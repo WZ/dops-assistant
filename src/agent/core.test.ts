@@ -88,6 +88,34 @@ describe("AgentCore", () => {
     );
   });
 
+  it("handles transport-level MCP error without throwing and feeds error back to LLM", async () => {
+    (mockLlm.chat as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        type: "tool_calls",
+        calls: [{ id: "call_1", name: "query_prometheus", args: { query: "up" } }],
+      })
+      .mockResolvedValueOnce({ type: "text", content: "Partial response despite error." });
+
+    (mockMcp.callTool as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("MCP process crashed")
+    );
+
+    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
+    const result = await core.run({ mode: "proactive", message: "Check metrics." });
+
+    // Agent must not throw — it should return a response
+    expect(result.response).toBe("Partial response despite error.");
+
+    // The second LLM call must have received a [Transport Error] tool message
+    const secondCallMessages = (mockLlm.chat as ReturnType<typeof vi.fn>).mock.calls[1][0];
+    const transportErrMsg = secondCallMessages.find(
+      (m: { role: string; content: string }) =>
+        m.role === "tool" && m.content.startsWith("[Transport Error]")
+    );
+    expect(transportErrMsg).toBeDefined();
+    expect(transportErrMsg.content).toContain("MCP process crashed");
+  });
+
   it("returns updatedHistory including new exchange", async () => {
     (mockLlm.chat as ReturnType<typeof vi.fn>).mockResolvedValue({
       type: "text",

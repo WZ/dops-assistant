@@ -29,6 +29,8 @@ export class AgentCore {
 
       if (response.type === "text") {
         messages.push({ role: "assistant", content: response.content });
+        // updatedHistory includes intermediate tool-call messages (role: "tool", content: null on assistant)
+        // so conversation memory can be fully restored for the next LLM call
         return {
           response: response.content,
           updatedHistory: messages.filter((m) => m.role !== "system"),
@@ -47,18 +49,37 @@ export class AgentCore {
       });
 
       // Execute tool calls and append results
-      for (const call of response.calls) {
-        const result = await this.mcp.callTool(call.name, call.args);
+      let results: string[];
+      try {
+        results = await Promise.all(
+          response.calls.map((call) => this.mcp.callTool(call.name, call.args))
+        );
+      } catch (err) {
+        // Transport-level failure (MCP process crash, etc.)
+        // Feed the error back to the LLM as a tool result so it can produce a partial response
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        for (const call of response.calls) {
+          messages.push({
+            role: "tool",
+            content: `[Transport Error] ${errorMsg}`,
+            tool_call_id: call.id,
+          });
+        }
+        continue;
+      }
+      for (let j = 0; j < response.calls.length; j++) {
         messages.push({
           role: "tool",
-          content: result,
-          tool_call_id: call.id,
+          content: results[j],
+          tool_call_id: response.calls[j].id,
         });
       }
     }
 
     const truncationMsg = "Reached maximum iterations without a final response.";
     messages.push({ role: "assistant", content: truncationMsg });
+    // updatedHistory includes intermediate tool-call messages (role: "tool", content: null on assistant)
+    // so conversation memory can be fully restored for the next LLM call
     return {
       response: truncationMsg,
       updatedHistory: messages.filter((m) => m.role !== "system"),
