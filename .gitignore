@@ -1,0 +1,14 @@
+# Worktrees
+.worktrees/
+
+# Node
+node_modules/
+dist/
+
+# Env
+.env
+.env.*
+
+# Logs
+*.log
+logs/
