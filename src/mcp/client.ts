@@ -21,6 +21,7 @@ export class McpClient {
   }
 
   async connect(): Promise<void> {
+    if (this.client !== null) return; // already connected
     // TODO: add reconnection logic for future enhancement
     const transport = new StdioClientTransport({
       command: this.config.command,
@@ -56,10 +57,11 @@ export class McpClient {
     if (!this.client) throw new Error("MCP client not connected");
     const result = await this.client.callTool({ name, arguments: args });
     const parts = result.content as Array<{ type: string; text?: string }>;
-    return parts
+    const text = parts
       .filter((p) => p.type === "text")
       .map((p) => p.text ?? "")
       .join("\n");
+    return result.isError ? `[Tool Error] ${text}` : text;
   }
 
   async disconnect(): Promise<void> {
