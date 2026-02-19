@@ -46,16 +46,28 @@ export class LlmClient {
       ...(tools.length > 0 ? { tools: tools as OpenAI.Chat.ChatCompletionTool[] } : {}),
     });
 
-    const message = response.choices[0].message;
+    const choice = response.choices[0];
+    if (!choice) {
+      throw new Error("LLM returned no choices (possible content filter or API error)");
+    }
+    const message = choice.message;
 
     if (message.tool_calls && message.tool_calls.length > 0) {
       return {
         type: "tool_calls",
-        calls: message.tool_calls.map((tc) => ({
-          id: tc.id,
-          name: tc.function.name,
-          args: JSON.parse(tc.function.arguments) as Record<string, unknown>,
-        })),
+        calls: message.tool_calls.map((tc) => {
+          let args: Record<string, unknown>;
+          try {
+            args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
+          } catch {
+            throw new Error(`Failed to parse tool arguments for "${tc.function.name}": ${tc.function.arguments}`);
+          }
+          return {
+            id: tc.id,
+            name: tc.function.name,
+            args,
+          };
+        }),
       };
     }
 
