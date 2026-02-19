@@ -1,3 +1,5 @@
+import type { KnownBlock } from "@slack/bolt";
+
 export type AnomalyAlert = {
   service: string;
   severity: "low" | "medium" | "high";
@@ -9,7 +11,7 @@ export type AnomalyAlert = {
 const SEVERITY_EMOJI = { low: ":yellow_circle:", medium: ":orange_circle:", high: ":red_circle:" };
 
 export async function sendAnomalyAlert(webhookUrl: string, alert: AnomalyAlert): Promise<void> {
-  const blocks: unknown[] = [
+  const blocks: KnownBlock[] = [
     {
       type: "header",
       text: {
