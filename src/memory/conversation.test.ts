@@ -60,4 +60,16 @@ describe("ConversationMemory", () => {
 
     expect(mem.get("thread-1")).toHaveLength(2);
   });
+
+  it("destroy() stops the eviction interval", () => {
+    const mem = new ConversationMemory({ maxMessages: 10, ttlMinutes: 60 });
+    mem.append("thread-1", { role: "user", content: "Hello." });
+    mem.destroy();
+
+    // After destroy, advancing past TTL should NOT evict (interval is stopped)
+    vi.advanceTimersByTime(61 * 60 * 1000 + 60 * 1000);
+
+    // Thread still present — destroy() stopped the eviction timer
+    expect(mem.get("thread-1")).toHaveLength(1);
+  });
 });

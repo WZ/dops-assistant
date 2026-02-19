@@ -15,6 +15,7 @@ export class ConversationMemory {
     this.maxMessages = opts.maxMessages;
     this.ttlMs = opts.ttlMinutes * 60 * 1000;
     this.evictionInterval = setInterval(() => this.evict(), 60 * 1000);
+    this.evictionInterval.unref();
   }
 
   get(threadId: string): Message[] {
