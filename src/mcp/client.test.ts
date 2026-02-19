@@ -112,4 +112,27 @@ describe("McpClient", () => {
     client = new McpClient(baseConfig);
     await expect(client.callTool("query_prometheus", {})).rejects.toThrow("MCP client not connected");
   });
+
+  it("connect() is a no-op when already connected", async () => {
+    const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+    client = new McpClient(baseConfig);
+    await client.connect();
+    await client.connect();
+    const instance = (Client as ReturnType<typeof vi.fn>).mock.instances[0];
+    expect(instance.connect).toHaveBeenCalledTimes(1);
+  });
+
+  it("callTool returns [Tool Error] prefix when isError is true", async () => {
+    const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+    client = new McpClient(baseConfig);
+    await client.connect();
+    const instance = (Client as ReturnType<typeof vi.fn>).mock.instances[0];
+    instance.callTool.mockResolvedValueOnce({
+      content: [{ type: "text", text: "metric not found" }],
+      isError: true,
+    });
+    const result = await client.callTool("query_prometheus", { query: "up" });
+    expect(result).toMatch(/^\[Tool Error\]/);
+    expect(result).toBe("[Tool Error] metric not found");
+  });
 });
