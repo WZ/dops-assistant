@@ -96,4 +96,41 @@ describe("LlmClient", () => {
       expect.objectContaining({ baseURL: "https://custom.endpoint/v1" })
     );
   });
+
+  it("throws when choices array is empty (possible content filter)", async () => {
+    const mockCreate = await getMockCreate();
+    mockCreate.mockResolvedValue({ choices: [] });
+
+    const client = new LlmClient(config);
+    await expect(
+      client.chat([{ role: "user", content: "Hello" }], [])
+    ).rejects.toThrow("LLM returned no choices (possible content filter or API error)");
+  });
+
+  it("throws when tool arguments contain malformed JSON", async () => {
+    const mockCreate = await getMockCreate();
+    mockCreate.mockResolvedValue({
+      choices: [
+        {
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: "call_bad",
+                type: "function",
+                function: { name: "broken_tool", arguments: "not-valid-json{" },
+              },
+            ],
+          },
+          finish_reason: "tool_calls",
+        },
+      ],
+    });
+
+    const client = new LlmClient(config);
+    await expect(
+      client.chat([{ role: "user", content: "Run tool." }], [])
+    ).rejects.toThrow('Failed to parse tool arguments for "broken_tool": not-valid-json{');
+  });
 });
