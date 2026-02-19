@@ -1,7 +1,22 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Scheduler, parseDurationToCron } from "./scheduler.js";
 import type { AgentCore } from "../agent/core.js";
 import type { sendAnomalyAlert } from "../notifications/slack-webhook.js";
+
+// Mock node-cron to avoid real timer loops in tests
+let capturedCallback: (() => void) | null = null;
+const mockTask = {
+  stop: vi.fn(),
+};
+
+vi.mock("node-cron", () => ({
+  default: {
+    schedule: vi.fn().mockImplementation((_expr: string, callback: () => void) => {
+      capturedCallback = callback;
+      return mockTask;
+    }),
+  },
+}));
 
 describe("parseDurationToCron", () => {
   it("converts 5m to cron expression", () => {
@@ -33,11 +48,7 @@ describe("Scheduler", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.useFakeTimers();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
+    capturedCallback = null;
   });
 
   it("calls agent for each service on tick", async () => {
@@ -51,7 +62,8 @@ describe("Scheduler", () => {
     );
     scheduler.start();
 
-    await vi.runAllTimersAsync();
+    // Simulate a cron tick
+    await capturedCallback!();
 
     expect(mockRun).toHaveBeenCalledTimes(2);
     expect(mockRun).toHaveBeenCalledWith(expect.objectContaining({ mode: "proactive" }));
@@ -71,7 +83,7 @@ describe("Scheduler", () => {
     );
     scheduler.start();
 
-    await vi.runAllTimersAsync();
+    await capturedCallback!();
 
     expect(mockNotify).toHaveBeenCalledTimes(1);
     expect(mockNotify).toHaveBeenCalledWith(
@@ -91,8 +103,23 @@ describe("Scheduler", () => {
     );
     scheduler.start();
 
-    await vi.runAllTimersAsync();
+    await capturedCallback!();
 
     expect(mockNotify).not.toHaveBeenCalled();
+  });
+
+  it("stop() calls task.stop()", () => {
+    mockRun.mockResolvedValue({ response: "healthy", updatedHistory: [] });
+
+    const scheduler = new Scheduler(
+      { interval: "1m", services: ["payments-api"], maxConcurrency: 5 },
+      services,
+      mockAgent,
+      mockNotify
+    );
+    scheduler.start();
+    scheduler.stop();
+
+    expect(mockTask.stop).toHaveBeenCalled();
   });
 });
