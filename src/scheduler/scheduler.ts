@@ -42,26 +42,11 @@ export class Scheduler {
 
   start(): void {
     const cronExpr = parseDurationToCron(this.config.interval);
-
-    // Schedule recurring execution via node-cron (production behaviour).
-    // The task is created with scheduled: false so its internal setTimeout loop does
-    // not start during construction.  The loop is activated by calling this.task.start()
-    // which happens outside of the Promise microtask below, ensuring vi.runAllTimersAsync()
-    // never sees the node-cron recursive setTimeout and can resolve cleanly in tests.
-    this.task = cron.schedule(
-      cronExpr,
-      () => {
-        void this.runChecks();
-      },
-      { scheduled: false }
-    );
-
-    // Trigger the first check immediately via Promise microtask.
-    // In the test environment (vi.useFakeTimers + vi.runAllTimersAsync) this microtask
-    // runs before runAllTimersAsync's internal doRun macrotask, so assertions are met
-    // without touching fake-timer recursion.
-    // In production this gives an immediate first check on start().
-    void Promise.resolve().then(() => this.runChecks());
+    this.task = cron.schedule(cronExpr, () => {
+      void this.runChecks();
+    });
+    // task.start() is called automatically by cron.schedule() unless scheduled: false is passed
+    // The task is now running and will fire at each cron tick
   }
 
   stop(): void {
