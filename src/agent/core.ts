@@ -49,29 +49,19 @@ export class AgentCore {
       });
 
       // Execute tool calls and append results
-      let results: string[];
-      try {
-        results = await Promise.all(
-          response.calls.map((call) => this.mcp.callTool(call.name, call.args))
-        );
-      } catch (err) {
-        // Transport-level failure (MCP process crash, etc.)
-        // Feed the error back to the LLM as a tool result so it can produce a partial response
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        for (const call of response.calls) {
-          messages.push({
-            role: "tool",
-            content: `[Transport Error] ${errorMsg}`,
-            tool_call_id: call.id,
-          });
-        }
-        continue;
-      }
+      const settled = await Promise.allSettled(
+        response.calls.map((call) => this.mcp.callTool(call.name, call.args))
+      );
       for (let j = 0; j < response.calls.length; j++) {
+        const outcome = settled[j];
+        const call = response.calls[j];
         messages.push({
           role: "tool",
-          content: results[j],
-          tool_call_id: response.calls[j].id,
+          content:
+            outcome.status === "fulfilled"
+              ? outcome.value
+              : `[Transport Error] ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`,
+          tool_call_id: call.id,
         });
       }
     }

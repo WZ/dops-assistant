@@ -116,6 +116,43 @@ describe("AgentCore", () => {
     expect(transportErrMsg.content).toContain("MCP process crashed");
   });
 
+  it("when one of two parallel tool calls fails, the successful result is still present in messages sent to LLM", async () => {
+    (mockLlm.chat as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        type: "tool_calls",
+        calls: [
+          { id: "call_ok", name: "query_prometheus", args: { query: "up" } },
+          { id: "call_fail", name: "query_prometheus", args: { query: "bad" } },
+        ],
+      })
+      .mockResolvedValueOnce({ type: "text", content: "Got partial results." });
+
+    (mockMcp.callTool as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce("1.0")
+      .mockRejectedValueOnce(new Error("MCP process crashed"));
+
+    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
+    const result = await core.run({ mode: "proactive", message: "Check metrics." });
+
+    expect(result.response).toBe("Got partial results.");
+
+    const secondCallMessages = (mockLlm.chat as ReturnType<typeof vi.fn>).mock.calls[1][0];
+    const toolMessages = secondCallMessages.filter(
+      (m: { role: string }) => m.role === "tool"
+    ) as { role: string; content: string; tool_call_id: string }[];
+
+    // The successful tool result must be present
+    const successMsg = toolMessages.find((m) => m.tool_call_id === "call_ok");
+    expect(successMsg).toBeDefined();
+    expect(successMsg!.content).toBe("1.0");
+
+    // The failed tool result must carry the transport error
+    const errorMsg = toolMessages.find((m) => m.tool_call_id === "call_fail");
+    expect(errorMsg).toBeDefined();
+    expect(errorMsg!.content).toContain("[Transport Error]");
+    expect(errorMsg!.content).toContain("MCP process crashed");
+  });
+
   it("returns updatedHistory including new exchange", async () => {
     (mockLlm.chat as ReturnType<typeof vi.fn>).mockResolvedValue({
       type: "text",
