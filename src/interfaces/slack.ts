@@ -66,7 +66,7 @@ export class SlackBot {
       if (!msg.text) return;
       await this.handleMessage(
         { text: msg.text, threadTs: msg.ts, userId: msg.user ?? "" },
-        say as (msg: object) => Promise<void>
+        say as unknown as (msg: object) => Promise<void>
       );
     });
 
@@ -74,8 +74,8 @@ export class SlackBot {
     this.app.event("app_mention", async ({ event, say }) => {
       const threadTs = event.thread_ts ?? event.ts;
       await this.handleMessage(
-        { text: event.text, threadTs, userId: event.user },
-        say as (msg: object) => Promise<void>
+        { text: event.text, threadTs, userId: event.user ?? "" },
+        say as unknown as (msg: object) => Promise<void>
       );
     });
   }
