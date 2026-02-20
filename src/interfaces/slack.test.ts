@@ -1,0 +1,107 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { SlackBot } from "./slack.js";
+import type { AgentCore } from "../agent/core.js";
+import type { ConversationMemory } from "../memory/conversation.js";
+
+// Mock @slack/bolt
+const mockSay = vi.fn();
+const mockOn = vi.fn();
+const mockStart = vi.fn().mockResolvedValue(undefined);
+const mockStop = vi.fn().mockResolvedValue(undefined);
+
+vi.mock("@slack/bolt", () => ({
+  App: vi.fn().mockImplementation(function () {
+    return {
+      message: mockOn,
+      event: mockOn,
+      start: mockStart,
+      stop: mockStop,
+    };
+  }),
+}));
+
+const mockAgent = {
+  run: vi.fn().mockResolvedValue({ response: "Here is the data.", updatedHistory: [] }),
+} as unknown as AgentCore;
+
+const mockMemory = {
+  get: vi.fn().mockReturnValue([]),
+  append: vi.fn(),
+} as unknown as ConversationMemory;
+
+describe("SlackBot", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Re-apply default return values after clearAllMocks
+    (mockAgent.run as ReturnType<typeof vi.fn>).mockResolvedValue({ response: "Here is the data.", updatedHistory: [] });
+    (mockMemory.get as ReturnType<typeof vi.fn>).mockReturnValue([]);
+  });
+
+  it("registers message and app_mention handlers on start", async () => {
+    const bot = new SlackBot(
+      { botToken: "xoxb-test", appToken: "xapp-test" },
+      mockAgent,
+      mockMemory
+    );
+    await bot.start();
+    expect(mockStart).toHaveBeenCalled();
+    expect(mockOn).toHaveBeenCalled();
+  });
+
+  it("loads history and calls agent with user message", async () => {
+    const existingHistory = [{ role: "user" as const, content: "Previous message." }];
+    (mockMemory.get as ReturnType<typeof vi.fn>).mockReturnValue(existingHistory);
+
+    const bot = new SlackBot(
+      { botToken: "xoxb-test", appToken: "xapp-test" },
+      mockAgent,
+      mockMemory
+    );
+
+    await bot.handleMessage({ text: "How is the system?", threadTs: "123.456", userId: "U123" }, mockSay);
+
+    expect(mockAgent.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: "conversational",
+        message: "How is the system?",
+        history: existingHistory,
+      })
+    );
+  });
+
+  it("appends user message and response to memory", async () => {
+    const bot = new SlackBot(
+      { botToken: "xoxb-test", appToken: "xapp-test" },
+      mockAgent,
+      mockMemory
+    );
+
+    await bot.handleMessage({ text: "Hello.", threadTs: "123.456", userId: "U123" }, mockSay);
+
+    expect(mockMemory.append).toHaveBeenCalledWith(
+      "123.456",
+      expect.objectContaining({ role: "user", content: "Hello." })
+    );
+    expect(mockMemory.append).toHaveBeenCalledWith(
+      "123.456",
+      expect.objectContaining({ role: "assistant", content: "Here is the data." })
+    );
+  });
+
+  it("posts agent response to the thread", async () => {
+    const bot = new SlackBot(
+      { botToken: "xoxb-test", appToken: "xapp-test" },
+      mockAgent,
+      mockMemory
+    );
+
+    await bot.handleMessage({ text: "Hello.", threadTs: "123.456", userId: "U123" }, mockSay);
+
+    expect(mockSay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Here is the data.",
+        thread_ts: "123.456",
+      })
+    );
+  });
+});
