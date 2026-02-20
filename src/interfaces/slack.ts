@@ -2,7 +2,7 @@ import { App } from "@slack/bolt";
 import type { AgentCore } from "../agent/core.js";
 import type { ConversationMemory } from "../memory/conversation.js";
 
-type SlackConfig = {
+export type SlackConfig = {
   botToken: string;
   appToken: string;
 };
@@ -44,15 +44,19 @@ export class SlackBot {
 
     this.memory.append(threadId, { role: "user", content: ctx.text });
 
-    const result = await this.agent.run({
-      mode: "conversational",
-      message: ctx.text,
-      history,
-    });
-
-    this.memory.append(threadId, { role: "assistant", content: result.response });
-
-    await say({ text: result.response, thread_ts: threadId });
+    try {
+      const result = await this.agent.run({
+        mode: "conversational",
+        message: ctx.text,
+        history,
+      });
+      this.memory.append(threadId, { role: "assistant", content: result.response });
+      await say({ text: result.response, thread_ts: threadId });
+    } catch (err) {
+      const errorText = "Sorry, something went wrong. Please try again.";
+      await say({ text: errorText, thread_ts: threadId }).catch(() => undefined);
+      throw err;
+    }
   }
 
   private registerHandlers(): void {
