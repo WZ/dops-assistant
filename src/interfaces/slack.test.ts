@@ -5,15 +5,16 @@ import type { ConversationMemory } from "../memory/conversation.js";
 
 // Mock @slack/bolt
 const mockSay = vi.fn();
-const mockOn = vi.fn();
+const mockMessage = vi.fn();
+const mockEvent = vi.fn();
 const mockStart = vi.fn().mockResolvedValue(undefined);
 const mockStop = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("@slack/bolt", () => ({
   App: vi.fn().mockImplementation(function () {
     return {
-      message: mockOn,
-      event: mockOn,
+      message: mockMessage,
+      event: mockEvent,
       start: mockStart,
       stop: mockStop,
     };
@@ -35,6 +36,7 @@ describe("SlackBot", () => {
     // Re-apply default return values after clearAllMocks
     (mockAgent.run as ReturnType<typeof vi.fn>).mockResolvedValue({ response: "Here is the data.", updatedHistory: [] });
     (mockMemory.get as ReturnType<typeof vi.fn>).mockReturnValue([]);
+    mockSay.mockResolvedValue(undefined);
   });
 
   it("registers message and app_mention handlers on start", async () => {
@@ -45,7 +47,8 @@ describe("SlackBot", () => {
     );
     await bot.start();
     expect(mockStart).toHaveBeenCalled();
-    expect(mockOn).toHaveBeenCalled();
+    expect(mockMessage).toHaveBeenCalledWith(expect.any(Function));
+    expect(mockEvent).toHaveBeenCalledWith("app_mention", expect.any(Function));
   });
 
   it("loads history and calls agent with user message", async () => {
@@ -100,6 +103,27 @@ describe("SlackBot", () => {
     expect(mockSay).toHaveBeenCalledWith(
       expect.objectContaining({
         text: "Here is the data.",
+        thread_ts: "123.456",
+      })
+    );
+  });
+
+  it("posts error message to thread when agent.run throws", async () => {
+    (mockAgent.run as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("LLM unavailable"));
+
+    const bot = new SlackBot(
+      { botToken: "xoxb-test", appToken: "xapp-test" },
+      mockAgent,
+      mockMemory
+    );
+
+    await expect(
+      bot.handleMessage({ text: "Hello.", threadTs: "123.456", userId: "U123" }, mockSay)
+    ).rejects.toThrow("LLM unavailable");
+
+    expect(mockSay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Sorry, something went wrong. Please try again.",
         thread_ts: "123.456",
       })
     );
