@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { McpClient } from "./client.js";
 import type { McpServerConfig } from "../config/schema.js";
+import { TimeoutError } from "../utils/timeout.js";
 
 // Mock the MCP SDK
 vi.mock("@modelcontextprotocol/sdk/client/index.js", () => ({
@@ -52,6 +53,13 @@ const baseConfig: McpServerConfig = {
   env: {},
 };
 
+const baseTimeouts = {
+  mcpConnectMs: 30_000,
+  llmCallMs: 60_000,
+  toolExecutionMs: 30_000,
+  agentIterationMs: 90_000,
+};
+
 describe("McpClient", () => {
   let client: McpClient;
 
@@ -60,7 +68,7 @@ describe("McpClient", () => {
   });
 
   it("connects and discovers all tools when no enabledTools filter", async () => {
-    client = new McpClient(baseConfig);
+    client = new McpClient(baseConfig, baseTimeouts);
     await client.connect();
     const tools = client.getTools();
     expect(tools).toHaveLength(2);
@@ -69,7 +77,7 @@ describe("McpClient", () => {
   });
 
   it("filters tools to only enabledTools when specified", async () => {
-    client = new McpClient({ ...baseConfig, enabledTools: ["query_prometheus"] });
+    client = new McpClient({ ...baseConfig, enabledTools: ["query_prometheus"] }, baseTimeouts);
     await client.connect();
     const tools = client.getTools();
     expect(tools).toHaveLength(1);
@@ -77,7 +85,7 @@ describe("McpClient", () => {
   });
 
   it("converts tool schema to OpenAI function definition format", async () => {
-    client = new McpClient({ ...baseConfig, enabledTools: ["query_prometheus"] });
+    client = new McpClient({ ...baseConfig, enabledTools: ["query_prometheus"] }, baseTimeouts);
     await client.connect();
     const tools = client.getTools();
     expect(tools[0]).toEqual({
@@ -97,25 +105,25 @@ describe("McpClient", () => {
   });
 
   it("executes a tool call and returns text result", async () => {
-    client = new McpClient(baseConfig);
+    client = new McpClient(baseConfig, baseTimeouts);
     await client.connect();
     const result = await client.callTool("query_prometheus", { query: "up" });
     expect(result).toBe("result data");
   });
 
   it("throws if getTools called before connect", () => {
-    client = new McpClient(baseConfig);
+    client = new McpClient(baseConfig, baseTimeouts);
     expect(() => client.getTools()).toThrow("MCP client not connected");
   });
 
   it("throws if callTool called before connect", async () => {
-    client = new McpClient(baseConfig);
+    client = new McpClient(baseConfig, baseTimeouts);
     await expect(client.callTool("query_prometheus", {})).rejects.toThrow("MCP client not connected");
   });
 
   it("connect() is a no-op when already connected", async () => {
     const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
-    client = new McpClient(baseConfig);
+    client = new McpClient(baseConfig, baseTimeouts);
     await client.connect();
     await client.connect();
     const instance = (Client as ReturnType<typeof vi.fn>).mock.instances[0];
@@ -124,7 +132,7 @@ describe("McpClient", () => {
 
   it("callTool returns [Tool Error] prefix when isError is true", async () => {
     const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
-    client = new McpClient(baseConfig);
+    client = new McpClient(baseConfig, baseTimeouts);
     await client.connect();
     const instance = (Client as ReturnType<typeof vi.fn>).mock.instances[0];
     instance.callTool.mockResolvedValueOnce({
@@ -134,5 +142,37 @@ describe("McpClient", () => {
     const result = await client.callTool("query_prometheus", { query: "up" });
     expect(result).toMatch(/^\[Tool Error\]/);
     expect(result).toBe("[Tool Error] metric not found");
+  });
+});
+
+describe("McpClient – timeouts and metrics", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("throws TimeoutError if connect exceeds mcpConnectMs", async () => {
+    const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+    // Override the mock so the instance's connect hangs forever
+    (Client as ReturnType<typeof vi.fn>).mockImplementationOnce(function () {
+      return {
+        connect: vi.fn().mockImplementation(() => new Promise(() => {})), // hangs forever
+        close: vi.fn().mockResolvedValue(undefined),
+        listTools: vi.fn().mockResolvedValue({ tools: [] }),
+        callTool: vi.fn(),
+      };
+    });
+    const client = new McpClient(
+      { command: "npx", args: [], env: {}, enabledTools: undefined },
+      { mcpConnectMs: 1, llmCallMs: 60_000, toolExecutionMs: 30_000, agentIterationMs: 90_000 },
+    );
+    await expect(client.connect()).rejects.toBeInstanceOf(TimeoutError);
+  });
+
+  it("exposes isConnected()", async () => {
+    const client = new McpClient(
+      { command: "npx", args: [], env: {}, enabledTools: undefined },
+      { mcpConnectMs: 30_000, llmCallMs: 60_000, toolExecutionMs: 30_000, agentIterationMs: 90_000 },
+    );
+    expect(client.isConnected()).toBe(false);
   });
 });
