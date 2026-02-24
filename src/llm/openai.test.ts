@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { LlmClient } from "./openai.js";
 import type { LlmConfig } from "./openai.js";
+import { TimeoutError } from "../utils/timeout.js";
+import type { TimeoutsConfig, RetryConfig } from "../config/schema.js";
 
 vi.mock("openai", () => {
   const mockCreate = vi.fn();
@@ -23,6 +25,15 @@ const config: LlmConfig = {
   model: "gpt-4",
   maxTokens: 4096,
 };
+
+const defaultTimeouts: TimeoutsConfig = {
+  mcpConnectMs: 30_000,
+  llmCallMs: 60_000,
+  toolExecutionMs: 30_000,
+  agentIterationMs: 90_000,
+};
+
+const defaultRetry: RetryConfig = { maxAttempts: 1, baseDelayMs: 0 };
 
 async function getMockCreate() {
   const mod = await import("openai");
@@ -49,7 +60,7 @@ describe("LlmClient", () => {
       ],
     });
 
-    const client = new LlmClient(config);
+    const client = new LlmClient(config, defaultTimeouts, defaultRetry);
     const result = await client.chat([{ role: "user", content: "Check the system." }], []);
     expect(result).toEqual({ type: "text", content: "Everything looks healthy." });
   });
@@ -75,7 +86,7 @@ describe("LlmClient", () => {
       ],
     });
 
-    const client = new LlmClient(config);
+    const client = new LlmClient(config, defaultTimeouts, defaultRetry);
     const result = await client.chat([{ role: "user", content: "Check metrics." }], []);
     expect(result).toEqual({
       type: "tool_calls",
@@ -91,7 +102,7 @@ describe("LlmClient", () => {
 
   it("passes baseURL to OpenAI client when configured", async () => {
     const OpenAI = (await import("openai")).default;
-    new LlmClient({ ...config, baseURL: "https://custom.endpoint/v1" });
+    new LlmClient({ ...config, baseURL: "https://custom.endpoint/v1" }, defaultTimeouts, defaultRetry);
     expect(OpenAI).toHaveBeenCalledWith(
       expect.objectContaining({ baseURL: "https://custom.endpoint/v1" })
     );
@@ -101,7 +112,7 @@ describe("LlmClient", () => {
     const mockCreate = await getMockCreate();
     mockCreate.mockResolvedValue({ choices: [] });
 
-    const client = new LlmClient(config);
+    const client = new LlmClient(config, defaultTimeouts, defaultRetry);
     await expect(
       client.chat([{ role: "user", content: "Hello" }], [])
     ).rejects.toThrow("LLM returned no choices (possible content filter or API error)");
@@ -128,9 +139,27 @@ describe("LlmClient", () => {
       ],
     });
 
-    const client = new LlmClient(config);
+    const client = new LlmClient(config, defaultTimeouts, defaultRetry);
     await expect(
       client.chat([{ role: "user", content: "Run tool." }], [])
     ).rejects.toThrow('Failed to parse tool arguments for "broken_tool": not-valid-json{');
+  });
+});
+
+describe("LlmClient – timeout and retry", () => {
+  it("wraps chat call with timeout", async () => {
+    const mockCreate = await getMockCreate();
+    mockCreate.mockImplementation(() => new Promise(() => {})); // hangs forever
+
+    const timeouts: TimeoutsConfig = {
+      mcpConnectMs: 30_000,
+      llmCallMs: 1,
+      toolExecutionMs: 30_000,
+      agentIterationMs: 90_000,
+    };
+    const retry: RetryConfig = { maxAttempts: 1, baseDelayMs: 0 };
+
+    const client = new LlmClient(config, timeouts, retry);
+    await expect(client.chat([], [])).rejects.toBeInstanceOf(TimeoutError);
   });
 });
