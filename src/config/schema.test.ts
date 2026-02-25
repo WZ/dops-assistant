@@ -17,6 +17,17 @@ describe("ConfigSchema – new sections", () => {
     expect(result.observability.logLevel).toBe("info");
   });
 
+  it("applies default investigationTriggerPhrases", () => {
+    const result = ConfigSchema.safeParse({
+      llm: { apiKey: "sk-test", model: "gpt-4", maxTokens: 4096 },
+      grafana: { mcpServer: { transport: "stdio", command: "npx", args: [], env: {} } },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.agent.investigationTriggerPhrases).toContain("investigate");
+    }
+  });
+
   it("accepts alertCooldownMinutes on anomalyCheck", () => {
     const result = ConfigSchema.parse({
       llm: { apiKey: "k", model: "gpt-4", maxTokens: 1000 },
