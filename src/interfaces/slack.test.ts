@@ -4,22 +4,21 @@ import type { AgentCore } from "../agent/core.js";
 import type { ConversationMemory } from "../memory/conversation.js";
 import { registry } from "../observability/metrics.js";
 
-// Mock @slack/bolt
-const mockSay = vi.fn();
-const mockMessage = vi.fn();
-const mockEvent = vi.fn();
-const mockStart = vi.fn().mockResolvedValue(undefined);
-const mockStop = vi.fn().mockResolvedValue(undefined);
+// Mock @slack/bolt — use vi.hoisted so variables are available inside the hoisted vi.mock factory
+const { mockSay, mockMessage, mockEvent, mockStart, mockStop, MockApp } = vi.hoisted(() => {
+  const mockSay = vi.fn();
+  const mockMessage = vi.fn();
+  const mockEvent = vi.fn();
+  const mockStart = vi.fn().mockResolvedValue(undefined);
+  const mockStop = vi.fn().mockResolvedValue(undefined);
+  const MockApp = vi.fn().mockImplementation(function () {
+    return { message: mockMessage, event: mockEvent, start: mockStart, stop: mockStop };
+  });
+  return { mockSay, mockMessage, mockEvent, mockStart, mockStop, MockApp };
+});
 
 vi.mock("@slack/bolt", () => ({
-  App: vi.fn().mockImplementation(function () {
-    return {
-      message: mockMessage,
-      event: mockEvent,
-      start: mockStart,
-      stop: mockStop,
-    };
-  }),
+  default: { App: MockApp },
 }));
 
 const mockAgent = {
