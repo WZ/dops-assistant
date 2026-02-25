@@ -1,4 +1,6 @@
 import type { KnownBlock } from "@slack/bolt";
+import type { RcaReport } from "../agent/rca-types.js";
+import { formatRcaBlocks } from "./rca-blocks.js";
 import { withRetry } from "../utils/retry.js";
 
 export type AnomalyAlert = {
@@ -8,6 +10,7 @@ export type AnomalyAlert = {
   affectedMetrics?: string[];
   dashboardUrl?: string;
   recommendedAction?: string;
+  rca?: RcaReport;
 };
 
 const SEVERITY_EMOJI: Record<AnomalyAlert["severity"], string> = {
@@ -74,6 +77,11 @@ export async function sendAnomalyAlert(
         },
       ],
     });
+  }
+
+  if (alert.rca) {
+    const rcaBlocks = formatRcaBlocks(alert.rca);
+    blocks.splice(0, blocks.length, ...rcaBlocks);
   }
 
   await withRetry(
