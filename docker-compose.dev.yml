@@ -2,20 +2,23 @@ services:
   grafana-mcp:
     image: docker.io/grafana/mcp-grafana:latest
     command: ["/app/mcp-grafana", "--transport", "streamable-http"]
-    restart: unless-stopped
+    restart: "no"
     environment:
       GRAFANA_URL: ${GRAFANA_URL}
       GRAFANA_SERVICE_ACCOUNT_TOKEN: ${GRAFANA_TOKEN}
+    ports:
+      - "8000:8000"   # optional: expose for local curl/healthz checks
 
   dops-assistant:
     build: .
-    restart: unless-stopped
-    env_file: .env
+    restart: "no"
+    env_file: dev/.env
     environment:
       CONFIG_PATH: /app/config.yaml
+      LOG_LEVEL: debug
       GRAFANA_MCP_URL: http://grafana-mcp:8000/mcp
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
+      - ./dev/config.yaml:/app/config.yaml:ro
     ports:
       - "9090:9090"
     depends_on:
