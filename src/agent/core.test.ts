@@ -167,4 +167,46 @@ describe("AgentCore", () => {
     expect(userMsg).toBeDefined();
     expect(assistantMsg).toBeDefined();
   });
+
+  it("records correlationId in task", async () => {
+    // verify agent.run() accepts a correlationId without throwing
+    (mockLlm.chat as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      type: "text",
+      content: "Hello response.",
+    });
+    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
+    const result = await core.run({
+      mode: "conversational",
+      message: "hello",
+      correlationId: "test-id-123",
+    });
+    expect(result.response).toBeDefined();
+  });
+
+  it("uses structured response format for proactive mode", async () => {
+    const assessment = {
+      isAnomaly: false,
+      severity: "low",
+      summary: "All good",
+      affectedMetrics: [],
+      recommendedAction: "none",
+    };
+    (mockLlm.chat as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      type: "text",
+      content: JSON.stringify(assessment),
+    });
+
+    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
+    const result = await core.run({
+      mode: "proactive",
+      message: "Check service: payments",
+      serviceContext: [],
+    });
+    expect(result.response).toContain("isAnomaly");
+    // Verify chat was called with responseFormat
+    const callArgs = (mockLlm.chat as ReturnType<typeof vi.fn>).mock.calls[
+      (mockLlm.chat as ReturnType<typeof vi.fn>).mock.calls.length - 1
+    ];
+    expect(callArgs[2]?.responseFormat).toBeDefined();
+  });
 });

@@ -1,7 +1,18 @@
-import { buildSystemPrompt } from "./prompts.js";
+import {
+  buildSystemPrompt,
+  ANOMALY_ASSESSMENT_RESPONSE_FORMAT,
+} from "./prompts.js";
 import type { AgentTask, AgentResult } from "./types.js";
 import type { LlmClient, Message } from "../llm/openai.js";
 import type { McpClient } from "../mcp/client.js";
+import { TimeoutError } from "../utils/timeout.js";
+import {
+  agentRunsTotal,
+  agentIterations,
+} from "../observability/metrics.js";
+import pino from "pino";
+
+const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
 
 export class AgentCore {
   private llm: LlmClient;
@@ -15,8 +26,16 @@ export class AgentCore {
   }
 
   async run(task: AgentTask): Promise<AgentResult> {
+    const log = logger.child({
+      component: "agent",
+      correlationId: task.correlationId,
+    });
     const tools = this.mcp.getTools();
     const systemPrompt = buildSystemPrompt(task.mode, task.serviceContext);
+    const responseFormat =
+      task.mode === "proactive"
+        ? ANOMALY_ASSESSMENT_RESPONSE_FORMAT
+        : undefined;
 
     const messages: Message[] = [
       { role: "system", content: systemPrompt },
@@ -24,55 +43,66 @@ export class AgentCore {
       { role: "user", content: task.message },
     ];
 
-    for (let i = 0; i < this.maxIterations; i++) {
-      const response = await this.llm.chat(messages, tools);
-
-      if (response.type === "text") {
-        messages.push({ role: "assistant", content: response.content });
-        // updatedHistory includes intermediate tool-call messages (role: "tool", content: null on assistant)
-        // so conversation memory can be fully restored for the next LLM call
-        return {
-          response: response.content,
-          updatedHistory: messages.filter((m) => m.role !== "system"),
-        };
-      }
-
-      // Append assistant message with tool_calls
-      messages.push({
-        role: "assistant",
-        content: null,
-        tool_calls: response.calls.map((c) => ({
-          id: c.id,
-          type: "function" as const,
-          function: { name: c.name, arguments: JSON.stringify(c.args) },
-        })),
-      });
-
-      // Execute tool calls and append results
-      const settled = await Promise.allSettled(
-        response.calls.map((call) => this.mcp.callTool(call.name, call.args))
-      );
-      for (let j = 0; j < response.calls.length; j++) {
-        const outcome = settled[j];
-        const call = response.calls[j];
-        messages.push({
-          role: "tool",
-          content:
-            outcome.status === "fulfilled"
-              ? outcome.value
-              : `[Transport Error] ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`,
-          tool_call_id: call.id,
+    let iterations = 0;
+    try {
+      for (let i = 0; i < this.maxIterations; i++) {
+        iterations = i + 1;
+        const response = await this.llm.chat(messages, tools, {
+          responseFormat,
         });
-      }
-    }
 
-    const truncationMsg = "Reached maximum iterations without a final response.";
-    messages.push({ role: "assistant", content: truncationMsg });
-    // updatedHistory includes intermediate tool-call messages (role: "tool", content: null on assistant)
-    // so conversation memory can be fully restored for the next LLM call
-    return {
-      response: truncationMsg,
-      updatedHistory: messages.filter((m) => m.role !== "system"),
-    };
+        if (response.type === "text") {
+          messages.push({ role: "assistant", content: response.content });
+          agentRunsTotal.inc({ status: "success" });
+          agentIterations.observe(iterations);
+          return {
+            response: response.content,
+            updatedHistory: messages.filter((m) => m.role !== "system"),
+          };
+        }
+
+        messages.push({
+          role: "assistant",
+          content: null,
+          tool_calls: response.calls.map((c) => ({
+            id: c.id,
+            type: "function" as const,
+            function: { name: c.name, arguments: JSON.stringify(c.args) },
+          })),
+        });
+
+        const settled = await Promise.allSettled(
+          response.calls.map((call) => this.mcp.callTool(call.name, call.args)),
+        );
+        for (let j = 0; j < response.calls.length; j++) {
+          const outcome = settled[j]!;
+          const call = response.calls[j]!;
+          messages.push({
+            role: "tool",
+            content:
+              outcome.status === "fulfilled"
+                ? outcome.value
+                : `[Transport Error] ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`,
+            tool_call_id: call.id,
+          });
+        }
+      }
+
+      const truncationMsg = "Reached maximum iterations without a final response.";
+      messages.push({ role: "assistant", content: truncationMsg });
+      agentRunsTotal.inc({ status: "truncated" });
+      agentIterations.observe(iterations);
+      log.warn({ iterations }, "Agent reached max iterations");
+      return {
+        response: truncationMsg,
+        updatedHistory: messages.filter((m) => m.role !== "system"),
+      };
+    } catch (err) {
+      const status = err instanceof TimeoutError ? "timeout" : "error";
+      agentRunsTotal.inc({ status });
+      agentIterations.observe(iterations);
+      log.error({ err, iterations }, "Agent run failed");
+      throw err;
+    }
   }
 }
