@@ -1,4 +1,7 @@
-import { App } from "@slack/bolt";
+import pkg from "@slack/bolt";
+
+const { App } = pkg;
+type App = InstanceType<typeof pkg.App>;
 import { randomUUID } from "node:crypto";
 import type { AgentCore } from "../agent/core.js";
 import type { ConversationMemory } from "../memory/conversation.js";
