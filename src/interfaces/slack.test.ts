@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { SlackBot } from "./slack.js";
 import type { AgentCore } from "../agent/core.js";
 import type { ConversationMemory } from "../memory/conversation.js";
+import { registry } from "../observability/metrics.js";
 
 // Mock @slack/bolt
 const mockSay = vi.fn();
@@ -127,5 +128,36 @@ describe("SlackBot", () => {
         thread_ts: "123.456",
       })
     );
+  });
+
+  it("increments slackMessagesTotal on success", async () => {
+    registry.resetMetrics();
+    const bot = new SlackBot(
+      { botToken: "xoxb-test", appToken: "xapp-test" },
+      mockAgent,
+      mockMemory
+    );
+    await bot.handleMessage({ text: "hello", threadTs: "ts1", userId: "U1" }, mockSay);
+    const metrics = await registry.getMetricsAsJSON();
+    const counter = metrics.find((m) => m.name === "slack_messages_total");
+    const values = counter?.values as Array<{ labels: { status: string }; value: number }>;
+    expect(values?.find((v) => v.labels.status === "success")?.value).toBe(1);
+  });
+
+  it("increments slackMessagesTotal on error", async () => {
+    registry.resetMetrics();
+    const bot = new SlackBot(
+      { botToken: "xoxb-test", appToken: "xapp-test" },
+      mockAgent,
+      mockMemory
+    );
+    (mockAgent.run as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("boom"));
+    await expect(
+      bot.handleMessage({ text: "fail", threadTs: "ts2", userId: "U2" }, mockSay),
+    ).rejects.toThrow("boom");
+    const metrics = await registry.getMetricsAsJSON();
+    const counter = metrics.find((m) => m.name === "slack_messages_total");
+    const values = counter?.values as Array<{ labels: { status: string }; value: number }>;
+    expect(values?.find((v) => v.labels.status === "error")?.value).toBe(1);
   });
 });
