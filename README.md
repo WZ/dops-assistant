@@ -12,58 +12,35 @@ An agentic infrastructure monitoring assistant that connects to Grafana via MCP,
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                          dops-assistant                               │
-│                                                                      │
-│  ┌─────────────────┐    ┌─────────────────────────────────────────┐  │
-│  │   Slack Bot     │    │            Agent Core                   │  │
-│  │ (Socket Mode)   │    │                                         │  │
-│  │                 │    │  ┌───────────┐   ┌───────────────────┐  │  │
-│  │  IntentClassifier    │  │  Prompts  │   │    LLM Client     │  │  │
-│  │   │             │    │  └───────────┘   │ (OpenAI, timeout, │  │  │
-│  │   ├─ question ──┼───▶│                  │  retry, metrics)  │  │  │
-│  │   │             │    │                  └────────┬──────────┘  │  │
-│  │   └─ investigate│    │                           │             │  │
-│  │        │        │    │                  ┌────────▼──────────┐  │  │
-│  └────────┼────────┘    │                  │   Agentic Loop    │  │  │
-│           │             │                  │   (tool calls)    │  │  │
-│           ▼             │                  └────────┬──────────┘  │  │
-│  ┌──────────────────┐   │                           │             │  │
-│  │ Investigation    │   │                  ┌────────▼──────────┐  │  │
-│  │ Agent (5-phase)  │   │                  │    MCP Client     │  │  │
-│  │                  │   │                  │    (Grafana)      │  │  │
-│  │ 1. Anomaly detect│   │                  │ stdio / HTTP      │  │  │
-│  │ 2. Metrics   ─┐  │──▶│                  └─────────────────┘  │  │
-│  │ 3. Logs      ─┼──│   └─────────────────────────────────────────┘  │
-│  │ 4. Infra     ─┘  │                                                │
-│  │ 5. Synthesis      │                                                │
-│  └──────────────────┘                                                │
-│           │                                                          │
-│  ┌────────┼─────────┐                                                │
-│  │Scheduler (cron)  │   ┌──────────────────────────────────────────┐ │
-│  │ anomaly detect ──┼──▶│ Slack Webhook (anomaly alerts + RCA)     │ │
-│  │ + RCA on anomaly │   └──────────────────────────────────────────┘ │
-│  │ + deduplication  │                                                │
-│  └──────────────────┘   ┌──────────────────────────────────────────┐ │
-│                         │ Observability Server (:9090)              │ │
-│  ┌──────────────────┐   │  /health — readiness + MCP status        │ │
-│  │ Conversation     │   │  /metrics — Prometheus counters          │ │
-│  │ Memory (in-mem)  │   └──────────────────────────────────────────┘ │
-│  └──────────────────┘                                                │
-└──────────────────────────────────────────────────────────────────────┘
-         │
-         ▼
-┌─────────────────────┐
-│  Grafana MCP Server │  (stdio child process or StreamableHTTP)
-│  - Prometheus       │
-│  - Loki             │
-│  - Dashboards       │
-│  - Alerts           │
-└─────────────────────┘
+```mermaid
+graph TD
+    subgraph dops-assistant
+        SlackBot["Slack Bot<br/>(Socket Mode)"]
+        IC["IntentClassifier"]
+        AC["Agent Core<br/>(agentic tool-call loop)"]
+        IA["InvestigationAgent<br/>(5-phase RCA)"]
+        LLM["LLM Client<br/>(OpenAI + timeout/retry)"]
+        MCP["MCP Client<br/>(Grafana)"]
+        Sched["Scheduler<br/>(cron + deduplication)"]
+        Webhook["Slack Webhook<br/>(alerts + RCA blocks)"]
+        Obs["Observability Server<br/>(:9090 /health /metrics)"]
+        Mem["Conversation Memory"]
+
+        SlackBot --> IC
+        IC -- question --> AC
+        IC -- investigate --> IA
+        AC --> LLM
+        LLM --> MCP
+        IA --> LLM
+        Sched -- anomaly detected --> IA
+        Sched -- alert --> Webhook
+        SlackBot --> Mem
+    end
+
+    MCP --> Grafana["Grafana MCP Server<br/>(stdio or StreamableHTTP)<br/>Prometheus · Loki · Dashboards · Alerts"]
 ```
 
-**Slack Bot** classifies incoming messages via **IntentClassifier** — investigation requests go to the **InvestigationAgent** (5-phase RCA pipeline), questions go to **Agent Core** (agentic tool-call loop). The **Scheduler** runs proactive checks and triggers RCA on detected anomalies. All LLM/tool calls have timeouts, retries, and Prometheus metrics. See [docs/architecture.md](docs/architecture.md) for a full component walkthrough.
+**Slack Bot** classifies incoming messages via **IntentClassifier** — investigation requests go to the **InvestigationAgent** (5-phase parallel RCA pipeline), questions go to **Agent Core** (agentic tool-call loop). The **Scheduler** runs proactive checks and triggers RCA on detected anomalies. All LLM/tool calls have timeouts, retries, and Prometheus metrics. See [docs/architecture.md](docs/architecture.md) for a full component walkthrough.
 
 ## Prerequisites
 
