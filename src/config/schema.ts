@@ -56,6 +56,14 @@ const ConversationMemorySchema = z.object({
 const AgentSchema = z.object({
   maxIterations: z.number().default(20),
   conversationMemory: ConversationMemorySchema.optional().default({}),
+  investigationTriggerPhrases: z.array(z.string()).optional().default([
+    "investigate",
+    "why is",
+    "what's wrong",
+    "is down",
+    "is slow",
+    "root cause",
+  ]),
 });
 
 const SlackNotificationsSchema = z.object({
