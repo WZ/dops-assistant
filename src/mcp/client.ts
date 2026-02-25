@@ -1,6 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { McpServerConfig, TimeoutsConfig } from "../config/schema.js";
 import { withTimeout, TimeoutError } from "../utils/timeout.js";
 import {
@@ -18,8 +18,8 @@ export type OpenAITool = {
 };
 
 export class McpClient {
-  private config: McpServerConfig;
-  private timeouts: TimeoutsConfig;
+  private readonly config: McpServerConfig;
+  private readonly timeouts: TimeoutsConfig;
   private client: Client | null = null;
   private tools: OpenAITool[] = [];
 
@@ -32,8 +32,8 @@ export class McpClient {
     if (this.client !== null) return;
 
     let transport;
-    if (this.config.transport === "sse") {
-      transport = new SSEClientTransport(new URL(this.config.url));
+    if (this.config.transport === "http") {
+      transport = new StreamableHTTPClientTransport(new URL(this.config.url));
     } else {
       transport = new StdioClientTransport({
         command: this.config.command,
@@ -71,6 +71,7 @@ export class McpClient {
 
       this.client = client;
     } catch (err) {
+      await transport.close().catch(() => {});
       await client.close().catch(() => {});
       throw err;
     }

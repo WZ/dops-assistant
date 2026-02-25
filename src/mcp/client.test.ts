@@ -43,13 +43,13 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", () => ({
 
 vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
   StdioClientTransport: vi.fn().mockImplementation(function () {
-    return {};
+    return { close: vi.fn().mockResolvedValue(undefined) };
   }),
 }));
 
-vi.mock("@modelcontextprotocol/sdk/client/sse.js", () => ({
-  SSEClientTransport: vi.fn().mockImplementation(function () {
-    return {};
+vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
+  StreamableHTTPClientTransport: vi.fn().mockImplementation(function () {
+    return { close: vi.fn().mockResolvedValue(undefined) };
   }),
 }));
 
@@ -184,33 +184,81 @@ describe("McpClient – timeouts and metrics", () => {
   });
 });
 
-describe("McpClient – SSE transport", () => {
+describe("McpClient – HTTP transport", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("connects via SSEClientTransport when transport is 'sse'", async () => {
-    const { SSEClientTransport } = await import("@modelcontextprotocol/sdk/client/sse.js");
-    const sseConfig: McpServerConfig = {
-      transport: "sse",
-      url: "http://localhost:8080/sse",
+  it("connects via StreamableHTTPClientTransport when transport is 'http'", async () => {
+    const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+    const httpConfig: McpServerConfig = {
+      transport: "http",
+      url: "http://localhost:8000/mcp",
     };
-    const client = new McpClient(sseConfig, baseTimeouts);
+    const client = new McpClient(httpConfig, baseTimeouts);
     await client.connect();
-    expect(SSEClientTransport).toHaveBeenCalledTimes(1);
-    expect(SSEClientTransport).toHaveBeenCalledWith(new URL("http://localhost:8080/sse"));
+    expect(StreamableHTTPClientTransport).toHaveBeenCalledTimes(1);
+    expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(new URL("http://localhost:8000/mcp"));
   });
 
-  it("discovers and returns tools via SSE connection", async () => {
-    const sseConfig: McpServerConfig = {
-      transport: "sse",
-      url: "http://localhost:8080/sse",
+  it("discovers and returns tools via HTTP connection", async () => {
+    const httpConfig: McpServerConfig = {
+      transport: "http",
+      url: "http://localhost:8000/mcp",
       enabledTools: ["query_prometheus"],
     };
-    const client = new McpClient(sseConfig, baseTimeouts);
+    const client = new McpClient(httpConfig, baseTimeouts);
     await client.connect();
     const tools = client.getTools();
     expect(tools).toHaveLength(1);
     expect(tools[0].function.name).toBe("query_prometheus");
+  });
+
+  it("connect() error → transport.close() called", async () => {
+    const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+    const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+
+    (Client as ReturnType<typeof vi.fn>).mockImplementationOnce(function () {
+      return {
+        connect: vi.fn().mockRejectedValue(new Error("network error")),
+        close: vi.fn().mockResolvedValue(undefined),
+        listTools: vi.fn().mockResolvedValue({ tools: [] }),
+        callTool: vi.fn(),
+      };
+    });
+
+    const httpConfig: McpServerConfig = {
+      transport: "http",
+      url: "http://localhost:8000/mcp",
+    };
+    const client = new McpClient(httpConfig, baseTimeouts);
+    await expect(client.connect()).rejects.toThrow("network error");
+
+    const transportInstance = (StreamableHTTPClientTransport as ReturnType<typeof vi.fn>).mock.results[0].value;
+    expect(transportInstance.close).toHaveBeenCalled();
+  });
+
+  it("connect() timeout → transport.close() called", async () => {
+    const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+    const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+
+    (Client as ReturnType<typeof vi.fn>).mockImplementationOnce(function () {
+      return {
+        connect: vi.fn().mockImplementation(() => new Promise(() => {})), // hangs forever
+        close: vi.fn().mockResolvedValue(undefined),
+        listTools: vi.fn().mockResolvedValue({ tools: [] }),
+        callTool: vi.fn(),
+      };
+    });
+
+    const httpConfig: McpServerConfig = {
+      transport: "http",
+      url: "http://localhost:8000/mcp",
+    };
+    const client = new McpClient(httpConfig, { mcpConnectMs: 1, llmCallMs: 60_000, toolExecutionMs: 30_000, agentIterationMs: 90_000 });
+    await expect(client.connect()).rejects.toBeInstanceOf(TimeoutError);
+
+    const transportInstance = (StreamableHTTPClientTransport as ReturnType<typeof vi.fn>).mock.results[0].value;
+    expect(transportInstance.close).toHaveBeenCalled();
   });
 });

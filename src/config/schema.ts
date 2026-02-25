@@ -20,7 +20,7 @@ const McpServerSchema = z.discriminatedUnion("transport", [
     enabledTools: z.array(z.string()).optional(),
   }),
   z.object({
-    transport: z.literal("sse"),
+    transport: z.literal("http"),
     url: z.string().url(),
     enabledTools: z.array(z.string()).optional(),
   }),
