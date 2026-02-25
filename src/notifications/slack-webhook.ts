@@ -2,13 +2,20 @@ import type { KnownBlock } from "@slack/bolt";
 
 export type AnomalyAlert = {
   service: string;
-  severity: "low" | "medium" | "high";
+  severity: "low" | "medium" | "high" | "critical";
   summary: string;
   metrics?: string[];
+  affectedMetrics?: string[];
+  recommendedAction?: string;
   dashboardUrl?: string;
 };
 
-const SEVERITY_EMOJI = { low: ":yellow_circle:", medium: ":orange_circle:", high: ":red_circle:" };
+const SEVERITY_EMOJI = {
+  low: ":yellow_circle:",
+  medium: ":orange_circle:",
+  high: ":red_circle:",
+  critical: ":rotating_light:",
+};
 
 export async function sendAnomalyAlert(webhookUrl: string, alert: AnomalyAlert): Promise<void> {
   const blocks: KnownBlock[] = [
@@ -32,10 +39,21 @@ export async function sendAnomalyAlert(webhookUrl: string, alert: AnomalyAlert):
     },
   ];
 
-  if (alert.metrics && alert.metrics.length > 0) {
+  const affectedMetrics = alert.affectedMetrics ?? alert.metrics;
+  if (affectedMetrics && affectedMetrics.length > 0) {
     blocks.push({
       type: "section",
-      text: { type: "mrkdwn", text: `*Metrics:*\n${alert.metrics.map((m) => `• ${m}`).join("\n")}` },
+      text: {
+        type: "mrkdwn",
+        text: `*Affected Metrics:*\n${affectedMetrics.map((m) => `• ${m}`).join("\n")}`,
+      },
+    });
+  }
+
+  if (alert.recommendedAction) {
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: `*Recommended Action:*\n${alert.recommendedAction}` },
     });
   }
 
