@@ -1,0 +1,20 @@
+services:
+  grafana-mcp:
+    image: docker.io/grafana/mcp-grafana:latest
+    entrypoint: ["/app/mcp-grafana", "--transport", "streamable-http", "--address", "0.0.0.0:8000"]
+    restart: unless-stopped
+    env_file: .env
+
+  dops-assistant:
+    build: .
+    restart: unless-stopped
+    env_file: dev/.env
+    environment:
+      CONFIG_PATH: /app/config.yaml
+      GRAFANA_MCP_URL: http://grafana-mcp:8000/mcp
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - grafana-mcp

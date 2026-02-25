@@ -1,0 +1,72 @@
+llm:
+  model: gpt-4
+  maxTokens: 4096
+  apiKey: "${OPENAI_API_KEY}"
+  # baseURL: "https://your-compatible-endpoint/v1"  # Optional: override for gpt-oss-120b etc.
+
+grafana:
+  mcpServer:
+    transport: http
+    url: ${GRAFANA_MCP_URL}
+    # enabledTools:
+    #   - query_prometheus
+    #   - query_loki
+    #   - search_dashboards
+    #   - get_alerts
+
+services:
+  - name: payments-api
+    metrics:
+      - query: 'rate(http_requests_total{service="payments"}[5m])'
+        description: "Request rate"
+      - query: 'histogram_quantile(0.99, rate(http_duration_seconds_bucket{service="payments"}[5m]))'
+        description: "P99 latency"
+    logLabels:
+      app: payments-api
+
+  - name: checkout-service
+    metrics:
+      - query: 'rate(http_requests_total{service="checkout"}[5m])'
+        description: "Request rate"
+    logLabels:
+      app: checkout-service
+
+scheduler:
+  anomalyCheck:
+    interval: "5m"
+    services:
+      - payments-api
+      - checkout-service
+    maxConcurrency: 3
+    alertCooldownMinutes: 30
+
+agent:
+  maxIterations: 20
+  conversationMemory:
+    maxMessages: 20
+    ttlMinutes: 60
+
+notifications:
+  slack:
+    webhookUrl: "${SLACK_WEBHOOK_URL}"
+    channel: "#ops-alerts"
+
+interfaces:
+  slack:
+    enabled: true
+    botToken: "${SLACK_BOT_TOKEN}"
+    appToken: "${SLACK_APP_TOKEN}"
+
+timeouts:
+  mcpConnectMs: 30000
+  llmCallMs: 60000
+  toolExecutionMs: 30000
+  agentIterationMs: 90000
+
+retry:
+  maxAttempts: 3
+  baseDelayMs: 500
+
+observability:
+  port: 9090
+  logLevel: info
