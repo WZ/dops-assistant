@@ -1,6 +1,8 @@
 import { App } from "@slack/bolt";
+import { randomUUID } from "node:crypto";
 import type { AgentCore } from "../agent/core.js";
 import type { ConversationMemory } from "../memory/conversation.js";
+import { slackMessagesTotal } from "../observability/metrics.js";
 
 export type SlackConfig = {
   botToken: string;
@@ -38,7 +40,11 @@ export class SlackBot {
   }
 
   // Public for testing
-  async handleMessage(ctx: MessageContext, say: (msg: object) => Promise<void>): Promise<void> {
+  async handleMessage(
+    ctx: MessageContext,
+    say: (msg: object) => Promise<void>,
+  ): Promise<void> {
+    const correlationId = randomUUID().slice(0, 8);
     const threadId = ctx.threadTs;
     const history = this.memory.get(threadId);
 
@@ -49,10 +55,13 @@ export class SlackBot {
         mode: "conversational",
         message: ctx.text,
         history,
+        correlationId,
       });
       this.memory.append(threadId, { role: "assistant", content: result.response });
       await say({ text: result.response, thread_ts: threadId });
+      slackMessagesTotal.inc({ status: "success" });
     } catch (err) {
+      slackMessagesTotal.inc({ status: "error" });
       const errorText = "Sorry, something went wrong. Please try again.";
       await say({ text: errorText, thread_ts: threadId }).catch(() => undefined);
       throw err;
@@ -60,22 +69,20 @@ export class SlackBot {
   }
 
   private registerHandlers(): void {
-    // Handle direct messages
     this.app.message(async ({ message, say }) => {
       const msg = message as { text?: string; ts: string; user?: string };
       if (!msg.text) return;
       await this.handleMessage(
         { text: msg.text, threadTs: msg.ts, userId: msg.user ?? "" },
-        say as unknown as (msg: object) => Promise<void>
+        say as unknown as (msg: object) => Promise<void>,
       );
     });
 
-    // Handle mentions in channels
     this.app.event("app_mention", async ({ event, say }) => {
       const threadTs = event.thread_ts ?? event.ts;
       await this.handleMessage(
         { text: event.text, threadTs, userId: event.user ?? "" },
-        say as unknown as (msg: object) => Promise<void>
+        say as unknown as (msg: object) => Promise<void>,
       );
     });
   }
