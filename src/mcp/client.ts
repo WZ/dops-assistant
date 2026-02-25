@@ -1,6 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { McpServerConfig, TimeoutsConfig } from "../config/schema.js";
 import { withTimeout, TimeoutError } from "../utils/timeout.js";
 import {
@@ -31,7 +32,7 @@ export class McpClient {
   async connect(): Promise<void> {
     if (this.client !== null) return;
 
-    let transport;
+    let transport: Transport;
     if (this.config.transport === "http") {
       transport = new StreamableHTTPClientTransport(new URL(this.config.url));
     } else {
@@ -47,12 +48,10 @@ export class McpClient {
       { capabilities: {} },
     );
 
+    let connectSucceeded = false;
     try {
-      await withTimeout(
-        client.connect(transport),
-        this.timeouts.mcpConnectMs,
-        "MCP connect",
-      );
+      await withTimeout(client.connect(transport), this.timeouts.mcpConnectMs, "MCP connect");
+      connectSucceeded = true;
 
       const { tools } = await client.listTools();
 
@@ -71,8 +70,14 @@ export class McpClient {
 
       this.client = client;
     } catch (err) {
-      await transport.close().catch(() => {});
-      await client.close().catch(() => {});
+      if (connectSucceeded) {
+        // Client owns the transport — let it clean up
+        await client.close().catch(() => {});
+      } else {
+        // Client never took ownership — close transport directly
+        await transport.close().catch(() => {});
+        await client.close().catch(() => {});
+      }
       throw err;
     }
   }
