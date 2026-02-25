@@ -6,27 +6,41 @@ import { ConversationMemory } from "./memory/conversation.js";
 import { sendAnomalyAlert } from "./notifications/slack-webhook.js";
 import { Scheduler } from "./scheduler/scheduler.js";
 import { SlackBot } from "./interfaces/slack.js";
+import { ObservabilityServer } from "./observability/server.js";
 import pino from "pino";
 
-const logger = pino({ level: "info" });
-
-const configPath = process.env.CONFIG_PATH ?? "config.yaml";
+const configPath = process.env["CONFIG_PATH"] ?? "config.yaml";
 
 async function main(): Promise<void> {
-  logger.info({ configPath }, "Loading config");
   const config = loadConfig(configPath);
 
+  const logger = pino({
+    level: process.env["LOG_LEVEL"] ?? config.observability.logLevel,
+  });
+
+  logger.info({ configPath }, "Loading config");
+
+  // Observability server (starts early so /health is available during startup)
+  const obsServer = new ObservabilityServer(
+    config.observability.port,
+    () => mcp.isConnected(),
+  );
+  await obsServer.start();
+  logger.info({ port: config.observability.port }, "Observability server started");
+
   // Layer 1: MCP client
-  const mcp = new McpClient(config.grafana.mcpServer);
+  const mcp = new McpClient(config.grafana.mcpServer, config.timeouts);
   logger.info("Connecting to Grafana MCP server...");
   await mcp.connect();
   logger.info("MCP connected");
 
   // Layer 2: LLM client
-  const llm = new LlmClient(config.llm);
+  const llm = new LlmClient(config.llm, config.timeouts, config.retry);
 
   // Layer 3: Agent core
-  const agent = new AgentCore(llm, mcp, { maxIterations: config.agent.maxIterations });
+  const agent = new AgentCore(llm, mcp, {
+    maxIterations: config.agent.maxIterations,
+  });
 
   // Layer 4: Conversation memory
   const memory = new ConversationMemory(config.agent.conversationMemory);
@@ -42,7 +56,7 @@ async function main(): Promise<void> {
       config.services,
       agent,
       sendAnomalyAlert,
-      webhookUrl
+      webhookUrl,
     );
     scheduler.start();
     logger.info("Scheduler started");
@@ -58,19 +72,19 @@ async function main(): Promise<void> {
     slackBot = new SlackBot(
       { botToken: slackCfg.botToken, appToken: slackCfg.appToken },
       agent,
-      memory
+      memory,
     );
     await slackBot.start();
     logger.info("Slack bot started");
   }
 
-  // Graceful shutdown
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, "Shutting down");
     scheduler?.stop();
     await slackBot?.stop();
     memory.destroy();
     await mcp.disconnect();
+    await obsServer.stop();
     logger.info("Shutdown complete");
     process.exit(0);
   };
@@ -82,6 +96,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  logger.error(err, "Fatal error");
+  console.error("Fatal error", err);
   process.exit(1);
 });
