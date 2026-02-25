@@ -1,23 +1,26 @@
 import type { KnownBlock } from "@slack/bolt";
+import { withRetry } from "../utils/retry.js";
 
 export type AnomalyAlert = {
   service: string;
   severity: "low" | "medium" | "high" | "critical";
   summary: string;
-  metrics?: string[];
   affectedMetrics?: string[];
-  recommendedAction?: string;
   dashboardUrl?: string;
+  recommendedAction?: string;
 };
 
-const SEVERITY_EMOJI = {
+const SEVERITY_EMOJI: Record<AnomalyAlert["severity"], string> = {
   low: ":yellow_circle:",
   medium: ":orange_circle:",
   high: ":red_circle:",
   critical: ":rotating_light:",
 };
 
-export async function sendAnomalyAlert(webhookUrl: string, alert: AnomalyAlert): Promise<void> {
+export async function sendAnomalyAlert(
+  webhookUrl: string,
+  alert: AnomalyAlert,
+): Promise<void> {
   const blocks: KnownBlock[] = [
     {
       type: "header",
@@ -39,21 +42,23 @@ export async function sendAnomalyAlert(webhookUrl: string, alert: AnomalyAlert):
     },
   ];
 
-  const affectedMetrics = alert.affectedMetrics ?? alert.metrics;
-  if (affectedMetrics && affectedMetrics.length > 0) {
+  if (alert.recommendedAction) {
     blocks.push({
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `*Affected Metrics:*\n${affectedMetrics.map((m) => `• ${m}`).join("\n")}`,
+        text: `*Recommended action:*\n${alert.recommendedAction}`,
       },
     });
   }
 
-  if (alert.recommendedAction) {
+  if (alert.affectedMetrics && alert.affectedMetrics.length > 0) {
     blocks.push({
       type: "section",
-      text: { type: "mrkdwn", text: `*Recommended Action:*\n${alert.recommendedAction}` },
+      text: {
+        type: "mrkdwn",
+        text: `*Affected metrics:*\n${alert.affectedMetrics.map((m) => `• ${m}`).join("\n")}`,
+      },
     });
   }
 
@@ -63,6 +68,7 @@ export async function sendAnomalyAlert(webhookUrl: string, alert: AnomalyAlert):
       elements: [
         {
           type: "button",
+          action_id: "view_dashboard",
           text: { type: "plain_text", text: "View Dashboard" },
           url: alert.dashboardUrl,
         },
@@ -70,13 +76,21 @@ export async function sendAnomalyAlert(webhookUrl: string, alert: AnomalyAlert):
     });
   }
 
-  const response = await fetch(webhookUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ blocks }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Slack webhook failed: ${response.status} ${response.statusText}`);
-  }
+  await withRetry(
+    async () => {
+      const response = await fetch(webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ blocks }),
+      });
+      if (!response.ok) {
+        const err = Object.assign(
+          new Error(`Slack webhook failed: ${response.status} ${response.statusText}`),
+          { status: response.status },
+        );
+        throw err;
+      }
+    },
+    { maxAttempts: 3, baseDelayMs: 500 },
+  );
 }
