@@ -4,7 +4,11 @@ const { App } = pkg;
 type App = InstanceType<typeof pkg.App>;
 import { randomUUID } from "node:crypto";
 import type { AgentCore } from "../agent/core.js";
+import type { IntentClassifier } from "../agent/intent.js";
+import type { InvestigationAgent } from "../agent/investigation.js";
+import type { ServiceConfig } from "../config/schema.js";
 import type { ConversationMemory } from "../memory/conversation.js";
+import { formatRcaBlocks } from "../notifications/rca-blocks.js";
 import { slackMessagesTotal } from "../observability/metrics.js";
 
 export type SlackConfig = {
@@ -22,10 +26,23 @@ export class SlackBot {
   private app: App;
   private agent: AgentCore;
   private memory: ConversationMemory;
+  private services: ServiceConfig[];
+  private classifier?: IntentClassifier;
+  private investigationAgent?: InvestigationAgent;
 
-  constructor(config: SlackConfig, agent: AgentCore, memory: ConversationMemory) {
+  constructor(
+    config: SlackConfig,
+    agent: AgentCore,
+    memory: ConversationMemory,
+    services: ServiceConfig[] = [],
+    classifier?: IntentClassifier,
+    investigationAgent?: InvestigationAgent,
+  ) {
     this.agent = agent;
     this.memory = memory;
+    this.services = services;
+    this.classifier = classifier;
+    this.investigationAgent = investigationAgent;
     this.app = new App({
       token: config.botToken,
       appToken: config.appToken,
@@ -49,11 +66,32 @@ export class SlackBot {
   ): Promise<void> {
     const correlationId = randomUUID().slice(0, 8);
     const threadId = ctx.threadTs;
-    const history = this.memory.get(threadId);
-
-    this.memory.append(threadId, { role: "user", content: ctx.text });
 
     try {
+      // Route via intent classifier if available
+      if (this.classifier && this.investigationAgent) {
+        const intent = await this.classifier.classify(ctx.text);
+        if (intent.intent === "investigation") {
+          const service = this.services.find((s) => s.name === intent.service)
+            ?? this.services[0];
+
+          if (!service) {
+            await say({ text: "No services configured to investigate.", thread_ts: threadId });
+            slackMessagesTotal.inc({ status: "success" });
+            return;
+          }
+
+          const report = await this.investigationAgent.investigate(service, undefined, correlationId);
+          await say({ blocks: formatRcaBlocks(report), thread_ts: threadId });
+          slackMessagesTotal.inc({ status: "success" });
+          return;
+        }
+      }
+
+      // Existing conversational path
+      const history = this.memory.get(threadId);
+      this.memory.append(threadId, { role: "user", content: ctx.text });
+
       const result = await this.agent.run({
         mode: "conversational",
         message: ctx.text,
@@ -65,8 +103,7 @@ export class SlackBot {
       slackMessagesTotal.inc({ status: "success" });
     } catch (err) {
       slackMessagesTotal.inc({ status: "error" });
-      const errorText = "Sorry, something went wrong. Please try again.";
-      await say({ text: errorText, thread_ts: threadId }).catch(() => undefined);
+      await say({ text: "Sorry, something went wrong. Please try again.", thread_ts: threadId }).catch(() => undefined);
       throw err;
     }
   }

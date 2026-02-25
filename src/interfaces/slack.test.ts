@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { SlackBot } from "./slack.js";
 import type { AgentCore } from "../agent/core.js";
+import type { IntentClassifier } from "../agent/intent.js";
+import type { InvestigationAgent } from "../agent/investigation.js";
+import type { RcaReport } from "../agent/rca-types.js";
 import type { ConversationMemory } from "../memory/conversation.js";
 import { registry } from "../observability/metrics.js";
 
@@ -158,5 +161,79 @@ describe("SlackBot", () => {
     const counter = metrics.find((m) => m.name === "slack_messages_total");
     const values = counter?.values as Array<{ labels: { status: string }; value: number }>;
     expect(values?.find((v) => v.labels.status === "error")?.value).toBe(1);
+  });
+});
+
+describe("SlackBot – investigation routing", () => {
+  const mockRcaReport: RcaReport = {
+    service: "payments-api",
+    severity: "high",
+    summary: "High error rate",
+    rootCause: "DB pool exhausted",
+    evidence: { metrics: ["18%"], logs: [], infra: [] },
+    recommendedActions: ["Scale DB"],
+    confidence: "high",
+    investigatedAt: new Date().toISOString(),
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (mockAgent.run as ReturnType<typeof vi.fn>).mockResolvedValue({ response: "Here is the data.", updatedHistory: [] });
+    (mockMemory.get as ReturnType<typeof vi.fn>).mockReturnValue([]);
+    mockSay.mockResolvedValue(undefined);
+  });
+
+  it("routes investigation intent to InvestigationAgent", async () => {
+    const mockClassifier = {
+      classify: vi.fn().mockResolvedValue({ intent: "investigation", service: "payments-api" }),
+    } as unknown as IntentClassifier;
+    const mockInvestigationAgent = {
+      investigate: vi.fn().mockResolvedValue(mockRcaReport),
+    } as unknown as InvestigationAgent;
+
+    const bot = new SlackBot(
+      { botToken: "xoxb-test", appToken: "xapp-test" },
+      mockAgent,
+      mockMemory,
+      [{ name: "payments-api", metrics: [], logLabels: {} }],
+      mockClassifier,
+      mockInvestigationAgent,
+    );
+
+    await bot.handleMessage({ text: "investigate payments-api", threadTs: "ts1", userId: "U1" }, mockSay);
+
+    expect(mockInvestigationAgent.investigate).toHaveBeenCalled();
+    expect(mockAgent.run).not.toHaveBeenCalled();
+    expect(mockSay).toHaveBeenCalledWith(expect.objectContaining({ blocks: expect.any(Array) }));
+  });
+
+  it("falls back to conversational mode for question intent", async () => {
+    const mockClassifier = {
+      classify: vi.fn().mockResolvedValue({ intent: "question" }),
+    } as unknown as IntentClassifier;
+
+    const bot = new SlackBot(
+      { botToken: "xoxb-test", appToken: "xapp-test" },
+      mockAgent,
+      mockMemory,
+      [],
+      mockClassifier,
+    );
+
+    await bot.handleMessage({ text: "what is the error rate?", threadTs: "ts1", userId: "U1" }, mockSay);
+
+    expect(mockAgent.run).toHaveBeenCalled();
+  });
+
+  it("falls back to conversational mode when no classifier provided", async () => {
+    const bot = new SlackBot(
+      { botToken: "xoxb-test", appToken: "xapp-test" },
+      mockAgent,
+      mockMemory,
+    );
+
+    await bot.handleMessage({ text: "hello", threadTs: "ts1", userId: "U1" }, mockSay);
+
+    expect(mockAgent.run).toHaveBeenCalled();
   });
 });
