@@ -11,12 +11,20 @@ const ServiceSchema = z.object({
   logLabels: z.record(z.string()).optional().default({}),
 });
 
-const McpServerSchema = z.object({
-  command: z.string(),
-  args: z.array(z.string()).optional().default([]),
-  env: z.record(z.string()).optional().default({}),
-  enabledTools: z.array(z.string()).optional(),
-});
+const McpServerSchema = z.discriminatedUnion("transport", [
+  z.object({
+    transport: z.literal("stdio"),
+    command: z.string(),
+    args: z.array(z.string()).optional().default([]),
+    env: z.record(z.string()).optional().default({}),
+    enabledTools: z.array(z.string()).optional(),
+  }),
+  z.object({
+    transport: z.literal("sse"),
+    url: z.string().url(),
+    enabledTools: z.array(z.string()).optional(),
+  }),
+]);
 
 const GrafanaSchema = z.object({
   mcpServer: McpServerSchema,
