@@ -6,16 +6,13 @@ llm:
 
 grafana:
   mcpServer:
-    command: "npx"
-    args: ["-y", "@grafana/mcp-grafana"]
-    env:
-      GRAFANA_URL: "https://grafana.example.com"
-      GRAFANA_API_KEY: "${GRAFANA_API_KEY}"
-    enabledTools:
-      - "query_prometheus"
-      - "query_loki"
-      - "search_dashboards"
-      - "get_alerts"
+    transport: http
+    url: ${GRAFANA_MCP_URL}
+    # enabledTools:
+    #   - query_prometheus
+    #   - query_loki
+    #   - search_dashboards
+    #   - get_alerts
 
 services:
   - name: payments-api
@@ -40,7 +37,8 @@ scheduler:
     services:
       - payments-api
       - checkout-service
-    maxConcurrency: 3\n    alertCooldownMinutes: 30
+    maxConcurrency: 3
+    alertCooldownMinutes: 30
 
 agent:
   maxIterations: 20
