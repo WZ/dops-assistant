@@ -47,7 +47,14 @@ vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
   }),
 }));
 
+vi.mock("@modelcontextprotocol/sdk/client/sse.js", () => ({
+  SSEClientTransport: vi.fn().mockImplementation(function () {
+    return {};
+  }),
+}));
+
 const baseConfig: McpServerConfig = {
+  transport: "stdio",
   command: "npx",
   args: ["-y", "@grafana/mcp-grafana"],
   env: {},
@@ -162,7 +169,7 @@ describe("McpClient – timeouts and metrics", () => {
       };
     });
     const client = new McpClient(
-      { command: "npx", args: [], env: {}, enabledTools: undefined },
+      { transport: "stdio", command: "npx", args: [], env: {}, enabledTools: undefined },
       { mcpConnectMs: 1, llmCallMs: 60_000, toolExecutionMs: 30_000, agentIterationMs: 90_000 },
     );
     await expect(client.connect()).rejects.toBeInstanceOf(TimeoutError);
@@ -170,9 +177,40 @@ describe("McpClient – timeouts and metrics", () => {
 
   it("exposes isConnected()", async () => {
     const client = new McpClient(
-      { command: "npx", args: [], env: {}, enabledTools: undefined },
+      { transport: "stdio", command: "npx", args: [], env: {}, enabledTools: undefined },
       { mcpConnectMs: 30_000, llmCallMs: 60_000, toolExecutionMs: 30_000, agentIterationMs: 90_000 },
     );
     expect(client.isConnected()).toBe(false);
+  });
+});
+
+describe("McpClient – SSE transport", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("connects via SSEClientTransport when transport is 'sse'", async () => {
+    const { SSEClientTransport } = await import("@modelcontextprotocol/sdk/client/sse.js");
+    const sseConfig: McpServerConfig = {
+      transport: "sse",
+      url: "http://localhost:8080/sse",
+    };
+    const client = new McpClient(sseConfig, baseTimeouts);
+    await client.connect();
+    expect(SSEClientTransport).toHaveBeenCalledTimes(1);
+    expect(SSEClientTransport).toHaveBeenCalledWith(new URL("http://localhost:8080/sse"));
+  });
+
+  it("discovers and returns tools via SSE connection", async () => {
+    const sseConfig: McpServerConfig = {
+      transport: "sse",
+      url: "http://localhost:8080/sse",
+      enabledTools: ["query_prometheus"],
+    };
+    const client = new McpClient(sseConfig, baseTimeouts);
+    await client.connect();
+    const tools = client.getTools();
+    expect(tools).toHaveLength(1);
+    expect(tools[0].function.name).toBe("query_prometheus");
   });
 });

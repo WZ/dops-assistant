@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import type { McpServerConfig, TimeoutsConfig } from "../config/schema.js";
 import { withTimeout, TimeoutError } from "../utils/timeout.js";
 import {
@@ -30,11 +31,16 @@ export class McpClient {
   async connect(): Promise<void> {
     if (this.client !== null) return;
 
-    const transport = new StdioClientTransport({
-      command: this.config.command,
-      args: this.config.args,
-      env: { ...process.env, ...this.config.env } as Record<string, string>,
-    });
+    let transport;
+    if (this.config.transport === "sse") {
+      transport = new SSEClientTransport(new URL(this.config.url));
+    } else {
+      transport = new StdioClientTransport({
+        command: this.config.command,
+        args: this.config.args,
+        env: { ...process.env, ...this.config.env } as Record<string, string>,
+      });
+    }
 
     const client = new Client(
       { name: "dops-assistant", version: "0.1.0" },
