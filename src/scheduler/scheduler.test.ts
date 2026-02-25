@@ -23,8 +23,10 @@ vi.mock("node-cron", () => ({
 
 import { Scheduler, parseDurationToCron, AlertDeduplicator } from "./scheduler.js";
 import type { AgentCore } from "../agent/core.js";
+import type { InvestigationAgent } from "../agent/investigation.js";
 import type { sendAnomalyAlert } from "../notifications/slack-webhook.js";
 import type { AnomalyAssessment } from "../agent/types.js";
+import type { RcaReport } from "../agent/rca-types.js";
 
 describe("parseDurationToCron", () => {
   it("converts 5m to cron expression", () => {
@@ -260,5 +262,86 @@ describe("Scheduler – structured anomaly detection", () => {
     });
     await scheduler.checkService(service);
     expect(mockNotify).not.toHaveBeenCalled();
+  });
+});
+
+describe("Scheduler – RCA integration", () => {
+  const service = { name: "test-service", metrics: [], logLabels: {} };
+
+  const mockReport: RcaReport = {
+    service: "test-service",
+    severity: "high",
+    summary: "High error rate",
+    rootCause: "DB pool exhausted",
+    evidence: { metrics: ["rate: 18%"], logs: [], infra: [] },
+    recommendedActions: ["Scale DB"],
+    confidence: "high",
+    investigatedAt: new Date().toISOString(),
+  };
+
+  it("calls investigationAgent.investigate() when anomaly is detected", async () => {
+    const mockAgent = { run: vi.fn() };
+    const mockInvestigationAgent = {
+      investigate: vi.fn().mockResolvedValue(mockReport),
+    } as unknown as InvestigationAgent;
+    const mockNotify = vi.fn().mockResolvedValue(undefined);
+
+    const anomalyAssessment = JSON.stringify({
+      isAnomaly: true, severity: "high", summary: "High error rate",
+      affectedMetrics: ["error_rate"], recommendedAction: "Investigate",
+    });
+    mockAgent.run.mockResolvedValueOnce({ response: anomalyAssessment, updatedHistory: [] });
+
+    const scheduler = new Scheduler(
+      { interval: "5m", maxConcurrency: 1, alertCooldownMinutes: 0 },
+      [service],
+      mockAgent as unknown as AgentCore,
+      mockNotify as typeof sendAnomalyAlert,
+      "https://hooks.slack.com/test",
+      mockInvestigationAgent,
+    );
+
+    await scheduler.checkService(service);
+
+    expect(mockInvestigationAgent.investigate).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "test-service" }),
+      expect.objectContaining({ isAnomaly: true }),
+      expect.any(String),
+    );
+    expect(mockNotify).toHaveBeenCalledWith(
+      "https://hooks.slack.com/test",
+      expect.objectContaining({ rca: mockReport }),
+    );
+  });
+
+  it("still alerts even if investigation fails", async () => {
+    const mockAgent = { run: vi.fn() };
+    const mockInvestigationAgent = {
+      investigate: vi.fn().mockRejectedValue(new Error("LLM timeout")),
+    } as unknown as InvestigationAgent;
+    const mockNotify = vi.fn().mockResolvedValue(undefined);
+
+    const anomalyAssessment = JSON.stringify({
+      isAnomaly: true, severity: "high", summary: "High error rate",
+      affectedMetrics: ["error_rate"], recommendedAction: "Investigate",
+    });
+    mockAgent.run.mockResolvedValueOnce({ response: anomalyAssessment, updatedHistory: [] });
+
+    const scheduler = new Scheduler(
+      { interval: "5m", maxConcurrency: 1, alertCooldownMinutes: 0 },
+      [service],
+      mockAgent as unknown as AgentCore,
+      mockNotify as typeof sendAnomalyAlert,
+      "https://hooks.slack.com/test",
+      mockInvestigationAgent,
+    );
+
+    await scheduler.checkService(service);
+
+    // Alert still sent, just without rca field
+    expect(mockNotify).toHaveBeenCalledWith(
+      "https://hooks.slack.com/test",
+      expect.not.objectContaining({ rca: expect.anything() }),
+    );
   });
 });
