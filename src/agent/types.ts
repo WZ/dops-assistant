@@ -8,9 +8,18 @@ export type AgentTask = {
   message: string;
   serviceContext?: ServiceConfig[];
   history?: Message[];
+  correlationId?: string;
 };
 
 export type AgentResult = {
   response: string;
   updatedHistory: Message[];
+};
+
+export type AnomalyAssessment = {
+  isAnomaly: boolean;
+  severity: "low" | "medium" | "high" | "critical";
+  summary: string;
+  affectedMetrics: string[];
+  recommendedAction: string;
 };
