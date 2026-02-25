@@ -2,6 +2,8 @@ import { loadConfig } from "./config/loader.js";
 import { McpClient } from "./mcp/client.js";
 import { LlmClient } from "./llm/openai.js";
 import { AgentCore } from "./agent/core.js";
+import { InvestigationAgent } from "./agent/investigation.js";
+import { IntentClassifier } from "./agent/intent.js";
 import { ConversationMemory } from "./memory/conversation.js";
 import { sendAnomalyAlert } from "./notifications/slack-webhook.js";
 import { Scheduler } from "./scheduler/scheduler.js";
@@ -45,10 +47,16 @@ async function main(): Promise<void> {
   // Layer 4: Conversation memory
   const memory = new ConversationMemory(config.agent.conversationMemory);
 
-  // Layer 5: Slack webhook notifier (used by scheduler)
+  // Layer 5: Investigation pipeline
+  const investigationAgent = new InvestigationAgent(llm, mcp, {
+    maxIterations: config.agent.maxIterations,
+  });
+  const classifier = new IntentClassifier(llm);
+
+  // Layer 6: Slack webhook notifier (used by scheduler)
   const webhookUrl = config.notifications.slack?.webhookUrl ?? "";
 
-  // Layer 6: Scheduler
+  // Layer 7: Scheduler
   let scheduler: Scheduler | null = null;
   if (config.scheduler.anomalyCheck) {
     scheduler = new Scheduler(
@@ -57,12 +65,13 @@ async function main(): Promise<void> {
       agent,
       sendAnomalyAlert,
       webhookUrl,
+      investigationAgent,
     );
     scheduler.start();
     logger.info("Scheduler started");
   }
 
-  // Layer 7: Slack bot
+  // Layer 8: Slack bot
   let slackBot: SlackBot | null = null;
   if (config.interfaces.slack?.enabled) {
     const slackCfg = config.interfaces.slack;
@@ -73,6 +82,9 @@ async function main(): Promise<void> {
       { botToken: slackCfg.botToken, appToken: slackCfg.appToken },
       agent,
       memory,
+      config.services,
+      classifier,
+      investigationAgent,
     );
     await slackBot.start();
     logger.info("Slack bot started");
