@@ -16,7 +16,7 @@ describe("sendAnomalyAlert", () => {
       service: "payments-api",
       severity: "high",
       summary: "P99 latency spike detected",
-      metrics: ["p99: 4.2s"],
+      affectedMetrics: ["p99: 4.2s"],
       dashboardUrl: "https://grafana.example.com/d/123",
     });
 
@@ -58,5 +58,37 @@ describe("sendAnomalyAlert", () => {
         summary: "Minor issue",
       })
     ).rejects.toThrow("Slack webhook failed: 400 Bad Request");
+  });
+
+  it("retries on 503", async () => {
+    mockFetch
+      .mockResolvedValueOnce({ ok: false, status: 503, statusText: "Service Unavailable" })
+      .mockResolvedValueOnce({ ok: true });
+
+    await expect(
+      sendAnomalyAlert("https://hooks.slack.com/test", {
+        service: "svc",
+        severity: "high",
+        summary: "down",
+      }),
+    ).resolves.toBeUndefined();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("includes recommendedAction in Slack blocks when provided", async () => {
+    mockFetch.mockResolvedValue({ ok: true });
+    await sendAnomalyAlert("https://hooks.slack.com/test", {
+      service: "svc",
+      severity: "critical",
+      summary: "Outage",
+      recommendedAction: "Restart the pod",
+    });
+    const body = JSON.parse(
+      (mockFetch.mock.calls[0][1] as RequestInit).body,
+    ) as { blocks: Array<{ text?: { text: string } }> };
+    const texts = body.blocks
+      .flatMap((b) => (b.text ? [b.text.text] : []))
+      .join(" ");
+    expect(texts).toContain("Restart the pod");
   });
 });
