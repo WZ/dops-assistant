@@ -20,9 +20,9 @@ export function buildProactiveStructuredPrompt(
 ): string {
   const serviceList = services
     ?.map((s) => {
-      const metrics = s.metrics
-        .map((m) => `  - ${m.description}: \`${m.query}\``)
-        .join("\n");
+      const metrics = s.metrics.length > 0
+        ? s.metrics.map((m) => `  - ${m.description}: \`${m.query}\``).join("\n")
+        : "  (no metrics configured)";
       const logs = Object.entries(s.logLabels ?? {})
         .map(([k, v]) => `${k}=${v}`)
         .join(", ");
@@ -39,7 +39,7 @@ For each service, use the available tools to query its metrics and recent logs. 
 
 After investigating, respond ONLY with a valid json object matching the required schema. Do not include any other text.
 
-${serviceList ?? "No services configured."}`;
+${serviceList || "No services configured."}`;
 }
 
 export const ANOMALY_ASSESSMENT_RESPONSE_FORMAT: OpenAI.ResponseFormatJSONSchema =

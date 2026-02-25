@@ -20,8 +20,10 @@ describe("buildProactiveStructuredPrompt", () => {
   });
 
   it("handles no services", () => {
-    const prompt = buildProactiveStructuredPrompt([]);
-    expect(typeof prompt).toBe("string");
+    const promptEmpty = buildProactiveStructuredPrompt([]);
+    expect(promptEmpty).toContain("No services configured.");
+    const promptUndefined = buildProactiveStructuredPrompt(undefined);
+    expect(promptUndefined).toContain("No services configured.");
   });
 });
 
