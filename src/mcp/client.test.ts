@@ -159,10 +159,10 @@ describe("McpClient – timeouts and metrics", () => {
 
   it("throws TimeoutError if connect exceeds mcpConnectMs", async () => {
     const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
-    // Override the mock so the instance's connect hangs forever
+    const { StdioClientTransport } = await import("@modelcontextprotocol/sdk/client/stdio.js");
     (Client as ReturnType<typeof vi.fn>).mockImplementationOnce(function () {
       return {
-        connect: vi.fn().mockImplementation(() => new Promise(() => {})), // hangs forever
+        connect: vi.fn().mockImplementation(() => new Promise(() => {})),
         close: vi.fn().mockResolvedValue(undefined),
         listTools: vi.fn().mockResolvedValue({ tools: [] }),
         callTool: vi.fn(),
@@ -173,6 +173,9 @@ describe("McpClient – timeouts and metrics", () => {
       { mcpConnectMs: 1, llmCallMs: 60_000, toolExecutionMs: 30_000, agentIterationMs: 90_000 },
     );
     await expect(client.connect()).rejects.toBeInstanceOf(TimeoutError);
+
+    const transportInstance = (StdioClientTransport as ReturnType<typeof vi.fn>).mock.results[0].value;
+    expect(transportInstance.close).toHaveBeenCalled();
   });
 
   it("exposes isConnected()", async () => {
