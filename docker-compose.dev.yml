@@ -1,7 +1,7 @@
 services:
   grafana-mcp:
     image: docker.io/grafana/mcp-grafana:latest
-    command: ["/app/mcp-grafana", "--transport", "streamable-http"]
+    entrypoint: ["/app/mcp-grafana", "--transport", "streamable-http", "--address", "0.0.0.0:8000"]
     restart: "no"
     environment:
       GRAFANA_URL: ${GRAFANA_URL}
