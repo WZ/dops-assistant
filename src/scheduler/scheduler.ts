@@ -1,8 +1,10 @@
 import cron from "node-cron";
 import pino from "pino";
 import type { AgentCore } from "../agent/core.js";
+import type { InvestigationAgent } from "../agent/investigation.js";
 import type { sendAnomalyAlert, AnomalyAlert } from "../notifications/slack-webhook.js";
 import type { AnomalyAssessment } from "../agent/types.js";
+import type { RcaReport } from "../agent/rca-types.js";
 import type { ServiceConfig, AnomalyCheckConfig } from "../config/schema.js";
 import {
   schedulerChecksTotal,
@@ -64,6 +66,7 @@ export class Scheduler {
   private task: cron.ScheduledTask | null = null;
   private webhookUrl: string;
   private deduplicator: AlertDeduplicator;
+  private investigationAgent?: InvestigationAgent;
 
   constructor(
     config: AnomalyCheckConfig,
@@ -71,6 +74,7 @@ export class Scheduler {
     agent: AgentCore,
     notify: typeof sendAnomalyAlert,
     webhookUrl = "",
+    investigationAgent?: InvestigationAgent,
   ) {
     this.config = config;
     this.services = services;
@@ -80,6 +84,7 @@ export class Scheduler {
     this.deduplicator = new AlertDeduplicator(
       config.alertCooldownMinutes,
     );
+    this.investigationAgent = investigationAgent;
   }
 
   start(): void {
@@ -166,12 +171,24 @@ export class Scheduler {
       return;
     }
 
+    // Run RCA investigation if available
+    let rca: RcaReport | undefined;
+    if (this.investigationAgent) {
+      try {
+        rca = await this.investigationAgent.investigate(service, assessment, correlationId);
+        log.info({ confidence: rca.confidence }, "RCA investigation complete");
+      } catch (err) {
+        log.warn({ err }, "RCA investigation failed, alerting without RCA");
+      }
+    }
+
     const alert: AnomalyAlert = {
       service: service.name,
       severity: assessment.severity,
       summary: assessment.summary,
       affectedMetrics: assessment.affectedMetrics,
       recommendedAction: assessment.recommendedAction,
+      ...(rca ? { rca } : {}),
     };
 
     try {
