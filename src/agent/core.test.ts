@@ -266,4 +266,18 @@ describe("AgentCore", () => {
 
     expect(result.images).toEqual([]);
   });
+
+  it("strips base64 image markdown from LLM text response", async () => {
+    (mockLlm.chat as ReturnType<typeof vi.fn>).mockResolvedValue({
+      type: "text",
+      content: 'Here is the chart:\n\n![System Load](data:image/png;base64,iVBORw0KGgoAAAANSUhEUg...)\n\nLooks healthy.',
+    });
+
+    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
+    const result = await core.run({ mode: "conversational", message: "show chart" });
+
+    expect(result.response).not.toContain("data:image");
+    expect(result.response).toContain("Here is the chart:");
+    expect(result.response).toContain("Looks healthy.");
+  });
 });

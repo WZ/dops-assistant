@@ -54,11 +54,16 @@ export class AgentCore {
         });
 
         if (response.type === "text") {
-          messages.push({ role: "assistant", content: response.content });
+          // Strip any base64 image markdown the LLM may have embedded
+          const cleaned = response.content.replace(
+            /!\[[^\]]*\]\(data:image\/[^)]+\)/g,
+            "",
+          ).trim();
+          messages.push({ role: "assistant", content: cleaned });
           agentRunsTotal.inc({ status: "success" });
           agentIterations.observe(iterations);
           return {
-            response: response.content,
+            response: cleaned,
             updatedHistory: messages.filter((m) => m.role !== "system"),
             images: collectedImages,
           };
