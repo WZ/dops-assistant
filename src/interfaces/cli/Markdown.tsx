@@ -1,0 +1,119 @@
+import React from "react";
+import { Text, Box } from "ink";
+
+type Segment =
+  | { type: "text"; value: string }
+  | { type: "bold"; value: string }
+  | { type: "code"; value: string };
+
+function parseInline(line: string): Segment[] {
+  const segments: Segment[] = [];
+  // Match **bold** or `code`
+  const re = /(\*\*(.+?)\*\*|`([^`]+)`)/g;
+  let last = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = re.exec(line)) !== null) {
+    if (match.index > last) {
+      segments.push({ type: "text", value: line.slice(last, match.index) });
+    }
+    if (match[2]) {
+      segments.push({ type: "bold", value: match[2] });
+    } else if (match[3]) {
+      segments.push({ type: "code", value: match[3] });
+    }
+    last = match.index + match[0].length;
+  }
+
+  if (last < line.length) {
+    segments.push({ type: "text", value: line.slice(last) });
+  }
+
+  return segments;
+}
+
+function InlineText({ text }: { text: string }) {
+  const segments = parseInline(text);
+  return (
+    <Text>
+      {segments.map((seg, i) => {
+        if (seg.type === "bold") return <Text key={i} bold>{seg.value}</Text>;
+        if (seg.type === "code") return <Text key={i} color="cyan">{seg.value}</Text>;
+        return <Text key={i}>{seg.value}</Text>;
+      })}
+    </Text>
+  );
+}
+
+export function Markdown({ text, indent = "  " }: { text: string; indent?: string }) {
+  const lines = text.split("\n");
+
+  return (
+    <Box flexDirection="column">
+      {lines.map((line, i) => {
+        const trimmed = line.trimStart();
+
+        // Headers: # ## ###
+        if (trimmed.startsWith("### ")) {
+          return (
+            <Text key={i} bold color="yellow">
+              {indent}{trimmed.slice(4)}
+            </Text>
+          );
+        }
+        if (trimmed.startsWith("## ")) {
+          return (
+            <Text key={i} bold color="yellow">
+              {indent}{trimmed.slice(3)}
+            </Text>
+          );
+        }
+        if (trimmed.startsWith("# ")) {
+          return (
+            <Text key={i} bold color="yellow">
+              {indent}{trimmed.slice(2)}
+            </Text>
+          );
+        }
+
+        // Numbered list: 1. item
+        const numberedMatch = trimmed.match(/^(\d+)\.\s+(.*)/);
+        if (numberedMatch) {
+          return (
+            <Box key={i}>
+              <Text>{indent}</Text>
+              <Text bold color="green">{numberedMatch[1]}. </Text>
+              <InlineText text={numberedMatch[2]} />
+            </Box>
+          );
+        }
+
+        // Bullet list: - item
+        if (trimmed.startsWith("- ")) {
+          const depth = line.length - trimmed.length;
+          const extra = "  ".repeat(Math.floor(depth / 2));
+          return (
+            <Box key={i}>
+              <Text>{indent}{extra}</Text>
+              <Text color="green">• </Text>
+              <InlineText text={trimmed.slice(2)} />
+            </Box>
+          );
+        }
+
+        // Empty line
+        if (trimmed === "") {
+          return <Text key={i}>{" "}</Text>;
+        }
+
+        // Regular text with inline formatting
+        return (
+          <Box key={i}>
+            <Text>{indent}</Text>
+            <InlineText text={trimmed} />
+          </Box>
+        );
+      })}
+    </Box>
+  );
+}
