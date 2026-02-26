@@ -79,6 +79,10 @@ export class AgentCore {
           })),
         });
 
+        for (const call of response.calls) {
+          task.onToolCall?.(call.name, call.args);
+        }
+
         const settled = await Promise.allSettled(
           response.calls.map((call) => this.mcp.callTool(call.name, call.args)),
         );
