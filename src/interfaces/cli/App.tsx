@@ -1,5 +1,5 @@
-import React, { useState, useCallback } from "react";
-import { Box, Text, useApp } from "ink";
+import React, { useState, useCallback, useRef } from "react";
+import { Box, Text, useApp, useInput } from "ink";
 import { TextInput, Spinner } from "@inkjs/ui";
 import { Markdown } from "./Markdown.js";
 import { randomUUID } from "node:crypto";
@@ -72,7 +72,33 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
   const [isThinking, setIsThinking] = useState(false);
   const [toolCalls, setToolCalls] = useState<ToolCallEntry[]>([]);
   const [thinkingLabel, setThinkingLabel] = useState("Thinking");
+  const [inputDefault, setInputDefault] = useState("");
+  const [inputKey, setInputKey] = useState(0);
+  const inputHistory = useRef<string[]>([]);
+  const historyIndex = useRef(-1);
   const threadId = "cli-session";
+
+  useInput((_input, key) => {
+    if (isThinking) return;
+    if (key.upArrow) {
+      const hist = inputHistory.current;
+      if (hist.length === 0) return;
+      const next = Math.min(historyIndex.current + 1, hist.length - 1);
+      historyIndex.current = next;
+      setInputDefault(hist[hist.length - 1 - next]!);
+      setInputKey((k) => k + 1);
+    } else if (key.downArrow) {
+      const next = historyIndex.current - 1;
+      if (next < 0) {
+        historyIndex.current = -1;
+        setInputDefault("");
+      } else {
+        historyIndex.current = next;
+        setInputDefault(inputHistory.current[inputHistory.current.length - 1 - next]!);
+      }
+      setInputKey((k) => k + 1);
+    }
+  });
 
   const addMessage = useCallback((msg: ChatMessage) => {
     setMessages((prev) => [...prev, msg]);
@@ -92,6 +118,10 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
       return;
     }
 
+    inputHistory.current.push(trimmed);
+    historyIndex.current = -1;
+    setInputDefault("");
+    setInputKey((k) => k + 1);
     addMessage({ id: randomUUID(), role: "user", content: trimmed });
     setIsThinking(true);
     setToolCalls([]);
@@ -191,7 +221,9 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
         <Box marginTop={messages.length > 0 ? 1 : 0}>
           <Text bold color="cyan">{"> "}</Text>
           <TextInput
+            key={inputKey}
             placeholder="Ask a question or type 'investigate <service>'..."
+            defaultValue={inputDefault}
             onSubmit={handleSubmit}
           />
         </Box>
