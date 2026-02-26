@@ -8,6 +8,8 @@ Query the metrics to determine:
 - What the baseline/normal range appears to be
 - When the anomaly window started
 
+After querying metrics, use the get_panel_image tool to capture screenshots of the most relevant Grafana panels showing the anomaly.
+
 Respond ONLY with valid JSON matching the required schema. Do not include any other text.`;
 
 export const LOG_CORRELATION_PROMPT = `You are investigating a service anomaly. Query the recent logs for the affected service to find:
