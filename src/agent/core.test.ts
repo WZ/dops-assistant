@@ -43,7 +43,7 @@ describe("AgentCore", () => {
       })
       .mockResolvedValueOnce({ type: "text", content: "Metrics look fine." });
 
-    (mockMcp.callTool as ReturnType<typeof vi.fn>).mockResolvedValue("1.0");
+    (mockMcp.callTool as ReturnType<typeof vi.fn>).mockResolvedValue({ text: "1.0", images: [] });
 
     const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
     const result = await core.run({ mode: "proactive", message: "Check metrics." });
@@ -58,7 +58,7 @@ describe("AgentCore", () => {
       type: "tool_calls",
       calls: [{ id: "call_1", name: "query_prometheus", args: {} }],
     });
-    (mockMcp.callTool as ReturnType<typeof vi.fn>).mockResolvedValue("data");
+    (mockMcp.callTool as ReturnType<typeof vi.fn>).mockResolvedValue({ text: "data", images: [] });
 
     const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 3 });
     const result = await core.run({ mode: "proactive", message: "Check." });
@@ -128,7 +128,7 @@ describe("AgentCore", () => {
       .mockResolvedValueOnce({ type: "text", content: "Got partial results." });
 
     (mockMcp.callTool as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce("1.0")
+      .mockResolvedValueOnce({ text: "1.0", images: [] })
       .mockRejectedValueOnce(new Error("MCP process crashed"));
 
     const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
@@ -208,5 +208,62 @@ describe("AgentCore", () => {
       (mockLlm.chat as ReturnType<typeof vi.fn>).mock.calls.length - 1
     ];
     expect(callArgs[2]?.responseFormat).toBeDefined();
+  });
+
+  it("collects images from tool results and returns them in AgentResult", async () => {
+    (mockLlm.chat as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        type: "tool_calls",
+        calls: [{ id: "call_img", name: "get_panel_image", args: { dashboardUid: "abc", panelId: 1 } }],
+      })
+      .mockResolvedValueOnce({ type: "text", content: "Here is your chart." });
+
+    (mockMcp.callTool as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      text: "Panel rendered",
+      images: [{ mimeType: "image/png", data: "aWJhc2U2NA==" }],
+    });
+
+    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
+    const result = await core.run({ mode: "conversational", message: "Show me the error rate chart." });
+
+    expect(result.images).toHaveLength(1);
+    expect(result.images[0].filename).toMatch(/^get_panel_image-.+\.png$/);
+    expect(result.images[0].mimeType).toBe("image/png");
+    expect(result.images[0].data).toBeInstanceOf(Buffer);
+  });
+
+  it("appends image-captured hint to tool result text when images present", async () => {
+    (mockLlm.chat as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        type: "tool_calls",
+        calls: [{ id: "call_img", name: "get_panel_image", args: {} }],
+      })
+      .mockResolvedValueOnce({ type: "text", content: "Done." });
+
+    (mockMcp.callTool as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      text: "Panel rendered",
+      images: [{ mimeType: "image/png", data: "abc" }],
+    });
+
+    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
+    await core.run({ mode: "conversational", message: "Chart." });
+
+    const secondCallMessages = (mockLlm.chat as ReturnType<typeof vi.fn>).mock.calls[1][0];
+    const toolMsg = secondCallMessages.find(
+      (m: { role: string }) => m.role === "tool"
+    );
+    expect(toolMsg.content).toContain("chart image");
+  });
+
+  it("returns empty images array when no tool calls produce images", async () => {
+    (mockLlm.chat as ReturnType<typeof vi.fn>).mockResolvedValue({
+      type: "text",
+      content: "All good.",
+    });
+
+    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
+    const result = await core.run({ mode: "conversational", message: "status?" });
+
+    expect(result.images).toEqual([]);
   });
 });
