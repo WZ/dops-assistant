@@ -4,7 +4,7 @@
 
 dops-assistant is built as a layered dependency graph — each layer depends only on the layers below it. This makes components testable in isolation (mocking the layer below) and makes it straightforward to swap implementations (e.g. a different LLM provider) without touching the layers above.
 
-The two entry points into the system — the Scheduler and the Slack Bot — both delegate to the Agent Core, which is the only component that knows about both the LLM and the MCP client.
+The three entry points into the system — the Scheduler, Slack Bot, and CLI — all delegate to the Agent Core, which is the only component that knows about both the LLM and the MCP client.
 
 ## Component map
 
@@ -12,6 +12,7 @@ The two entry points into the system — the Scheduler and the Slack Bot — bot
 Entry Point
 ├── Scheduler ──────────────────┐
 ├── Slack Bot ──────────────────┤
+├── CLI ────────────────────────┤
 │   └── Conversation Memory     │
 │                               ▼
 │                          Agent Core
@@ -173,11 +174,27 @@ Thread ID is `event.thread_ts ?? event.ts` for mentions, and `message.ts` for DM
 
 ---
 
+### CLI Interface
+
+**Files:** `src/cli.tsx`, `src/interfaces/cli/App.tsx`
+
+A terminal REPL built with Ink (React for CLIs). Started via `npm run cli`. Uses the same components as the Slack Bot — AgentCore, IntentClassifier, InvestigationAgent, ConversationMemory — but renders to the terminal instead of Slack.
+
+Features:
+- Real-time tool call log (via `onToolCall` callback on `AgentTask`)
+- Spinner while the agent is thinking
+- RCA reports displayed in bordered boxes
+- Images saved to `/tmp` and opened automatically on macOS
+- Conversation memory persists across turns within the session
+- Special commands: `exit`/`quit`, `clear`
+
+---
+
 ### Entry Point
 
-**File:** `src/index.ts`
+**Files:** `src/index.ts` (Slack + Scheduler), `src/cli.tsx` (CLI mode)
 
-Wires all components together in dependency order:
+`src/index.ts` wires all components together in dependency order:
 
 1. Load config from `CONFIG_PATH` (default: `config.yaml`)
 2. Connect MCP client
@@ -187,6 +204,8 @@ Wires all components together in dependency order:
 6. Register `SIGINT`/`SIGTERM` handlers for graceful shutdown
 
 Graceful shutdown stops the Scheduler, stops the Slack Bot, destroys conversation memory (clears the eviction interval), and disconnects the MCP client.
+
+`src/cli.tsx` is a separate entry point started via `npm run cli` (or `CONFIG_PATH=dev/config.yaml npm run cli`). It connects to MCP and the LLM but skips Slack, Scheduler, and ObservabilityServer. On exit, it disconnects MCP and destroys conversation memory.
 
 ---
 
