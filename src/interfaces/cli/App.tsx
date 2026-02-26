@@ -17,7 +17,7 @@ import type { ImageAttachment } from "../../agent/types.js";
 
 type ChatMessage = {
   id: string;
-  role: "user" | "assistant" | "rca" | "error" | "image";
+  role: "user" | "assistant" | "rca" | "error" | "image" | "toolcalls";
   content: string;
 };
 
@@ -177,7 +177,13 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
       addMessage({ id: randomUUID(), role: "error", content: msg });
     } finally {
       setIsThinking(false);
-      setToolCalls([]);
+      setToolCalls((prev) => {
+        if (prev.length > 0) {
+          const summary = prev.map((tc) => `◼ ${tc.name}(${tc.args})`).join("\n");
+          addMessage({ id: randomUUID(), role: "toolcalls", content: summary });
+        }
+        return [];
+      });
     }
   }, [agent, memory, services, classifier, investigationAgent, addMessage, exit]);
 
@@ -204,6 +210,9 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
           )}
           {msg.role === "image" && (
             <Text color="green">{"  "}{msg.content}</Text>
+          )}
+          {msg.role === "toolcalls" && (
+            <Text dimColor>{"  "}{msg.content}</Text>
           )}
         </Box>
       ))}
