@@ -3,7 +3,7 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-loadDotenv({ path: resolve(__dirname, "../dev/.env") });
+loadDotenv({ path: resolve(__dirname, "../dev/.env"), override: true });
 
 import React from "react";
 import { render } from "ink";
