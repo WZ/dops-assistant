@@ -9,6 +9,7 @@ export type AgentTask = {
   serviceContext?: ServiceConfig[];
   history?: Message[];
   correlationId?: string;
+  onToolCall?: (name: string, args: Record<string, unknown>) => void;
 };
 
 export type ImageAttachment = {

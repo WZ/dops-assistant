@@ -280,4 +280,26 @@ describe("AgentCore", () => {
     expect(result.response).toContain("Here is the chart:");
     expect(result.response).toContain("Looks healthy.");
   });
+
+  it("calls onToolCall callback before executing each tool", async () => {
+    const onToolCall = vi.fn();
+    (mockLlm.chat as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        type: "tool_calls",
+        calls: [
+          { id: "call_1", name: "query_prometheus", args: { query: "up" } },
+          { id: "call_2", name: "query_loki", args: { query: "{app=\"x\"}" } },
+        ],
+      })
+      .mockResolvedValueOnce({ type: "text", content: "Done." });
+
+    (mockMcp.callTool as ReturnType<typeof vi.fn>).mockResolvedValue({ text: "data", images: [] });
+
+    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
+    await core.run({ mode: "conversational", message: "check", onToolCall });
+
+    expect(onToolCall).toHaveBeenCalledTimes(2);
+    expect(onToolCall).toHaveBeenCalledWith("query_prometheus", { query: "up" });
+    expect(onToolCall).toHaveBeenCalledWith("query_loki", { query: "{app=\"x\"}" });
+  });
 });
