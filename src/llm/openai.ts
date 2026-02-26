@@ -1,5 +1,8 @@
 import OpenAI from "openai";
+import pino from "pino";
 import type { OpenAITool } from "../mcp/client.js";
+
+const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
 import type { TimeoutsConfig, RetryConfig } from "../config/schema.js";
 import { withTimeout, TimeoutError } from "../utils/timeout.js";
 import { withRetry } from "../utils/retry.js";
@@ -87,7 +90,7 @@ export class LlmClient {
         max_tokens: this.config.maxTokens,
         messages: messages as OpenAI.Chat.ChatCompletionMessageParam[],
         ...(tools.length > 0
-          ? { tools: tools as OpenAI.Chat.ChatCompletionTool[] }
+          ? { tools: tools as OpenAI.Chat.ChatCompletionTool[], tool_choice: "auto" as const }
           : {}),
         ...(opts?.responseFormat
           ? { response_format: opts.responseFormat }
@@ -122,6 +125,14 @@ export class LlmClient {
       );
     }
     const message = choice.message;
+
+    logger.debug({
+      component: "llm",
+      finishReason: choice.finish_reason,
+      hasToolCalls: !!(message.tool_calls && message.tool_calls.length > 0),
+      toolCallCount: message.tool_calls?.length ?? 0,
+      contentPreview: message.content?.slice(0, 200),
+    }, "LLM response received");
 
     if (message.tool_calls && message.tool_calls.length > 0) {
       return {

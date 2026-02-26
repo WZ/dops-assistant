@@ -10,7 +10,7 @@
     "dev": "tsx src/index.ts",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
-    "cli": "tsx src/cli.tsx"
+    "cli": "NODE_TLS_REJECT_UNAUTHORIZED=0 NODE_NO_WARNINGS=1 tsx src/cli.tsx"
   },
   "dependencies": {
     "@inkjs/ui": "^2.0.0",
