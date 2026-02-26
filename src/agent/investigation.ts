@@ -151,7 +151,7 @@ export class InvestigationAgent {
         messages.push({
           role: "tool",
           content: outcome.status === "fulfilled"
-            ? outcome.value
+            ? outcome.value.text
             : `[Transport Error] ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`,
           tool_call_id: call.id,
         });
