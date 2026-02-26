@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from "react";
 import { Box, Text, useApp } from "ink";
 import { TextInput, Spinner } from "@inkjs/ui";
+import { Markdown } from "./Markdown.js";
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { execFile } from "node:child_process";
@@ -161,11 +162,11 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
             </Text>
           )}
           {msg.role === "assistant" && (
-            <Text color="white">{"  "}{msg.content}</Text>
+            <Markdown text={msg.content} />
           )}
           {msg.role === "rca" && (
             <Box borderStyle="round" borderColor="yellow" paddingX={1} flexDirection="column">
-              <Text>{msg.content}</Text>
+              <Markdown text={msg.content} indent="" />
             </Box>
           )}
           {msg.role === "error" && (
