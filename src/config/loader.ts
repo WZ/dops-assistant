@@ -4,12 +4,17 @@ import { ConfigSchema, type Config } from "./schema.js";
 
 function resolveEnvVars(obj: unknown): unknown {
   if (typeof obj === "string") {
-    return obj.replace(/\$\{([^}]+)\}/g, (_, key) => {
-      const val = process.env[key];
-      if (val === undefined) {
-        throw new Error(`Missing environment variable: ${key}`);
+    return obj.replace(/\$\{([^}]+)\}/g, (_, expr: string) => {
+      const match = expr.match(/^([^:-]+)(?::-([\s\S]*))?$/);
+      if (!match) {
+        throw new Error(`Invalid env var expression: \${${expr}}`);
       }
-      return val;
+      const key = match[1]!;
+      const defaultVal = match[2];
+      const val = process.env[key];
+      if (val !== undefined) return val;
+      if (defaultVal !== undefined) return defaultVal;
+      throw new Error(`Missing environment variable: ${key}`);
     });
   }
   if (Array.isArray(obj)) {
