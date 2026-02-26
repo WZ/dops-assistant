@@ -1,8 +1,9 @@
+import { randomUUID } from "node:crypto";
 import {
   buildSystemPrompt,
   ANOMALY_ASSESSMENT_RESPONSE_FORMAT,
 } from "./prompts.js";
-import type { AgentTask, AgentResult } from "./types.js";
+import type { AgentTask, AgentResult, ImageAttachment } from "./types.js";
 import type { LlmClient, Message } from "../llm/openai.js";
 import type { McpClient } from "../mcp/client.js";
 import { TimeoutError } from "../utils/timeout.js";
@@ -43,6 +44,7 @@ export class AgentCore {
       { role: "user", content: task.message },
     ];
 
+    const collectedImages: ImageAttachment[] = [];
     let iterations = 0;
     try {
       for (let i = 0; i < this.maxIterations; i++) {
@@ -58,6 +60,7 @@ export class AgentCore {
           return {
             response: response.content,
             updatedHistory: messages.filter((m) => m.role !== "system"),
+            images: collectedImages,
           };
         }
 
@@ -77,12 +80,26 @@ export class AgentCore {
         for (let j = 0; j < response.calls.length; j++) {
           const outcome = settled[j]!;
           const call = response.calls[j]!;
+          let toolText: string;
+          if (outcome.status === "fulfilled") {
+            const toolResult = outcome.value;
+            toolText = toolResult.text;
+            for (const img of toolResult.images) {
+              collectedImages.push({
+                filename: `${call.name}-${randomUUID().slice(0, 8)}.png`,
+                mimeType: img.mimeType,
+                data: Buffer.from(img.data, "base64"),
+              });
+            }
+            if (toolResult.images.length > 0) {
+              toolText += `\n[${toolResult.images.length} chart image(s) captured and will be sent to the user]`;
+            }
+          } else {
+            toolText = `[Transport Error] ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`;
+          }
           messages.push({
             role: "tool",
-            content:
-              outcome.status === "fulfilled"
-                ? outcome.value
-                : `[Transport Error] ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`,
+            content: toolText,
             tool_call_id: call.id,
           });
         }
@@ -96,6 +113,7 @@ export class AgentCore {
       return {
         response: truncationMsg,
         updatedHistory: messages.filter((m) => m.role !== "system"),
+        images: collectedImages,
       };
     } catch (err) {
       const status = err instanceof TimeoutError ? "timeout" : "error";
