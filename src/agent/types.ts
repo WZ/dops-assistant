@@ -11,9 +11,16 @@ export type AgentTask = {
   correlationId?: string;
 };
 
+export type ImageAttachment = {
+  filename: string;
+  mimeType: string;
+  data: Buffer;
+};
+
 export type AgentResult = {
   response: string;
   updatedHistory: Message[];
+  images: ImageAttachment[];
 };
 
 export type AnomalyAssessment = {
