@@ -115,7 +115,8 @@ describe("McpClient", () => {
     client = new McpClient(baseConfig, baseTimeouts);
     await client.connect();
     const result = await client.callTool("query_prometheus", { query: "up" });
-    expect(result).toBe("result data");
+    expect(result.text).toBe("result data");
+    expect(result.images).toEqual([]);
   });
 
   it("throws if getTools called before connect", () => {
@@ -137,6 +138,24 @@ describe("McpClient", () => {
     expect(instance.connect).toHaveBeenCalledTimes(1);
   });
 
+  it("callTool returns ToolResult with images when result contains image parts", async () => {
+    const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+    client = new McpClient(baseConfig, baseTimeouts);
+    await client.connect();
+    const instance = (Client as ReturnType<typeof vi.fn>).mock.instances[0];
+    instance.callTool.mockResolvedValueOnce({
+      content: [
+        { type: "text", text: "Panel rendered" },
+        { type: "image", mimeType: "image/png", data: "iVBOR...base64..." },
+      ],
+    });
+    const result = await client.callTool("get_panel_image", { dashboardUid: "abc", panelId: 1 });
+    expect(result.text).toBe("Panel rendered");
+    expect(result.images).toHaveLength(1);
+    expect(result.images[0].mimeType).toBe("image/png");
+    expect(result.images[0].data).toBe("iVBOR...base64...");
+  });
+
   it("callTool returns [Tool Error] prefix when isError is true", async () => {
     const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
     client = new McpClient(baseConfig, baseTimeouts);
@@ -147,8 +166,8 @@ describe("McpClient", () => {
       isError: true,
     });
     const result = await client.callTool("query_prometheus", { query: "up" });
-    expect(result).toMatch(/^\[Tool Error\]/);
-    expect(result).toBe("[Tool Error] metric not found");
+    expect(result.text).toMatch(/^\[Tool Error\]/);
+    expect(result.text).toBe("[Tool Error] metric not found");
   });
 });
 

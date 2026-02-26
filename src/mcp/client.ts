@@ -18,6 +18,16 @@ export type OpenAITool = {
   };
 };
 
+export type ImageContent = {
+  mimeType: string;
+  data: string;
+};
+
+export type ToolResult = {
+  text: string;
+  images: ImageContent[];
+};
+
 export class McpClient {
   private readonly config: McpServerConfig;
   private readonly timeouts: TimeoutsConfig;
@@ -91,7 +101,7 @@ export class McpClient {
     return this.tools;
   }
 
-  async callTool(name: string, args: Record<string, unknown>): Promise<string> {
+  async callTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
     if (!this.client) throw new Error("MCP client not connected");
 
     const end = toolDurationSeconds.startTimer({ tool: name });
@@ -102,13 +112,16 @@ export class McpClient {
         `tool:${name}`,
       );
       end();
-      const parts = result.content as Array<{ type: string; text?: string }>;
+      const parts = result.content as Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
       const text = parts
         .filter((p) => p.type === "text")
         .map((p) => p.text ?? "")
         .join("\n");
+      const images: ImageContent[] = parts
+        .filter((p) => p.type === "image")
+        .map((p) => ({ mimeType: p.mimeType ?? "image/png", data: p.data ?? "" }));
       toolCallsTotal.inc({ tool: name, status: "success" });
-      return result.isError ? `[Tool Error] ${text}` : text;
+      return { text: result.isError ? `[Tool Error] ${text}` : text, images };
     } catch (err) {
       end();
       toolCallsTotal.inc({
