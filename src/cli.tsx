@@ -1,5 +1,12 @@
+import { config as loadDotenv } from "dotenv";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+loadDotenv({ path: resolve(__dirname, "../dev/.env") });
+
 import React from "react";
-import { render, Box, Text } from "ink";
+import { render } from "ink";
 import { loadConfig } from "./config/loader.js";
 import { McpClient } from "./mcp/client.js";
 import { LlmClient } from "./llm/openai.js";
@@ -9,7 +16,7 @@ import { IntentClassifier } from "./agent/intent.js";
 import { ConversationMemory } from "./memory/conversation.js";
 import { App } from "./interfaces/cli/App.js";
 
-const configPath = process.env["CONFIG_PATH"] ?? "config.yaml";
+const configPath = process.env["CONFIG_PATH"] ?? "dev/config.yaml";
 
 async function main(): Promise<void> {
   const config = loadConfig(configPath);
