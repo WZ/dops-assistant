@@ -1,4 +1,7 @@
 import pkg from "@slack/bolt";
+import pino from "pino";
+
+const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
 
 const { App } = pkg;
 type App = InstanceType<typeof pkg.App>;
@@ -20,6 +23,7 @@ type MessageContext = {
   text: string;
   threadTs: string;
   userId: string;
+  channelId: string;
 };
 
 export class SlackBot {
@@ -100,6 +104,19 @@ export class SlackBot {
       });
       this.memory.append(threadId, { role: "assistant", content: result.response });
       await say({ text: result.response, thread_ts: threadId });
+
+      // Upload images to thread (failures logged, not thrown)
+      for (const img of result.images) {
+        await this.app.client.filesUploadV2({
+          channel_id: ctx.channelId,
+          thread_ts: threadId,
+          file: img.data,
+          filename: img.filename,
+        }).catch((err: unknown) => {
+          logger.warn({ err, filename: img.filename }, "Failed to upload image to Slack");
+        });
+      }
+
       slackMessagesTotal.inc({ status: "success" });
     } catch (err) {
       slackMessagesTotal.inc({ status: "error" });
@@ -110,10 +127,10 @@ export class SlackBot {
 
   private registerHandlers(): void {
     this.app.message(async ({ message, say }) => {
-      const msg = message as { text?: string; ts: string; user?: string };
+      const msg = message as { text?: string; ts: string; user?: string; channel?: string };
       if (!msg.text) return;
       await this.handleMessage(
-        { text: msg.text, threadTs: msg.ts, userId: msg.user ?? "" },
+        { text: msg.text, threadTs: msg.ts, userId: msg.user ?? "", channelId: msg.channel ?? "" },
         say as unknown as (msg: object) => Promise<void>,
       );
     });
@@ -121,7 +138,7 @@ export class SlackBot {
     this.app.event("app_mention", async ({ event, say }) => {
       const threadTs = event.thread_ts ?? event.ts;
       await this.handleMessage(
-        { text: event.text, threadTs, userId: event.user ?? "" },
+        { text: event.text, threadTs, userId: event.user ?? "", channelId: event.channel ?? "" },
         say as unknown as (msg: object) => Promise<void>,
       );
     });
