@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+
+vi.mock("ink-table", () => ({ default: () => null }));
+
 import { parseInline } from "./Markdown.js";
 import { formatRcaText, saveAndOpenImages } from "./App.js";
 import type { RcaReport } from "../../agent/rca-types.js";
