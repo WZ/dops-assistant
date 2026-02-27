@@ -72,14 +72,100 @@ function InlineText({ text }: { text: string }) {
   );
 }
 
-export function Markdown({ text, indent = "  " }: { text: string; indent?: string }) {
-  const lines = text.split("\n");
+function isTableSeparator(line: string): boolean {
+  return /^\|[\s\-:|]+\|$/.test(line.trim());
+}
+
+function parseTableRow(line: string): string[] {
+  const trimmed = line.trim();
+  // Strip leading/trailing pipes and split by |
+  const inner = trimmed.startsWith("|") ? trimmed.slice(1) : trimmed;
+  const stripped = inner.endsWith("|") ? inner.slice(0, -1) : inner;
+  return stripped.split("|").map((cell) => cell.trim());
+}
+
+/** Measure visible length ignoring markdown formatting markers */
+function visibleLength(text: string): number {
+  // Strip **bold** markers and `code` markers for length calculation
+  return text.replace(/\*\*([^*]*)\*\*/g, "$1").replace(/`([^`]*)`/g, "$1").length;
+}
+
+function Table({ rows, indent }: { rows: string[][]; indent: string }) {
+  // Compute max visible width per column
+  const colCount = Math.max(...rows.map((r) => r.length));
+  const colWidths: number[] = Array.from({ length: colCount }, () => 0);
+  for (const row of rows) {
+    for (let c = 0; c < row.length; c++) {
+      colWidths[c] = Math.max(colWidths[c] ?? 0, visibleLength(row[c] ?? ""));
+    }
+  }
 
   return (
     <Box flexDirection="column">
-      {lines.map((line, i) => {
-        const trimmed = line.trimStart();
-        const key = `line-${i}-${trimmed.slice(0, 20)}`;
+      {rows.map((row, ri) => (
+        <Box key={`trow-${ri}`}>
+          <Text>{indent}</Text>
+          {row.map((cell, ci) => {
+            const pad = (colWidths[ci] ?? 0) - visibleLength(cell) + 1;
+            return (
+              <Text key={`tcell-${ri}-${ci}`}>
+                {"| "}
+                <InlineText text={cell} />
+                {" ".repeat(Math.max(pad, 1))}
+              </Text>
+            );
+          })}
+          <Text>|</Text>
+        </Box>
+      ))}
+    </Box>
+  );
+}
+
+type Block =
+  | { type: "line"; index: number; line: string; trimmed: string }
+  | { type: "table"; index: number; rows: string[][] };
+
+function groupLines(lines: string[]): Block[] {
+  const blocks: Block[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const trimmed = lines[i]!.trimStart();
+    if (trimmed.startsWith("|")) {
+      // Collect consecutive table lines
+      const tableRows: string[][] = [];
+      const startIdx = i;
+      while (i < lines.length && lines[i]!.trimStart().startsWith("|")) {
+        const rowTrimmed = lines[i]!.trimStart();
+        if (!isTableSeparator(rowTrimmed)) {
+          tableRows.push(parseTableRow(rowTrimmed));
+        }
+        i++;
+      }
+      blocks.push({ type: "table", index: startIdx, rows: tableRows });
+    } else {
+      blocks.push({ type: "line", index: i, line: lines[i]!, trimmed });
+      i++;
+    }
+  }
+
+  return blocks;
+}
+
+export function Markdown({ text, indent = "  " }: { text: string; indent?: string }) {
+  const lines = text.split("\n");
+  const blocks = groupLines(lines);
+
+  return (
+    <Box flexDirection="column">
+      {blocks.map((block) => {
+        if (block.type === "table") {
+          return <Table key={`table-${block.index}`} rows={block.rows} indent={indent} />;
+        }
+
+        const { trimmed } = block;
+        const key = `line-${block.index}-${trimmed.slice(0, 20)}`;
 
         // Headers: # ## ###
         if (trimmed.startsWith("### ")) {
@@ -118,7 +204,7 @@ export function Markdown({ text, indent = "  " }: { text: string; indent?: strin
 
         // Bullet list: - item
         if (trimmed.startsWith("- ")) {
-          const depth = line.length - trimmed.length;
+          const depth = block.line.length - trimmed.length;
           const extra = "  ".repeat(Math.floor(depth / 2));
           return (
             <Box key={key}>
