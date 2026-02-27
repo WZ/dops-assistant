@@ -1,4 +1,4 @@
-import type { LlmClient, Message } from "../llm/openai.js";
+import type { LlmClient, Message, TokenUsage } from "../llm/openai.js";
 import type { McpClient } from "../mcp/client.js";
 import type { ServiceConfig } from "../config/schema.js";
 import type { AnomalyAssessment } from "./types.js";
@@ -34,6 +34,7 @@ export class InvestigationAgent {
     service: ServiceConfig,
     initialAnomaly?: AnomalyAssessment,
     correlationId?: string,
+    onTokenUsage?: (usage: TokenUsage) => void,
   ): Promise<RcaReport> {
     const log = logger.child({ component: "investigation", service: service.name, correlationId });
 
@@ -45,6 +46,8 @@ export class InvestigationAgent {
         buildProactiveStructuredPrompt([service]),
         `Check service: ${service.name}`,
         ANOMALY_ASSESSMENT_RESPONSE_FORMAT,
+        undefined,
+        onTokenUsage,
       );
       anomaly = result;
     }
@@ -70,9 +73,9 @@ export class InvestigationAgent {
     const infraMessage = `${anomalyContext}\nService: ${service.name}`;
 
     const [metricResult, logResult, infraResult] = await Promise.allSettled([
-      this.runPhase<MetricFindings>(METRIC_DEEP_DIVE_PROMPT, metricMessage, METRIC_FINDINGS_SCHEMA),
-      this.runPhase<LogFindings>(LOG_CORRELATION_PROMPT, logMessage, LOG_FINDINGS_SCHEMA),
-      this.runPhase<InfraFindings>(INFRA_HEALTH_PROMPT, infraMessage, INFRA_FINDINGS_SCHEMA),
+      this.runPhase<MetricFindings>(METRIC_DEEP_DIVE_PROMPT, metricMessage, METRIC_FINDINGS_SCHEMA, undefined, onTokenUsage),
+      this.runPhase<LogFindings>(LOG_CORRELATION_PROMPT, logMessage, LOG_FINDINGS_SCHEMA, undefined, onTokenUsage),
+      this.runPhase<InfraFindings>(INFRA_HEALTH_PROMPT, infraMessage, INFRA_FINDINGS_SCHEMA, undefined, onTokenUsage),
     ]);
 
     const metricFindings = metricResult.status === "fulfilled"
@@ -104,6 +107,7 @@ export class InvestigationAgent {
       synthesisMessage,
       RCA_REPORT_SCHEMA,
       3,
+      onTokenUsage,
     );
 
     return {
@@ -118,6 +122,7 @@ export class InvestigationAgent {
     userMessage: string,
     responseFormat: OpenAI.ResponseFormatJSONSchema,
     maxIterations = this.maxIterations,
+    onTokenUsage?: (usage: TokenUsage) => void,
   ): Promise<T> {
     const tools = this.mcp.getTools();
     const messages: Message[] = [
@@ -127,6 +132,8 @@ export class InvestigationAgent {
 
     for (let i = 0; i < maxIterations; i++) {
       const response = await this.llm.chat(messages, tools, { responseFormat });
+
+      if (response.usage) onTokenUsage?.(response.usage);
 
       if (response.type === "text") {
         return JSON.parse(response.content) as T;
