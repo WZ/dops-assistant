@@ -35,7 +35,7 @@ type AppProps = {
   toolCount: number;
 };
 
-function formatRcaText(report: RcaReport): string {
+export function formatRcaText(report: RcaReport): string {
   const severityEmoji: Record<string, string> = {
     low: "🟢", medium: "🟡", high: "🟠", critical: "🔴",
   };
@@ -53,7 +53,7 @@ function formatRcaText(report: RcaReport): string {
   ].filter(Boolean).join("\n");
 }
 
-function saveAndOpenImages(images: ImageAttachment[]): string[] {
+export function saveAndOpenImages(images: ImageAttachment[]): string[] {
   const saved: string[] = [];
   for (const img of images) {
     const filePath = join(tmpdir(), `dops-${img.filename}`);
