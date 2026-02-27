@@ -29,9 +29,11 @@ export type ToolCall = {
   args: Record<string, unknown>;
 };
 
+export type TokenUsage = { inputTokens: number; outputTokens: number };
+
 export type LlmResponse =
-  | { type: "text"; content: string }
-  | { type: "tool_calls"; calls: ToolCall[] };
+  | { type: "text"; content: string; usage?: TokenUsage }
+  | { type: "tool_calls"; calls: ToolCall[]; usage?: TokenUsage };
 
 export class LlmClient {
   private openai: OpenAI;
@@ -104,6 +106,10 @@ export class LlmClient {
       throw err;
     }
 
+    const usage: TokenUsage | undefined = response.usage
+      ? { inputTokens: response.usage.prompt_tokens, outputTokens: response.usage.completion_tokens }
+      : undefined;
+
     if (response.usage) {
       llmTokensUsedTotal.inc(
         { type: "prompt" },
@@ -126,6 +132,7 @@ export class LlmClient {
     if (message.tool_calls && message.tool_calls.length > 0) {
       return {
         type: "tool_calls",
+        usage,
         calls: message.tool_calls.map((tc) => {
           let args: Record<string, unknown>;
           try {
@@ -140,6 +147,6 @@ export class LlmClient {
       };
     }
 
-    return { type: "text", content: message.content ?? "" };
+    return { type: "text", content: message.content ?? "", usage };
   }
 }
