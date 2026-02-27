@@ -51,6 +51,8 @@ export class AgentCore {
           responseFormat,
         });
 
+        if (response.usage) task.onTokenUsage?.(response.usage);
+
         if (response.type === "text") {
           messages.push({ role: "assistant", content: response.content });
           agentRunsTotal.inc({ status: "success" });
