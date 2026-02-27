@@ -52,25 +52,26 @@ export function Markdown({ text, indent = "  " }: { text: string; indent?: strin
     <Box flexDirection="column">
       {lines.map((line, i) => {
         const trimmed = line.trimStart();
+        const key = `line-${i}-${trimmed.slice(0, 20)}`;
 
         // Headers: # ## ###
         if (trimmed.startsWith("### ")) {
           return (
-            <Text key={i} bold color="yellow">
+            <Text key={key} bold color="yellow">
               {indent}{trimmed.slice(4)}
             </Text>
           );
         }
         if (trimmed.startsWith("## ")) {
           return (
-            <Text key={i} bold color="yellow">
+            <Text key={key} bold color="yellow">
               {indent}{trimmed.slice(3)}
             </Text>
           );
         }
         if (trimmed.startsWith("# ")) {
           return (
-            <Text key={i} bold color="yellow">
+            <Text key={key} bold color="yellow">
               {indent}{trimmed.slice(2)}
             </Text>
           );
@@ -80,7 +81,7 @@ export function Markdown({ text, indent = "  " }: { text: string; indent?: strin
         const numberedMatch = trimmed.match(/^(\d+)\.\s+(.*)/);
         if (numberedMatch) {
           return (
-            <Box key={i}>
+            <Box key={key}>
               <Text>{indent}</Text>
               <Text bold color="green">{numberedMatch[1]}. </Text>
               <InlineText text={numberedMatch[2]} />
@@ -93,7 +94,7 @@ export function Markdown({ text, indent = "  " }: { text: string; indent?: strin
           const depth = line.length - trimmed.length;
           const extra = "  ".repeat(Math.floor(depth / 2));
           return (
-            <Box key={i}>
+            <Box key={key}>
               <Text>{indent}{extra}</Text>
               <Text color="green">• </Text>
               <InlineText text={trimmed.slice(2)} />
@@ -103,12 +104,12 @@ export function Markdown({ text, indent = "  " }: { text: string; indent?: strin
 
         // Empty line
         if (trimmed === "") {
-          return <Text key={i}>{" "}</Text>;
+          return <Text key={key}>{" "}</Text>;
         }
 
         // Regular text with inline formatting
         return (
-          <Box key={i}>
+          <Box key={key}>
             <Text>{indent}</Text>
             <InlineText text={trimmed} />
           </Box>
