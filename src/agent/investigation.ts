@@ -1,4 +1,4 @@
-import type { LlmClient, Message, ResponseFormat } from "../llm/openai.js";
+import type { LlmClient, Message, ResponseFormat, TokenUsage } from "../llm/openai.js";
 import type { McpClient } from "../mcp/client.js";
 import type { ServiceConfig } from "../config/schema.js";
 import type { AnomalyAssessment } from "./types.js";
@@ -14,6 +14,7 @@ import {
   RCA_REPORT_SCHEMA,
 } from "./rca-prompts.js";
 import { buildProactiveStructuredPrompt, ANOMALY_ASSESSMENT_RESPONSE_FORMAT } from "./prompts.js";
+import { sanitizeToolResult } from "./core.js";
 import pino from "pino";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
@@ -33,6 +34,7 @@ export class InvestigationAgent {
     service: ServiceConfig,
     initialAnomaly?: AnomalyAssessment,
     correlationId?: string,
+    onTokenUsage?: (usage: TokenUsage) => void,
   ): Promise<RcaReport> {
     const log = logger.child({ component: "investigation", service: service.name, correlationId });
 
@@ -44,6 +46,8 @@ export class InvestigationAgent {
         buildProactiveStructuredPrompt([service]),
         `Check service: ${service.name}`,
         ANOMALY_ASSESSMENT_RESPONSE_FORMAT,
+        undefined,
+        onTokenUsage,
       );
       anomaly = result;
     }
@@ -69,9 +73,9 @@ export class InvestigationAgent {
     const infraMessage = `${anomalyContext}\nService: ${service.name}`;
 
     const [metricResult, logResult, infraResult] = await Promise.allSettled([
-      this.runPhase<MetricFindings>(METRIC_DEEP_DIVE_PROMPT, metricMessage, METRIC_FINDINGS_SCHEMA),
-      this.runPhase<LogFindings>(LOG_CORRELATION_PROMPT, logMessage, LOG_FINDINGS_SCHEMA),
-      this.runPhase<InfraFindings>(INFRA_HEALTH_PROMPT, infraMessage, INFRA_FINDINGS_SCHEMA),
+      this.runPhase<MetricFindings>(METRIC_DEEP_DIVE_PROMPT, metricMessage, METRIC_FINDINGS_SCHEMA, undefined, onTokenUsage),
+      this.runPhase<LogFindings>(LOG_CORRELATION_PROMPT, logMessage, LOG_FINDINGS_SCHEMA, undefined, onTokenUsage),
+      this.runPhase<InfraFindings>(INFRA_HEALTH_PROMPT, infraMessage, INFRA_FINDINGS_SCHEMA, undefined, onTokenUsage),
     ]);
 
     const metricFindings = metricResult.status === "fulfilled"
@@ -103,6 +107,7 @@ export class InvestigationAgent {
       synthesisMessage,
       RCA_REPORT_SCHEMA,
       3,
+      onTokenUsage,
     );
 
     return {
@@ -117,6 +122,7 @@ export class InvestigationAgent {
     userMessage: string,
     responseFormat: ResponseFormat,
     maxIterations = this.maxIterations,
+    onTokenUsage?: (usage: TokenUsage) => void,
   ): Promise<T> {
     const tools = this.mcp.getTools();
     const messages: Message[] = [
@@ -126,6 +132,8 @@ export class InvestigationAgent {
 
     for (let i = 0; i < maxIterations; i++) {
       const response = await this.llm.chat(messages, tools, { responseFormat });
+
+      if (response.usage) onTokenUsage?.(response.usage);
 
       if (response.type === "text") {
         return JSON.parse(response.content) as T;
@@ -148,7 +156,7 @@ export class InvestigationAgent {
         messages.push({
           role: "tool",
           content: outcome.status === "fulfilled"
-            ? outcome.value.text
+            ? sanitizeToolResult(outcome.value.text)
             : `[Transport Error] ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`,
           tool_call_id: call.id,
         });

@@ -67,6 +67,8 @@ export class AgentCore {
           responseFormat,
         });
 
+        if (response.usage) task.onTokenUsage?.(response.usage);
+
         if (response.type === "text") {
           // Strip any base64 image markdown the LLM may have embedded
           const cleaned = response.content.replace(
