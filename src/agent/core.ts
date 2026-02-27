@@ -73,9 +73,7 @@ export class AgentCore {
           role: "assistant",
           content: null,
           tool_calls: response.calls.map((c) => ({
-            id: c.id,
-            type: "function" as const,
-            function: { name: c.name, arguments: JSON.stringify(c.args) },
+            id: c.id, name: c.name, args: c.args,
           })),
         });
 

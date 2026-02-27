@@ -1,9 +1,8 @@
-import type { LlmClient, Message } from "../llm/openai.js";
+import type { LlmClient, Message, ResponseFormat } from "../llm/openai.js";
 import type { McpClient } from "../mcp/client.js";
 import type { ServiceConfig } from "../config/schema.js";
 import type { AnomalyAssessment } from "./types.js";
 import type { MetricFindings, LogFindings, InfraFindings, RcaReport } from "./rca-types.js";
-import type OpenAI from "openai";
 import {
   METRIC_DEEP_DIVE_PROMPT,
   LOG_CORRELATION_PROMPT,
@@ -116,7 +115,7 @@ export class InvestigationAgent {
   private async runPhase<T>(
     systemPrompt: string,
     userMessage: string,
-    responseFormat: OpenAI.ResponseFormatJSONSchema,
+    responseFormat: ResponseFormat,
     maxIterations = this.maxIterations,
   ): Promise<T> {
     const tools = this.mcp.getTools();
@@ -136,9 +135,7 @@ export class InvestigationAgent {
         role: "assistant",
         content: null,
         tool_calls: response.calls.map((c) => ({
-          id: c.id,
-          type: "function" as const,
-          function: { name: c.name, arguments: JSON.stringify(c.args) },
+          id: c.id, name: c.name, args: c.args,
         })),
       });
 

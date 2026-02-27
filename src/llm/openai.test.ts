@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { LlmClient } from "./openai.js";
-import type { LlmConfig } from "./openai.js";
+import { LlmClient, convertToResponsesInput } from "./openai.js";
+import type { LlmConfig, Message } from "./openai.js";
 import { TimeoutError } from "../utils/timeout.js";
 import type { TimeoutsConfig, RetryConfig } from "../config/schema.js";
 
@@ -9,10 +9,8 @@ vi.mock("openai", () => {
   return {
     default: vi.fn().mockImplementation(function () {
       return {
-        chat: {
-          completions: {
-            create: mockCreate,
-          },
+        responses: {
+          create: mockCreate,
         },
       };
     }),
@@ -48,16 +46,14 @@ describe("LlmClient", () => {
   it("returns text response when no tool calls", async () => {
     const mockCreate = await getMockCreate();
     mockCreate.mockResolvedValue({
-      choices: [
+      output: [
         {
-          message: {
-            role: "assistant",
-            content: "Everything looks healthy.",
-            tool_calls: null,
-          },
-          finish_reason: "stop",
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "Everything looks healthy." }],
         },
       ],
+      usage: { input_tokens: 10, output_tokens: 5 },
     });
 
     const client = new LlmClient(config, defaultTimeouts, defaultRetry);
@@ -68,22 +64,15 @@ describe("LlmClient", () => {
   it("returns tool_calls response when LLM requests tools", async () => {
     const mockCreate = await getMockCreate();
     mockCreate.mockResolvedValue({
-      choices: [
+      output: [
         {
-          message: {
-            role: "assistant",
-            content: null,
-            tool_calls: [
-              {
-                id: "call_1",
-                type: "function",
-                function: { name: "query_prometheus", arguments: '{"query":"up"}' },
-              },
-            ],
-          },
-          finish_reason: "tool_calls",
+          type: "function_call",
+          call_id: "call_1",
+          name: "query_prometheus",
+          arguments: '{"query":"up"}',
         },
       ],
+      usage: { input_tokens: 10, output_tokens: 5 },
     });
 
     const client = new LlmClient(config, defaultTimeouts, defaultRetry);
@@ -108,35 +97,28 @@ describe("LlmClient", () => {
     );
   });
 
-  it("throws when choices array is empty (possible content filter)", async () => {
+  it("throws when output array is empty", async () => {
     const mockCreate = await getMockCreate();
-    mockCreate.mockResolvedValue({ choices: [] });
+    mockCreate.mockResolvedValue({ output: [], usage: null });
 
     const client = new LlmClient(config, defaultTimeouts, defaultRetry);
     await expect(
       client.chat([{ role: "user", content: "Hello" }], [])
-    ).rejects.toThrow("LLM returned no choices (possible content filter or API error)");
+    ).rejects.toThrow("LLM returned no output (possible content filter or API error)");
   });
 
   it("throws when tool arguments contain malformed JSON", async () => {
     const mockCreate = await getMockCreate();
     mockCreate.mockResolvedValue({
-      choices: [
+      output: [
         {
-          message: {
-            role: "assistant",
-            content: null,
-            tool_calls: [
-              {
-                id: "call_bad",
-                type: "function",
-                function: { name: "broken_tool", arguments: "not-valid-json{" },
-              },
-            ],
-          },
-          finish_reason: "tool_calls",
+          type: "function_call",
+          call_id: "call_bad",
+          name: "broken_tool",
+          arguments: "not-valid-json{",
         },
       ],
+      usage: { input_tokens: 10, output_tokens: 5 },
     });
 
     const client = new LlmClient(config, defaultTimeouts, defaultRetry);
@@ -161,5 +143,44 @@ describe("LlmClient – timeout and retry", () => {
 
     const client = new LlmClient(config, timeouts, retry);
     await expect(client.chat([], [])).rejects.toBeInstanceOf(TimeoutError);
+  });
+});
+
+describe("convertToResponsesInput", () => {
+  it("extracts system messages as instructions", () => {
+    const messages: Message[] = [
+      { role: "system", content: "You are helpful." },
+      { role: "user", content: "Hello" },
+    ];
+    const { instructions, input } = convertToResponsesInput(messages);
+    expect(instructions).toBe("You are helpful.");
+    expect(input).toHaveLength(1);
+    expect(input[0]).toEqual({
+      type: "message",
+      role: "user",
+      content: "Hello",
+    });
+  });
+
+  it("converts assistant tool_calls to function_call items", () => {
+    const messages: Message[] = [
+      { role: "assistant", content: null, tool_calls: [
+        { id: "c1", name: "foo", args: { bar: 1 } },
+      ]},
+    ];
+    const { input } = convertToResponsesInput(messages);
+    expect(input).toEqual([
+      { type: "function_call", call_id: "c1", name: "foo", arguments: '{"bar":1}' },
+    ]);
+  });
+
+  it("converts tool messages to function_call_output items", () => {
+    const messages: Message[] = [
+      { role: "tool", content: "result", tool_call_id: "c1" },
+    ];
+    const { input } = convertToResponsesInput(messages);
+    expect(input).toEqual([
+      { type: "function_call_output", call_id: "c1", output: "result" },
+    ]);
   });
 });
