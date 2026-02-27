@@ -14,6 +14,7 @@ import type { ConversationMemory } from "../../memory/conversation.js";
 import type { ServiceConfig } from "../../config/schema.js";
 import type { RcaReport } from "../../agent/rca-types.js";
 import type { ImageAttachment } from "../../agent/types.js";
+import type { TokenUsage } from "../../llm/openai.js";
 
 type ChatMessage = {
   id: string;
@@ -80,6 +81,7 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
   const [inputKey, setInputKey] = useState(0);
   const inputHistory = useRef<string[]>([]);
   const historyIndex = useRef(-1);
+  const tokenTotals = useRef({ inputTokens: 0, outputTokens: 0 });
   const threadId = "cli-session";
 
   useInput((_input, key) => {
@@ -129,8 +131,14 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
     addMessage({ id: randomUUID(), role: "user", content: trimmed });
     setIsThinking(true);
     setToolCalls([]);
+    tokenTotals.current = { inputTokens: 0, outputTokens: 0 };
 
     const correlationId = randomUUID().slice(0, 8);
+
+    const onTokenUsage = (usage: TokenUsage) => {
+      tokenTotals.current.inputTokens += usage.inputTokens;
+      tokenTotals.current.outputTokens += usage.outputTokens;
+    };
 
     try {
       const intent = await classifier.classify(trimmed);
@@ -146,24 +154,23 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
           return;
         }
 
-        const report = await investigationAgent.investigate(service, undefined, correlationId);
+        const report = await investigationAgent.investigate(service, undefined, correlationId, onTokenUsage);
         addMessage({ id: randomUUID(), role: "rca", content: formatRcaText(report) });
       } else {
         setThinkingLabel("Thinking");
         const history = memory.get(threadId);
         memory.append(threadId, { role: "user", content: trimmed });
 
-        const onToolCall = (name: string, args: Record<string, unknown>) => {
-          const summary = JSON.stringify(args).slice(0, 80);
-          setToolCalls((prev) => [...prev, { name, args: summary }]);
-        };
-
         const result = await agent.run({
           mode: "conversational",
           message: trimmed,
           history,
           correlationId,
-          onToolCall,
+          onToolCall: (name: string, args: Record<string, unknown>) => {
+            const summary = JSON.stringify(args).slice(0, 80);
+            setToolCalls((prev) => [...prev, { name, args: summary }]);
+          },
+          onTokenUsage,
         });
 
         memory.append(threadId, { role: "assistant", content: result.response });
@@ -182,8 +189,16 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
     } finally {
       setIsThinking(false);
       setToolCalls((prev) => {
+        const parts: string[] = [];
         if (prev.length > 0) {
-          addMessage({ id: randomUUID(), role: "toolcalls", content: `Completed ${prev.length} tool call${prev.length === 1 ? "" : "s"}` });
+          parts.push(`${prev.length} tool call${prev.length === 1 ? "" : "s"}`);
+        }
+        const { inputTokens, outputTokens } = tokenTotals.current;
+        if (inputTokens > 0 || outputTokens > 0) {
+          parts.push(`${inputTokens + outputTokens} tokens (${inputTokens} in / ${outputTokens} out)`);
+        }
+        if (parts.length > 0) {
+          addMessage({ id: randomUUID(), role: "toolcalls", content: parts.join(" · ") });
         }
         return [];
       });
