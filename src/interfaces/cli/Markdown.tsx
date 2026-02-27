@@ -1,5 +1,6 @@
 import React from "react";
 import { Text, Box } from "ink";
+import Table from "ink-table";
 
 type Segment =
   | { type: "text"; value: string }
@@ -78,48 +79,32 @@ function isTableSeparator(line: string): boolean {
 
 function parseTableRow(line: string): string[] {
   const trimmed = line.trim();
-  // Strip leading/trailing pipes and split by |
   const inner = trimmed.startsWith("|") ? trimmed.slice(1) : trimmed;
   const stripped = inner.endsWith("|") ? inner.slice(0, -1) : inner;
   return stripped.split("|").map((cell) => cell.trim());
 }
 
-/** Measure visible length ignoring markdown formatting markers */
-function visibleLength(text: string): number {
-  // Strip **bold** markers and `code` markers for length calculation
-  return text.replace(/\*\*([^*]*)\*\*/g, "$1").replace(/`([^`]*)`/g, "$1").length;
+/** Strip markdown formatting markers for plain text display */
+function stripInlineFormatting(text: string): string {
+  return text.replace(/\*\*([^*]*)\*\*/g, "$1").replace(/`([^`]*)`/g, "$1");
 }
 
-function Table({ rows, indent }: { rows: string[][]; indent: string }) {
-  // Compute max visible width per column
-  const colCount = Math.max(...rows.map((r) => r.length));
-  const colWidths: number[] = Array.from({ length: colCount }, () => 0);
-  for (const row of rows) {
-    for (let c = 0; c < row.length; c++) {
-      colWidths[c] = Math.max(colWidths[c] ?? 0, visibleLength(row[c] ?? ""));
-    }
-  }
+function MarkdownTable({ rows }: { rows: string[][] }) {
+  if (rows.length < 2) return null;
 
-  return (
-    <Box flexDirection="column">
-      {rows.map((row, ri) => (
-        <Box key={`trow-${ri}`}>
-          <Text>{indent}</Text>
-          {row.map((cell, ci) => {
-            const pad = (colWidths[ci] ?? 0) - visibleLength(cell) + 1;
-            return (
-              <Text key={`tcell-${ri}-${ci}`}>
-                {"| "}
-                <InlineText text={cell} />
-                {" ".repeat(Math.max(pad, 1))}
-              </Text>
-            );
-          })}
-          <Text>|</Text>
-        </Box>
-      ))}
-    </Box>
-  );
+  const headers = rows[0]!;
+  const dataRows = rows.slice(1);
+
+  const data = dataRows.map((row) => {
+    const obj: Record<string, string> = {};
+    for (let c = 0; c < headers.length; c++) {
+      const key = stripInlineFormatting(headers[c] ?? `col${c}`);
+      obj[key] = stripInlineFormatting(row[c] ?? "");
+    }
+    return obj;
+  });
+
+  return <Table data={data} />;
 }
 
 type Block =
@@ -133,7 +118,6 @@ function groupLines(lines: string[]): Block[] {
   while (i < lines.length) {
     const trimmed = lines[i]!.trimStart();
     if (trimmed.startsWith("|")) {
-      // Collect consecutive table lines
       const tableRows: string[][] = [];
       const startIdx = i;
       while (i < lines.length && lines[i]!.trimStart().startsWith("|")) {
@@ -161,7 +145,11 @@ export function Markdown({ text, indent = "  " }: { text: string; indent?: strin
     <Box flexDirection="column">
       {blocks.map((block) => {
         if (block.type === "table") {
-          return <Table key={`table-${block.index}`} rows={block.rows} indent={indent} />;
+          return (
+            <Box key={`table-${block.index}`} marginLeft={indent.length}>
+              <MarkdownTable rows={block.rows} />
+            </Box>
+          );
         }
 
         const { trimmed } = block;
