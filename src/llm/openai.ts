@@ -243,8 +243,12 @@ export class LlmClient {
         for (const part of item.content) {
           if (part.type === "output_text") {
             textContent += part.text;
+          } else {
+            logger.warn({ component: "llm", partType: part.type }, "Unhandled response content part type");
           }
         }
+      } else {
+        logger.warn({ component: "llm", itemType: item.type }, "Unhandled response output item type");
       }
     }
 

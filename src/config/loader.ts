@@ -5,7 +5,7 @@ import { ConfigSchema, type Config } from "./schema.js";
 function resolveEnvVars(obj: unknown): unknown {
   if (typeof obj === "string") {
     return obj.replace(/\$\{([^}]+)\}/g, (_, expr: string) => {
-      const match = expr.match(/^([^:-]+)(?::-([\s\S]*))?$/);
+      const match = expr.match(/^([^:-]+)(?::-([^\r\n]*))?$/);
       if (!match) {
         throw new Error(`Invalid env var expression: \${${expr}}`);
       }

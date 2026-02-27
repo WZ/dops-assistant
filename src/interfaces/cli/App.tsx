@@ -60,7 +60,11 @@ function saveAndOpenImages(images: ImageAttachment[]): string[] {
     writeFileSync(filePath, img.data);
     saved.push(filePath);
     if (process.platform === "darwin") {
-      execFile("open", [filePath], () => {});
+      execFile("open", [filePath], (error) => {
+        if (error) {
+          console.error(`Failed to open image: ${filePath}`, error.message);
+        }
+      });
     }
   }
   return saved;
@@ -179,8 +183,7 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
       setIsThinking(false);
       setToolCalls((prev) => {
         if (prev.length > 0) {
-          const summary = prev.map((tc) => `◼ ${tc.name}(${tc.args})`).join("\n");
-          addMessage({ id: randomUUID(), role: "toolcalls", content: summary });
+          addMessage({ id: randomUUID(), role: "toolcalls", content: `Completed ${prev.length} tool call${prev.length === 1 ? "" : "s"}` });
         }
         return [];
       });

@@ -1,9 +1,8 @@
 import { config as loadDotenv } from "dotenv";
-import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-loadDotenv({ path: resolve(__dirname, "../dev/.env"), override: true });
+const envPath = process.env["DOTENV_PATH"] ?? resolve(process.cwd(), "dev/.env");
+loadDotenv({ path: envPath });
 
 import React from "react";
 import { render } from "ink";

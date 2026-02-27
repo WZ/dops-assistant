@@ -15,6 +15,20 @@ import pino from "pino";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
 
+const MAX_TOOL_RESULT_CHARS = 8000;
+
+/** Strip base64 blobs and truncate oversized tool results before sending to LLM */
+export function sanitizeToolResult(text: string): string {
+  // Strip inline base64 data URIs
+  let cleaned = text.replace(/data:[a-z]+\/[a-z+.-]+;base64,[A-Za-z0-9+/=\s]{100,}/g, "[base64 image removed]");
+  // Strip raw base64 blobs (>200 chars of contiguous base64)
+  cleaned = cleaned.replace(/[A-Za-z0-9+/=]{200,}/g, "[large blob removed]");
+  if (cleaned.length > MAX_TOOL_RESULT_CHARS) {
+    cleaned = cleaned.slice(0, MAX_TOOL_RESULT_CHARS) + "\n...[truncated]";
+  }
+  return cleaned;
+}
+
 export class AgentCore {
   private llm: LlmClient;
   private mcp: McpClient;
@@ -56,7 +70,7 @@ export class AgentCore {
         if (response.type === "text") {
           // Strip any base64 image markdown the LLM may have embedded
           const cleaned = response.content.replace(
-            /!\[[^\]]*\]\(data:image\/[^)]+\)/g,
+            /!\[[^\]]*\]\(data:image\/[^;]+;base64,[^)]+\)/g,
             "",
           ).trim();
           messages.push({ role: "assistant", content: cleaned });
@@ -90,10 +104,11 @@ export class AgentCore {
           let toolText: string;
           if (outcome.status === "fulfilled") {
             const toolResult = outcome.value;
-            toolText = toolResult.text;
+            toolText = sanitizeToolResult(toolResult.text);
             for (const img of toolResult.images) {
+              const ext = img.mimeType.split("/")[1] ?? "png";
               collectedImages.push({
-                filename: `${call.name}-${randomUUID().slice(0, 8)}.png`,
+                filename: `${call.name}-${randomUUID().slice(0, 8)}.${ext}`,
                 mimeType: img.mimeType,
                 data: Buffer.from(img.data, "base64"),
               });
