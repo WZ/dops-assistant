@@ -6,27 +6,54 @@ type Segment =
   | { type: "bold"; value: string }
   | { type: "code"; value: string };
 
-function parseInline(line: string): Segment[] {
+export function parseInline(line: string): Segment[] {
   const segments: Segment[] = [];
-  // Match **bold** or `code`
-  const re = /(\*\*(.+?)\*\*|`([^`]+)`)/g;
-  let last = 0;
-  let match: RegExpExecArray | null;
+  let i = 0;
 
-  while ((match = re.exec(line)) !== null) {
-    if (match.index > last) {
-      segments.push({ type: "text", value: line.slice(last, match.index) });
+  while (i < line.length) {
+    const boldIndex = line.indexOf("**", i);
+    const codeIndex = line.indexOf("`", i);
+
+    let nextIndex = -1;
+    let marker: "**" | "`" | null = null;
+
+    if (boldIndex !== -1 && (codeIndex === -1 || boldIndex < codeIndex)) {
+      nextIndex = boldIndex;
+      marker = "**";
+    } else if (codeIndex !== -1) {
+      nextIndex = codeIndex;
+      marker = "`";
+    } else {
+      break;
     }
-    if (match[2]) {
-      segments.push({ type: "bold", value: match[2] });
-    } else if (match[3]) {
-      segments.push({ type: "code", value: match[3] });
+
+    if (nextIndex > i) {
+      segments.push({ type: "text", value: line.slice(i, nextIndex) });
     }
-    last = match.index + match[0].length;
+
+    if (marker === "**") {
+      const end = line.indexOf("**", nextIndex + 2);
+      if (end !== -1 && end > nextIndex + 2) {
+        segments.push({ type: "bold", value: line.slice(nextIndex + 2, end) });
+        i = end + 2;
+      } else {
+        segments.push({ type: "text", value: line.slice(nextIndex, nextIndex + 2) });
+        i = nextIndex + 2;
+      }
+    } else if (marker === "`") {
+      const end = line.indexOf("`", nextIndex + 1);
+      if (end !== -1 && end > nextIndex + 1) {
+        segments.push({ type: "code", value: line.slice(nextIndex + 1, end) });
+        i = end + 1;
+      } else {
+        segments.push({ type: "text", value: line.slice(nextIndex, nextIndex + 1) });
+        i = nextIndex + 1;
+      }
+    }
   }
 
-  if (last < line.length) {
-    segments.push({ type: "text", value: line.slice(last) });
+  if (i < line.length) {
+    segments.push({ type: "text", value: line.slice(i) });
   }
 
   return segments;
