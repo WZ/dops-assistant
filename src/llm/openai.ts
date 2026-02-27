@@ -22,8 +22,13 @@ export type Message = {
   role: "system" | "user" | "assistant" | "tool";
   content: string | null;
   tool_call_id?: string;
-  tool_calls?: OpenAI.Chat.ChatCompletionMessageToolCall[];
+  tool_calls?: { id: string; name: string; args: Record<string, unknown> }[];
   name?: string;
+};
+
+export type ResponseFormat = {
+  type: "json_schema";
+  json_schema: { name: string; strict: boolean; schema: Record<string, unknown> };
 };
 
 export type ToolCall = {
@@ -35,6 +40,95 @@ export type ToolCall = {
 export type LlmResponse =
   | { type: "text"; content: string }
   | { type: "tool_calls"; calls: ToolCall[] };
+
+// -- Conversion helpers for Responses API --
+
+type ResponsesInputItem =
+  | { type: "message"; role: "user" | "assistant"; content: string }
+  | { type: "function_call"; call_id: string; name: string; arguments: string }
+  | { type: "function_call_output"; call_id: string; output: string };
+
+export function convertToResponsesInput(messages: Message[]): {
+  instructions: string | undefined;
+  input: ResponsesInputItem[];
+} {
+  const systemParts: string[] = [];
+  const input: ResponsesInputItem[] = [];
+
+  for (const msg of messages) {
+    switch (msg.role) {
+      case "system":
+        if (msg.content) systemParts.push(msg.content);
+        break;
+      case "user":
+        input.push({
+          type: "message",
+          role: "user",
+          content: msg.content ?? "",
+        });
+        break;
+      case "assistant":
+        if (msg.tool_calls && msg.tool_calls.length > 0) {
+          for (const tc of msg.tool_calls) {
+            input.push({
+              type: "function_call",
+              call_id: tc.id,
+              name: tc.name,
+              arguments: JSON.stringify(tc.args),
+            });
+          }
+        } else {
+          input.push({
+            type: "message",
+            role: "assistant",
+            content: msg.content ?? "",
+          });
+        }
+        break;
+      case "tool":
+        input.push({
+          type: "function_call_output",
+          call_id: msg.tool_call_id ?? "",
+          output: msg.content ?? "",
+        });
+        break;
+    }
+  }
+
+  return {
+    instructions: systemParts.length > 0 ? systemParts.join("\n\n") : undefined,
+    input,
+  };
+}
+
+export function convertTools(tools: OpenAITool[]): Array<{
+  type: "function";
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  strict: boolean;
+}> {
+  return tools.map((t) => ({
+    type: "function" as const,
+    name: t.function.name,
+    description: t.function.description,
+    parameters: t.function.parameters,
+    strict: true,
+  }));
+}
+
+export function convertResponseFormat(
+  fmt: ResponseFormat,
+): { format: { type: "json_schema"; name: string; schema: Record<string, unknown>; strict: boolean } } {
+  return {
+    format: {
+      type: "json_schema",
+      name: fmt.json_schema.name,
+      schema: fmt.json_schema.schema,
+      strict: fmt.json_schema.strict,
+    },
+  };
+}
 
 export class LlmClient {
   private openai: OpenAI;
@@ -55,7 +149,7 @@ export class LlmClient {
   async chat(
     messages: Message[],
     tools: OpenAITool[],
-    opts?: { responseFormat?: OpenAI.ResponseFormatJSONSchema },
+    opts?: { responseFormat?: ResponseFormat },
   ): Promise<LlmResponse> {
     try {
       return await withRetry(
@@ -81,21 +175,37 @@ export class LlmClient {
   private async doChat(
     messages: Message[],
     tools: OpenAITool[],
-    opts?: { responseFormat?: OpenAI.ResponseFormatJSONSchema },
+    opts?: { responseFormat?: ResponseFormat },
   ): Promise<LlmResponse> {
-    let response: OpenAI.Chat.ChatCompletion;
+    const { instructions, input } = convertToResponsesInput(messages);
+
+    const requestParams = {
+      model: this.config.model,
+      max_output_tokens: this.config.maxTokens,
+      ...(instructions ? { instructions } : {}),
+      input,
+      ...(tools.length > 0
+        ? { tools: convertTools(tools), tool_choice: "auto" as const }
+        : {}),
+      ...(opts?.responseFormat
+        ? { text: convertResponseFormat(opts.responseFormat) }
+        : {}),
+    };
+
+    logger.debug({
+      component: "llm",
+      model: requestParams.model,
+      inputItems: input.length,
+      toolCount: tools.length,
+      hasInstructions: !!instructions,
+      hasResponseFormat: !!opts?.responseFormat,
+    }, "Sending Responses API request");
+
+    let response: OpenAI.Responses.Response;
     try {
-      response = await this.openai.chat.completions.create({
-        model: this.config.model,
-        max_tokens: this.config.maxTokens,
-        messages: messages as OpenAI.Chat.ChatCompletionMessageParam[],
-        ...(tools.length > 0
-          ? { tools: tools as OpenAI.Chat.ChatCompletionTool[], tool_choice: "auto" as const }
-          : {}),
-        ...(opts?.responseFormat
-          ? { response_format: opts.responseFormat }
-          : {}),
-      });
+      response = await this.openai.responses.create(
+        requestParams as OpenAI.Responses.ResponseCreateParamsNonStreaming,
+      ) as OpenAI.Responses.Response;
       llmCallsTotal.inc({ status: "success" });
     } catch (err) {
       const isRateLimit =
@@ -110,47 +220,64 @@ export class LlmClient {
     if (response.usage) {
       llmTokensUsedTotal.inc(
         { type: "prompt" },
-        response.usage.prompt_tokens,
+        response.usage.input_tokens,
       );
       llmTokensUsedTotal.inc(
         { type: "completion" },
-        response.usage.completion_tokens,
+        response.usage.output_tokens,
       );
     }
 
-    const choice = response.choices[0];
-    if (!choice) {
-      throw new Error(
-        "LLM returned no choices (possible content filter or API error)",
-      );
+    // Parse response.output items
+    const functionCalls: Array<{ id: string; name: string; arguments: string }> = [];
+    let textContent = "";
+
+    for (const item of response.output) {
+      if (item.type === "function_call") {
+        functionCalls.push({
+          id: item.call_id,
+          name: item.name,
+          arguments: item.arguments,
+        });
+      } else if (item.type === "message") {
+        for (const part of item.content) {
+          if (part.type === "output_text") {
+            textContent += part.text;
+          }
+        }
+      }
     }
-    const message = choice.message;
 
     logger.debug({
       component: "llm",
-      finishReason: choice.finish_reason,
-      hasToolCalls: !!(message.tool_calls && message.tool_calls.length > 0),
-      toolCallCount: message.tool_calls?.length ?? 0,
-      contentPreview: message.content?.slice(0, 200),
+      hasToolCalls: functionCalls.length > 0,
+      toolCallCount: functionCalls.length,
+      contentPreview: textContent.slice(0, 200),
     }, "LLM response received");
 
-    if (message.tool_calls && message.tool_calls.length > 0) {
+    if (functionCalls.length > 0) {
       return {
         type: "tool_calls",
-        calls: message.tool_calls.map((tc) => {
+        calls: functionCalls.map((fc) => {
           let args: Record<string, unknown>;
           try {
-            args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
+            args = JSON.parse(fc.arguments) as Record<string, unknown>;
           } catch {
             throw new Error(
-              `Failed to parse tool arguments for "${tc.function.name}": ${tc.function.arguments}`,
+              `Failed to parse tool arguments for "${fc.name}": ${fc.arguments}`,
             );
           }
-          return { id: tc.id, name: tc.function.name, args };
+          return { id: fc.id, name: fc.name, args };
         }),
       };
     }
 
-    return { type: "text", content: message.content ?? "" };
+    if (response.output.length === 0) {
+      throw new Error(
+        "LLM returned no output (possible content filter or API error)",
+      );
+    }
+
+    return { type: "text", content: textContent };
   }
 }
