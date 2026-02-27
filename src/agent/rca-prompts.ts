@@ -1,4 +1,4 @@
-import type OpenAI from "openai";
+import type { ResponseFormat } from "../llm/openai.js";
 
 // ── Phase prompts ─────────────────────────────────────────────────────────────
 
@@ -44,7 +44,7 @@ Respond ONLY with valid JSON matching the required schema. Do not include any ot
 
 // ── JSON schemas ──────────────────────────────────────────────────────────────
 
-export const METRIC_FINDINGS_SCHEMA: OpenAI.ResponseFormatJSONSchema = {
+export const METRIC_FINDINGS_SCHEMA: ResponseFormat = {
   type: "json_schema",
   json_schema: {
     name: "metric_findings",
@@ -62,7 +62,7 @@ export const METRIC_FINDINGS_SCHEMA: OpenAI.ResponseFormatJSONSchema = {
   },
 };
 
-export const LOG_FINDINGS_SCHEMA: OpenAI.ResponseFormatJSONSchema = {
+export const LOG_FINDINGS_SCHEMA: ResponseFormat = {
   type: "json_schema",
   json_schema: {
     name: "log_findings",
@@ -80,7 +80,7 @@ export const LOG_FINDINGS_SCHEMA: OpenAI.ResponseFormatJSONSchema = {
   },
 };
 
-export const INFRA_FINDINGS_SCHEMA: OpenAI.ResponseFormatJSONSchema = {
+export const INFRA_FINDINGS_SCHEMA: ResponseFormat = {
   type: "json_schema",
   json_schema: {
     name: "infra_findings",
@@ -98,7 +98,7 @@ export const INFRA_FINDINGS_SCHEMA: OpenAI.ResponseFormatJSONSchema = {
   },
 };
 
-export const RCA_REPORT_SCHEMA: OpenAI.ResponseFormatJSONSchema = {
+export const RCA_REPORT_SCHEMA: ResponseFormat = {
   type: "json_schema",
   json_schema: {
     name: "rca_report",
@@ -128,7 +128,7 @@ export const RCA_REPORT_SCHEMA: OpenAI.ResponseFormatJSONSchema = {
   },
 };
 
-export const INTENT_RESPONSE_FORMAT: OpenAI.ResponseFormatJSONSchema = {
+export const INTENT_RESPONSE_FORMAT: ResponseFormat = {
   type: "json_schema",
   json_schema: {
     name: "intent_classification",

@@ -1,4 +1,4 @@
-import type OpenAI from "openai";
+import type { ResponseFormat } from "../llm/openai.js";
 import type { ServiceConfig } from "../config/schema.js";
 
 export function buildSystemPrompt(
@@ -44,7 +44,7 @@ After investigating, respond ONLY with a valid json object matching the required
 ${serviceList || "No services configured."}`;
 }
 
-export const ANOMALY_ASSESSMENT_RESPONSE_FORMAT: OpenAI.ResponseFormatJSONSchema =
+export const ANOMALY_ASSESSMENT_RESPONSE_FORMAT: ResponseFormat =
   {
     type: "json_schema",
     json_schema: {
