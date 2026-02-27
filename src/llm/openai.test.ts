@@ -58,7 +58,7 @@ describe("LlmClient", () => {
 
     const client = new LlmClient(config, defaultTimeouts, defaultRetry);
     const result = await client.chat([{ role: "user", content: "Check the system." }], []);
-    expect(result).toEqual({ type: "text", content: "Everything looks healthy." });
+    expect(result).toEqual({ type: "text", content: "Everything looks healthy.", usage: { inputTokens: 10, outputTokens: 5 } });
   });
 
   it("returns tool_calls response when LLM requests tools", async () => {
@@ -79,6 +79,7 @@ describe("LlmClient", () => {
     const result = await client.chat([{ role: "user", content: "Check metrics." }], []);
     expect(result).toEqual({
       type: "tool_calls",
+      usage: { inputTokens: 10, outputTokens: 5 },
       calls: [
         {
           id: "call_1",

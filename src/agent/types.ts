@@ -1,4 +1,4 @@
-import type { Message } from "../llm/openai.js";
+import type { Message, TokenUsage } from "../llm/openai.js";
 import type { ServiceConfig } from "../config/schema.js";
 
 export type AgentMode = "proactive" | "conversational";
@@ -10,6 +10,7 @@ export type AgentTask = {
   history?: Message[];
   correlationId?: string;
   onToolCall?: (name: string, args: Record<string, unknown>) => void;
+  onTokenUsage?: (usage: TokenUsage) => void;
 };
 
 export type ImageAttachment = {

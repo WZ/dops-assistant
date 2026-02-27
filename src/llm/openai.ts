@@ -42,9 +42,11 @@ export type ToolCall = {
   args: Record<string, unknown>;
 };
 
+export type TokenUsage = { inputTokens: number; outputTokens: number };
+
 export type LlmResponse =
-  | { type: "text"; content: string }
-  | { type: "tool_calls"; calls: ToolCall[] };
+  | { type: "text"; content: string; usage?: TokenUsage }
+  | { type: "tool_calls"; calls: ToolCall[]; usage?: TokenUsage };
 
 // -- Conversion helpers for Responses API --
 
@@ -238,6 +240,10 @@ export class LlmClient {
       );
     }
 
+    const usage: TokenUsage | undefined = response.usage
+      ? { inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens }
+      : undefined;
+
     // Parse response.output items
     const functionCalls: Array<{ id: string; name: string; arguments: string }> = [];
     let textContent = "";
@@ -272,6 +278,7 @@ export class LlmClient {
     if (functionCalls.length > 0) {
       return {
         type: "tool_calls",
+        usage,
         calls: functionCalls.map((fc) => {
           let args: Record<string, unknown>;
           try {
@@ -292,6 +299,6 @@ export class LlmClient {
       );
     }
 
-    return { type: "text", content: textContent };
+    return { type: "text", content: textContent, usage };
   }
 }

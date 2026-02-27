@@ -281,6 +281,56 @@ describe("AgentCore", () => {
     expect(result.response).toContain("Looks healthy.");
   });
 
+  it("fires onTokenUsage callback for each LLM call", async () => {
+    (mockLlm.chat as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        type: "tool_calls",
+        usage: { inputTokens: 100, outputTokens: 20 },
+        calls: [{ id: "call_1", name: "query_prometheus", args: {} }],
+      })
+      .mockResolvedValueOnce({
+        type: "text",
+        content: "Done.",
+        usage: { inputTokens: 200, outputTokens: 50 },
+      });
+    (mockMcp.callTool as ReturnType<typeof vi.fn>).mockResolvedValue({ text: "data", images: [] });
+
+    const onTokenUsage = vi.fn();
+    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
+    await core.run({
+      mode: "conversational",
+      message: "check",
+      onTokenUsage,
+    });
+
+    expect(onTokenUsage).toHaveBeenCalledTimes(2);
+    expect(onTokenUsage).toHaveBeenNthCalledWith(1, { inputTokens: 100, outputTokens: 20 });
+    expect(onTokenUsage).toHaveBeenNthCalledWith(2, { inputTokens: 200, outputTokens: 50 });
+  });
+
+  it("does not fail when onTokenUsage is not provided and usage is present", async () => {
+    (mockLlm.chat as ReturnType<typeof vi.fn>).mockResolvedValue({
+      type: "text",
+      content: "ok",
+      usage: { inputTokens: 10, outputTokens: 5 },
+    });
+    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
+    const result = await core.run({ mode: "conversational", message: "Hi." });
+    expect(result.response).toBe("ok");
+  });
+
+  it("skips onTokenUsage callback when usage is absent", async () => {
+    (mockLlm.chat as ReturnType<typeof vi.fn>).mockResolvedValue({
+      type: "text",
+      content: "ok",
+    });
+    const onTokenUsage = vi.fn();
+    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
+    await core.run({ mode: "conversational", message: "Hi.", onTokenUsage });
+
+    expect(onTokenUsage).not.toHaveBeenCalled();
+  });
+
   it("calls onToolCall callback before executing each tool", async () => {
     const onToolCall = vi.fn();
     (mockLlm.chat as ReturnType<typeof vi.fn>)
