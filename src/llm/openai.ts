@@ -18,6 +18,11 @@ export type LlmConfig = {
   baseURL?: string;
 };
 
+/**
+ * Internal message type decoupled from OpenAI's ChatCompletionMessage.
+ * Uses simplified `tool_calls` (no `type: "function"` wrapper) since we
+ * convert to the Responses API format via `convertToResponsesInput()`.
+ */
 export type Message = {
   role: "system" | "user" | "assistant" | "tool";
   content: string | null;
@@ -117,6 +122,11 @@ export function convertTools(tools: OpenAITool[]): Array<{
   }));
 }
 
+/**
+ * Converts our ResponseFormat to the Responses API `text` config shape.
+ * The Responses API uses `text: { format: { type: "json_schema", ... } }`
+ * (see OpenAI SDK's ResponseTextConfig / ResponseFormatTextConfig types).
+ */
 export function convertResponseFormat(
   fmt: ResponseFormat,
 ): { format: { type: "json_schema"; name: string; schema: Record<string, unknown>; strict: boolean } } {
