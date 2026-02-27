@@ -28,6 +28,22 @@ describe("ConfigSchema – new sections", () => {
     }
   });
 
+  it("accepts discovery config with defaults", () => {
+    const result = ConfigSchema.safeParse({
+      llm: { apiKey: "k", model: "gpt-4", maxTokens: 1000 },
+      grafana: { mcpServer: { transport: "stdio", command: "npx", args: [] } },
+      discovery: {
+        excludeServices: ["consul", "prometheus"],
+        consulMetric: "consul_catalog_service_node_healthy",
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.discovery.autoRefresh).toBe(false);
+      expect(result.data.discovery.excludeServices).toEqual(["consul", "prometheus"]);
+    }
+  });
+
   it("accepts alertCooldownMinutes on anomalyCheck", () => {
     const result = ConfigSchema.parse({
       llm: { apiKey: "k", model: "gpt-4", maxTokens: 1000 },

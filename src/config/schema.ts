@@ -104,6 +104,12 @@ const ObservabilitySchema = z.object({
     .default("info"),
 });
 
+const DiscoverySchema = z.object({
+  autoRefresh: z.boolean().default(false),
+  excludeServices: z.array(z.string()).default([]),
+  consulMetric: z.string().default("consul_catalog_service_node_healthy"),
+});
+
 export const ConfigSchema = z.object({
   llm: LlmSchema,
   grafana: GrafanaSchema,
@@ -115,6 +121,7 @@ export const ConfigSchema = z.object({
   timeouts: TimeoutsSchema.optional().default({}),
   retry: RetrySchema.optional().default({}),
   observability: ObservabilitySchema.optional().default({}),
+  discovery: DiscoverySchema.optional().default({}),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -124,3 +131,4 @@ export type AnomalyCheckConfig = z.infer<typeof AnomalyCheckSchema>;
 export type TimeoutsConfig = z.infer<typeof TimeoutsSchema>;
 export type RetryConfig = z.infer<typeof RetrySchema>;
 export type ObservabilityConfig = z.infer<typeof ObservabilitySchema>;
+export type DiscoveryConfig = z.infer<typeof DiscoverySchema>;
