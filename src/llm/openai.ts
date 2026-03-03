@@ -48,6 +48,7 @@ export type LlmResponse =
   | { type: "text"; content: string; usage?: TokenUsage }
   | { type: "tool_calls"; calls: ToolCall[]; usage?: TokenUsage };
 
+
 // -- Conversion helpers for Responses API --
 
 type ResponsesInputItem =
@@ -229,6 +230,10 @@ export class LlmClient {
       throw err;
     }
 
+    const usage: TokenUsage | undefined = response.usage
+      ? { inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens }
+      : undefined;
+
     if (response.usage) {
       llmTokensUsedTotal.inc(
         { type: "prompt" },
@@ -240,9 +245,14 @@ export class LlmClient {
       );
     }
 
-    const usage: TokenUsage | undefined = response.usage
-      ? { inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens }
-      : undefined;
+    // Detect truncated responses (Responses API equivalent of finish_reason=length)
+    if (response.status === "incomplete") {
+      const reason = (response as unknown as { incomplete_details?: { reason?: string } }).incomplete_details?.reason ?? "unknown";
+      throw new Error(
+        `LLM response truncated (status=incomplete, reason=${reason}, max_tokens=${this.config.maxTokens}). ` +
+        `Increase llm.maxTokens or reduce context size.`,
+      );
+    }
 
     // Parse response.output items
     const functionCalls: Array<{ id: string; name: string; arguments: string }> = [];

@@ -1,4 +1,4 @@
-import type { ImageAttachment } from "./types.js";
+import type { PanelImage } from "../mcp/client.js";
 
 export type MetricFindings = {
   observations: string[];  // key metric values with timestamps
@@ -31,7 +31,7 @@ export type RcaReport = {
     infra: string[];
   };
   dashboardLinks: string[];       // Grafana panel URLs
-  panelImages: ImageAttachment[]; // panel screenshots
+  panelImages: PanelImage[]; // panel screenshots (raw base64)
   recommendedActions: string[];
   confidence: "low" | "medium" | "high";
   investigatedAt: string;

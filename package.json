@@ -5,13 +5,15 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
+
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
     "cli": "NODE_TLS_REJECT_UNAUTHORIZED=0 NODE_NO_WARNINGS=1 tsx src/cli.tsx",
-    "discover": "NODE_TLS_REJECT_UNAUTHORIZED=0 NODE_NO_WARNINGS=1 tsx src/discover.tsx"
+    "discover": "NODE_TLS_REJECT_UNAUTHORIZED=0 NODE_NO_WARNINGS=1 tsx src/discover.tsx",
+    "investigate": "NODE_TLS_REJECT_UNAUTHORIZED=0 npx tsx dev/run-investigation.ts"
   },
   "dependencies": {
     "@inkjs/ui": "^2.0.0",

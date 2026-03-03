@@ -183,6 +183,59 @@ describe("AgentCore", () => {
     expect(result.response).toBeDefined();
   });
 
+  it("fires onTokenUsage callback for each LLM call", async () => {
+    (mockLlm.chat as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        type: "tool_calls",
+        usage: { inputTokens: 100, outputTokens: 20 },
+        calls: [{ id: "call_1", name: "query_prometheus", args: { query: "up" } }],
+      })
+      .mockResolvedValueOnce({
+        type: "text",
+        content: "Done.",
+        usage: { inputTokens: 200, outputTokens: 50 },
+      });
+
+    (mockMcp.callTool as ReturnType<typeof vi.fn>).mockResolvedValue({ text: "1.0", images: [] });
+
+    const onTokenUsage = vi.fn();
+    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
+    await core.run({
+      mode: "conversational",
+      message: "Check metrics.",
+      onTokenUsage,
+    });
+
+    expect(onTokenUsage).toHaveBeenCalledTimes(2);
+    expect(onTokenUsage).toHaveBeenNthCalledWith(1, { inputTokens: 100, outputTokens: 20 });
+    expect(onTokenUsage).toHaveBeenNthCalledWith(2, { inputTokens: 200, outputTokens: 50 });
+  });
+
+  it("does not fail when onTokenUsage is not provided and usage is present", async () => {
+    (mockLlm.chat as ReturnType<typeof vi.fn>).mockResolvedValue({
+      type: "text",
+      content: "OK.",
+      usage: { inputTokens: 50, outputTokens: 10 },
+    });
+
+    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
+    const result = await core.run({ mode: "conversational", message: "Hi." });
+    expect(result.response).toBe("OK.");
+  });
+
+  it("skips onTokenUsage callback when usage is absent", async () => {
+    (mockLlm.chat as ReturnType<typeof vi.fn>).mockResolvedValue({
+      type: "text",
+      content: "No usage.",
+    });
+
+    const onTokenUsage = vi.fn();
+    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
+    await core.run({ mode: "conversational", message: "Hi.", onTokenUsage });
+
+    expect(onTokenUsage).not.toHaveBeenCalled();
+  });
+
   it("uses structured response format for proactive mode", async () => {
     const assessment = {
       isAnomaly: false,

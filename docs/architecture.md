@@ -4,20 +4,43 @@
 
 dops-assistant is built as a layered dependency graph — each layer depends only on the layers below it. This makes components testable in isolation (mocking the layer below) and makes it straightforward to swap implementations (e.g. a different LLM provider) without touching the layers above.
 
-The two entry points into the system — the Scheduler and the Slack Bot — both delegate to the Agent Core, which is the only component that knows about both the LLM and the MCP client.
+There are two entry points into the system — the **Scheduler** (proactive) and the **Slack Bot** (interactive). Both delegate to the **Agent Core** for conversational queries and to the **InvestigationAgent** for autonomous root cause analysis. The **IntentClassifier** routes Slack messages to the appropriate path.
 
 ## Component map
 
 ```
-Entry Point
-├── Scheduler ──────────────────┐
-├── Slack Bot ──────────────────┤
-│   └── Conversation Memory     │
-│                               ▼
-│                          Agent Core
-│                          ├── LLM Client (OpenAI)
-│                          └── MCP Client (Grafana)
-└── Slack Webhook Notifier (used by Scheduler)
+dops-assistant
+├── Observability Server (:9090)
+│   ├── /health
+│   └── /metrics (Prometheus)
+│
+├── Slack Bot (Socket Mode)
+│   ├── IntentClassifier ──── "investigation" ──▶ InvestigationAgent
+│   │                    └─── "question" ──────▶ Agent Core
+│   └── Conversation Memory
+│
+├── Scheduler (cron)
+│   ├── Agent Core (anomaly detection)
+│   ├── InvestigationAgent (RCA on anomaly)
+│   ├── Alert Deduplicator
+│   └── Slack Webhook Notifier
+│
+├── InvestigationAgent (5-phase RCA pipeline)
+│   ├── Phase 1: Anomaly detection (optional)
+│   ├── Phase 2: Metric deep dive    ─┐
+│   ├── Phase 3: Log correlation      ├─ parallel
+│   ├── Phase 4: Infra health check  ─┘
+│   └── Phase 5: RCA synthesis
+│
+├── Agent Core (agentic tool-call loop)
+│   ├── LLM Client (OpenAI) ─── timeout + retry
+│   └── MCP Client (Grafana) ── timeout + metrics
+│
+└── Grafana MCP Server (stdio or StreamableHTTP)
+    ├── Prometheus
+    ├── Loki
+    ├── Dashboards
+    └── Alerts
 ```
 
 ---
@@ -32,19 +55,22 @@ A Zod schema validates the YAML config at startup. All `${ENV_VAR}` placeholders
 
 The config is loaded once at startup in `src/index.ts` and passed down to each component that needs it. No component reads config independently.
 
+Key config sections: `llm`, `grafana.mcpServer`, `services`, `scheduler.anomalyCheck`, `agent` (includes `investigationTriggerPhrases`), `notifications.slack`, `interfaces.slack`, `timeouts`, `retry`, `observability`.
+
 ---
 
 ### MCP Client
 
 **File:** `src/mcp/client.ts`
 
-Wraps `@modelcontextprotocol/sdk`. At startup it launches the Grafana MCP server as a stdio child process (the command is specified in `grafana.mcpServer` config), then calls `listTools` to discover available tools.
+Wraps `@modelcontextprotocol/sdk`. Supports two transport modes configured via `grafana.mcpServer.transport`:
 
-If `enabledTools` is configured, only those tools are surfaced to the LLM — the rest are filtered out. All tools are converted from MCP schema format to OpenAI function definition format so they can be passed directly to the LLM.
+- **`stdio`** — launches the Grafana MCP server as a child process
+- **`http`** — connects to a remote Grafana MCP server via StreamableHTTP (e.g. a docker-compose sidecar)
 
-`callTool(name, args)` executes a single tool call and returns the text content as a string. If the MCP server signals an application-level error (`isError: true`), the result is prefixed with `[Tool Error]` so the LLM can reason about it. Transport-level failures (e.g. the child process dying) throw an exception, which the Agent Core catches and converts to a `[Transport Error]` tool result.
+At startup it calls `listTools` to discover available tools. If `enabledTools` is configured, only those tools are surfaced to the LLM. All tools are converted from MCP schema format to OpenAI function definition format.
 
-A single persistent connection is used for the lifetime of the process. TODO: add reconnection logic.
+`callTool(name, args)` executes a single tool call with a configurable timeout and returns the text content as a string. Application-level errors (`isError: true`) are prefixed with `[Tool Error]`. Transport-level failures throw exceptions. Prometheus metrics track tool call counts, durations, and timeouts.
 
 ---
 
@@ -52,16 +78,14 @@ A single persistent connection is used for the lifetime of the process. TODO: ad
 
 **File:** `src/llm/openai.ts`
 
-A thin wrapper around the `openai` SDK. The single method `chat(messages, tools)` calls the OpenAI chat completions API and returns a typed discriminated union:
+A thin wrapper around the `openai` SDK. The single method `chat(messages, tools, opts?)` calls the chat completions API and returns a typed discriminated union:
 
-- `{ type: "text", content: string }` — the LLM produced a final response
-- `{ type: "tool_calls", calls: ToolCall[] }` — the LLM wants to call one or more tools
+- `{ type: "text", content: string }` — final response
+- `{ type: "tool_calls", calls: ToolCall[] }` — the LLM wants to call tools
 
-This shape is what the Agent Core loops on. The LLM client never loops itself — it makes exactly one API call per invocation.
+Supports `opts.responseFormat` for structured JSON output (used by the InvestigationAgent and proactive anomaly detection).
 
-Guards are in place for two failure modes: an empty `choices` array (content filtering) and malformed JSON in tool call arguments.
-
-Setting `llm.baseURL` in config overrides the OpenAI endpoint, enabling use of OpenAI-compatible APIs (e.g. hosted open-source models).
+All calls go through `withTimeout` and `withRetry` wrappers. Prometheus counters track success, error, rate-limited, and timeout outcomes, plus token usage.
 
 ---
 
@@ -69,7 +93,7 @@ Setting `llm.baseURL` in config overrides the OpenAI endpoint, enabling use of O
 
 **Files:** `src/agent/core.ts`, `src/agent/prompts.ts`, `src/agent/types.ts`
 
-The heart of the system. `AgentCore.run(task)` accepts an `AgentTask` and returns an `AgentResult`:
+The agentic tool-call loop. `AgentCore.run(task)` accepts an `AgentTask` and returns an `AgentResult`:
 
 ```ts
 type AgentTask = {
@@ -77,30 +101,62 @@ type AgentTask = {
   message: string;
   serviceContext?: ServiceConfig[];
   history?: Message[];
-};
-
-type AgentResult = {
-  response: string;
-  updatedHistory: Message[];
+  correlationId?: string;
 };
 ```
 
-**The agentic loop:**
+**The loop:**
 
-1. Build the message array: `[system prompt, ...history, user message]`
-2. Call the LLM with the current messages and available tools
-3. If the response is `tool_calls` → execute all tool calls in parallel via `Promise.allSettled` → append the assistant message and tool results to the message array → go to step 2
-4. If the response is `text` → append it as the assistant message → return
-5. If `maxIterations` is reached → return a truncation message
+1. Build messages: `[system prompt, ...history, user message]`
+2. Call the LLM with messages and available tools
+3. If `tool_calls` → execute all in parallel via `Promise.allSettled` → append results → go to 2
+4. If `text` → return the response
+5. If `maxIterations` reached → return a truncation message
 
-Tool calls within a single LLM turn are executed in parallel. If some succeed and some fail, each gets its own result (success or `[Transport Error]`) — partial failures do not abort the batch.
+**Proactive mode** uses structured output (`ResponseFormatJSONSchema`) to return an `AnomalyAssessment` with `isAnomaly`, `severity`, `summary`, `affectedMetrics`, and `recommendedAction`.
 
-**System prompts:**
+---
 
-- **Proactive mode:** instructs the LLM to check each service's metrics and logs for anomalies, describe anything unusual with severity, and say "looks healthy" if all is well
-- **Conversational mode:** instructs the LLM to act as an ops assistant, give specific metric values and timestamps, and link to dashboards when found
+### InvestigationAgent
 
-`updatedHistory` returns the full message array minus the system prompt, including intermediate tool-call messages. This is intentional — the Slack Bot stores this in conversation memory and passes it back on the next turn so the LLM has full context.
+**Files:** `src/agent/investigation.ts`, `src/agent/rca-types.ts`, `src/agent/rca-prompts.ts`
+
+A 5-phase autonomous root cause analysis pipeline:
+
+1. **Anomaly detection** (optional) — runs the existing proactive prompt if no initial anomaly is provided
+2. **Metric deep dive** — queries Prometheus for abnormal values, baselines, anomaly windows
+3. **Log correlation** — queries Loki for error patterns, stack traces, first occurrence
+4. **Infra health check** — checks pod restarts, node pressure, k8s events
+5. **RCA synthesis** — combines all findings into a structured `RcaReport` with root cause, evidence, confidence, and recommended actions
+
+Phases 2/3/4 run in parallel via `Promise.allSettled`. If any phase fails, the pipeline continues with empty findings for that phase (graceful degradation). Each phase uses its own `runPhase()` helper that runs a mini agentic loop with tools + structured JSON output.
+
+The `RcaReport` output type:
+```ts
+type RcaReport = {
+  service: string;
+  severity: "low" | "medium" | "high" | "critical";
+  summary: string;
+  rootCause: string;
+  evidence: { metrics: string[]; logs: string[]; infra: string[] };
+  recommendedActions: string[];
+  confidence: "low" | "medium" | "high";
+  investigatedAt: string;
+};
+```
+
+---
+
+### IntentClassifier
+
+**File:** `src/agent/intent.ts`
+
+A single LLM call (no tools) that classifies a Slack message as either:
+
+- `{ intent: "investigation", service?: string }` — route to InvestigationAgent
+- `{ intent: "question" }` — route to Agent Core (conversational mode)
+
+Uses structured JSON output. Falls back to `"question"` on any error (parse failure, LLM timeout, etc.).
 
 ---
 
@@ -110,22 +166,21 @@ Tool calls within a single LLM turn are executed in parallel. If some succeed an
 
 An in-memory `Map` keyed by Slack thread ID. Each entry holds a `Message[]` and a `lastActivity` timestamp.
 
-- `append(threadId, message)` — adds a message and trims to `maxMessages` (oldest removed)
+- `append(threadId, message)` — adds a message and trims to `maxMessages`
 - `get(threadId)` — returns the message array, or `[]` for unknown threads
-- `clear(threadId)` — removes the thread entirely
-- `destroy()` — stops the background eviction interval (called on shutdown)
+- `destroy()` — stops the background eviction interval
 
-A background `setInterval` (every 60 seconds) evicts threads inactive beyond `ttlMinutes`. The interval is `.unref()`'d so it does not prevent process exit.
+A background `setInterval` evicts threads inactive beyond `ttlMinutes`. The interval is `.unref()`'d so it does not prevent process exit.
 
 ---
 
 ### Slack Webhook Notifier
 
-**File:** `src/notifications/slack-webhook.ts`
+**Files:** `src/notifications/slack-webhook.ts`, `src/notifications/rca-blocks.ts`
 
-A single exported function `sendAnomalyAlert(webhookUrl, alert)`. Formats an anomaly as a Slack Block Kit message (header, service/severity fields, summary, optional metrics list, optional dashboard link button) and POSTs it to the webhook URL via `fetch`. Throws on non-2xx responses.
+`sendAnomalyAlert(webhookUrl, alert)` formats an `AnomalyAlert` as Slack Block Kit blocks and POSTs to the webhook URL. If the alert includes an `rca` field (attached by the Scheduler after investigation), the standard alert blocks are replaced with rich RCA blocks showing root cause, evidence sections, recommended actions, confidence, and timestamp.
 
-Used by the Scheduler — the Slack Bot does not use this; it replies directly in threads via the Bolt SDK.
+`formatRcaBlocks(report)` converts an `RcaReport` into `KnownBlock[]` with severity-emoji header, root cause section, evidence (metrics/logs/infra — empty sections omitted), numbered recommended actions, and a confidence/timestamp context footer.
 
 ---
 
@@ -133,17 +188,20 @@ Used by the Scheduler — the Slack Bot does not use this; it replies directly i
 
 **File:** `src/scheduler/scheduler.ts`
 
-Uses `node-cron` to run proactive anomaly checks on a configured interval. The interval string (`"5m"`, `"1h"`) is converted to a cron expression by `parseDurationToCron`.
+Uses `node-cron` to run proactive anomaly checks on a configured interval.
 
-On each tick, the scheduler:
+On each tick:
 
-1. Resolves the services to check (all services, or the subset listed in `scheduler.anomalyCheck.services`)
-2. Splits them into chunks of `maxConcurrency`
-3. For each chunk, runs `agent.run()` for every service in parallel via `Promise.allSettled`
-4. For any response that does not contain "healthy" or "no anomalies" (case-insensitive), fires `sendAnomalyAlert`
-5. Logs any rejected outcomes via pino (service check failures do not abort the batch)
+1. Resolve services to check (all, or the subset in `scheduler.anomalyCheck.services`)
+2. Split into chunks of `maxConcurrency`
+3. For each service, run `agent.run()` in proactive mode with structured output
+4. Parse the `AnomalyAssessment` JSON response
+5. If `isAnomaly === true` and not suppressed by `AlertDeduplicator`:
+   - Run `investigationAgent.investigate()` to get a full `RcaReport` (if investigation agent is available)
+   - Attach the report to the alert and fire `sendAnomalyAlert`
+6. If investigation fails, the alert is still sent without the RCA report
 
-**Anomaly detection heuristic:** The agent is prompted to say "everything looks healthy" when there are no issues. The scheduler treats any response lacking those keywords as an anomaly signal. This is intentionally simple — the LLM's judgment does the heavy lifting.
+The `AlertDeduplicator` tracks the last alert time per service and suppresses alerts within the `alertCooldownMinutes` window.
 
 ---
 
@@ -151,22 +209,40 @@ On each tick, the scheduler:
 
 **File:** `src/interfaces/slack.ts`
 
-Uses `@slack/bolt` in Socket Mode — no public URL required, works behind a firewall. Registers two handlers on startup:
+Uses `@slack/bolt` in Socket Mode. Registers `app.message` and `app.event("app_mention")` handlers.
 
-- `app.message` — direct messages to the bot
-- `app.event("app_mention")` — mentions in channels
+Message routing:
 
-Both handlers call `handleMessage(ctx, say)`, which:
+1. If an `IntentClassifier` and `InvestigationAgent` are provided:
+   - Classify the message intent
+   - If `"investigation"` → find the matching service (or default to first) → run `investigationAgent.investigate()` → reply with RCA blocks
+   - If `"question"` → fall through to conversational mode
+2. Conversational mode: load history from memory → `agent.run()` → save response to memory → reply as text
 
-1. Loads conversation history from `ConversationMemory` for the thread
-2. Appends the user message to memory
-3. Calls `agent.run()` in conversational mode with the loaded history
-4. Appends the assistant response to memory
-5. Posts the response to the thread via `say({ text, thread_ts })`
+If no classifier is configured, all messages go through conversational mode (backwards-compatible).
 
-If `agent.run()` throws, the user receives "Sorry, something went wrong. Please try again." and the error is re-thrown for process-level logging. The user message remains in memory so context is not lost.
+---
 
-Thread ID is `event.thread_ts ?? event.ts` for mentions, and `message.ts` for DMs — this means each top-level message starts its own conversation context.
+### Observability Server
+
+**File:** `src/observability/server.ts`
+
+An HTTP server on the configured port (default 9090) with two endpoints:
+
+- `GET /health` — returns `{ status: "ok", mcpConnected: boolean }`
+- `GET /metrics` — returns Prometheus-format metrics from the custom registry
+
+**Prometheus metrics** (`src/observability/metrics.ts`):
+
+| Metric | Type | Labels |
+|--------|------|--------|
+| `llm_calls_total` | Counter | `status` (success/error/timeout/rate_limited) |
+| `llm_tokens_used_total` | Counter | `type` (prompt/completion) |
+| `tool_calls_total` | Counter | `tool`, `status` |
+| `tool_duration_seconds` | Histogram | `tool` |
+| `scheduler_checks_total` | Counter | `service`, `status` |
+| `alert_notifications_total` | Counter | `status` |
+| `slack_messages_total` | Counter | `status` |
 
 ---
 
@@ -177,26 +253,32 @@ Thread ID is `event.thread_ts ?? event.ts` for mentions, and `message.ts` for DM
 Wires all components together in dependency order:
 
 1. Load config from `CONFIG_PATH` (default: `config.yaml`)
-2. Connect MCP client
-3. Construct LLM client, Agent Core, Conversation Memory
-4. Start Scheduler (if `scheduler.anomalyCheck` is configured)
-5. Start Slack Bot (if `interfaces.slack.enabled` and tokens are present)
-6. Register `SIGINT`/`SIGTERM` handlers for graceful shutdown
-
-Graceful shutdown stops the Scheduler, stops the Slack Bot, destroys conversation memory (clears the eviction interval), and disconnects the MCP client.
+2. Start observability server (so `/health` is available during startup)
+3. Connect MCP client (stdio or HTTP)
+4. Construct LLM client, Agent Core, Conversation Memory
+5. Construct InvestigationAgent and IntentClassifier
+6. Start Scheduler with InvestigationAgent (if `scheduler.anomalyCheck` configured)
+7. Start Slack Bot with IntentClassifier + InvestigationAgent (if `interfaces.slack.enabled`)
+8. Register `SIGINT`/`SIGTERM` handlers for graceful shutdown
 
 ---
 
 ## Key design decisions
 
-**Grafana MCP only** — A single MCP connection to Grafana covers Prometheus, Loki, dashboards, and alerts. No separate Prometheus MCP is needed.
+**Grafana MCP only** — A single MCP connection to Grafana covers Prometheus, Loki, dashboards, and alerts. No separate data source clients needed.
 
-**OpenAI for MVP** — Single LLM provider to keep the implementation simple. The `LlmClient` interface is thin enough that adding a second provider would be a contained change.
+**Dual transport** — MCP supports both stdio (child process) and StreamableHTTP (docker-compose sidecar or remote deployment). Configured via `grafana.mcpServer.transport`.
 
-**In-memory conversation store** — No database dependency for the MVP. Conversations are ephemeral with TTL-based eviction. Persistent storage (SQLite/Postgres) is a future enhancement.
+**5-phase parallel RCA** — Phases 2/3/4 (metrics, logs, infra) run concurrently to minimize investigation time. Each phase is an independent agentic loop with its own structured output schema. Graceful degradation means a failed phase doesn't block the investigation.
 
-**Socket Mode Slack** — No public webhook URL required. Simpler deployment and works in private networks.
+**Intent-based routing** — A single lightweight LLM call classifies Slack messages before dispatching to the appropriate handler. This avoids running the full agentic loop for investigation requests that don't need conversational context.
 
-**Promise.allSettled for parallelism** — Both the Agent Core (tool call execution) and the Scheduler (service checks) use `Promise.allSettled` so partial failures are isolated and reported individually rather than aborting the whole batch.
+**Structured output everywhere** — Proactive anomaly detection, per-phase investigation findings, and RCA synthesis all use OpenAI's `response_format: json_schema` for reliable parsing. No regex or string matching.
 
-**Anomaly detection via LLM judgment** — Rather than defining thresholds in config, the proactive system prompt describes what to look for and the LLM decides. This handles novel anomalies and cross-metric patterns that rule-based systems miss, at the cost of occasional false positives.
+**Timeouts and retries** — All LLM calls and tool executions are wrapped with configurable timeouts and exponential backoff retries. Prometheus metrics track all outcomes.
+
+**In-memory conversation store** — No database dependency for the MVP. Conversations are ephemeral with TTL-based eviction.
+
+**Socket Mode Slack** — No public webhook URL required. Works behind firewalls.
+
+**Promise.allSettled for parallelism** — Both the Agent Core (tool calls), Scheduler (service checks), and InvestigationAgent (phases 2/3/4) use `Promise.allSettled` so partial failures are isolated rather than aborting the whole batch.
