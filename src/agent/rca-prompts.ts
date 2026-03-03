@@ -3,6 +3,7 @@ import type { ResponseFormat } from "../llm/openai.js";
 // ── Phase prompts ─────────────────────────────────────────────────────────────
 
 export const METRIC_DEEP_DIVE_PROMPT = `You are investigating a service anomaly. Your job is to deeply analyse the metrics for the affected service.
+
 Query the metrics to determine:
 - What values are currently abnormal (include exact numbers and timestamps)
 - What the baseline/normal range appears to be
