@@ -185,7 +185,13 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
         const service = matchService(intent.service, services);
 
         if (!service) {
-          addMessage({ id: randomUUID(), role: "error", content: "No services configured to investigate." });
+          const available = services.map((s) => s.name).join(", ") || "none";
+          const name = intent.service ?? "unknown";
+          addMessage({
+            id: randomUUID(),
+            role: "error",
+            content: `No matching service found for "${name}". Available: ${available}`,
+          });
           setIsThinking(false);
           return;
         }
