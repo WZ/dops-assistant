@@ -111,16 +111,17 @@ export class InvestigationAgent {
       };
     }
 
-    log.debug("Running phases 2/3/4 in parallel");
+    log.debug("Running phases 2/3/4 + panel capture in parallel");
     const anomalyContext = `Known issue: ${anomaly.summary} (severity: ${anomaly.severity})`;
     const metricMessage = `${anomalyContext}\nService metrics: ${service.metrics.map((m) => m.query).join(", ")}`;
     const logMessage = `${anomalyContext}\nLog labels: ${JSON.stringify(service.logLabels)}`;
     const infraMessage = `${anomalyContext}\nService: ${service.name}`;
 
-    const [metricResult, logResult, infraResult] = await Promise.allSettled([
+    const [metricResult, logResult, infraResult, panelCaptureResult] = await Promise.allSettled([
       this.runPhase<MetricFindings>(METRIC_DEEP_DIVE_PROMPT, metricMessage, METRIC_FINDINGS_SCHEMA, undefined, onTokenUsage, onToolCall),
       this.runPhase<LogFindings>(LOG_CORRELATION_PROMPT, logMessage, LOG_FINDINGS_SCHEMA, undefined, onTokenUsage, onToolCall),
       this.runPhase<InfraFindings>(INFRA_HEALTH_PROMPT, infraMessage, INFRA_FINDINGS_SCHEMA, undefined, onTokenUsage, onToolCall),
+      this.capturePanelImages(service.name, onToolCall),
     ]);
 
     const metricFindings = metricResult.status === "fulfilled"
@@ -147,9 +148,16 @@ export class InvestigationAgent {
       log.debug({ infraImages: infraResult.value.images.length }, "Infra phase images");
     }
 
+    // Deterministic panel images (guaranteed capture)
+    if (panelCaptureResult.status === "fulfilled") {
+      collectedImages.push(...panelCaptureResult.value);
+      log.debug({ panelCaptureImages: panelCaptureResult.value.length }, "Deterministic panel capture images");
+    }
+
     if (metricResult.status === "rejected") log.warn({ err: metricResult.reason }, "Metric phase failed");
     if (logResult.status === "rejected") log.warn({ err: logResult.reason }, "Log phase failed");
     if (infraResult.status === "rejected") log.warn({ err: infraResult.reason }, "Infra phase failed");
+    if (panelCaptureResult.status === "rejected") log.warn({ err: panelCaptureResult.reason }, "Panel capture failed");
 
     // Phase 5: synthesise
     log.debug("Running phase 5: synthesis");
@@ -179,6 +187,90 @@ export class InvestigationAgent {
       investigatedAt: new Date().toISOString(),
       panelImages: collectedImages,
     };
+  }
+
+  /**
+   * Deterministic panel image capture — always runs, independent of LLM behavior.
+   * Searches dashboards, finds metric-related panels, and captures up to 3 images.
+   */
+  private async capturePanelImages(
+    serviceName: string,
+    onToolCall?: (name: string, args: Record<string, unknown>) => void,
+  ): Promise<PanelImage[]> {
+    const log = logger.child({ component: "panel-capture", service: serviceName });
+    const images: PanelImage[] = [];
+    const maxImages = 3;
+
+    const toolNames = this.mcp.getTools().map((t) => t.function.name);
+    if (!toolNames.includes("get_panel_image") || !toolNames.includes("search_dashboards")) {
+      log.debug("Panel image tools not available, skipping capture");
+      return images;
+    }
+
+    // Step 1: list all dashboards
+    onToolCall?.("search_dashboards", { query: "" });
+    const searchResult = await this.mcp.callTool("search_dashboards", { query: "" });
+
+    let dashboards: Array<{ uid: string; title: string }>;
+    try {
+      const parsed = JSON.parse(searchResult.text);
+      dashboards = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed?.dashboards) ? parsed.dashboards : [];
+    } catch {
+      log.warn("Failed to parse dashboard list");
+      return images;
+    }
+
+    log.debug({ dashboardCount: dashboards.length, first: dashboards[0]?.title }, "Dashboards found");
+    if (dashboards.length === 0) return images;
+
+    // Step 2: get panels from dashboards (check up to 3)
+    const serviceNameLower = serviceName.toLowerCase();
+    for (const db of dashboards.slice(0, 3)) {
+      if (images.length >= maxImages) break;
+
+      onToolCall?.("get_dashboard_by_uid", { uid: db.uid });
+      const detailResult = await this.mcp.callTool("get_dashboard_by_uid", { uid: db.uid });
+
+      let panels: Array<{ id: number; title: string; type: string }>;
+      try {
+        const data = JSON.parse(detailResult.text);
+        panels = (data.dashboard?.panels ?? data.panels ?? []) as Array<{
+          id: number; title: string; type: string;
+        }>;
+      } catch {
+        log.debug({ uid: db.uid, responsePreview: detailResult.text.slice(0, 200) }, "Failed to parse dashboard detail");
+        continue;
+      }
+
+      // Filter to visual metric panels only
+      const graphTypes = new Set(["timeseries", "graph", "gauge", "stat", "bargauge", "heatmap"]);
+      const metricPanels = panels.filter((p) => graphTypes.has(p.type));
+      log.debug({ uid: db.uid, totalPanels: panels.length, metricPanels: metricPanels.length, types: panels.map(p => p.type) }, "Dashboard panels");
+
+      // Prefer panels whose title mentions the service name
+      metricPanels.sort((a, b) => {
+        const aMatch = a.title.toLowerCase().includes(serviceNameLower) ? 0 : 1;
+        const bMatch = b.title.toLowerCase().includes(serviceNameLower) ? 0 : 1;
+        return aMatch - bMatch;
+      });
+
+      // Step 3: capture images
+      for (const panel of metricPanels.slice(0, maxImages - images.length)) {
+        try {
+          const args = { dashboardUid: db.uid, panelId: panel.id };
+          onToolCall?.("get_panel_image", args);
+          const imgResult = await this.mcp.callTool("get_panel_image", args);
+          images.push(...imgResult.images);
+        } catch (err) {
+          log.warn({ panel: panel.title, err }, "Failed to capture panel image");
+        }
+      }
+    }
+
+    log.info({ capturedImages: images.length }, "Panel image capture complete");
+    return images;
   }
 
   private async runPhase<T>(
