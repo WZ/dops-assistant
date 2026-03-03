@@ -171,13 +171,13 @@ export class InvestigationAgent {
           tool_call_id: call.id,
         });
         if (outcome.status === "fulfilled") {
-          for (const img of outcome.value.images) {
+          outcome.value.images.forEach((img, k) => {
             collectedImages.push({
-              filename: `panel-${call.name}-${Date.now()}.png`,
+              filename: `panel-${call.name}-${j}-${k}.png`,
               mimeType: img.mimeType,
               data: Buffer.from(img.data, "base64"),
             });
-          }
+          });
         }
       }
     }
