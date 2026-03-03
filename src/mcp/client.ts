@@ -8,6 +8,9 @@ import {
   toolCallsTotal,
   toolDurationSeconds,
 } from "../observability/metrics.js";
+import pino from "pino";
+
+const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
 
 export type OpenAITool = {
   type: "function";
@@ -16,6 +19,13 @@ export type OpenAITool = {
     description: string;
     parameters: Record<string, unknown>;
   };
+};
+
+export type PanelImage = { data: string; mimeType: string };
+
+export type ToolResult = {
+  text: string;
+  images: PanelImage[];
 };
 
 export class McpClient {
@@ -91,8 +101,11 @@ export class McpClient {
     return this.tools;
   }
 
-  async callTool(name: string, args: Record<string, unknown>): Promise<string> {
+  async callTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
     if (!this.client) throw new Error("MCP client not connected");
+
+    const log = logger.child({ tool: name });
+    log.debug({ args }, "Calling tool");
 
     const end = toolDurationSeconds.startTimer({ tool: name });
     try {
@@ -102,13 +115,33 @@ export class McpClient {
         `tool:${name}`,
       );
       end();
-      const parts = result.content as Array<{ type: string; text?: string }>;
+      const parts = result.content as Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+
+      // Count content parts by type for debugging
+      const typeCounts: Record<string, number> = {};
+      for (const p of parts) {
+        typeCounts[p.type] = (typeCounts[p.type] ?? 0) + 1;
+      }
+      log.debug({ typeCounts, totalParts: parts.length }, "MCP response content parts");
+
       const text = parts
         .filter((p) => p.type === "text")
         .map((p) => p.text ?? "")
         .join("\n");
+
+      const images = parts
+        .filter((p) => p.type === "image")
+        .map((p) => ({ data: p.data ?? "", mimeType: p.mimeType ?? "image/png" }));
+
+      if (images.length > 0) {
+        log.debug({ imageCount: images.length }, "Extracted images from response");
+      }
+
       toolCallsTotal.inc({ tool: name, status: "success" });
-      return result.isError ? `[Tool Error] ${text}` : text;
+      return {
+        text: result.isError ? `[Tool Error] ${text}` : text,
+        images,
+      };
     } catch (err) {
       end();
       toolCallsTotal.inc({

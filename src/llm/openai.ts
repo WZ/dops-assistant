@@ -127,6 +127,14 @@ export class LlmClient {
         "LLM returned no choices (possible content filter or API error)",
       );
     }
+
+    if (choice.finish_reason === "length") {
+      throw new Error(
+        `LLM response truncated (finish_reason=length, max_tokens=${this.config.maxTokens}). ` +
+        `Increase llm.maxTokens or reduce context size.`,
+      );
+    }
+
     const message = choice.message;
 
     if (message.tool_calls && message.tool_calls.length > 0) {
