@@ -4,19 +4,12 @@ import type OpenAI from "openai";
 
 export const METRIC_DEEP_DIVE_PROMPT = `You are investigating a service anomaly. Your job is to deeply analyse the metrics for the affected service.
 
-Step 1 — Query the metrics to determine:
+Query the metrics to determine:
 - What values are currently abnormal (include exact numbers and timestamps)
 - What the baseline/normal range appears to be
 - When the anomaly window started
 
-Step 2 — Capture panel images for evidence. You MUST complete this step:
-1. Call search_dashboards with an empty query to list ALL available dashboards.
-2. Pick the most relevant dashboard(s) for the service being investigated.
-3. Call get_dashboard_by_uid to get the dashboard details and find panel IDs.
-4. Call get_panel_image for 1-3 of the most relevant panels.
-   Required args: dashboardUid (string) and panelId (number).
-
-Complete BOTH steps before responding. Respond ONLY with valid JSON matching the required schema. Do not include any other text.`;
+Respond ONLY with valid JSON matching the required schema. Do not include any other text.`;
 
 export const LOG_CORRELATION_PROMPT = `You are investigating a service anomaly. Query the recent logs for the affected service to find:
 - Recurring error messages or exception patterns
@@ -29,8 +22,6 @@ export const INFRA_HEALTH_PROMPT = `You are investigating a service anomaly. Che
 - pod restart counts, OOMKilled events, CrashLoopBackOff status
 - Node CPU or memory pressure
 - Recent Kubernetes events or active alerts
-
-After checking health, capture panel images: call search_dashboards with an empty query, pick a relevant dashboard, call get_dashboard_by_uid to find panels, then call get_panel_image (dashboardUid: string, panelId: number) for up to 2 panels.
 
 Respond ONLY with valid JSON matching the required schema. Do not include any other text.`;
 
