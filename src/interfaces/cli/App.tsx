@@ -38,6 +38,18 @@ type AppProps = {
   toolCount: number;
 };
 
+/** Strip leading bullet/number markers that the LLM may include in list items */
+function stripLeadingBullet(s: string): string {
+  let cleaned = s.trim();
+  // Strip emoji numbers (1️⃣ through 🔟) — keycap sequences: digit + U+FE0F + U+20E3
+  cleaned = cleaned.replace(/^[\u0030-\u0039]\uFE0F?\u20E3\s*/, "");
+  // Strip leading "N." or "N)" numbering
+  cleaned = cleaned.replace(/^\d+[.)]\s*/, "");
+  // Strip bullet markers (•, -, *)
+  cleaned = cleaned.replace(/^[•\-\*]\s*/, "");
+  return cleaned.trim();
+}
+
 export function formatRcaText(report: RcaReport): string {
   const severityEmoji: Record<string, string> = {
     low: "🟢", medium: "🟡", high: "🟠", critical: "🔴",
@@ -45,47 +57,61 @@ export function formatRcaText(report: RcaReport): string {
   const emoji = severityEmoji[report.severity] ?? "⚪";
 
   const lines: string[] = [
-    `${emoji} RCA Report: ${report.service}`,
-    `Severity: ${report.severity} | Confidence: ${report.confidence}`,
-    `Root cause: ${report.rootCause}`,
-    `Summary: ${report.summary}`,
+    `# ${emoji} RCA: ${report.service}`,
+    "",
+    `**Severity:** ${report.severity} | **Confidence:** ${report.confidence} | **Investigated:** ${report.investigatedAt}`,
+    "",
+    `## Summary`,
+    report.summary,
+    "",
+    `## Root Cause`,
+    report.rootCause,
   ];
 
-  const evidenceSections: string[] = [];
-  if (report.evidence.metrics.length > 0) {
-    evidenceSections.push(
-      `  Metrics:\n${report.evidence.metrics.map((m) => `    • ${m}`).join("\n")}`,
-    );
+  // Evidence
+  const hasEvidence =
+    report.evidence.metrics.length > 0 ||
+    report.evidence.logs.length > 0 ||
+    report.evidence.infra.length > 0;
+
+  if (hasEvidence) {
+    lines.push("", "## Evidence");
+
+    if (report.evidence.metrics.length > 0) {
+      lines.push("", "### Metrics");
+      for (const m of report.evidence.metrics) {
+        lines.push(`- ${stripLeadingBullet(m)}`);
+      }
+    }
+    if (report.evidence.logs.length > 0) {
+      lines.push("", "### Logs");
+      for (const l of report.evidence.logs) {
+        lines.push(`- ${stripLeadingBullet(l)}`);
+      }
+    }
+    if (report.evidence.infra.length > 0) {
+      lines.push("", "### Infrastructure");
+      for (const i of report.evidence.infra) {
+        lines.push(`- ${stripLeadingBullet(i)}`);
+      }
+    }
   }
-  if (report.evidence.logs.length > 0) {
-    evidenceSections.push(
-      `  Logs:\n${report.evidence.logs.map((l) => `    • ${l}`).join("\n")}`,
-    );
-  }
-  if (report.evidence.infra.length > 0) {
-    evidenceSections.push(
-      `  Infrastructure:\n${report.evidence.infra.map((i) => `    • ${i}`).join("\n")}`,
-    );
-  }
+
   if (report.dashboardLinks.length > 0) {
-    evidenceSections.push(
-      `  Dashboard links:\n${report.dashboardLinks.map((l) => `    • ${l}`).join("\n")}`,
-    );
-  }
-  if (evidenceSections.length > 0) {
-    lines.push(`Evidence:\n${evidenceSections.join("\n")}`);
+    lines.push("", "## Dashboard Links");
+    for (const l of report.dashboardLinks) {
+      lines.push(`- ${stripLeadingBullet(l)}`);
+    }
   }
 
   if (report.recommendedActions.length > 0) {
-    const actions = report.recommendedActions
-      .map((a, i) => `  ${i + 1}. ${a}`)
-      .join("\n");
-    lines.push(`Actions:\n${actions}`);
+    lines.push("", "## Recommended Actions");
+    for (let i = 0; i < report.recommendedActions.length; i++) {
+      lines.push(`${i + 1}. ${stripLeadingBullet(report.recommendedActions[i]!)}`);
+    }
   }
 
-  lines.push(`Investigated at: ${report.investigatedAt}`);
-
-  return lines.filter(Boolean).join("\n");
+  return lines.join("\n");
 }
 
 /** Convert raw PanelImage (base64) to ImageAttachment (Buffer) for file saving */
@@ -206,7 +232,12 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
           return;
         }
 
-        const report = await investigationAgent.investigate(service, undefined, correlationId, onTokenUsage);
+        const report = await investigationAgent.investigate(service, undefined, correlationId, onTokenUsage, trimmed, (name: string, args: Record<string, unknown>) => {
+            const summary = JSON.stringify(args).slice(0, 80);
+            const tokens = pendingTokens;
+            pendingTokens = undefined;
+            setToolCalls((prev) => [...prev, { name, args: summary, tokens }]);
+          });
         addMessage({ id: randomUUID(), role: "rca", content: formatRcaText(report) });
         if (report.panelImages.length > 0) {
           const paths = saveAndOpenImages(panelImagesToAttachments(report.panelImages));

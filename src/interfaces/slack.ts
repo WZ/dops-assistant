@@ -7,7 +7,7 @@ const { App } = pkg;
 type App = InstanceType<typeof pkg.App>;
 import { randomUUID } from "node:crypto";
 import type { AgentCore } from "../agent/core.js";
-import type { IntentClassifier } from "../agent/intent.js";
+import { matchService, type IntentClassifier } from "../agent/intent.js";
 import type { InvestigationAgent } from "../agent/investigation.js";
 import type { ServiceConfig } from "../config/schema.js";
 import type { ConversationMemory } from "../memory/conversation.js";
@@ -74,10 +74,10 @@ export class SlackBot {
     try {
       // Route via intent classifier if available
       if (this.classifier && this.investigationAgent) {
-        const intent = await this.classifier.classify(ctx.text);
+        const serviceNames = this.services.map((s) => s.name);
+        const intent = await this.classifier.classify(ctx.text, serviceNames);
         if (intent.intent === "investigation") {
-          const service = this.services.find((s) => s.name === intent.service)
-            ?? this.services[0];
+          const service = matchService(intent.service, this.services);
 
           if (!service) {
             await say({ text: "No services configured to investigate.", thread_ts: threadId });
@@ -85,7 +85,7 @@ export class SlackBot {
             return;
           }
 
-          const report = await this.investigationAgent.investigate(service, undefined, correlationId);
+          const report = await this.investigationAgent.investigate(service, undefined, correlationId, undefined, ctx.text);
           await say({ blocks: formatRcaBlocks(report), thread_ts: threadId });
           slackMessagesTotal.inc({ status: "success" });
           return;

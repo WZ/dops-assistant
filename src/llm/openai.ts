@@ -121,7 +121,7 @@ export function convertTools(tools: OpenAITool[]): Array<{
     name: t.function.name,
     description: t.function.description,
     parameters: t.function.parameters,
-    strict: true,
+    strict: false,
   }));
 }
 
@@ -162,7 +162,7 @@ export class LlmClient {
   async chat(
     messages: Message[],
     tools: OpenAITool[],
-    opts?: { responseFormat?: ResponseFormat },
+    opts?: { responseFormat?: ResponseFormat; maxOutputTokens?: number },
   ): Promise<LlmResponse> {
     try {
       return await withRetry(
@@ -188,13 +188,13 @@ export class LlmClient {
   private async doChat(
     messages: Message[],
     tools: OpenAITool[],
-    opts?: { responseFormat?: ResponseFormat },
+    opts?: { responseFormat?: ResponseFormat; maxOutputTokens?: number },
   ): Promise<LlmResponse> {
     const { instructions, input } = convertToResponsesInput(messages);
 
     const requestParams = {
       model: this.config.model,
-      max_output_tokens: this.config.maxTokens,
+      max_output_tokens: opts?.maxOutputTokens ?? this.config.maxTokens,
       ...(instructions ? { instructions } : {}),
       input,
       ...(tools.length > 0
@@ -265,6 +265,17 @@ export class LlmClient {
           name: item.name,
           arguments: item.arguments,
         });
+      } else if (item.type === "mcp_call") {
+        // Some OpenAI-compatible APIs return mcp_call instead of function_call.
+        // Structure is similar: id, name, arguments, server_label.
+        const mcpItem = item as unknown as { id: string; name: string; arguments: string };
+        functionCalls.push({
+          id: mcpItem.id,
+          name: mcpItem.name,
+          arguments: mcpItem.arguments,
+        });
+      } else if (item.type === "reasoning") {
+        // Chain-of-thought reasoning from some APIs — safely ignore.
       } else if (item.type === "message") {
         for (const part of item.content) {
           if (part.type === "output_text") {

@@ -13,12 +13,12 @@ import {
   INFRA_FINDINGS_SCHEMA,
   RCA_REPORT_SCHEMA,
 } from "./rca-prompts.js";
-import { buildProactiveStructuredPrompt, ANOMALY_ASSESSMENT_RESPONSE_FORMAT } from "./prompts.js";
+import { buildProactiveStructuredPrompt, ANOMALY_ASSESSMENT_RESPONSE_FORMAT, getTimeContext } from "./prompts.js";
 import pino from "pino";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
 
-const MAX_TOOL_RESPONSE_CHARS = 4000;
+const MAX_TOOL_RESPONSE_CHARS = 2000;
 
 /**
  * Truncate oversized tool responses to prevent context bloat.
@@ -69,6 +69,7 @@ export class InvestigationAgent {
     initialAnomaly?: AnomalyAssessment,
     correlationId?: string,
     onTokenUsage?: (usage: TokenUsage) => void,
+    userMessage?: string,
     onToolCall?: (name: string, args: Record<string, unknown>) => void,
   ): Promise<RcaReport> {
     const log = logger.child({ component: "investigation", service: service.name, correlationId });
@@ -78,11 +79,14 @@ export class InvestigationAgent {
     let anomaly = initialAnomaly;
     if (!anomaly) {
       log.debug("Running phase 1: anomaly detection");
+      const phase1UserMessage = userMessage
+        ? `User reported: "${userMessage}"\n\nSearch for relevant dashboards and metrics to verify this report. Check service: ${service.name}`
+        : `Check service: ${service.name}`;
       const result = await this.runPhase<AnomalyAssessment>(
         buildProactiveStructuredPrompt([service]),
-        `Check service: ${service.name}`,
+        phase1UserMessage,
         ANOMALY_ASSESSMENT_RESPONSE_FORMAT,
-        undefined,
+        8,
         onTokenUsage,
         onToolCall,
       );
@@ -103,21 +107,23 @@ export class InvestigationAgent {
         panelImages: collectedImages,
         recommendedActions: [],
         confidence: "high",
-        investigatedAt: new Date().toISOString(),
+        investigatedAt: new Date().toLocaleString(),
       };
     }
 
     log.debug("Running phases 2/3/4 + panel capture in parallel");
-    const anomalyContext = `Known issue: ${anomaly.summary} (severity: ${anomaly.severity})`;
-    const metricMessage = `${anomalyContext}\nService metrics: ${service.metrics.map((m) => m.query).join(", ")}`;
-    const logMessage = `${anomalyContext}\nLog labels: ${JSON.stringify(service.logLabels)}`;
-    const infraMessage = `${anomalyContext}\nService: ${service.name}`;
+    const timeCtx = getTimeContext();
+    const anomalyContext = `${timeCtx}\nPresent all timestamps in the user's local timezone, not UTC.\n\nKnown issue: ${anomaly.summary} (severity: ${anomaly.severity})`;
+    const userContext = userMessage ? `\nUser reported: "${userMessage}"` : "";
+    const metricMessage = `${anomalyContext}${userContext}\nService metrics: ${service.metrics.map((m) => m.query).join(", ")}`;
+    const logMessage = `${anomalyContext}${userContext}\nLog labels: ${JSON.stringify(service.logLabels)}`;
+    const infraMessage = `${anomalyContext}${userContext}\nService: ${service.name}`;
 
     const [metricResult, logResult, infraResult, panelCaptureResult] = await Promise.allSettled([
-      this.runPhase<MetricFindings>(METRIC_DEEP_DIVE_PROMPT, metricMessage, METRIC_FINDINGS_SCHEMA, undefined, onTokenUsage, onToolCall),
-      this.runPhase<LogFindings>(LOG_CORRELATION_PROMPT, logMessage, LOG_FINDINGS_SCHEMA, undefined, onTokenUsage, onToolCall),
-      this.runPhase<InfraFindings>(INFRA_HEALTH_PROMPT, infraMessage, INFRA_FINDINGS_SCHEMA, undefined, onTokenUsage, onToolCall),
-      this.capturePanelImages(service.name, onToolCall),
+      this.runPhase<MetricFindings>(METRIC_DEEP_DIVE_PROMPT, metricMessage, METRIC_FINDINGS_SCHEMA, 8, onTokenUsage, onToolCall),
+      this.runPhase<LogFindings>(LOG_CORRELATION_PROMPT, logMessage, LOG_FINDINGS_SCHEMA, 8, onTokenUsage, onToolCall),
+      this.runPhase<InfraFindings>(INFRA_HEALTH_PROMPT, infraMessage, INFRA_FINDINGS_SCHEMA, 8, onTokenUsage, onToolCall),
+      this.capturePanelImages(service.name, anomaly.summary, userMessage, onToolCall),
     ]);
 
     const metricFindings = metricResult.status === "fulfilled"
@@ -158,6 +164,8 @@ export class InvestigationAgent {
     // Phase 5: synthesise
     log.debug("Running phase 5: synthesis");
     const synthesisMessage = [
+      timeCtx,
+      `Present all timestamps in the user's local timezone, not UTC.`,
       `Service: ${service.name}`,
       `Initial anomaly: ${JSON.stringify(anomaly)}`,
       `Metric findings: ${JSON.stringify(metricFindings)}`,
@@ -172,6 +180,7 @@ export class InvestigationAgent {
       3,
       onTokenUsage,
       onToolCall,
+      false, // synthesis is pure reasoning, no tools needed
     );
     collectedImages.push(...synthesisResult.images);
 
@@ -180,28 +189,37 @@ export class InvestigationAgent {
     return {
       ...synthesisResult.parsed,
       service: service.name,
-      investigatedAt: new Date().toISOString(),
+      investigatedAt: new Date().toLocaleString(),
       panelImages: collectedImages,
     };
   }
 
   /**
    * Deterministic panel image capture — always runs, independent of LLM behavior.
-   * Searches dashboards, finds metric-related panels, and captures up to 3 images.
+   * Searches dashboards, finds ones relevant to the service, and captures up to 3
+   * panel images with a time range derived from the anomaly context.
    */
   private async capturePanelImages(
     serviceName: string,
+    anomalySummary: string,
+    userMessage?: string,
     onToolCall?: (name: string, args: Record<string, unknown>) => void,
   ): Promise<PanelImage[]> {
     const log = logger.child({ component: "panel-capture", service: serviceName });
+    log.info("Starting deterministic panel capture");
     const images: PanelImage[] = [];
     const maxImages = 3;
 
     const toolNames = this.mcp.getTools().map((t) => t.function.name);
+    log.info({ availableTools: toolNames }, "Available tools for panel capture");
     if (!toolNames.includes("get_panel_image") || !toolNames.includes("search_dashboards")) {
-      log.debug("Panel image tools not available, skipping capture");
+      log.warn("Panel image tools not available, skipping capture");
       return images;
     }
+
+    // Derive time range from anomaly context
+    const timeRange = this.extractTimeRange(anomalySummary, userMessage);
+    log.info({ timeRange }, "Derived time range for panel images");
 
     // Step 1: list all dashboards
     onToolCall?.("search_dashboards", { query: "" });
@@ -218,11 +236,21 @@ export class InvestigationAgent {
       return images;
     }
 
-    log.debug({ dashboardCount: dashboards.length, first: dashboards[0]?.title }, "Dashboards found");
     if (dashboards.length === 0) return images;
 
-    // Step 2: get panels from dashboards (check up to 3)
-    const serviceNameLower = serviceName.toLowerCase();
+    // Step 2: sort dashboards by relevance to the service name
+    const serviceTokens = serviceName.toLowerCase().split(/[-_\s]+/);
+    dashboards.sort((a, b) => {
+      const aTitle = a.title.toLowerCase();
+      const bTitle = b.title.toLowerCase();
+      const aScore = serviceTokens.filter((t) => aTitle.includes(t)).length;
+      const bScore = serviceTokens.filter((t) => bTitle.includes(t)).length;
+      return bScore - aScore; // higher match count first
+    });
+
+    log.debug({ dashboardCount: dashboards.length, topDashboards: dashboards.slice(0, 3).map((d) => d.title) }, "Dashboards ranked by relevance");
+
+    // Step 3: get panels from top dashboards
     for (const db of dashboards.slice(0, 3)) {
       if (images.length >= maxImages) break;
 
@@ -236,29 +264,34 @@ export class InvestigationAgent {
           id: number; title: string; type: string;
         }>;
       } catch {
-        log.debug({ uid: db.uid, responsePreview: detailResult.text.slice(0, 200) }, "Failed to parse dashboard detail");
         continue;
       }
 
-      // Filter to visual metric panels only
+      // Filter to visual metric panels
       const graphTypes = new Set(["timeseries", "graph", "gauge", "stat", "bargauge", "heatmap"]);
       const metricPanels = panels.filter((p) => graphTypes.has(p.type));
-      log.debug({ uid: db.uid, totalPanels: panels.length, metricPanels: metricPanels.length, types: panels.map(p => p.type) }, "Dashboard panels");
 
-      // Prefer panels whose title mentions the service name
+      // Rank panels: prefer those whose title mentions the service
       metricPanels.sort((a, b) => {
-        const aMatch = a.title.toLowerCase().includes(serviceNameLower) ? 0 : 1;
-        const bMatch = b.title.toLowerCase().includes(serviceNameLower) ? 0 : 1;
-        return aMatch - bMatch;
+        const aTitle = a.title.toLowerCase();
+        const bTitle = b.title.toLowerCase();
+        const aScore = serviceTokens.filter((t) => aTitle.includes(t)).length;
+        const bScore = serviceTokens.filter((t) => bTitle.includes(t)).length;
+        return bScore - aScore;
       });
 
-      // Step 3: capture images
+      // Step 4: capture images with the correct time range
       for (const panel of metricPanels.slice(0, maxImages - images.length)) {
         try {
-          const args = { dashboardUid: db.uid, panelId: panel.id };
+          const args: Record<string, unknown> = {
+            dashboardUid: db.uid,
+            panelId: panel.id,
+            timeRange,
+          };
           onToolCall?.("get_panel_image", args);
           const imgResult = await this.mcp.callTool("get_panel_image", args);
           images.push(...imgResult.images);
+          log.debug({ panel: panel.title, dashboard: db.title }, "Captured panel image");
         } catch (err) {
           log.warn({ panel: panel.title, err }, "Failed to capture panel image");
         }
@@ -269,6 +302,47 @@ export class InvestigationAgent {
     return images;
   }
 
+  /**
+   * Extract a Grafana-compatible time range from the anomaly description.
+   * Looks for date/time references; defaults to last 24h if none found.
+   */
+  private extractTimeRange(anomalySummary: string, userMessage?: string): { from: string; to: string } {
+    const text = `${anomalySummary} ${userMessage ?? ""}`;
+
+    // Try to find an ISO-ish date or "March 2nd" style references
+    const dateMatch = text.match(/(\d{4}-\d{2}-\d{2})/);
+    if (dateMatch) {
+      // Found a date like 2026-03-02 — show that full day
+      return { from: `${dateMatch[1]}T00:00:00`, to: `${dateMatch[1]}T23:59:59` };
+    }
+
+    // Try "March 2nd", "Mar 2", etc.
+    const monthNames: Record<string, string> = {
+      january: "01", february: "02", march: "03", april: "04",
+      may: "05", june: "06", july: "07", august: "08",
+      september: "09", october: "10", november: "11", december: "12",
+      jan: "01", feb: "02", mar: "03", apr: "04",
+      jun: "06", jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12",
+    };
+    const namedDateMatch = text.match(
+      /\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2})(?:st|nd|rd|th)?\b/i,
+    );
+    if (namedDateMatch) {
+      const month = monthNames[namedDateMatch[1]!.toLowerCase()];
+      const day = namedDateMatch[2]!.padStart(2, "0");
+      const year = new Date().getFullYear();
+      return { from: `${year}-${month}-${day}T00:00:00`, to: `${year}-${month}-${day}T23:59:59` };
+    }
+
+    // Try relative references
+    if (/yesterday/i.test(text)) {
+      return { from: "now-2d", to: "now" };
+    }
+
+    // Default: last 24h
+    return { from: "now-24h", to: "now" };
+  }
+
   private async runPhase<T>(
     systemPrompt: string,
     userMessage: string,
@@ -276,8 +350,9 @@ export class InvestigationAgent {
     maxIterations = this.maxIterations,
     onTokenUsage?: (usage: TokenUsage) => void,
     onToolCall?: (name: string, args: Record<string, unknown>) => void,
+    useTools = true,
   ): Promise<PhaseResult<T>> {
-    const tools = this.mcp.getTools();
+    const tools = useTools ? this.mcp.getTools() : [];
     const messages: Message[] = [
       { role: "system", content: systemPrompt },
       { role: "user", content: userMessage },
@@ -285,15 +360,14 @@ export class InvestigationAgent {
     const phaseImages: PanelImage[] = [];
 
     for (let i = 0; i < maxIterations; i++) {
-      // On the last iteration, withhold tools and inject a "respond now" message
-      // to force the LLM to produce a final text response
-      const isLastIteration = i === maxIterations - 1;
-      const iterationTools = isLastIteration ? [] : tools;
+      // Near the end, withhold tools to force a JSON response
+      const remainingIterations = maxIterations - i;
+      const iterationTools = remainingIterations <= 2 ? [] : tools;
 
-      if (isLastIteration && i > 0) {
+      if (remainingIterations <= 2 && i > 0) {
         messages.push({
           role: "user",
-          content: "You have used all available tool iterations. Please respond now with your findings in the required JSON format.",
+          content: "You have used all available tool iterations. You MUST respond now with valid JSON matching the required schema. Do not call any more tools.",
         });
       }
 
@@ -314,6 +388,12 @@ export class InvestigationAgent {
             `Phase returned invalid JSON (${response.content.length} chars): ${err instanceof Error ? err.message : String(err)}`,
           );
         }
+      }
+
+      // If LLM returned tool_calls on the last iteration (despite no tools), skip execution
+      if (remainingIterations <= 1) {
+        logger.warn({ iteration: i, callCount: response.calls.length }, "LLM returned tool calls on final iteration, forcing completion");
+        break;
       }
 
       messages.push({

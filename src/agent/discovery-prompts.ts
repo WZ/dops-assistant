@@ -1,29 +1,30 @@
 import type { ResponseFormat } from "../llm/openai.js";
 import type { DiscoveryConfig } from "../config/schema.js";
 
-export const DISCOVERY_PROMPT = `You are a service discovery agent. Your job is to discover services monitored in this Grafana/Prometheus environment and generate configuration for each.
+export const DISCOVERY_PROMPT = `You are a service discovery agent. Your job is to discover services from Consul and generate monitoring configuration.
 
 For each discovered service, produce:
-- name: a short identifier (e.g. "payments-api", "user-service")
-- metrics: an array of useful Prometheus queries with descriptions. Focus on RED signals:
-  - Request rate (e.g. rate(http_requests_total{...}[5m]))
-  - Error rate (e.g. rate(http_requests_total{status=~"5.."}[5m]))
-  - Latency (e.g. histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{...}[5m])))
-  Only include metrics that actually exist — verify by querying them.
-- logLabels: key-value pairs for querying this service's logs in Loki. Try common label names (app, service, job) and verify which ones return results.
+- name: the service_name from the consul metric
+- metrics: 1 Prometheus query — the consul health metric for this service. Format: consul_catalog_service_node_healthy{service_name="<name>"}
+- logLabels: {} (log label matching is handled automatically after discovery)
 
 Strategy:
-1. Query the consul metric to get a list of service names
-2. For each service (excluding infrastructure services listed below):
-   a. Use list_prometheus_metric_metadata or query_prometheus to find metrics matching the service name (try job label, service label, and other common patterns)
-   b. Select the most useful RED metrics and write working PromQL queries
-   c. Query Loki to find log labels that match this service
-3. Return ALL discovered services as a JSON array
+1. Call list_datasources to find the Prometheus datasource UID.
+2. Query Prometheus to get ALL service names using a compact aggregation query:
+   expr: count by (service_name) (<consul_metric>)
+   queryType: instant
+   This returns exactly one row per service name (not per node), keeping the result small.
+   Extract every unique service_name value from the result.
+3. Output the JSON with all discovered services.
+
+For each service:
+- metrics: always include consul_catalog_service_node_healthy{service_name="<name>"}
+- logLabels: always set to {} (will be enriched later)
 
 Important:
-- Only include metrics you have verified exist by querying them
-- Write complete, working PromQL queries (not templates)
-- If a service has no discoverable metrics or logs, still include it with empty arrays — it can be enriched later
+- Include EVERY unique service_name from the consul metric (except excluded ones)
+- Keep metrics to exactly 1 query per service (the consul health metric)
+- Do NOT query Loki — log label discovery is handled separately
 
 Respond ONLY with valid JSON matching the required schema.`;
 

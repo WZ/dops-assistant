@@ -1,7 +1,7 @@
 services:
   grafana-mcp:
     image: docker.io/grafana/mcp-grafana:latest
-    entrypoint: ["/app/mcp-grafana", "--transport", "streamable-http", "--address", "0.0.0.0:8000"]
+    entrypoint: ["/app/mcp-grafana", "--transport", "streamable-http", "--address", "0.0.0.0:8000", "--debug", "--log-level", "debug", "-tls-skip-verify"]
     restart: "no"
     env_file: dev/.env
     ports:
