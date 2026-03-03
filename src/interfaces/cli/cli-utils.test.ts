@@ -118,6 +118,53 @@ describe("formatRcaText", () => {
     const text = formatRcaText({ ...baseReport, recommendedActions: [] });
     expect(text).not.toContain("Actions:");
   });
+
+  it("renders evidence metrics", () => {
+    const text = formatRcaText({
+      ...baseReport,
+      evidence: { metrics: ["error_rate=15%"], logs: [], infra: [] },
+    });
+    expect(text).toContain("Metrics:");
+    expect(text).toContain("• error_rate=15%");
+  });
+
+  it("renders evidence logs", () => {
+    const text = formatRcaText({
+      ...baseReport,
+      evidence: { metrics: [], logs: ["connection timeout"], infra: [] },
+    });
+    expect(text).toContain("Logs:");
+    expect(text).toContain("• connection timeout");
+  });
+
+  it("renders evidence infra", () => {
+    const text = formatRcaText({
+      ...baseReport,
+      evidence: { metrics: [], logs: [], infra: ["node-1 unreachable"] },
+    });
+    expect(text).toContain("Infrastructure:");
+    expect(text).toContain("• node-1 unreachable");
+  });
+
+  it("renders dashboard links", () => {
+    const text = formatRcaText({
+      ...baseReport,
+      dashboardLinks: ["https://grafana/d/abc?panelId=1"],
+    });
+    expect(text).toContain("Dashboard links:");
+    expect(text).toContain("https://grafana/d/abc?panelId=1");
+  });
+
+  it("omits empty evidence sections", () => {
+    const text = formatRcaText({
+      ...baseReport,
+      evidence: { metrics: [], logs: [], infra: [] },
+      dashboardLinks: [],
+    });
+    expect(text).not.toContain("Metrics:");
+    expect(text).not.toContain("Logs:");
+    expect(text).not.toContain("Dashboard links:");
+  });
 });
 
 describe("saveAndOpenImages", () => {
