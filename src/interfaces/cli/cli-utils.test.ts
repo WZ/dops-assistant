@@ -93,18 +93,20 @@ describe("formatRcaText", () => {
     panelImages: [],
     recommendedActions: ["Scale connection pool", "Add circuit breaker"],
     confidence: "high",
-    investigatedAt: "2026-02-27T10:00:00Z",
+    investigatedAt: "3/3/2026, 8:52:13 AM",
   };
 
-  it("formats a complete RCA report", () => {
+  it("formats a complete RCA report with markdown headers", () => {
     const text = formatRcaText(baseReport);
-    expect(text).toContain("🟠 RCA Report: payments-api");
-    expect(text).toContain("Severity: high | Confidence: high");
-    expect(text).toContain("Root cause: Database connection pool exhaustion");
-    expect(text).toContain("Summary: Elevated error rate detected");
+    expect(text).toContain("# 🟠 RCA: payments-api");
+    expect(text).toContain("**Severity:** high | **Confidence:** high");
+    expect(text).toContain("## Root Cause");
+    expect(text).toContain("Database connection pool exhaustion");
+    expect(text).toContain("## Summary");
+    expect(text).toContain("Elevated error rate detected");
     expect(text).toContain("1. Scale connection pool");
     expect(text).toContain("2. Add circuit breaker");
-    expect(text).toContain("Investigated at: 2026-02-27T10:00:00Z");
+    expect(text).toContain("**Investigated:** 3/3/2026, 8:52:13 AM");
   });
 
   it("uses correct severity emojis", () => {
@@ -116,43 +118,43 @@ describe("formatRcaText", () => {
 
   it("omits actions section when empty", () => {
     const text = formatRcaText({ ...baseReport, recommendedActions: [] });
-    expect(text).not.toContain("Actions:");
+    expect(text).not.toContain("## Recommended Actions");
   });
 
-  it("renders evidence metrics", () => {
+  it("renders evidence metrics as markdown bullets", () => {
     const text = formatRcaText({
       ...baseReport,
       evidence: { metrics: ["error_rate=15%"], logs: [], infra: [] },
     });
-    expect(text).toContain("Metrics:");
-    expect(text).toContain("• error_rate=15%");
+    expect(text).toContain("### Metrics");
+    expect(text).toContain("- error_rate=15%");
   });
 
-  it("renders evidence logs", () => {
+  it("renders evidence logs as markdown bullets", () => {
     const text = formatRcaText({
       ...baseReport,
       evidence: { metrics: [], logs: ["connection timeout"], infra: [] },
     });
-    expect(text).toContain("Logs:");
-    expect(text).toContain("• connection timeout");
+    expect(text).toContain("### Logs");
+    expect(text).toContain("- connection timeout");
   });
 
-  it("renders evidence infra", () => {
+  it("renders evidence infra as markdown bullets", () => {
     const text = formatRcaText({
       ...baseReport,
       evidence: { metrics: [], logs: [], infra: ["node-1 unreachable"] },
     });
-    expect(text).toContain("Infrastructure:");
-    expect(text).toContain("• node-1 unreachable");
+    expect(text).toContain("### Infrastructure");
+    expect(text).toContain("- node-1 unreachable");
   });
 
-  it("renders dashboard links", () => {
+  it("renders dashboard links section", () => {
     const text = formatRcaText({
       ...baseReport,
       dashboardLinks: ["https://grafana/d/abc?panelId=1"],
     });
-    expect(text).toContain("Dashboard links:");
-    expect(text).toContain("https://grafana/d/abc?panelId=1");
+    expect(text).toContain("## Dashboard Links");
+    expect(text).toContain("- https://grafana/d/abc?panelId=1");
   });
 
   it("omits empty evidence sections", () => {
@@ -161,9 +163,58 @@ describe("formatRcaText", () => {
       evidence: { metrics: [], logs: [], infra: [] },
       dashboardLinks: [],
     });
-    expect(text).not.toContain("Metrics:");
-    expect(text).not.toContain("Logs:");
-    expect(text).not.toContain("Dashboard links:");
+    expect(text).not.toContain("### Metrics");
+    expect(text).not.toContain("### Logs");
+    expect(text).not.toContain("## Dashboard Links");
+  });
+
+  it("strips leading bullet markers from LLM output", () => {
+    const text = formatRcaText({
+      ...baseReport,
+      evidence: {
+        metrics: ["• already bulleted item", "- dash item", "* star item"],
+        logs: [],
+        infra: [],
+      },
+    });
+    // Should have single bullets, not double
+    expect(text).toContain("- already bulleted item");
+    expect(text).toContain("- dash item");
+    expect(text).toContain("- star item");
+    expect(text).not.toContain("- • ");
+    expect(text).not.toContain("- - ");
+    expect(text).not.toContain("- * ");
+  });
+
+  it("strips leading bullets from recommended actions", () => {
+    const text = formatRcaText({
+      ...baseReport,
+      recommendedActions: ["• Check logs", "- Restart pods"],
+    });
+    expect(text).toContain("1. Check logs");
+    expect(text).toContain("2. Restart pods");
+  });
+
+  it("strips emoji numbers from recommended actions", () => {
+    const text = formatRcaText({
+      ...baseReport,
+      recommendedActions: ["1\uFE0F\u20E3 Validate broker health", "2\uFE0F\u20E3 Inspect network"],
+    });
+    expect(text).toContain("1. Validate broker health");
+    expect(text).toContain("2. Inspect network");
+    // No double numbering
+    expect(text).not.toContain("1. 1");
+    expect(text).not.toContain("2. 2");
+  });
+
+  it("strips leading number prefixes from actions", () => {
+    const text = formatRcaText({
+      ...baseReport,
+      recommendedActions: ["1. Already numbered", "2) Paren style"],
+    });
+    expect(text).toContain("1. Already numbered");
+    expect(text).toContain("2. Paren style");
+    expect(text).not.toContain("1. 1.");
   });
 });
 

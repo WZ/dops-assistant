@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { McpClient } from "./client.js";
+import { McpClient, normalizeGrafanaTime } from "./client.js";
 import type { McpServerConfig } from "../config/schema.js";
 import { TimeoutError } from "../utils/timeout.js";
 
@@ -282,5 +282,100 @@ describe("McpClient – HTTP transport", () => {
 
     const transportInstance = (StreamableHTTPClientTransport as ReturnType<typeof vi.fn>).mock.results[0].value;
     expect(transportInstance.close).toHaveBeenCalled();
+  });
+});
+
+describe("normalizeGrafanaTime", () => {
+  it("passes through relative time strings", () => {
+    expect(normalizeGrafanaTime("now")).toBe("now");
+    expect(normalizeGrafanaTime("now-1h")).toBe("now-1h");
+    expect(normalizeGrafanaTime("now-6h")).toBe("now-6h");
+    expect(normalizeGrafanaTime("now-7d/d")).toBe("now-7d/d");
+  });
+
+  it("converts ISO 8601 dates to epoch ms", () => {
+    const result = normalizeGrafanaTime("2026-03-02T22:00:00Z");
+    expect(typeof result).toBe("number");
+    expect(result).toBe(new Date("2026-03-02T22:00:00Z").getTime());
+    expect(result as number).toBeGreaterThan(1e12);
+  });
+
+  it("converts epoch seconds (numbers) to epoch ms", () => {
+    expect(normalizeGrafanaTime(1709402400)).toBe(1709402400000);
+  });
+
+  it("keeps epoch ms numbers as-is", () => {
+    expect(normalizeGrafanaTime(1709402400000)).toBe(1709402400000);
+  });
+
+  it("rejects pure numeric strings", () => {
+    expect(normalizeGrafanaTime("1709402400")).toBeNull();
+    expect(normalizeGrafanaTime("1709402400000")).toBeNull();
+  });
+
+  it("rejects garbage", () => {
+    expect(normalizeGrafanaTime("hello")).toBeNull();
+    expect(normalizeGrafanaTime("")).toBeNull();
+    expect(normalizeGrafanaTime(null)).toBeNull();
+    expect(normalizeGrafanaTime(undefined)).toBeNull();
+    expect(normalizeGrafanaTime(0)).toBeNull();
+    expect(normalizeGrafanaTime(-1)).toBeNull();
+  });
+});
+
+describe("McpClient – get_panel_image timeRange normalization", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("converts ISO date timeRange to epoch ms before sending to MCP", async () => {
+    const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+    const client = new McpClient(baseConfig, baseTimeouts);
+    await client.connect();
+    const instance = (Client as ReturnType<typeof vi.fn>).mock.instances[0];
+    instance.callTool.mockResolvedValueOnce({
+      content: [{ type: "text", text: "ok" }],
+    });
+
+    await client.callTool("get_panel_image", {
+      dashboardUid: "abc",
+      panelId: 1,
+      timeRange: { from: "2026-03-02T22:00:00Z", to: "2026-03-02T23:00:00Z" },
+    });
+
+    const sentArgs = instance.callTool.mock.calls[0][0].arguments;
+    expect(sentArgs.timeRange.from).toBe(new Date("2026-03-02T22:00:00Z").getTime());
+    expect(sentArgs.timeRange.to).toBe(new Date("2026-03-02T23:00:00Z").getTime());
+  });
+
+  it("defaults missing timeRange to now-6h/now", async () => {
+    const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+    const client = new McpClient(baseConfig, baseTimeouts);
+    await client.connect();
+    const instance = (Client as ReturnType<typeof vi.fn>).mock.instances[0];
+    instance.callTool.mockResolvedValueOnce({
+      content: [{ type: "text", text: "ok" }],
+    });
+
+    await client.callTool("get_panel_image", { dashboardUid: "abc", panelId: 1 });
+
+    const sentArgs = instance.callTool.mock.calls[0][0].arguments;
+    expect(sentArgs.timeRange).toEqual({ from: "now-6h", to: "now" });
+  });
+
+  it("does NOT normalize args for non-panel-image tools", async () => {
+    const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+    const client = new McpClient(baseConfig, baseTimeouts);
+    await client.connect();
+    const instance = (Client as ReturnType<typeof vi.fn>).mock.instances[0];
+    instance.callTool.mockResolvedValueOnce({
+      content: [{ type: "text", text: "ok" }],
+    });
+
+    const args = { query: "up", startTime: "2026-03-02T22:00:00Z" };
+    await client.callTool("query_prometheus", args);
+
+    const sentArgs = instance.callTool.mock.calls[0][0].arguments;
+    expect(sentArgs).toBe(args); // exact same reference, no transformation
   });
 });

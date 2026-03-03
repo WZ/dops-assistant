@@ -15,6 +15,11 @@ import { IntentClassifier } from "./agent/intent.js";
 import { ConversationMemory } from "./memory/conversation.js";
 import { App } from "./interfaces/cli/App.js";
 
+// Silence pino loggers — their stdout output corrupts Ink's terminal rendering
+if (!process.env["LOG_LEVEL"]) {
+  process.env["LOG_LEVEL"] = "silent";
+}
+
 const configPath = process.env["CONFIG_PATH"] ?? "dev/config.yaml";
 
 async function main(): Promise<void> {

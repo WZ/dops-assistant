@@ -4,7 +4,7 @@
 
 dops-assistant is built as a layered dependency graph — each layer depends only on the layers below it. This makes components testable in isolation (mocking the layer below) and makes it straightforward to swap implementations (e.g. a different LLM provider) without touching the layers above.
 
-The three entry points into the system — the Scheduler, Slack Bot, and CLI — all delegate to the Agent Core, which is the only component that knows about both the LLM and the MCP client.
+The three entry points into the system — the Scheduler, Slack Bot, and CLI — all delegate to the Agent Core, which is the only component that knows about both the LLM and the MCP client. A separate Discovery Agent uses the same LLM + MCP stack to auto-discover services at startup or via the `npm run discover` CLI.
 
 ## Component map
 
@@ -18,6 +18,8 @@ Entry Point
 │                          Agent Core
 │                          ├── LLM Client (OpenAI)
 │                          └── MCP Client (Grafana)
+├── Discovery Agent ───────────▶ LLM + MCP (auto-discovers services)
+│   └── discover CLI (npm run discover)
 └── Slack Webhook Notifier (used by Scheduler)
 ```
 
@@ -190,22 +192,42 @@ Features:
 
 ---
 
+### Discovery Agent
+
+**Files:** `src/agent/discovery.ts`, `src/agent/discovery-prompts.ts`
+
+Automatically discovers services by querying Prometheus and Loki via the existing MCP connection. The agent uses a `consul_catalog_service_node_healthy` metric (configurable via `discovery.consulMetric`) to find registered services, then probes each one for RED metrics (rate, errors, duration) and Loki log labels.
+
+The discovery loop follows the same pattern as the Agent Core — an LLM agentic loop with MCP tool calls — but uses a specialized system prompt and returns structured JSON via the OpenAI `json_schema` response format. The result is a `ServiceConfig[]` that can be merged with statically defined services.
+
+Two triggers:
+
+- **`npm run discover`** (`src/discover.tsx`) — an Ink-based CLI that runs discovery interactively, shows progress, and writes results back to the config file
+- **Startup auto-refresh** — when `discovery.autoRefresh` is `true` in config, `src/index.ts` runs discovery at boot and merges new services into the runtime service list (does not write to disk)
+
+Services listed in `discovery.excludeServices` (e.g. `consul`, `prometheus`, `grafana`) are filtered from results. Static services in config always take precedence — discovery only adds services not already defined.
+
+---
+
 ### Entry Point
 
-**Files:** `src/index.ts` (Slack + Scheduler), `src/cli.tsx` (CLI mode)
+**Files:** `src/index.ts` (Slack + Scheduler), `src/cli.tsx` (CLI mode), `src/discover.tsx` (discovery CLI)
 
 `src/index.ts` wires all components together in dependency order:
 
 1. Load config from `CONFIG_PATH` (default: `config.yaml`)
 2. Connect MCP client
 3. Construct LLM client, Agent Core, Conversation Memory
-4. Start Scheduler (if `scheduler.anomalyCheck` is configured)
-5. Start Slack Bot (if `interfaces.slack.enabled` and tokens are present)
-6. Register `SIGINT`/`SIGTERM` handlers for graceful shutdown
+4. Run service auto-discovery if `discovery.autoRefresh` is enabled (merges with static services)
+5. Start Scheduler (if `scheduler.anomalyCheck` is configured)
+6. Start Slack Bot (if `interfaces.slack.enabled` and tokens are present)
+7. Register `SIGINT`/`SIGTERM` handlers for graceful shutdown
 
 Graceful shutdown stops the Scheduler, stops the Slack Bot, destroys conversation memory (clears the eviction interval), and disconnects the MCP client.
 
 `src/cli.tsx` is a separate entry point started via `npm run cli` (or `CONFIG_PATH=dev/config.yaml npm run cli`). It connects to MCP and the LLM but skips Slack, Scheduler, and ObservabilityServer. On exit, it disconnects MCP and destroys conversation memory.
+
+`src/discover.tsx` is started via `npm run discover`. It connects to MCP, runs the Discovery Agent, merges results with static config, writes back to the config file, and exits.
 
 ---
 

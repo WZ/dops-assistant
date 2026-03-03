@@ -59,7 +59,7 @@ async function main(): Promise<void> {
   if (config.discovery.autoRefresh) {
     logger.info("Running service auto-discovery...");
     try {
-      const discoveryAgent = new DiscoveryAgent(llm, mcp, { maxIterations: config.agent.maxIterations });
+      const discoveryAgent = new DiscoveryAgent(llm, mcp, { maxIterations: config.discovery.maxIterations });
       const discovered = await discoveryAgent.discover(config.discovery);
       const staticNames = new Set(services.map((s) => s.name));
       const newServices = discovered.filter((s) => !staticNames.has(s.name));
