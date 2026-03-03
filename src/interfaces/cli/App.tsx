@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef } from "react";
-import { Box, Text, useApp, useInput } from "ink";
+import { Box, Static, Text, useApp, useInput } from "ink";
 import { TextInput, Spinner } from "@inkjs/ui";
 import { Markdown } from "./Markdown.js";
 import { randomUUID } from "node:crypto";
@@ -8,7 +8,7 @@ import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentCore } from "../../agent/core.js";
-import type { IntentClassifier } from "../../agent/intent.js";
+import { matchService, type IntentClassifier } from "../../agent/intent.js";
 import type { InvestigationAgent } from "../../agent/investigation.js";
 import type { ConversationMemory } from "../../memory/conversation.js";
 import type { ServiceConfig } from "../../config/schema.js";
@@ -25,6 +25,7 @@ type ChatMessage = {
 type ToolCallEntry = {
   name: string;
   args: string;
+  tokens?: string;
 };
 
 type AppProps = {
@@ -41,17 +42,49 @@ export function formatRcaText(report: RcaReport): string {
     low: "🟢", medium: "🟡", high: "🟠", critical: "🔴",
   };
   const emoji = severityEmoji[report.severity] ?? "⚪";
-  const actions = report.recommendedActions
-    .map((a, i) => `  ${i + 1}. ${a}`)
-    .join("\n");
-  return [
+
+  const lines: string[] = [
     `${emoji} RCA Report: ${report.service}`,
     `Severity: ${report.severity} | Confidence: ${report.confidence}`,
     `Root cause: ${report.rootCause}`,
     `Summary: ${report.summary}`,
-    report.recommendedActions.length > 0 ? `Actions:\n${actions}` : "",
-    `Investigated at: ${report.investigatedAt}`,
-  ].filter(Boolean).join("\n");
+  ];
+
+  const evidenceSections: string[] = [];
+  if (report.evidence.metrics.length > 0) {
+    evidenceSections.push(
+      `  Metrics:\n${report.evidence.metrics.map((m) => `    • ${m}`).join("\n")}`,
+    );
+  }
+  if (report.evidence.logs.length > 0) {
+    evidenceSections.push(
+      `  Logs:\n${report.evidence.logs.map((l) => `    • ${l}`).join("\n")}`,
+    );
+  }
+  if (report.evidence.infra.length > 0) {
+    evidenceSections.push(
+      `  Infrastructure:\n${report.evidence.infra.map((i) => `    • ${i}`).join("\n")}`,
+    );
+  }
+  if (report.dashboardLinks.length > 0) {
+    evidenceSections.push(
+      `  Dashboard links:\n${report.dashboardLinks.map((l) => `    • ${l}`).join("\n")}`,
+    );
+  }
+  if (evidenceSections.length > 0) {
+    lines.push(`Evidence:\n${evidenceSections.join("\n")}`);
+  }
+
+  if (report.recommendedActions.length > 0) {
+    const actions = report.recommendedActions
+      .map((a, i) => `  ${i + 1}. ${a}`)
+      .join("\n");
+    lines.push(`Actions:\n${actions}`);
+  }
+
+  lines.push(`Investigated at: ${report.investigatedAt}`);
+
+  return lines.filter(Boolean).join("\n");
 }
 
 export function saveAndOpenImages(images: ImageAttachment[]): string[] {
@@ -135,18 +168,21 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
 
     const correlationId = randomUUID().slice(0, 8);
 
+    let pendingTokens: string | undefined;
+
     const onTokenUsage = (usage: TokenUsage) => {
       tokenTotals.current.inputTokens += usage.inputTokens;
       tokenTotals.current.outputTokens += usage.outputTokens;
+      pendingTokens = `${usage.inputTokens + usage.outputTokens} tok`;
     };
 
     try {
-      const intent = await classifier.classify(trimmed);
+      const serviceNames = services.map((s) => s.name);
+      const intent = await classifier.classify(trimmed, serviceNames);
 
       if (intent.intent === "investigation") {
         setThinkingLabel("Running investigation");
-        const service = services.find((s) => s.name === intent.service)
-          ?? services[0];
+        const service = matchService(intent.service, services);
 
         if (!service) {
           addMessage({ id: randomUUID(), role: "error", content: "No services configured to investigate." });
@@ -156,6 +192,12 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
 
         const report = await investigationAgent.investigate(service, undefined, correlationId, onTokenUsage);
         addMessage({ id: randomUUID(), role: "rca", content: formatRcaText(report) });
+        if (report.panelImages.length > 0) {
+          const paths = saveAndOpenImages(report.panelImages);
+          for (const p of paths) {
+            addMessage({ id: randomUUID(), role: "image", content: `📎 Panel image: ${p} (opened)` });
+          }
+        }
       } else {
         setThinkingLabel("Thinking");
         const history = memory.get(threadId);
@@ -168,7 +210,9 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
           correlationId,
           onToolCall: (name: string, args: Record<string, unknown>) => {
             const summary = JSON.stringify(args).slice(0, 80);
-            setToolCalls((prev) => [...prev, { name, args: summary }]);
+            const tokens = pendingTokens;
+            pendingTokens = undefined;
+            setToolCalls((prev) => [...prev, { name, args: summary, tokens }]);
           },
           onTokenUsage,
         });
@@ -206,55 +250,59 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
   }, [agent, memory, services, classifier, investigationAgent, addMessage, exit]);
 
   return (
-    <Box flexDirection="column" paddingX={1}>
-      {messages.map((msg) => (
-        <Box key={msg.id} marginBottom={msg.role === "rca" ? 1 : 0}>
-          {msg.role === "user" && (
-            <Text>
-              <Text bold color="cyan">{"> "}</Text>
-              <Text>{msg.content}</Text>
-            </Text>
-          )}
-          {msg.role === "assistant" && (
-            <Markdown text={msg.content} />
-          )}
-          {msg.role === "rca" && (
-            <Box borderStyle="round" borderColor="yellow" paddingX={1} flexDirection="column">
-              <Markdown text={msg.content} indent="" />
-            </Box>
-          )}
-          {msg.role === "error" && (
-            <Text color="red">{"  ✗ "}{msg.content}</Text>
-          )}
-          {msg.role === "image" && (
-            <Text color="green">{"  "}{msg.content}</Text>
-          )}
-          {msg.role === "toolcalls" && (
-            <Text dimColor>{"  "}{msg.content}</Text>
-          )}
-        </Box>
-      ))}
+    <>
+      <Static items={messages}>
+        {(msg) => (
+          <Box key={msg.id} paddingX={1} marginBottom={msg.role === "rca" ? 1 : 0}>
+            {msg.role === "user" && (
+              <Text>
+                <Text bold color="cyan">{"> "}</Text>
+                <Text>{msg.content}</Text>
+              </Text>
+            )}
+            {msg.role === "assistant" && (
+              <Markdown text={msg.content} />
+            )}
+            {msg.role === "rca" && (
+              <Box borderStyle="round" borderColor="yellow" paddingX={1} flexDirection="column">
+                <Markdown text={msg.content} indent="" />
+              </Box>
+            )}
+            {msg.role === "error" && (
+              <Text color="red">{"  ✗ "}{msg.content}</Text>
+            )}
+            {msg.role === "image" && (
+              <Text color="green">{"  "}{msg.content}</Text>
+            )}
+            {msg.role === "toolcalls" && (
+              <Text dimColor>{"  "}{msg.content}</Text>
+            )}
+          </Box>
+        )}
+      </Static>
 
-      {toolCalls.map((tc, i) => (
-        <Text key={i} dimColor>{"  ◼ "}{tc.name}({tc.args})</Text>
-      ))}
+      <Box flexDirection="column" paddingX={1}>
+        {toolCalls.map((tc, i) => (
+          <Text key={i} dimColor>{"  ◼ "}{tc.name}({tc.args}){tc.tokens ? ` [${tc.tokens}]` : ""}</Text>
+        ))}
 
-      {isThinking ? (
-        <Box marginTop={0}>
-          <Text>{"  "}</Text>
-          <Spinner label={thinkingLabel} />
-        </Box>
-      ) : (
-        <Box marginTop={messages.length > 0 ? 1 : 0}>
-          <Text bold color="cyan">{"> "}</Text>
-          <TextInput
-            key={inputKey}
-            placeholder="Ask a question or type 'investigate <service>'..."
-            defaultValue={inputDefault}
-            onSubmit={handleSubmit}
-          />
-        </Box>
-      )}
-    </Box>
+        {isThinking ? (
+          <Box marginTop={0}>
+            <Text>{"  "}</Text>
+            <Spinner label={thinkingLabel} />
+          </Box>
+        ) : (
+          <Box marginTop={messages.length > 0 ? 1 : 0}>
+            <Text bold color="cyan">{"> "}</Text>
+            <TextInput
+              key={inputKey}
+              placeholder="Ask a question or type 'investigate <service>'..."
+              defaultValue={inputDefault}
+              onSubmit={handleSubmit}
+            />
+          </Box>
+        )}
+      </Box>
+    </>
   );
 }
