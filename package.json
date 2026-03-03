@@ -5,11 +5,13 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
+
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "test": "vitest run --passWithNoTests",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "investigate": "NODE_TLS_REJECT_UNAUTHORIZED=0 npx tsx dev/run-investigation.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

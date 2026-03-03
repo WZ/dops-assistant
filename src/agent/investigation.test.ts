@@ -8,7 +8,7 @@ const mockTools = [{ type: "function" as const, function: { name: "query_prometh
 
 const mockMcp = {
   getTools: vi.fn().mockReturnValue(mockTools),
-  callTool: vi.fn().mockResolvedValue("metric data"),
+  callTool: vi.fn().mockResolvedValue({ text: "metric data", images: [] }),
   isConnected: vi.fn().mockReturnValue(true),
 } as unknown as McpClient;
 
