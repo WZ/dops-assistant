@@ -1,7 +1,7 @@
 import type { LlmClient, Message, ResponseFormat, TokenUsage } from "../llm/openai.js";
-import type { McpClient } from "../mcp/client.js";
+import type { McpClient, PanelImage } from "../mcp/client.js";
 import type { ServiceConfig } from "../config/schema.js";
-import type { AnomalyAssessment, ImageAttachment } from "./types.js";
+import type { AnomalyAssessment } from "./types.js";
 import type { MetricFindings, LogFindings, InfraFindings, RcaReport } from "./rca-types.js";
 import {
   METRIC_DEEP_DIVE_PROMPT,
@@ -14,10 +14,44 @@ import {
   RCA_REPORT_SCHEMA,
 } from "./rca-prompts.js";
 import { buildProactiveStructuredPrompt, ANOMALY_ASSESSMENT_RESPONSE_FORMAT } from "./prompts.js";
-import { sanitizeToolResult } from "./core.js";
 import pino from "pino";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
+
+const MAX_TOOL_RESPONSE_CHARS = 4000;
+
+/**
+ * Truncate oversized tool responses to prevent context bloat.
+ * For get_dashboard_by_uid, extract only panel id/title/type.
+ */
+function truncateToolResponse(text: string, toolName: string): string {
+  if (text.length <= MAX_TOOL_RESPONSE_CHARS) return text;
+
+  if (toolName === "get_dashboard_by_uid") {
+    try {
+      const data = JSON.parse(text);
+      const panels = (data.dashboard?.panels ?? data.panels ?? []) as Array<{
+        id: number; title: string; type: string;
+      }>;
+      const summary = {
+        title: data.dashboard?.title ?? data.title,
+        uid: data.dashboard?.uid ?? data.meta?.slug,
+        panels: panels.map((p) => ({ id: p.id, title: p.title, type: p.type })),
+      };
+      return JSON.stringify(summary);
+    } catch {
+      // fall through to generic truncation
+    }
+  }
+
+  logger.debug({ toolName, originalLen: text.length, truncatedTo: MAX_TOOL_RESPONSE_CHARS }, "Truncating tool response");
+  return text.slice(0, MAX_TOOL_RESPONSE_CHARS) + `\n... [truncated, ${text.length - MAX_TOOL_RESPONSE_CHARS} chars omitted]`;
+}
+
+export type PhaseResult<T> = {
+  parsed: T;
+  images: PanelImage[];
+};
 
 export class InvestigationAgent {
   private readonly llm: LlmClient;
@@ -35,21 +69,26 @@ export class InvestigationAgent {
     initialAnomaly?: AnomalyAssessment,
     correlationId?: string,
     onTokenUsage?: (usage: TokenUsage) => void,
+    onToolCall?: (name: string, args: Record<string, unknown>) => void,
   ): Promise<RcaReport> {
     const log = logger.child({ component: "investigation", service: service.name, correlationId });
+    const collectedImages: PanelImage[] = [];
 
     // Phase 1: detect anomaly if not provided
     let anomaly = initialAnomaly;
     if (!anomaly) {
       log.debug("Running phase 1: anomaly detection");
-      const { result } = await this.runPhase<AnomalyAssessment>(
+      const result = await this.runPhase<AnomalyAssessment>(
         buildProactiveStructuredPrompt([service]),
         `Check service: ${service.name}`,
         ANOMALY_ASSESSMENT_RESPONSE_FORMAT,
         undefined,
         onTokenUsage,
+        onToolCall,
       );
-      anomaly = result;
+      anomaly = result.parsed;
+      collectedImages.push(...result.images);
+      log.debug({ phaseImages: result.images.length }, "Phase 1 images");
     }
 
     if (!anomaly.isAnomaly) {
@@ -61,43 +100,60 @@ export class InvestigationAgent {
         rootCause: "No anomaly detected",
         evidence: { metrics: [], logs: [], infra: [] },
         dashboardLinks: [],
-        panelImages: [],
+        panelImages: collectedImages,
         recommendedActions: [],
         confidence: "high",
         investigatedAt: new Date().toISOString(),
       };
     }
 
-    log.debug("Running phases 2/3/4 in parallel");
+    log.debug("Running phases 2/3/4 + panel capture in parallel");
     const anomalyContext = `Known issue: ${anomaly.summary} (severity: ${anomaly.severity})`;
     const metricMessage = `${anomalyContext}\nService metrics: ${service.metrics.map((m) => m.query).join(", ")}`;
     const logMessage = `${anomalyContext}\nLog labels: ${JSON.stringify(service.logLabels)}`;
     const infraMessage = `${anomalyContext}\nService: ${service.name}`;
 
-    const [metricResult, logResult, infraResult] = await Promise.allSettled([
-      this.runPhase<MetricFindings>(METRIC_DEEP_DIVE_PROMPT, metricMessage, METRIC_FINDINGS_SCHEMA, undefined, onTokenUsage),
-      this.runPhase<LogFindings>(LOG_CORRELATION_PROMPT, logMessage, LOG_FINDINGS_SCHEMA, undefined, onTokenUsage),
-      this.runPhase<InfraFindings>(INFRA_HEALTH_PROMPT, infraMessage, INFRA_FINDINGS_SCHEMA, undefined, onTokenUsage),
+    const [metricResult, logResult, infraResult, panelCaptureResult] = await Promise.allSettled([
+      this.runPhase<MetricFindings>(METRIC_DEEP_DIVE_PROMPT, metricMessage, METRIC_FINDINGS_SCHEMA, undefined, onTokenUsage, onToolCall),
+      this.runPhase<LogFindings>(LOG_CORRELATION_PROMPT, logMessage, LOG_FINDINGS_SCHEMA, undefined, onTokenUsage, onToolCall),
+      this.runPhase<InfraFindings>(INFRA_HEALTH_PROMPT, infraMessage, INFRA_FINDINGS_SCHEMA, undefined, onTokenUsage, onToolCall),
+      this.capturePanelImages(service.name, onToolCall),
     ]);
 
-    const metricPhase = metricResult.status === "fulfilled"
-      ? metricResult.value
-      : { result: { observations: [], baseline: "unavailable", anomalyWindow: "unknown" }, images: [] as ImageAttachment[] };
-    const logPhase = logResult.status === "fulfilled"
-      ? logResult.value
-      : { result: { errorPatterns: [], stackTraces: [], logSamples: [], lokiSearchTerms: [], firstOccurrence: "unknown" }, images: [] as ImageAttachment[] };
-    const infraPhase = infraResult.status === "fulfilled"
-      ? infraResult.value
-      : { result: { podHealth: [], nodeHealth: [], recentEvents: [] }, images: [] as ImageAttachment[] };
+    const metricFindings = metricResult.status === "fulfilled"
+      ? metricResult.value.parsed
+      : { observations: [], baseline: "unavailable", anomalyWindow: "unknown" };
+    const logFindings = logResult.status === "fulfilled"
+      ? logResult.value.parsed
+      : { errorPatterns: [], stackTraces: [], logSamples: [], lokiSearchTerms: [], firstOccurrence: "unknown" };
+    const infraFindings = infraResult.status === "fulfilled"
+      ? infraResult.value.parsed
+      : { podHealth: [], nodeHealth: [], recentEvents: [] };
 
-    const metricFindings = metricPhase.result;
-    const logFindings = logPhase.result;
-    const infraFindings = infraPhase.result;
-    const panelImages = [...metricPhase.images, ...logPhase.images];
+    // Collect images from fulfilled phases
+    if (metricResult.status === "fulfilled") {
+      collectedImages.push(...metricResult.value.images);
+      log.debug({ metricImages: metricResult.value.images.length }, "Metric phase images");
+    }
+    if (logResult.status === "fulfilled") {
+      collectedImages.push(...logResult.value.images);
+      log.debug({ logImages: logResult.value.images.length }, "Log phase images");
+    }
+    if (infraResult.status === "fulfilled") {
+      collectedImages.push(...infraResult.value.images);
+      log.debug({ infraImages: infraResult.value.images.length }, "Infra phase images");
+    }
+
+    // Deterministic panel images (guaranteed capture)
+    if (panelCaptureResult.status === "fulfilled") {
+      collectedImages.push(...panelCaptureResult.value);
+      log.debug({ panelCaptureImages: panelCaptureResult.value.length }, "Deterministic panel capture images");
+    }
 
     if (metricResult.status === "rejected") log.warn({ err: metricResult.reason }, "Metric phase failed");
     if (logResult.status === "rejected") log.warn({ err: logResult.reason }, "Log phase failed");
     if (infraResult.status === "rejected") log.warn({ err: infraResult.reason }, "Infra phase failed");
+    if (panelCaptureResult.status === "rejected") log.warn({ err: panelCaptureResult.reason }, "Panel capture failed");
 
     // Phase 5: synthesise
     log.debug("Running phase 5: synthesis");
@@ -109,20 +165,108 @@ export class InvestigationAgent {
       `Infrastructure findings: ${JSON.stringify(infraFindings)}`,
     ].join("\n");
 
-    const { result: partial } = await this.runPhase<Omit<RcaReport, "service" | "investigatedAt" | "panelImages">>(
+    const synthesisResult = await this.runPhase<Omit<RcaReport, "service" | "investigatedAt" | "panelImages">>(
       RCA_SYNTHESIS_PROMPT,
       synthesisMessage,
       RCA_REPORT_SCHEMA,
       3,
       onTokenUsage,
+      onToolCall,
     );
+    collectedImages.push(...synthesisResult.images);
+
+    log.info({ totalPanelImages: collectedImages.length }, "Investigation complete");
 
     return {
-      ...partial,
+      ...synthesisResult.parsed,
       service: service.name,
       investigatedAt: new Date().toISOString(),
-      panelImages,
+      panelImages: collectedImages,
     };
+  }
+
+  /**
+   * Deterministic panel image capture — always runs, independent of LLM behavior.
+   * Searches dashboards, finds metric-related panels, and captures up to 3 images.
+   */
+  private async capturePanelImages(
+    serviceName: string,
+    onToolCall?: (name: string, args: Record<string, unknown>) => void,
+  ): Promise<PanelImage[]> {
+    const log = logger.child({ component: "panel-capture", service: serviceName });
+    const images: PanelImage[] = [];
+    const maxImages = 3;
+
+    const toolNames = this.mcp.getTools().map((t) => t.function.name);
+    if (!toolNames.includes("get_panel_image") || !toolNames.includes("search_dashboards")) {
+      log.debug("Panel image tools not available, skipping capture");
+      return images;
+    }
+
+    // Step 1: list all dashboards
+    onToolCall?.("search_dashboards", { query: "" });
+    const searchResult = await this.mcp.callTool("search_dashboards", { query: "" });
+
+    let dashboards: Array<{ uid: string; title: string }>;
+    try {
+      const parsed = JSON.parse(searchResult.text);
+      dashboards = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed?.dashboards) ? parsed.dashboards : [];
+    } catch {
+      log.warn("Failed to parse dashboard list");
+      return images;
+    }
+
+    log.debug({ dashboardCount: dashboards.length, first: dashboards[0]?.title }, "Dashboards found");
+    if (dashboards.length === 0) return images;
+
+    // Step 2: get panels from dashboards (check up to 3)
+    const serviceNameLower = serviceName.toLowerCase();
+    for (const db of dashboards.slice(0, 3)) {
+      if (images.length >= maxImages) break;
+
+      onToolCall?.("get_dashboard_by_uid", { uid: db.uid });
+      const detailResult = await this.mcp.callTool("get_dashboard_by_uid", { uid: db.uid });
+
+      let panels: Array<{ id: number; title: string; type: string }>;
+      try {
+        const data = JSON.parse(detailResult.text);
+        panels = (data.dashboard?.panels ?? data.panels ?? []) as Array<{
+          id: number; title: string; type: string;
+        }>;
+      } catch {
+        log.debug({ uid: db.uid, responsePreview: detailResult.text.slice(0, 200) }, "Failed to parse dashboard detail");
+        continue;
+      }
+
+      // Filter to visual metric panels only
+      const graphTypes = new Set(["timeseries", "graph", "gauge", "stat", "bargauge", "heatmap"]);
+      const metricPanels = panels.filter((p) => graphTypes.has(p.type));
+      log.debug({ uid: db.uid, totalPanels: panels.length, metricPanels: metricPanels.length, types: panels.map(p => p.type) }, "Dashboard panels");
+
+      // Prefer panels whose title mentions the service name
+      metricPanels.sort((a, b) => {
+        const aMatch = a.title.toLowerCase().includes(serviceNameLower) ? 0 : 1;
+        const bMatch = b.title.toLowerCase().includes(serviceNameLower) ? 0 : 1;
+        return aMatch - bMatch;
+      });
+
+      // Step 3: capture images
+      for (const panel of metricPanels.slice(0, maxImages - images.length)) {
+        try {
+          const args = { dashboardUid: db.uid, panelId: panel.id };
+          onToolCall?.("get_panel_image", args);
+          const imgResult = await this.mcp.callTool("get_panel_image", args);
+          images.push(...imgResult.images);
+        } catch (err) {
+          log.warn({ panel: panel.title, err }, "Failed to capture panel image");
+        }
+      }
+    }
+
+    log.info({ capturedImages: images.length }, "Panel image capture complete");
+    return images;
   }
 
   private async runPhase<T>(
@@ -131,22 +275,45 @@ export class InvestigationAgent {
     responseFormat: ResponseFormat,
     maxIterations = this.maxIterations,
     onTokenUsage?: (usage: TokenUsage) => void,
-  ): Promise<{ result: T; images: ImageAttachment[] }> {
+    onToolCall?: (name: string, args: Record<string, unknown>) => void,
+  ): Promise<PhaseResult<T>> {
     const tools = this.mcp.getTools();
     const messages: Message[] = [
       { role: "system", content: systemPrompt },
       { role: "user", content: userMessage },
     ];
-
-    const collectedImages: ImageAttachment[] = [];
+    const phaseImages: PanelImage[] = [];
 
     for (let i = 0; i < maxIterations; i++) {
-      const response = await this.llm.chat(messages, tools, { responseFormat });
+      // On the last iteration, withhold tools and inject a "respond now" message
+      // to force the LLM to produce a final text response
+      const isLastIteration = i === maxIterations - 1;
+      const iterationTools = isLastIteration ? [] : tools;
+
+      if (isLastIteration && i > 0) {
+        messages.push({
+          role: "user",
+          content: "You have used all available tool iterations. Please respond now with your findings in the required JSON format.",
+        });
+      }
+
+      const response = await this.llm.chat(messages, iterationTools, { responseFormat });
 
       if (response.usage) onTokenUsage?.(response.usage);
 
       if (response.type === "text") {
-        return { result: JSON.parse(response.content) as T, images: collectedImages };
+        logger.debug({ phaseImages: phaseImages.length, iteration: i }, "Phase complete");
+        try {
+          return { parsed: JSON.parse(response.content) as T, images: phaseImages };
+        } catch (err) {
+          logger.error(
+            { err, contentLen: response.content.length, contentPreview: response.content.slice(0, 200) },
+            "Failed to parse phase response as JSON",
+          );
+          throw new Error(
+            `Phase returned invalid JSON (${response.content.length} chars): ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       }
 
       messages.push({
@@ -158,25 +325,31 @@ export class InvestigationAgent {
       });
 
       const settled = await Promise.allSettled(
-        response.calls.map((call) => this.mcp.callTool(call.name, call.args)),
+        response.calls.map((call) => {
+          onToolCall?.(call.name, call.args);
+          logger.debug({ toolName: call.name, isImageTool: call.name === "get_panel_image" }, "Tool call");
+          return this.mcp.callTool(call.name, call.args);
+        }),
       );
       for (let j = 0; j < response.calls.length; j++) {
         const outcome = settled[j]!;
         const call = response.calls[j]!;
-        messages.push({
-          role: "tool",
-          content: outcome.status === "fulfilled"
-            ? sanitizeToolResult(outcome.value.text)
-            : `[Transport Error] ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`,
-          tool_call_id: call.id,
-        });
         if (outcome.status === "fulfilled") {
-          outcome.value.images.forEach((img, k) => {
-            collectedImages.push({
-              filename: `panel-${call.name}-${j}-${k}.png`,
-              mimeType: img.mimeType,
-              data: Buffer.from(img.data, "base64"),
-            });
+          const text = truncateToolResponse(outcome.value.text, call.name);
+          messages.push({
+            role: "tool",
+            content: text,
+            tool_call_id: call.id,
+          });
+          if (outcome.value.images.length > 0) {
+            phaseImages.push(...outcome.value.images);
+            logger.debug({ tool: call.name, newImages: outcome.value.images.length, totalPhaseImages: phaseImages.length }, "Images collected from tool call");
+          }
+        } else {
+          messages.push({
+            role: "tool",
+            content: `[Transport Error] ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`,
+            tool_call_id: call.id,
           });
         }
       }

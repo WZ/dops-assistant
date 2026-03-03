@@ -5,16 +5,21 @@ import { ConfigSchema, type Config } from "./schema.js";
 function resolveEnvVars(obj: unknown): unknown {
   if (typeof obj === "string") {
     return obj.replace(/\$\{([^}]+)\}/g, (_, expr: string) => {
-      const match = expr.match(/^([^:-]+)(?::-([^\r\n]*))?$/);
-      if (!match) {
-        throw new Error(`Invalid env var expression: \${${expr}}`);
-      }
-      const key = match[1]!;
-      const defaultVal = match[2];
+      // Support ${VAR:-default} syntax (bash semantics)
+      const sepIdx = expr.indexOf(":-");
+      const key = sepIdx >= 0 ? expr.slice(0, sepIdx) : expr;
+      const defaultVal = sepIdx >= 0 ? expr.slice(sepIdx + 2) : undefined;
+
       const val = process.env[key];
-      if (val !== undefined) return val;
-      if (defaultVal !== undefined) return defaultVal;
-      throw new Error(`Missing environment variable: ${key}`);
+      // For ${VAR:-default}: use default when val is unset or empty (bash semantics)
+      if (defaultVal !== undefined) {
+        return (val !== undefined && val !== "") ? val : defaultVal;
+      }
+      // For ${VAR}: original behavior — only throw on undefined
+      if (val === undefined) {
+        throw new Error(`Missing environment variable: ${key}`);
+      }
+      return val;
     });
   }
   if (Array.isArray(obj)) {
