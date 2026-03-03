@@ -11,9 +11,9 @@ if (!process.env["LOG_LEVEL"]) {
 import React, { useState, useEffect } from "react";
 import { render, Box, Text, Static } from "ink";
 import { Spinner } from "@inkjs/ui";
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { stringify } from "yaml";
-import { loadConfig } from "./config/loader.js";
+import { loadConfig, getServicesFilePath } from "./config/loader.js";
 import { McpClient } from "./mcp/client.js";
 import { LlmClient } from "./llm/openai.js";
 import { DiscoveryAgent } from "./agent/discovery.js";
@@ -47,7 +47,7 @@ function DiscoverApp() {
         log(`Connected to MCP (${mcp.getTools().length} tools)`);
 
         const llm = new LlmClient(config.llm, config.timeouts, config.retry);
-        const agent = new DiscoveryAgent(llm, mcp, { maxIterations: config.agent.maxIterations });
+        const agent = new DiscoveryAgent(llm, mcp, { maxIterations: config.discovery.maxIterations });
 
         setSpinnerLabel("Discovering services...");
 
@@ -76,15 +76,11 @@ function DiscoverApp() {
             log(`  - ${s.name}: ${s.metrics.length} metrics, ${Object.keys(s.logLabels).length} log labels`);
           }
 
-          // Write back to config
-          const raw = readFileSync(configPath, "utf-8");
-          const servicesYaml = stringify({ services: merged }, { indent: 2 });
-          const updated = raw.replace(
-            /^services:.*?(?=\n\S|\n*$)/ms,
-            servicesYaml.trimEnd(),
-          );
-          writeFileSync(configPath, updated);
-          log(`Updated ${configPath} with ${merged.length} services.`);
+          // Write discovered services to services.yaml
+          const servicesPath = getServicesFilePath(configPath);
+          const servicesYaml = stringify(merged, { indent: 2 });
+          writeFileSync(servicesPath, servicesYaml);
+          log(`Wrote ${merged.length} services to ${servicesPath}`);
         }
 
         await mcp.disconnect();

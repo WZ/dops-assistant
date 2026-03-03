@@ -1,6 +1,5 @@
 import React from "react";
 import { Text, Box } from "ink";
-import Table from "ink-table";
 
 type Segment =
   | { type: "text"; value: string }
@@ -95,16 +94,40 @@ function MarkdownTable({ rows }: { rows: string[][] }) {
   const headers = rows[0]!;
   const dataRows = rows.slice(1);
 
-  const data = dataRows.map((row) => {
-    const obj: Record<string, string> = {};
-    for (let c = 0; c < headers.length; c++) {
-      const key = stripInlineFormatting(headers[c] ?? `col${c}`);
-      obj[key] = stripInlineFormatting(row[c] ?? "");
-    }
-    return obj;
+  // Calculate column widths
+  const colWidths = headers.map((h, c) => {
+    const headerLen = stripInlineFormatting(h).length;
+    const maxDataLen = dataRows.reduce(
+      (max, row) => Math.max(max, stripInlineFormatting(row[c] ?? "").length),
+      0,
+    );
+    return Math.max(headerLen, maxDataLen);
   });
 
-  return <Table data={data} />;
+  const pad = (text: string, width: number) =>
+    text + " ".repeat(Math.max(0, width - text.length));
+
+  const separator = colWidths.map((w) => "─".repeat(w)).join("──");
+
+  return (
+    <Box flexDirection="column">
+      <Text>
+        {headers
+          .map((h, c) => pad(stripInlineFormatting(h), colWidths[c]!))
+          .join("  ")}
+      </Text>
+      <Text dimColor>{separator}</Text>
+      {dataRows.map((row, r) => (
+        <Text key={r}>
+          {row
+            .map((cell, c) =>
+              pad(stripInlineFormatting(cell ?? ""), colWidths[c] ?? 0),
+            )
+            .join("  ")}
+        </Text>
+      ))}
+    </Box>
+  );
 }
 
 type Block =

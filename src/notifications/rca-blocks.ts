@@ -14,9 +14,19 @@ const CONFIDENCE_LABEL: Record<RcaReport["confidence"], string> = {
   high: ":high_brightness: high",
 };
 
-export function formatRcaBlocks(report: RcaReport): KnownBlock[] {
-  const time = new Date(report.investigatedAt).toISOString().slice(11, 16) + " UTC";
+/** Strip leading bullet/number markers that the LLM may include in list items */
+function stripLeadingBullet(s: string): string {
+  let cleaned = s.trim();
+  // Strip emoji numbers (1️⃣ through 🔟) — keycap sequences: digit + U+FE0F + U+20E3
+  cleaned = cleaned.replace(/^[\u0030-\u0039]\uFE0F?\u20E3\s*/, "");
+  // Strip leading "N." or "N)" numbering
+  cleaned = cleaned.replace(/^\d+[.)]\s*/, "");
+  // Strip bullet markers (•, -, *)
+  cleaned = cleaned.replace(/^[•\-\*]\s*/, "");
+  return cleaned.trim();
+}
 
+export function formatRcaBlocks(report: RcaReport): KnownBlock[] {
   const blocks: KnownBlock[] = [
     {
       type: "header",
@@ -33,13 +43,13 @@ export function formatRcaBlocks(report: RcaReport): KnownBlock[] {
 
   const evidenceLines: string[] = [];
   if (report.evidence.metrics.length > 0) {
-    evidenceLines.push(`*Metrics*\n${report.evidence.metrics.map((m) => `• ${m}`).join("\n")}`);
+    evidenceLines.push(`*Metrics*\n${report.evidence.metrics.map((m) => `• ${stripLeadingBullet(m)}`).join("\n")}`);
   }
   if (report.evidence.logs.length > 0) {
-    evidenceLines.push(`*Logs*\n${report.evidence.logs.map((l) => `• ${l}`).join("\n")}`);
+    evidenceLines.push(`*Logs*\n${report.evidence.logs.map((l) => `• ${stripLeadingBullet(l)}`).join("\n")}`);
   }
   if (report.evidence.infra.length > 0) {
-    evidenceLines.push(`*Infrastructure*\n${report.evidence.infra.map((i) => `• ${i}`).join("\n")}`);
+    evidenceLines.push(`*Infrastructure*\n${report.evidence.infra.map((i) => `• ${stripLeadingBullet(i)}`).join("\n")}`);
   }
 
   if (evidenceLines.length > 0) {
@@ -54,7 +64,7 @@ export function formatRcaBlocks(report: RcaReport): KnownBlock[] {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `*Recommended Actions*\n${report.recommendedActions.map((a, i) => `${i + 1}. ${a}`).join("\n")}`,
+        text: `*Recommended Actions*\n${report.recommendedActions.map((a, i) => `${i + 1}. ${stripLeadingBullet(a)}`).join("\n")}`,
       },
     });
   }
@@ -64,7 +74,7 @@ export function formatRcaBlocks(report: RcaReport): KnownBlock[] {
     elements: [
       {
         type: "mrkdwn",
-        text: `Confidence: ${CONFIDENCE_LABEL[report.confidence]}  |  Investigated at ${time}`,
+        text: `Confidence: ${CONFIDENCE_LABEL[report.confidence]}  |  Investigated at ${report.investigatedAt}`,
       },
     ],
   });
