@@ -1,7 +1,7 @@
 import type { LlmClient, Message, ResponseFormat, TokenUsage } from "../llm/openai.js";
 import type { McpClient } from "../mcp/client.js";
 import type { ServiceConfig } from "../config/schema.js";
-import type { AnomalyAssessment } from "./types.js";
+import type { AnomalyAssessment, ImageAttachment } from "./types.js";
 import type { MetricFindings, LogFindings, InfraFindings, RcaReport } from "./rca-types.js";
 import {
   METRIC_DEEP_DIVE_PROMPT,
@@ -42,7 +42,7 @@ export class InvestigationAgent {
     let anomaly = initialAnomaly;
     if (!anomaly) {
       log.debug("Running phase 1: anomaly detection");
-      const result = await this.runPhase<AnomalyAssessment>(
+      const { result } = await this.runPhase<AnomalyAssessment>(
         buildProactiveStructuredPrompt([service]),
         `Check service: ${service.name}`,
         ANOMALY_ASSESSMENT_RESPONSE_FORMAT,
@@ -60,6 +60,8 @@ export class InvestigationAgent {
         summary: anomaly.summary,
         rootCause: "No anomaly detected",
         evidence: { metrics: [], logs: [], infra: [] },
+        dashboardLinks: [],
+        panelImages: [],
         recommendedActions: [],
         confidence: "high",
         investigatedAt: new Date().toISOString(),
@@ -78,15 +80,20 @@ export class InvestigationAgent {
       this.runPhase<InfraFindings>(INFRA_HEALTH_PROMPT, infraMessage, INFRA_FINDINGS_SCHEMA, undefined, onTokenUsage),
     ]);
 
-    const metricFindings = metricResult.status === "fulfilled"
+    const metricPhase = metricResult.status === "fulfilled"
       ? metricResult.value
-      : { observations: [], baseline: "unavailable", anomalyWindow: "unknown" };
-    const logFindings = logResult.status === "fulfilled"
+      : { result: { observations: [], baseline: "unavailable", anomalyWindow: "unknown" }, images: [] as ImageAttachment[] };
+    const logPhase = logResult.status === "fulfilled"
       ? logResult.value
-      : { errorPatterns: [], stackTraces: [], firstOccurrence: "unknown" };
-    const infraFindings = infraResult.status === "fulfilled"
+      : { result: { errorPatterns: [], stackTraces: [], logSamples: [], lokiSearchTerms: [], firstOccurrence: "unknown" }, images: [] as ImageAttachment[] };
+    const infraPhase = infraResult.status === "fulfilled"
       ? infraResult.value
-      : { podHealth: [], nodeHealth: [], recentEvents: [] };
+      : { result: { podHealth: [], nodeHealth: [], recentEvents: [] }, images: [] as ImageAttachment[] };
+
+    const metricFindings = metricPhase.result;
+    const logFindings = logPhase.result;
+    const infraFindings = infraPhase.result;
+    const panelImages = [...metricPhase.images, ...logPhase.images];
 
     if (metricResult.status === "rejected") log.warn({ err: metricResult.reason }, "Metric phase failed");
     if (logResult.status === "rejected") log.warn({ err: logResult.reason }, "Log phase failed");
@@ -102,7 +109,7 @@ export class InvestigationAgent {
       `Infrastructure findings: ${JSON.stringify(infraFindings)}`,
     ].join("\n");
 
-    const partial = await this.runPhase<Omit<RcaReport, "service" | "investigatedAt">>(
+    const { result: partial } = await this.runPhase<Omit<RcaReport, "service" | "investigatedAt" | "panelImages">>(
       RCA_SYNTHESIS_PROMPT,
       synthesisMessage,
       RCA_REPORT_SCHEMA,
@@ -114,6 +121,7 @@ export class InvestigationAgent {
       ...partial,
       service: service.name,
       investigatedAt: new Date().toISOString(),
+      panelImages,
     };
   }
 
@@ -121,14 +129,16 @@ export class InvestigationAgent {
     systemPrompt: string,
     userMessage: string,
     responseFormat: ResponseFormat,
-    maxIterations = this.maxIterations,
+    maxIterations = Math.max(this.maxIterations, 30),
     onTokenUsage?: (usage: TokenUsage) => void,
-  ): Promise<T> {
+  ): Promise<{ result: T; images: ImageAttachment[] }> {
     const tools = this.mcp.getTools();
     const messages: Message[] = [
       { role: "system", content: systemPrompt },
       { role: "user", content: userMessage },
     ];
+
+    const collectedImages: ImageAttachment[] = [];
 
     for (let i = 0; i < maxIterations; i++) {
       const response = await this.llm.chat(messages, tools, { responseFormat });
@@ -136,7 +146,7 @@ export class InvestigationAgent {
       if (response.usage) onTokenUsage?.(response.usage);
 
       if (response.type === "text") {
-        return JSON.parse(response.content) as T;
+        return { result: JSON.parse(response.content) as T, images: collectedImages };
       }
 
       messages.push({
@@ -160,6 +170,15 @@ export class InvestigationAgent {
             : `[Transport Error] ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`,
           tool_call_id: call.id,
         });
+        if (outcome.status === "fulfilled") {
+          for (const img of outcome.value.images) {
+            collectedImages.push({
+              filename: `panel-${call.name}-${Date.now()}.png`,
+              mimeType: img.mimeType,
+              data: Buffer.from(img.data, "base64"),
+            });
+          }
+        }
       }
     }
 
