@@ -129,7 +129,7 @@ export class InvestigationAgent {
     systemPrompt: string,
     userMessage: string,
     responseFormat: ResponseFormat,
-    maxIterations = Math.max(this.maxIterations, 30),
+    maxIterations = this.maxIterations,
     onTokenUsage?: (usage: TokenUsage) => void,
   ): Promise<{ result: T; images: ImageAttachment[] }> {
     const tools = this.mcp.getTools();

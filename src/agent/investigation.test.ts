@@ -13,7 +13,13 @@ const mockMcp = {
 } as unknown as McpClient;
 
 const baseMetricFindings = JSON.stringify({ observations: ["error_rate: 18%"], baseline: "0.2%", anomalyWindow: "14:32 UTC" });
-const baseLogFindings = JSON.stringify({ errorPatterns: ["connection timeout"], stackTraces: [], firstOccurrence: "14:30 UTC" });
+const baseLogFindings = JSON.stringify({
+  errorPatterns: ["connection timeout"],
+  stackTraces: [],
+  logSamples: ["[14:30:01] ERROR connection timeout to db-primary"],
+  lokiSearchTerms: ['{app="payments-api"} |= "connection timeout"'],
+  firstOccurrence: "14:30 UTC",
+});
 const baseInfraFindings = JSON.stringify({ podHealth: ["restarted 3x"], nodeHealth: [], recentEvents: [] });
 const baseRcaReport = JSON.stringify({
   severity: "high",
