@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("ink-table", () => ({ default: () => null }));
 
 import { parseInline } from "./Markdown.js";
 import { formatRcaText, saveAndOpenImages } from "./App.js";
@@ -90,6 +89,8 @@ describe("formatRcaText", () => {
     summary: "Elevated error rate detected",
     rootCause: "Database connection pool exhaustion",
     evidence: { metrics: ["error_rate=15%"], logs: ["connection timeout"], infra: [] },
+    dashboardLinks: [],
+    panelImages: [],
     recommendedActions: ["Scale connection pool", "Add circuit breaker"],
     confidence: "high",
     investigatedAt: "2026-02-27T10:00:00Z",
