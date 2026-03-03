@@ -43,7 +43,7 @@ describe("AgentCore", () => {
       })
       .mockResolvedValueOnce({ type: "text", content: "Metrics look fine." });
 
-    (mockMcp.callTool as ReturnType<typeof vi.fn>).mockResolvedValue("1.0");
+    (mockMcp.callTool as ReturnType<typeof vi.fn>).mockResolvedValue({ text: "1.0", images: [] });
 
     const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
     const result = await core.run({ mode: "proactive", message: "Check metrics." });
@@ -58,7 +58,7 @@ describe("AgentCore", () => {
       type: "tool_calls",
       calls: [{ id: "call_1", name: "query_prometheus", args: {} }],
     });
-    (mockMcp.callTool as ReturnType<typeof vi.fn>).mockResolvedValue("data");
+    (mockMcp.callTool as ReturnType<typeof vi.fn>).mockResolvedValue({ text: "data", images: [] });
 
     const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 3 });
     const result = await core.run({ mode: "proactive", message: "Check." });
@@ -128,7 +128,7 @@ describe("AgentCore", () => {
       .mockResolvedValueOnce({ type: "text", content: "Got partial results." });
 
     (mockMcp.callTool as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce("1.0")
+      .mockResolvedValueOnce({ text: "1.0", images: [] })
       .mockRejectedValueOnce(new Error("MCP process crashed"));
 
     const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
@@ -196,7 +196,7 @@ describe("AgentCore", () => {
         usage: { inputTokens: 200, outputTokens: 50 },
       });
 
-    (mockMcp.callTool as ReturnType<typeof vi.fn>).mockResolvedValue("1.0");
+    (mockMcp.callTool as ReturnType<typeof vi.fn>).mockResolvedValue({ text: "1.0", images: [] });
 
     const onTokenUsage = vi.fn();
     const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });

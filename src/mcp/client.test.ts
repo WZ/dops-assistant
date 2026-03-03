@@ -115,7 +115,8 @@ describe("McpClient", () => {
     client = new McpClient(baseConfig, baseTimeouts);
     await client.connect();
     const result = await client.callTool("query_prometheus", { query: "up" });
-    expect(result).toBe("result data");
+    expect(result.text).toBe("result data");
+    expect(result.images).toEqual([]);
   });
 
   it("throws if getTools called before connect", () => {
@@ -147,8 +148,8 @@ describe("McpClient", () => {
       isError: true,
     });
     const result = await client.callTool("query_prometheus", { query: "up" });
-    expect(result).toMatch(/^\[Tool Error\]/);
-    expect(result).toBe("[Tool Error] metric not found");
+    expect(result.text).toMatch(/^\[Tool Error\]/);
+    expect(result.text).toBe("[Tool Error] metric not found");
   });
 });
 
