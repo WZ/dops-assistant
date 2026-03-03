@@ -4,11 +4,33 @@ import type { LlmClient } from "../llm/openai.js";
 import type { McpClient } from "../mcp/client.js";
 import type { AnomalyAssessment } from "./types.js";
 
-const mockTools = [{ type: "function" as const, function: { name: "query_prometheus", description: "", parameters: {} } }];
+const mockTools = [
+  { type: "function" as const, function: { name: "query_prometheus", description: "", parameters: {} } },
+  { type: "function" as const, function: { name: "search_dashboards", description: "", parameters: {} } },
+  { type: "function" as const, function: { name: "get_dashboard_by_uid", description: "", parameters: {} } },
+  { type: "function" as const, function: { name: "get_panel_image", description: "", parameters: {} } },
+];
+
+const fakeDashboards = JSON.stringify({ dashboards: [{ uid: "abc123", title: "Service Monitor" }] });
+const fakeDashboardDetail = JSON.stringify({
+  dashboard: {
+    title: "Service Monitor",
+    uid: "abc123",
+    panels: [
+      { id: 1, title: "Request Rate", type: "timeseries" },
+      { id: 2, title: "Error Rate", type: "graph" },
+    ],
+  },
+});
 
 const mockMcp = {
   getTools: vi.fn().mockReturnValue(mockTools),
-  callTool: vi.fn().mockResolvedValue({ text: "metric data", images: [] }),
+  callTool: vi.fn().mockImplementation((name: string) => {
+    if (name === "search_dashboards") return Promise.resolve({ text: fakeDashboards, images: [] });
+    if (name === "get_dashboard_by_uid") return Promise.resolve({ text: fakeDashboardDetail, images: [] });
+    if (name === "get_panel_image") return Promise.resolve({ text: "", images: [{ data: "iVBOR...", mimeType: "image/png" }] });
+    return Promise.resolve({ text: "metric data", images: [] });
+  }),
   isConnected: vi.fn().mockReturnValue(true),
 } as unknown as McpClient;
 
@@ -85,6 +107,21 @@ describe("InvestigationAgent", () => {
     expect(report.rootCause).toBe("No anomaly detected");
     expect(report.confidence).toBe("high");
     expect((llm.chat as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
+  });
+
+  it("always captures panel images via deterministic capture", async () => {
+    const llm = makeMockLlm([baseMetricFindings, baseLogFindings, baseInfraFindings, baseRcaReport]);
+    const agent = new InvestigationAgent(llm, mockMcp, { maxIterations: 5 });
+
+    const report = await agent.investigate(service, anomaly, "corr-003");
+
+    // Deterministic capture should produce images (2 panels in mock dashboard)
+    expect(report.panelImages.length).toBeGreaterThanOrEqual(2);
+    expect(report.panelImages[0]!.mimeType).toBe("image/png");
+    // Verify get_panel_image was called
+    const panelCalls = (mockMcp.callTool as ReturnType<typeof vi.fn>).mock.calls
+      .filter(([name]: [string]) => name === "get_panel_image");
+    expect(panelCalls.length).toBeGreaterThanOrEqual(2);
   });
 
   it("degrades gracefully when a parallel phase fails", async () => {
