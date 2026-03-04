@@ -2,70 +2,31 @@ import type { ResponseFormat } from "../llm/openai.js";
 
 // ── Phase prompts ─────────────────────────────────────────────────────────────
 
-export const METRIC_DEEP_DIVE_PROMPT = `You are investigating a service anomaly. Your job is to deeply analyse the metrics for the affected service.
+export const METRIC_DEEP_DIVE_PROMPT = `You are investigating a service anomaly. Analyse the metrics for the affected service.
 
-Strategy:
-1. Use search_dashboards to find dashboards related to the service or mentioned by the user.
-2. Use get_dashboard_by_uid to get the FULL dashboard JSON — this reveals the exact PromQL expressions used in each panel and related panels (Kafka, upstream/downstream services, etc.).
-3. Query the key metrics using the EXACT PromQL from the dashboard panels, plus correlated panels (e.g. if there's a Kafka panel, query it too).
-4. Capture panel screenshots with get_panel_image for the primary panel AND any correlated panels showing the anomaly.
+1. search_dashboards to find relevant dashboards.
+2. get_dashboard_by_uid to get panel details (PromQL, related panels).
+3. query_prometheus with the exact PromQL from dashboard panels. Use "startTime"/"endTime" params.
 
-Determine:
-- What values are currently abnormal (include exact numbers and timestamps)
-- What the baseline/normal range appears to be
-- When the anomaly window started and ended
-- Whether upstream/downstream services (Kafka, databases, etc.) show the same pattern
+Determine: abnormal values (exact numbers + timestamps), baseline range, anomaly window, upstream/downstream patterns.
 
-IMPORTANT tool parameter differences:
-- query_prometheus uses "startTime" and "endTime" (supports RFC3339 or relative like "now-1h")
-- query_loki_logs uses "startRfc3339" and "endRfc3339"
-- get_panel_image uses timeRange: { from, to } (supports RFC3339 or relative)
+Be efficient — make at most 3 tool calls per round. Respond ONLY with valid JSON matching the required schema.`;
 
-You MUST capture at least one panel screenshot using get_panel_image with an appropriate timeRange that shows the anomaly clearly.
+export const LOG_CORRELATION_PROMPT = `You are investigating a service anomaly. Query logs using Loki tools.
 
-Respond ONLY with valid JSON matching the required schema. Do not include any other text.`;
+1. Query logs DURING the anomaly window. No logs = evidence of outage.
+2. If empty, query 5 min BEFORE and AFTER the anomaly for errors/recovery patterns.
+3. Use regex: |~ "(?i)(error|exception|warn|disconnect|timeout|refused|reset|restart)"
+4. query_loki_logs uses "startRfc3339"/"endRfc3339" (RFC3339 format).
 
-export const LOG_CORRELATION_PROMPT = `You are investigating a service anomaly. Query the recent logs for the affected service using the available Loki query tools.
+Include: error patterns, up to 5 raw log samples, 1-3 reusable Loki search terms, first occurrence time.
+Be efficient — make at most 3 tool calls per round. Respond ONLY with valid JSON matching the required schema.`;
 
-Strategy:
-1. First query logs DURING the anomaly window. If no logs are found (common during outages where logging stops), this is itself evidence.
-2. If the anomaly window returns empty, query the 5 minutes BEFORE the drop started — look for errors or warnings that preceded the outage.
-3. Also query the 5 minutes AFTER recovery — look for reconnection messages, metadata resets, or startup logs that reveal what happened.
-4. Use regex filters: |~ "(?i)(error|exception|warn|disconnect|timeout|refused|reset|restart|shutdown)"
+export const INFRA_HEALTH_PROMPT = `You are investigating a service anomaly. Check infrastructure health.
 
-5. If the service depends on Kafka/messaging, also check Kafka logs. Kafka may be under a DIFFERENT label (e.g. job="stream/stream-kafka-cluster-kafka" or similar). Use list_loki_label_values to find Kafka-related values in the "job" or "chart" labels.
+Query Prometheus (use "startTime"/"endTime") for: pod restarts, CPU usage, memory, active alerts (list_alert_rules).
 
-Find:
-- Recurring error messages or exception patterns
-- Stack traces or relevant error details
-- When the errors first appeared
-- Recovery/reconnection log patterns (e.g. Kafka partition resets, reconnection messages)
-- Upstream service errors (Kafka broker warnings, database errors)
-
-IMPORTANT tool parameter differences:
-- query_loki_logs uses "startRfc3339" and "endRfc3339" (RFC3339 format)
-- query_prometheus uses "startTime" and "endTime"
-
-For each error pattern found, include up to 5 raw log lines verbatim in the logSamples field.
-Also generate 1-3 reusable Loki search terms (e.g. {job="myservice"} |= "exception") that a human could paste directly into Grafana Explore.
-If no logs were found during the drop, note "No logs during outage window — logging stopped" as an errorPattern.
-
-Respond ONLY with valid JSON matching the required schema. Do not include any other text.`;
-
-export const INFRA_HEALTH_PROMPT = `You are investigating a service anomaly. Check the infrastructure health for the affected service.
-
-Query Prometheus for (use "startTime"/"endTime" parameters, NOT "startRfc3339"):
-- Pod restart counts: increase(kube_pod_container_status_restarts_total{container="SERVICE"}[1h])
-- CPU usage: process_cpu_usage{chart="SERVICE"}
-- JVM/memory: jvm_memory_used_bytes or container_memory_usage_bytes
-- Node pressure metrics
-- Check list_alert_rules for any active alerts
-
-If the service depends on Kafka, also check:
-- Kafka consumer lag: kafka_consumergroup_lag
-- Kafka broker metrics: kafka_server_brokertopicmetrics_*
-
-Respond ONLY with valid JSON matching the required schema. Do not include any other text.`;
+Be efficient — make at most 3 tool calls per round. Respond ONLY with valid JSON matching the required schema.`;
 
 export const RCA_SYNTHESIS_PROMPT = `You are performing root cause analysis. Based on the metric, log, and infrastructure findings provided, identify the root cause of the anomaly.
 Determine the confidence level based on evidence quality:

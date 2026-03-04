@@ -18,31 +18,42 @@ import pino from "pino";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
 
-const MAX_TOOL_RESPONSE_CHARS = 2000;
+const MAX_TOOL_RESPONSE_CHARS = 1500;
+const MAX_TOOL_CALLS_PER_ITERATION = 3;
 
 /**
  * Truncate oversized tool responses to prevent context bloat.
- * For get_dashboard_by_uid, extract only panel id/title/type.
+ * Applies tool-specific extraction for known verbose tools before
+ * falling back to generic character-limit truncation.
  */
 function truncateToolResponse(text: string, toolName: string): string {
-  if (text.length <= MAX_TOOL_RESPONSE_CHARS) return text;
-
+  // Tool-specific extraction — return only what the LLM needs
   if (toolName === "get_dashboard_by_uid") {
     try {
       const data = JSON.parse(text);
       const panels = (data.dashboard?.panels ?? data.panels ?? []) as Array<{
         id: number; title: string; type: string;
       }>;
-      const summary = {
+      return JSON.stringify({
         title: data.dashboard?.title ?? data.title,
         uid: data.dashboard?.uid ?? data.meta?.slug,
         panels: panels.map((p) => ({ id: p.id, title: p.title, type: p.type })),
-      };
-      return JSON.stringify(summary);
-    } catch {
-      // fall through to generic truncation
-    }
+      });
+    } catch { /* fall through */ }
   }
+
+  if (toolName === "search_dashboards") {
+    try {
+      const parsed = JSON.parse(text);
+      const list = Array.isArray(parsed) ? parsed : parsed?.dashboards ?? [];
+      // Only uid + title, cap at 20 dashboards
+      return JSON.stringify(
+        (list as Array<{ uid: string; title: string }>).slice(0, 20).map((d) => ({ uid: d.uid, title: d.title })),
+      );
+    } catch { /* fall through */ }
+  }
+
+  if (text.length <= MAX_TOOL_RESPONSE_CHARS) return text;
 
   logger.debug({ toolName, originalLen: text.length, truncatedTo: MAX_TOOL_RESPONSE_CHARS }, "Truncating tool response");
   return text.slice(0, MAX_TOOL_RESPONSE_CHARS) + `\n... [truncated, ${text.length - MAX_TOOL_RESPONSE_CHARS} chars omitted]`;
@@ -86,7 +97,7 @@ export class InvestigationAgent {
         buildProactiveStructuredPrompt([service]),
         phase1UserMessage,
         ANOMALY_ASSESSMENT_RESPONSE_FORMAT,
-        8,
+        5,
         onTokenUsage,
         onToolCall,
       );
@@ -120,9 +131,9 @@ export class InvestigationAgent {
     const infraMessage = `${anomalyContext}${userContext}\nService: ${service.name}`;
 
     const [metricResult, logResult, infraResult, panelCaptureResult] = await Promise.allSettled([
-      this.runPhase<MetricFindings>(METRIC_DEEP_DIVE_PROMPT, metricMessage, METRIC_FINDINGS_SCHEMA, 8, onTokenUsage, onToolCall),
-      this.runPhase<LogFindings>(LOG_CORRELATION_PROMPT, logMessage, LOG_FINDINGS_SCHEMA, 8, onTokenUsage, onToolCall),
-      this.runPhase<InfraFindings>(INFRA_HEALTH_PROMPT, infraMessage, INFRA_FINDINGS_SCHEMA, 8, onTokenUsage, onToolCall),
+      this.runPhase<MetricFindings>(METRIC_DEEP_DIVE_PROMPT, metricMessage, METRIC_FINDINGS_SCHEMA, 5, onTokenUsage, onToolCall),
+      this.runPhase<LogFindings>(LOG_CORRELATION_PROMPT, logMessage, LOG_FINDINGS_SCHEMA, 5, onTokenUsage, onToolCall),
+      this.runPhase<InfraFindings>(INFRA_HEALTH_PROMPT, infraMessage, INFRA_FINDINGS_SCHEMA, 5, onTokenUsage, onToolCall),
       this.capturePanelImages(service.name, anomaly.summary, userMessage, onToolCall),
     ]);
 
@@ -396,22 +407,28 @@ export class InvestigationAgent {
         break;
       }
 
+      // Cap tool calls per iteration to limit context growth
+      const calls = response.calls.slice(0, MAX_TOOL_CALLS_PER_ITERATION);
+      if (response.calls.length > MAX_TOOL_CALLS_PER_ITERATION) {
+        logger.debug({ requested: response.calls.length, executed: calls.length }, "Capped tool calls per iteration");
+      }
+
       messages.push({
         role: "assistant",
         content: null,
-        tool_calls: response.calls.map((c) => ({
+        tool_calls: calls.map((c) => ({
           id: c.id, name: c.name, args: c.args,
         })),
       });
 
       const settled = await Promise.allSettled(
-        response.calls.map((call) => {
+        calls.map((call) => {
           onToolCall?.(call.name, call.args);
           logger.debug({ toolName: call.name, isImageTool: call.name === "get_panel_image" }, "Tool call");
           return this.mcp.callTool(call.name, call.args);
         }),
       );
-      for (let j = 0; j < response.calls.length; j++) {
+      for (let j = 0; j < calls.length; j++) {
         const outcome = settled[j]!;
         const call = response.calls[j]!;
         if (outcome.status === "fulfilled") {

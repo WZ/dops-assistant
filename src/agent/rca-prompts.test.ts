@@ -64,12 +64,11 @@ describe("RCA prompts", () => {
     expect(schema.required).toContain("dashboardLinks");
   });
 
-  it("LOG_CORRELATION_PROMPT instructs LLM to collect raw log samples", () => {
-    expect(LOG_CORRELATION_PROMPT).toContain("raw log");
+  it("LOG_CORRELATION_PROMPT instructs LLM to collect log samples", () => {
+    expect(LOG_CORRELATION_PROMPT).toContain("log sample");
   });
 
-  it("METRIC_DEEP_DIVE_PROMPT instructs LLM to get dashboard and capture panels", () => {
+  it("METRIC_DEEP_DIVE_PROMPT instructs LLM to get dashboard details", () => {
     expect(METRIC_DEEP_DIVE_PROMPT).toContain("get_dashboard_by_uid");
-    expect(METRIC_DEEP_DIVE_PROMPT).toContain("get_panel_image");
   });
 });
