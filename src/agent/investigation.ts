@@ -371,11 +371,11 @@ export class InvestigationAgent {
     const phaseImages: PanelImage[] = [];
 
     for (let i = 0; i < maxIterations; i++) {
-      // Near the end, withhold tools to force a JSON response
-      const remainingIterations = maxIterations - i;
-      const iterationTools = remainingIterations <= 2 ? [] : tools;
+      const isLastIteration = i === maxIterations - 1;
+      // On the last iteration, withhold tools and inject a "respond now" nudge
+      const iterationTools = isLastIteration ? [] : tools;
 
-      if (remainingIterations <= 2 && i > 0) {
+      if (isLastIteration && i > 0) {
         messages.push({
           role: "user",
           content: "You have used all available tool iterations. You MUST respond now with valid JSON matching the required schema. Do not call any more tools.",
@@ -402,7 +402,7 @@ export class InvestigationAgent {
       }
 
       // If LLM returned tool_calls on the last iteration (despite no tools), skip execution
-      if (remainingIterations <= 1) {
+      if (isLastIteration) {
         logger.warn({ iteration: i, callCount: response.calls.length }, "LLM returned tool calls on final iteration, forcing completion");
         break;
       }
