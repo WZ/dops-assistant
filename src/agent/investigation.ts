@@ -64,6 +64,31 @@ export type PhaseResult<T> = {
   images: PanelImage[];
 };
 
+/**
+ * Extract dashboard and panel name hints from the user message and anomaly summary.
+ * Looks for patterns like "(Panel Name in Dashboard Name)" or just quoted names.
+ */
+export function extractDashboardPanelHints(
+  userMessage?: string,
+  anomalySummary?: string,
+): { dashboardHint: string | null; panelHint: string | null } {
+  const text = `${userMessage ?? ""} ${anomalySummary ?? ""}`;
+
+  // Pattern: "(Panel Name in Dashboard Name)" — e.g. "(Ingestion Log Rate in Ingestion monitor)"
+  const parenMatch = text.match(/\(([^)]+?)\s+in\s+([^)]+?)\)/i);
+  if (parenMatch) {
+    return { panelHint: parenMatch[1]!.trim(), dashboardHint: parenMatch[2]!.trim() };
+  }
+
+  // Pattern: "Panel Name in Dashboard Name" without parens — less strict, require "dashboard"/"monitor" suffix
+  const inMatch = text.match(/([A-Z][A-Za-z\s]+?)\s+in\s+([A-Z][A-Za-z\s]*(?:dashboard|monitor|overview))/i);
+  if (inMatch) {
+    return { panelHint: inMatch[1]!.trim(), dashboardHint: inMatch[2]!.trim() };
+  }
+
+  return { dashboardHint: null, panelHint: null };
+}
+
 export class InvestigationAgent {
   private readonly llm: LlmClient;
   private readonly mcp: McpClient;
@@ -211,8 +236,8 @@ export class InvestigationAgent {
 
   /**
    * Deterministic panel image capture — always runs, independent of LLM behavior.
-   * Searches dashboards, finds ones relevant to the service, and captures up to 3
-   * panel images with a time range derived from the anomaly context.
+   * Searches dashboards, finds ones relevant to the service and user query,
+   * and captures up to 3 panel images with a time range derived from the anomaly context.
    */
   private async capturePanelImages(
     serviceName: string,
@@ -236,6 +261,16 @@ export class InvestigationAgent {
     const timeRange = this.extractTimeRange(anomalySummary, userMessage);
     log.info({ timeRange }, "Derived time range for panel images");
 
+    // Extract dashboard/panel hints from user message
+    // e.g. "(Ingestion Log Rate in Ingestion monitor)" → dashboardHint="Ingestion monitor", panelHint="Ingestion Log Rate"
+    const { dashboardHint, panelHint } = extractDashboardPanelHints(userMessage, anomalySummary);
+    log.debug({ dashboardHint, panelHint }, "Extracted dashboard/panel hints from query");
+
+    // Build scoring tokens: service name tokens + query-derived tokens
+    const serviceTokens = serviceName.toLowerCase().split(/[-_\s]+/);
+    const dashboardHintTokens = dashboardHint ? dashboardHint.toLowerCase().split(/[-_\s]+/).filter((t) => t.length > 1) : [];
+    const panelHintTokens = panelHint ? panelHint.toLowerCase().split(/[-_\s]+/).filter((t) => t.length > 1) : [];
+
     // Step 1: list all dashboards
     onToolCall?.("search_dashboards", { query: "" });
     const searchResult = await this.mcp.callTool("search_dashboards", { query: "" });
@@ -253,14 +288,16 @@ export class InvestigationAgent {
 
     if (dashboards.length === 0) return images;
 
-    // Step 2: sort dashboards by relevance to the service name
-    const serviceTokens = serviceName.toLowerCase().split(/[-_\s]+/);
+    // Step 2: sort dashboards by relevance
+    // Dashboard hint match is weighted 3x higher than service token match
     dashboards.sort((a, b) => {
       const aTitle = a.title.toLowerCase();
       const bTitle = b.title.toLowerCase();
-      const aScore = serviceTokens.filter((t) => aTitle.includes(t)).length;
-      const bScore = serviceTokens.filter((t) => bTitle.includes(t)).length;
-      return bScore - aScore; // higher match count first
+      const aServiceScore = serviceTokens.filter((t) => aTitle.includes(t)).length;
+      const bServiceScore = serviceTokens.filter((t) => bTitle.includes(t)).length;
+      const aHintScore = dashboardHintTokens.filter((t) => aTitle.includes(t)).length * 3;
+      const bHintScore = dashboardHintTokens.filter((t) => bTitle.includes(t)).length * 3;
+      return (bServiceScore + bHintScore) - (aServiceScore + aHintScore);
     });
 
     log.debug({ dashboardCount: dashboards.length, topDashboards: dashboards.slice(0, 3).map((d) => d.title) }, "Dashboards ranked by relevance");
@@ -286,13 +323,16 @@ export class InvestigationAgent {
       const graphTypes = new Set(["timeseries", "graph", "gauge", "stat", "bargauge", "heatmap"]);
       const metricPanels = panels.filter((p) => graphTypes.has(p.type));
 
-      // Rank panels: prefer those whose title mentions the service
+      // Rank panels: panel hint tokens weighted 3x, service tokens 1x
+      const allPanelTokens = [...panelHintTokens, ...serviceTokens];
       metricPanels.sort((a, b) => {
         const aTitle = a.title.toLowerCase();
         const bTitle = b.title.toLowerCase();
-        const aScore = serviceTokens.filter((t) => aTitle.includes(t)).length;
-        const bScore = serviceTokens.filter((t) => bTitle.includes(t)).length;
-        return bScore - aScore;
+        const aHintScore = panelHintTokens.filter((t) => aTitle.includes(t)).length * 3;
+        const bHintScore = panelHintTokens.filter((t) => bTitle.includes(t)).length * 3;
+        const aServiceScore = serviceTokens.filter((t) => aTitle.includes(t)).length;
+        const bServiceScore = serviceTokens.filter((t) => bTitle.includes(t)).length;
+        return (bHintScore + bServiceScore) - (aHintScore + aServiceScore);
       });
 
       // Step 4: capture images with the correct time range

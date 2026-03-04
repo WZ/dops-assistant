@@ -36,6 +36,8 @@ Determine the confidence level based on evidence quality:
 
 Extract any Grafana dashboard URLs found in the metric findings observations and include them in dashboardLinks.
 
+FORMATTING: Do NOT use markdown tables in the summary or any text fields. Use bullet lists or plain text instead. The output will be rendered in a terminal that does not support tables.
+
 Respond ONLY with valid JSON matching the required schema. Do not include any other text.`;
 
 export const INTENT_CLASSIFIER_PROMPT = `You are classifying a user message as either an investigation request or a regular question.
