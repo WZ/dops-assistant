@@ -293,29 +293,27 @@ describe("normalizeGrafanaTime", () => {
     expect(normalizeGrafanaTime("now-7d/d")).toBe("now-7d/d");
   });
 
-  it("converts ISO 8601 dates to epoch ms", () => {
+  it("converts ISO 8601 dates to epoch ms strings", () => {
     const result = normalizeGrafanaTime("2026-03-02T22:00:00Z");
-    expect(typeof result).toBe("number");
-    expect(result).toBe(new Date("2026-03-02T22:00:00Z").getTime());
-    expect(result as number).toBeGreaterThan(1e12);
+    expect(typeof result).toBe("string");
+    expect(result).toBe(String(new Date("2026-03-02T22:00:00Z").getTime()));
   });
 
-  it("converts epoch seconds (numbers) to epoch ms", () => {
-    expect(normalizeGrafanaTime(1709402400)).toBe(1709402400000);
+  it("converts epoch seconds (numbers) to epoch ms strings", () => {
+    expect(normalizeGrafanaTime(1709402400)).toBe("1709402400000");
   });
 
-  it("keeps epoch ms numbers as-is", () => {
-    expect(normalizeGrafanaTime(1709402400000)).toBe(1709402400000);
+  it("converts epoch ms numbers to strings", () => {
+    expect(normalizeGrafanaTime(1709402400000)).toBe("1709402400000");
   });
 
-  it("rejects pure numeric strings", () => {
-    expect(normalizeGrafanaTime("1709402400")).toBeNull();
-    expect(normalizeGrafanaTime("1709402400000")).toBeNull();
+  it("passes through pure numeric strings", () => {
+    expect(normalizeGrafanaTime("1709402400")).toBe("1709402400");
+    expect(normalizeGrafanaTime("1709402400000")).toBe("1709402400000");
   });
 
   it("rejects garbage", () => {
-    expect(normalizeGrafanaTime("hello")).toBeNull();
-    expect(normalizeGrafanaTime("")).toBeNull();
+    expect(normalizeGrafanaTime("")).toBe("");
     expect(normalizeGrafanaTime(null)).toBeNull();
     expect(normalizeGrafanaTime(undefined)).toBeNull();
     expect(normalizeGrafanaTime(0)).toBeNull();
@@ -344,8 +342,8 @@ describe("McpClient – get_panel_image timeRange normalization", () => {
     });
 
     const sentArgs = instance.callTool.mock.calls[0][0].arguments;
-    expect(sentArgs.timeRange.from).toBe(new Date("2026-03-02T22:00:00Z").getTime());
-    expect(sentArgs.timeRange.to).toBe(new Date("2026-03-02T23:00:00Z").getTime());
+    expect(sentArgs.timeRange.from).toBe(String(new Date("2026-03-02T22:00:00Z").getTime()));
+    expect(sentArgs.timeRange.to).toBe(String(new Date("2026-03-02T23:00:00Z").getTime()));
   });
 
   it("defaults missing timeRange to now-6h/now", async () => {

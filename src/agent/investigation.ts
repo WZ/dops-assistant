@@ -86,18 +86,22 @@ export class InvestigationAgent {
     const log = logger.child({ component: "investigation", service: service.name, correlationId });
     const collectedImages: PanelImage[] = [];
 
+    // Pre-fetch datasource UIDs so phases don't waste iterations on list_datasources
+    const datasourceHint = await this.getDatasourceHint();
+    log.debug({ datasourceHint }, "Pre-fetched datasource UIDs");
+
     // Phase 1: detect anomaly if not provided
     let anomaly = initialAnomaly;
     if (!anomaly) {
       log.debug("Running phase 1: anomaly detection");
       const phase1UserMessage = userMessage
-        ? `User reported: "${userMessage}"\n\nSearch for relevant dashboards and metrics to verify this report. Check service: ${service.name}`
-        : `Check service: ${service.name}`;
+        ? `${datasourceHint}\nUser reported: "${userMessage}"\n\nSearch for relevant dashboards and metrics to verify this report. Check service: ${service.name}`
+        : `${datasourceHint}\nCheck service: ${service.name}`;
       const result = await this.runPhase<AnomalyAssessment>(
         buildProactiveStructuredPrompt([service]),
         phase1UserMessage,
         ANOMALY_ASSESSMENT_RESPONSE_FORMAT,
-        5,
+        7,
         onTokenUsage,
         onToolCall,
       );
@@ -124,7 +128,7 @@ export class InvestigationAgent {
 
     log.debug("Running phases 2/3/4 + panel capture in parallel");
     const timeCtx = getTimeContext();
-    const anomalyContext = `${timeCtx}\nPresent all timestamps in the user's local timezone, not UTC.\n\nKnown issue: ${anomaly.summary} (severity: ${anomaly.severity})`;
+    const anomalyContext = `${datasourceHint}\n${timeCtx}\nPresent all timestamps in the user's local timezone, not UTC.\n\nKnown issue: ${anomaly.summary} (severity: ${anomaly.severity})`;
     const userContext = userMessage ? `\nUser reported: "${userMessage}"` : "";
     const metricMessage = `${anomalyContext}${userContext}\nService metrics: ${service.metrics.map((m) => m.query).join(", ")}`;
     const logMessage = `${anomalyContext}${userContext}\nLog labels: ${JSON.stringify(service.logLabels)}`;
@@ -354,6 +358,25 @@ export class InvestigationAgent {
     return { from: "now-24h", to: "now" };
   }
 
+  /**
+   * Pre-fetch datasource UIDs so LLM phases don't waste iterations on list_datasources.
+   */
+  private async getDatasourceHint(): Promise<string> {
+    const toolNames = this.mcp.getTools().map((t) => t.function.name);
+    if (!toolNames.includes("list_datasources")) return "";
+
+    try {
+      const result = await this.mcp.callTool("list_datasources", {});
+      const datasources = JSON.parse(result.text) as Array<{ uid: string; name: string; type: string }>;
+      const relevant = datasources.filter((d) => d.type === "prometheus" || d.type === "loki");
+      if (relevant.length === 0) return "";
+      const lines = relevant.map((d) => `- ${d.type}: datasourceUid="${d.uid}" (${d.name})`);
+      return `Available datasources (use these UIDs directly, do NOT call list_datasources):\n${lines.join("\n")}`;
+    } catch {
+      return "";
+    }
+  }
+
   private async runPhase<T>(
     systemPrompt: string,
     userMessage: string,
@@ -452,6 +475,44 @@ export class InvestigationAgent {
       }
     }
 
-    throw new Error(`Phase did not complete within ${maxIterations} iterations`);
+    // Post-loop retry: the LLM burned through all iterations without producing JSON.
+    // Try up to 3 times, adding mock error responses when the model keeps returning tool_calls.
+    logger.warn("Phase loop exhausted, attempting forced JSON extraction");
+    for (let retry = 0; retry < 3; retry++) {
+      messages.push({
+        role: "user",
+        content: "All tool iterations are exhausted. You MUST respond NOW with ONLY a valid JSON object matching the required schema. Do NOT call any tools. Do NOT include any text outside the JSON.",
+      });
+      const retryResponse = await this.llm.chat(messages, [], { responseFormat });
+      if (retryResponse.usage) onTokenUsage?.(retryResponse.usage);
+
+      if (retryResponse.type === "text") {
+        logger.info({ phaseImages: phaseImages.length, retry }, "Phase completed via post-loop retry");
+        try {
+          return { parsed: JSON.parse(retryResponse.content) as T, images: phaseImages };
+        } catch (err) {
+          throw new Error(
+            `Phase returned invalid JSON on retry (${retryResponse.content.length} chars): ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+
+      // Model still wants tools — add mock error responses so it knows tools are gone
+      logger.debug({ retry, callCount: retryResponse.calls.length }, "Model returned tool_calls on retry, injecting errors");
+      messages.push({
+        role: "assistant",
+        content: null,
+        tool_calls: retryResponse.calls.map((c) => ({ id: c.id, name: c.name, args: c.args })),
+      });
+      for (const call of retryResponse.calls) {
+        messages.push({
+          role: "tool",
+          content: "[Error] No tools available. You must respond with JSON now.",
+          tool_call_id: call.id,
+        });
+      }
+    }
+
+    throw new Error(`Phase did not complete within ${maxIterations} iterations (model refuses to produce JSON)`);
   }
 }
