@@ -79,16 +79,13 @@ export class SlackBot {
         if (intent.intent === "investigation") {
           const service = matchService(intent.service, this.services);
 
-          if (!service) {
-            await say({ text: "No services configured to investigate.", thread_ts: threadId });
+          if (service) {
+            const report = await this.investigationAgent.investigate(service, undefined, correlationId, undefined, ctx.text);
+            await say({ blocks: formatRcaBlocks(report), thread_ts: threadId });
             slackMessagesTotal.inc({ status: "success" });
             return;
           }
-
-          const report = await this.investigationAgent.investigate(service, undefined, correlationId, undefined, ctx.text);
-          await say({ blocks: formatRcaBlocks(report), thread_ts: threadId });
-          slackMessagesTotal.inc({ status: "success" });
-          return;
+          // No matching service — fall through to conversational agent
         }
       }
 

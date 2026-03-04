@@ -216,22 +216,13 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
       const serviceNames = services.map((s) => s.name);
       const intent = await classifier.classify(trimmed, serviceNames);
 
-      if (intent.intent === "investigation") {
+      const service = intent.intent === "investigation"
+        ? matchService(intent.service, services)
+        : undefined;
+
+      if (service) {
+        // Run structured RCA investigation for matched service
         setThinkingLabel("Running investigation");
-        const service = matchService(intent.service, services);
-
-        if (!service) {
-          const available = services.map((s) => s.name).join(", ") || "none";
-          const name = intent.service ?? "unknown";
-          addMessage({
-            id: randomUUID(),
-            role: "error",
-            content: `No matching service found for "${name}". Available: ${available}`,
-          });
-          setIsThinking(false);
-          return;
-        }
-
         const report = await investigationAgent.investigate(service, undefined, correlationId, onTokenUsage, trimmed, (name: string, args: Record<string, unknown>) => {
             const summary = JSON.stringify(args).slice(0, 80);
             const tokens = pendingTokens;
@@ -246,6 +237,7 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
           }
         }
       } else {
+        // Conversational agent — handles questions, unmatched services, and general infra queries
         setThinkingLabel("Thinking");
         const history = memory.get(threadId);
         memory.append(threadId, { role: "user", content: trimmed });
