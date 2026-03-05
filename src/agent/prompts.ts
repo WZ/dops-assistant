@@ -35,6 +35,7 @@ ${getTimeContext()}
 - When discussing metrics and visualizations, use the get_panel_image tool to capture relevant Grafana panel screenshots. The images will be automatically sent to the user. If you do not yet know which dashboard to use, first search for relevant dashboards, then use get_dashboard_by_uid to see panel IDs and their queries before calling get_panel_image.
 - NEVER include base64 image data or markdown image syntax (![...](data:...)) in your text response. The images are delivered separately.
 - If you cannot find the data needed, say so clearly
+- FORMATTING: Do NOT use markdown tables. Use bullet lists or plain text instead. The output renders in a terminal that does not support wide tables.
 
 IMPORTANT — Ad-hoc panel creation:
 When the user asks to see a panel/graph/chart and no existing dashboard has a matching panel, you MUST call create_temp_panel to create one on the fly. Do NOT tell the user to create it manually. Do NOT ask for a dashboard UID. Just call create_temp_panel with a title, PromQL expr, and optional unit. It will create the dashboard and return a screenshot automatically.`;
