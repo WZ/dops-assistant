@@ -1,11 +1,12 @@
-import { readFileSync } from "fs";
+import { readFileSync, existsSync } from "fs";
+import { dirname, resolve } from "path";
 import { parse } from "yaml";
-import { ConfigSchema, type Config } from "./schema.js";
+import { ConfigSchema, type Config, type ServiceConfig } from "./schema.js";
 
 function resolveEnvVars(obj: unknown): unknown {
   if (typeof obj === "string") {
     return obj.replace(/\$\{([^}]+)\}/g, (_, expr: string) => {
-      // Support ${VAR:-default} syntax
+      // Support ${VAR:-default} syntax (bash semantics)
       const sepIdx = expr.indexOf(":-");
       const key = sepIdx >= 0 ? expr.slice(0, sepIdx) : expr;
       const defaultVal = sepIdx >= 0 ? expr.slice(sepIdx + 2) : undefined;
@@ -36,6 +37,25 @@ function resolveEnvVars(obj: unknown): unknown {
   return obj;
 }
 
+/**
+ * Resolves the services.yaml path relative to the config file directory.
+ */
+export function getServicesFilePath(configPath: string): string {
+  return resolve(dirname(configPath), "services.yaml");
+}
+
+/**
+ * Loads services from a separate services.yaml file if it exists.
+ */
+export function loadServicesFile(configPath: string): ServiceConfig[] {
+  const servicesPath = getServicesFilePath(configPath);
+  if (!existsSync(servicesPath)) return [];
+  const raw = readFileSync(servicesPath, "utf-8");
+  const parsed = parse(raw) as unknown;
+  if (!Array.isArray(parsed)) return [];
+  return parsed as ServiceConfig[];
+}
+
 export function loadConfig(configPath: string): Config {
   const raw = readFileSync(configPath, "utf-8");
   const parsed = parse(raw);
@@ -48,5 +68,15 @@ export function loadConfig(configPath: string): Config {
         .join("\n")}`
     );
   }
-  return result.data;
+
+  // Merge services from services.yaml (inline config takes precedence)
+  const config = result.data;
+  const fileServices = loadServicesFile(configPath);
+  if (fileServices.length > 0) {
+    const inlineNames = new Set(config.services.map((s) => s.name));
+    const extra = fileServices.filter((s) => !inlineNames.has(s.name));
+    config.services = [...config.services, ...extra];
+  }
+
+  return config;
 }
