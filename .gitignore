@@ -9,6 +9,9 @@ dist/
 .env
 .env.*
 
+# Local dev config (contains secrets)
+dev/
+
 # Logs
 *.log
 logs/

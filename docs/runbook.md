@@ -96,7 +96,24 @@ grafana:
       - "search_dashboards"
       - "get_alerts"
 
+# Service auto-discovery. Discovers services via Consul metrics in Prometheus.
+discovery:
+  # Run discovery at startup and merge with static services.
+  autoRefresh: false
+
+  # Services to exclude from discovery results.
+  excludeServices:
+    - consul
+    - prometheus
+    - grafana
+    - node-exporter
+    - alertmanager
+
+  # Prometheus metric used to discover services (Consul service health).
+  consulMetric: "consul_catalog_service_node_healthy"
+
 # Services to monitor proactively.
+# Populate manually, or run `npm run discover` to auto-populate from Prometheus/Loki.
 services:
   - name: payments-api
     # PromQL queries the agent will check for each service.
@@ -216,6 +233,12 @@ Controls how many LLM + tool-call rounds the agent can take before giving up. In
 - `maxMessages` — how many messages to retain per thread. Higher values give the LLM more context but increase token usage on each turn. 20 is a good default.
 - `ttlMinutes` — how long a thread stays in memory after the last message. 60 minutes works well for ops workflows; increase if your team has long-running incident threads.
 
+### Service discovery (`discovery`)
+
+- `autoRefresh` — set to `true` to run discovery at every startup. Discovered services are merged with static config in memory (does not write to disk). Set to `false` and use `npm run discover` for a one-time CLI-driven discovery that writes back to your config file.
+- `excludeServices` — infrastructure services (consul, prometheus, grafana, etc.) that should not appear in discovery results. Case-insensitive.
+- `consulMetric` — the Prometheus metric used to enumerate services. Defaults to `consul_catalog_service_node_healthy`. Change this if your service registry uses a different metric.
+
 ### Concurrency (`scheduler.anomalyCheck.maxConcurrency`)
 
 Controls how many service checks run in parallel per cron tick. Set this based on how many Grafana MCP calls you're comfortable making simultaneously. Default of 3 is conservative.
@@ -281,6 +304,12 @@ If you see `429 Too Many Requests` errors in logs:
 - Reduce `scheduler.anomalyCheck.maxConcurrency` to limit parallel LLM calls.
 - Increase `scheduler.anomalyCheck.interval` to reduce frequency.
 - Switch to a higher-tier OpenAI plan or use a different model via `llm.baseURL`.
+
+### Discovery finds no services
+
+- Confirm `consul_catalog_service_node_healthy` (or your configured `consulMetric`) exists in Prometheus. Run `query_prometheus` with `consul_catalog_service_node_healthy` to verify.
+- Check that `discovery.excludeServices` isn't filtering out the services you expect to find.
+- Increase `agent.maxIterations` if the discovery agent is running out of iterations before completing its probes.
 
 ### Agent hits maxIterations
 

@@ -9,12 +9,20 @@ export type AgentTask = {
   serviceContext?: ServiceConfig[];
   history?: Message[];
   correlationId?: string;
+  onToolCall?: (name: string, args: Record<string, unknown>) => void;
   onTokenUsage?: (usage: TokenUsage) => void;
+};
+
+export type ImageAttachment = {
+  filename: string;
+  mimeType: string;
+  data: Buffer;
 };
 
 export type AgentResult = {
   response: string;
   updatedHistory: Message[];
+  images: ImageAttachment[];
 };
 
 export type AnomalyAssessment = {

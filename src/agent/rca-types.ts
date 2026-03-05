@@ -1,3 +1,5 @@
+import type { PanelImage } from "../mcp/client.js";
+
 export type MetricFindings = {
   observations: string[];  // key metric values with timestamps
   baseline: string;        // normal range for comparison
@@ -5,9 +7,11 @@ export type MetricFindings = {
 };
 
 export type LogFindings = {
-  errorPatterns: string[];  // recurring error messages
-  stackTraces: string[];    // relevant stack traces
-  firstOccurrence: string;  // ISO timestamp or "unknown"
+  errorPatterns: string[];   // recurring error messages
+  stackTraces: string[];     // relevant stack traces
+  logSamples: string[];      // up to 5 raw log lines from Loki
+  lokiSearchTerms: string[]; // ready-to-use Loki queries (e.g. {job="x"} |= "error")
+  firstOccurrence: string;   // ISO timestamp or "unknown"
 };
 
 export type InfraFindings = {
@@ -26,6 +30,8 @@ export type RcaReport = {
     logs: string[];
     infra: string[];
   };
+  dashboardLinks: string[];       // Grafana panel URLs
+  panelImages: PanelImage[]; // panel screenshots (raw base64)
   recommendedActions: string[];
   confidence: "low" | "medium" | "high";
   investigatedAt: string;
