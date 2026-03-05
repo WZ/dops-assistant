@@ -3,7 +3,7 @@ import type { ServiceConfig } from "../config/schema.js";
 
 export type AgentMode = "proactive" | "conversational";
 
-export type AgentTask = {
+export type ChatRequest = {
   mode: AgentMode;
   message: string;
   serviceContext?: ServiceConfig[];
@@ -19,7 +19,7 @@ export type ImageAttachment = {
   data: Buffer;
 };
 
-export type AgentResult = {
+export type ChatResponse = {
   response: string;
   updatedHistory: Message[];
   images: ImageAttachment[];

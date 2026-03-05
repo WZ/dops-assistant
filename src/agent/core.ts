@@ -3,7 +3,7 @@ import {
   buildSystemPrompt,
   ANOMALY_ASSESSMENT_RESPONSE_FORMAT,
 } from "./prompts.js";
-import type { AgentTask, AgentResult, ImageAttachment } from "./types.js";
+import type { ChatRequest, ChatResponse, ImageAttachment } from "./types.js";
 import type { LlmClient, Message } from "../llm/openai.js";
 import type { McpClient } from "../mcp/client.js";
 import type { OpenAITool, ToolResult } from "../mcp/client.js";
@@ -59,7 +59,7 @@ const CREATE_TEMP_PANEL_TOOL: OpenAITool = {
   },
 };
 
-export class AgentCore {
+export class ChatAgent {
   private llm: LlmClient;
   private mcp: McpClient;
   private maxIterations: number;
@@ -132,7 +132,7 @@ export class AgentCore {
     };
   }
 
-  async run(task: AgentTask): Promise<AgentResult> {
+  async chat(task: ChatRequest): Promise<ChatResponse> {
     const log = logger.child({
       component: "agent",
       correlationId: task.correlationId,
