@@ -1,13 +1,10 @@
 import { loadConfig } from "./config/loader.js";
 import { McpClient } from "./mcp/client.js";
 import { LlmClient } from "./llm/openai.js";
-import { AgentCore } from "./agent/core.js";
+import { ChatAgent } from "./agent/core.js";
 import { InvestigationAgent } from "./agent/investigation.js";
 import { IntentClassifier } from "./agent/intent.js";
 import { ConversationMemory } from "./memory/conversation.js";
-import { sendAnomalyAlert } from "./notifications/slack-webhook.js";
-import { Scheduler } from "./scheduler/scheduler.js";
-import { SlackBot } from "./interfaces/slack.js";
 import { ObservabilityServer } from "./observability/server.js";
 import { DiscoveryAgent } from "./agent/discovery.js";
 import pino from "pino";
@@ -40,8 +37,8 @@ async function main(): Promise<void> {
   // Layer 2: LLM client
   const llm = new LlmClient(config.llm, config.timeouts, config.retry);
 
-  // Layer 3: Agent core
-  const agent = new AgentCore(llm, mcp, {
+  // Layer 3: Chat agent
+  const agent = new ChatAgent(llm, mcp, {
     maxIterations: config.agent.maxIterations,
   });
 
@@ -70,47 +67,8 @@ async function main(): Promise<void> {
     }
   }
 
-  // Layer 6: Slack webhook notifier (used by scheduler)
-  const webhookUrl = config.notifications.slack?.webhookUrl ?? "";
-
-  // Layer 7: Scheduler
-  let scheduler: Scheduler | null = null;
-  if (config.scheduler.anomalyCheck) {
-    scheduler = new Scheduler(
-      config.scheduler.anomalyCheck,
-      services,
-      agent,
-      sendAnomalyAlert,
-      webhookUrl,
-      investigationAgent,
-    );
-    scheduler.start();
-    logger.info("Scheduler started");
-  }
-
-  // Layer 8: Slack bot
-  let slackBot: SlackBot | null = null;
-  if (config.interfaces.slack?.enabled) {
-    const slackCfg = config.interfaces.slack;
-    if (!slackCfg.botToken || !slackCfg.appToken) {
-      throw new Error("Slack enabled but botToken or appToken missing");
-    }
-    slackBot = new SlackBot(
-      { botToken: slackCfg.botToken, appToken: slackCfg.appToken },
-      agent,
-      memory,
-      services,
-      classifier,
-      investigationAgent,
-    );
-    await slackBot.start();
-    logger.info("Slack bot started");
-  }
-
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, "Shutting down");
-    scheduler?.stop();
-    await slackBot?.stop();
     memory.destroy();
     await mcp.disconnect();
     await obsServer.stop();

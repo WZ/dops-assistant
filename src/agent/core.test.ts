@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { AgentCore } from "./core.js";
+import { ChatAgent } from "./core.js";
 import type { McpClient } from "../mcp/client.js";
 import type { LlmClient } from "../llm/openai.js";
 
@@ -17,7 +17,7 @@ const mockMcp = {
   callTool: vi.fn(),
 } as unknown as McpClient;
 
-describe("AgentCore", () => {
+describe("ChatAgent", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -28,8 +28,8 @@ describe("AgentCore", () => {
       content: "All systems healthy.",
     });
 
-    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
-    const result = await core.run({ mode: "proactive", message: "Check services." });
+    const core = new ChatAgent(mockLlm, mockMcp, { maxIterations: 10 });
+    const result = await core.chat({ mode: "proactive", message: "Check services." });
 
     expect(result.response).toBe("All systems healthy.");
     expect(mockLlm.chat).toHaveBeenCalledTimes(1);
@@ -45,8 +45,8 @@ describe("AgentCore", () => {
 
     (mockMcp.callTool as ReturnType<typeof vi.fn>).mockResolvedValue({ text: "1.0", images: [] });
 
-    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
-    const result = await core.run({ mode: "proactive", message: "Check metrics." });
+    const core = new ChatAgent(mockLlm, mockMcp, { maxIterations: 10 });
+    const result = await core.chat({ mode: "proactive", message: "Check metrics." });
 
     expect(result.response).toBe("Metrics look fine.");
     expect(mockLlm.chat).toHaveBeenCalledTimes(2);
@@ -60,8 +60,8 @@ describe("AgentCore", () => {
     });
     (mockMcp.callTool as ReturnType<typeof vi.fn>).mockResolvedValue({ text: "data", images: [] });
 
-    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 3 });
-    const result = await core.run({ mode: "proactive", message: "Check." });
+    const core = new ChatAgent(mockLlm, mockMcp, { maxIterations: 3 });
+    const result = await core.chat({ mode: "proactive", message: "Check." });
 
     expect(result.response).toContain("maximum iterations");
   });
@@ -72,12 +72,12 @@ describe("AgentCore", () => {
       content: "Response.",
     });
 
-    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
+    const core = new ChatAgent(mockLlm, mockMcp, { maxIterations: 10 });
     const history = [
       { role: "user" as const, content: "Earlier message." },
       { role: "assistant" as const, content: "Earlier response." },
     ];
-    await core.run({ mode: "conversational", message: "Follow up.", history });
+    await core.chat({ mode: "conversational", message: "Follow up.", history });
 
     const callMessages = (mockLlm.chat as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(callMessages).toEqual(
@@ -100,8 +100,8 @@ describe("AgentCore", () => {
       new Error("MCP process crashed")
     );
 
-    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
-    const result = await core.run({ mode: "proactive", message: "Check metrics." });
+    const core = new ChatAgent(mockLlm, mockMcp, { maxIterations: 10 });
+    const result = await core.chat({ mode: "proactive", message: "Check metrics." });
 
     // Agent must not throw — it should return a response
     expect(result.response).toBe("Partial response despite error.");
@@ -131,8 +131,8 @@ describe("AgentCore", () => {
       .mockResolvedValueOnce({ text: "1.0", images: [] })
       .mockRejectedValueOnce(new Error("MCP process crashed"));
 
-    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
-    const result = await core.run({ mode: "proactive", message: "Check metrics." });
+    const core = new ChatAgent(mockLlm, mockMcp, { maxIterations: 10 });
+    const result = await core.chat({ mode: "proactive", message: "Check metrics." });
 
     expect(result.response).toBe("Got partial results.");
 
@@ -159,8 +159,8 @@ describe("AgentCore", () => {
       content: "Done.",
     });
 
-    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
-    const result = await core.run({ mode: "conversational", message: "Hello." });
+    const core = new ChatAgent(mockLlm, mockMcp, { maxIterations: 10 });
+    const result = await core.chat({ mode: "conversational", message: "Hello." });
 
     const userMsg = result.updatedHistory.find((m) => m.role === "user" && m.content === "Hello.");
     const assistantMsg = result.updatedHistory.find((m) => m.role === "assistant" && m.content === "Done.");
@@ -174,8 +174,8 @@ describe("AgentCore", () => {
       type: "text",
       content: "Hello response.",
     });
-    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
-    const result = await core.run({
+    const core = new ChatAgent(mockLlm, mockMcp, { maxIterations: 10 });
+    const result = await core.chat({
       mode: "conversational",
       message: "hello",
       correlationId: "test-id-123",
@@ -199,8 +199,8 @@ describe("AgentCore", () => {
     (mockMcp.callTool as ReturnType<typeof vi.fn>).mockResolvedValue({ text: "1.0", images: [] });
 
     const onTokenUsage = vi.fn();
-    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
-    await core.run({
+    const core = new ChatAgent(mockLlm, mockMcp, { maxIterations: 10 });
+    await core.chat({
       mode: "conversational",
       message: "Check metrics.",
       onTokenUsage,
@@ -218,8 +218,8 @@ describe("AgentCore", () => {
       usage: { inputTokens: 50, outputTokens: 10 },
     });
 
-    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
-    const result = await core.run({ mode: "conversational", message: "Hi." });
+    const core = new ChatAgent(mockLlm, mockMcp, { maxIterations: 10 });
+    const result = await core.chat({ mode: "conversational", message: "Hi." });
     expect(result.response).toBe("OK.");
   });
 
@@ -230,8 +230,8 @@ describe("AgentCore", () => {
     });
 
     const onTokenUsage = vi.fn();
-    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
-    await core.run({ mode: "conversational", message: "Hi.", onTokenUsage });
+    const core = new ChatAgent(mockLlm, mockMcp, { maxIterations: 10 });
+    await core.chat({ mode: "conversational", message: "Hi.", onTokenUsage });
 
     expect(onTokenUsage).not.toHaveBeenCalled();
   });
@@ -249,8 +249,8 @@ describe("AgentCore", () => {
       content: JSON.stringify(assessment),
     });
 
-    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
-    const result = await core.run({
+    const core = new ChatAgent(mockLlm, mockMcp, { maxIterations: 10 });
+    const result = await core.chat({
       mode: "proactive",
       message: "Check service: payments",
       serviceContext: [],
@@ -263,7 +263,7 @@ describe("AgentCore", () => {
     expect(callArgs[2]?.responseFormat).toBeDefined();
   });
 
-  it("collects images from tool results and returns them in AgentResult", async () => {
+  it("collects images from tool results and returns them in ChatResponse", async () => {
     (mockLlm.chat as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce({
         type: "tool_calls",
@@ -276,8 +276,8 @@ describe("AgentCore", () => {
       images: [{ mimeType: "image/png", data: "aWJhc2U2NA==" }],
     });
 
-    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
-    const result = await core.run({ mode: "conversational", message: "Show me the error rate chart." });
+    const core = new ChatAgent(mockLlm, mockMcp, { maxIterations: 10 });
+    const result = await core.chat({ mode: "conversational", message: "Show me the error rate chart." });
 
     expect(result.images).toHaveLength(1);
     expect(result.images[0].filename).toMatch(/^get_panel_image-.+\.png$/);
@@ -298,8 +298,8 @@ describe("AgentCore", () => {
       images: [{ mimeType: "image/png", data: "abc" }],
     });
 
-    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
-    await core.run({ mode: "conversational", message: "Chart." });
+    const core = new ChatAgent(mockLlm, mockMcp, { maxIterations: 10 });
+    await core.chat({ mode: "conversational", message: "Chart." });
 
     const secondCallMessages = (mockLlm.chat as ReturnType<typeof vi.fn>).mock.calls[1][0];
     const toolMsg = secondCallMessages.find(
@@ -314,8 +314,8 @@ describe("AgentCore", () => {
       content: "All good.",
     });
 
-    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
-    const result = await core.run({ mode: "conversational", message: "status?" });
+    const core = new ChatAgent(mockLlm, mockMcp, { maxIterations: 10 });
+    const result = await core.chat({ mode: "conversational", message: "status?" });
 
     expect(result.images).toEqual([]);
   });
@@ -326,8 +326,8 @@ describe("AgentCore", () => {
       content: 'Here is the chart:\n\n![System Load](data:image/png;base64,iVBORw0KGgoAAAANSUhEUg...)\n\nLooks healthy.',
     });
 
-    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
-    const result = await core.run({ mode: "conversational", message: "show chart" });
+    const core = new ChatAgent(mockLlm, mockMcp, { maxIterations: 10 });
+    const result = await core.chat({ mode: "conversational", message: "show chart" });
 
     expect(result.response).not.toContain("data:image");
     expect(result.response).toContain("Here is the chart:");
@@ -349,8 +349,8 @@ describe("AgentCore", () => {
     (mockMcp.callTool as ReturnType<typeof vi.fn>).mockResolvedValue({ text: "data", images: [] });
 
     const onTokenUsage = vi.fn();
-    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
-    await core.run({
+    const core = new ChatAgent(mockLlm, mockMcp, { maxIterations: 10 });
+    await core.chat({
       mode: "conversational",
       message: "check",
       onTokenUsage,
@@ -367,8 +367,8 @@ describe("AgentCore", () => {
       content: "ok",
       usage: { inputTokens: 10, outputTokens: 5 },
     });
-    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
-    const result = await core.run({ mode: "conversational", message: "Hi." });
+    const core = new ChatAgent(mockLlm, mockMcp, { maxIterations: 10 });
+    const result = await core.chat({ mode: "conversational", message: "Hi." });
     expect(result.response).toBe("ok");
   });
 
@@ -378,8 +378,8 @@ describe("AgentCore", () => {
       content: "ok",
     });
     const onTokenUsage = vi.fn();
-    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
-    await core.run({ mode: "conversational", message: "Hi.", onTokenUsage });
+    const core = new ChatAgent(mockLlm, mockMcp, { maxIterations: 10 });
+    await core.chat({ mode: "conversational", message: "Hi.", onTokenUsage });
 
     expect(onTokenUsage).not.toHaveBeenCalled();
   });
@@ -398,8 +398,8 @@ describe("AgentCore", () => {
 
     (mockMcp.callTool as ReturnType<typeof vi.fn>).mockResolvedValue({ text: "data", images: [] });
 
-    const core = new AgentCore(mockLlm, mockMcp, { maxIterations: 10 });
-    await core.run({ mode: "conversational", message: "check", onToolCall });
+    const core = new ChatAgent(mockLlm, mockMcp, { maxIterations: 10 });
+    await core.chat({ mode: "conversational", message: "check", onToolCall });
 
     expect(onToolCall).toHaveBeenCalledTimes(2);
     expect(onToolCall).toHaveBeenCalledWith("query_prometheus", { query: "up" });
