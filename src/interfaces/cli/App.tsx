@@ -7,7 +7,7 @@ import { writeFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentCore } from "../../agent/core.js";
+import type { ChatAgent } from "../../agent/core.js";
 import { matchService, type IntentClassifier } from "../../agent/intent.js";
 import type { InvestigationAgent } from "../../agent/investigation.js";
 import type { ConversationMemory } from "../../memory/conversation.js";
@@ -30,7 +30,7 @@ type ToolCallEntry = {
 };
 
 type AppProps = {
-  agent: AgentCore;
+  agent: ChatAgent;
   memory: ConversationMemory;
   services: ServiceConfig[];
   classifier: IntentClassifier;
@@ -242,7 +242,7 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
         const history = memory.get(threadId);
         memory.append(threadId, { role: "user", content: trimmed });
 
-        const result = await agent.run({
+        const result = await agent.chat({
           mode: "conversational",
           message: trimmed,
           history,
