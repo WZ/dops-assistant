@@ -12,6 +12,8 @@ const report: RcaReport = {
     logs: ["connection timeout after 30s (340x)"],
     infra: ["pod restarted 3x (OOMKilled)"],
   },
+  dashboardLinks: [],
+  panelImages: [],
   recommendedActions: ["Scale connection pool", "Restart pods"],
   confidence: "high",
   investigatedAt: "2026-02-25T14:37:00.000Z",

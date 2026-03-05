@@ -9,6 +9,7 @@ import { sendAnomalyAlert } from "./notifications/slack-webhook.js";
 import { Scheduler } from "./scheduler/scheduler.js";
 import { SlackBot } from "./interfaces/slack.js";
 import { ObservabilityServer } from "./observability/server.js";
+import { DiscoveryAgent } from "./agent/discovery.js";
 import pino from "pino";
 
 const configPath = process.env["CONFIG_PATH"] ?? "config.yaml";
@@ -53,6 +54,22 @@ async function main(): Promise<void> {
   });
   const classifier = new IntentClassifier(llm);
 
+  // Service discovery: optionally merge discovered services with static config
+  let services = config.services;
+  if (config.discovery.autoRefresh) {
+    logger.info("Running service auto-discovery...");
+    try {
+      const discoveryAgent = new DiscoveryAgent(llm, mcp, { maxIterations: config.discovery.maxIterations });
+      const discovered = await discoveryAgent.discover(config.discovery);
+      const staticNames = new Set(services.map((s) => s.name));
+      const newServices = discovered.filter((s) => !staticNames.has(s.name));
+      services = [...services, ...newServices];
+      logger.info({ discovered: newServices.length, total: services.length }, "Service discovery complete");
+    } catch (err) {
+      logger.warn({ err }, "Service discovery failed, using static config only");
+    }
+  }
+
   // Layer 6: Slack webhook notifier (used by scheduler)
   const webhookUrl = config.notifications.slack?.webhookUrl ?? "";
 
@@ -61,7 +78,7 @@ async function main(): Promise<void> {
   if (config.scheduler.anomalyCheck) {
     scheduler = new Scheduler(
       config.scheduler.anomalyCheck,
-      config.services,
+      services,
       agent,
       sendAnomalyAlert,
       webhookUrl,
@@ -82,7 +99,7 @@ async function main(): Promise<void> {
       { botToken: slackCfg.botToken, appToken: slackCfg.appToken },
       agent,
       memory,
-      config.services,
+      services,
       classifier,
       investigationAgent,
     );

@@ -4,10 +4,10 @@ An agentic infrastructure monitoring assistant that connects to Grafana via MCP,
 
 ## What it does
 
-- **Proactive monitoring** — scheduled checks against your Grafana instance (Prometheus metrics, Loki logs, alerts) with structured anomaly detection
-- **Autonomous RCA** — 5-phase investigation pipeline (anomaly detection, metric deep dive, log correlation, infra health, synthesis) produces structured root cause reports
-- **Conversational ops assistant** — answer questions in Slack with specific metric values, log excerpts, and dashboard links
-- **Intent-based routing** — Slack messages are classified as investigation requests or questions, routed to the appropriate handler
+- **Proactive monitoring** — runs scheduled checks against your Grafana instance (Prometheus metrics, Loki logs, alerts) and posts anomaly summaries to Slack
+- **Conversational ops assistant** — answer questions in Slack and get back specific metric values, log excerpts, and dashboard links
+- **Service auto-discovery** — automatically discovers services via Consul metrics in Prometheus, probes for RED metrics and Loki log labels, and populates your config
+- **Agentic tool use** — uses an LLM (OpenAI GPT-4 or compatible) in an agentic loop, calling Grafana MCP tools as needed to answer each question or check each service
 - **Per-thread memory** — conversations in Slack threads retain context across turns
 
 ## Architecture
@@ -65,10 +65,13 @@ export SLACK_BOT_TOKEN=xoxb-...
 export SLACK_APP_TOKEN=xapp-...
 export SLACK_WEBHOOK_URL=https://hooks.slack.com/...
 
-# 4. Run in development mode
+# 4. (Optional) Auto-discover services from Consul/Prometheus
+npm run discover
+
+# 5. Run in development mode
 npm run dev
 
-# 5. Or build and run in production
+# 6. Or build and run in production
 npm run build && npm start
 
 # 6. Or run with Docker Compose
@@ -84,13 +87,11 @@ The config path defaults to `config.yaml` in the working directory. Override wit
 | `llm` | Model, API key, token limit, optional custom base URL |
 | `grafana.mcpServer` | MCP transport (`stdio` or `http`), command/URL, enabled tools |
 | `services` | Services to monitor — PromQL queries and Loki log labels per service |
-| `scheduler.anomalyCheck` | Check interval, target services, max concurrency, alert cooldown |
-| `agent` | Max iterations, conversation memory config, investigation trigger phrases |
-| `notifications.slack` | Webhook URL and channel for outbound anomaly/RCA alerts |
-| `interfaces.slack` | Enable the Slack bot, bot token, app token |
-| `timeouts` | MCP connect, LLM call, tool execution, agent iteration timeouts |
-| `retry` | Max retry attempts and base delay for LLM calls |
-| `observability` | Metrics server port and log level |
+| `discovery` | Auto-discovery settings — `autoRefresh`, `excludeServices`, `consulMetric` |
+| `scheduler.anomalyCheck` | Check interval (e.g. `"5m"`), which services, max concurrency |
+| `agent` | Max agentic loop iterations, conversation memory size and TTL |
+| `notifications.slack` | Webhook URL and channel for outbound anomaly alerts |
+| `interfaces.slack` | Enable the conversational Slack bot, bot token, app token |
 
 See [docs/runbook.md](docs/runbook.md) for a full annotated configuration reference and setup guides for Slack and Grafana.
 

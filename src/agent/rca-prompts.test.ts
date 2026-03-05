@@ -52,4 +52,23 @@ describe("RCA prompts", () => {
     expect(schema.required).toContain("recommendedActions");
     expect(schema.required).toContain("evidence");
   });
+
+  it("LOG_FINDINGS_SCHEMA has logSamples and lokiSearchTerms fields", () => {
+    const schema = LOG_FINDINGS_SCHEMA.json_schema.schema as { required: string[] };
+    expect(schema.required).toContain("logSamples");
+    expect(schema.required).toContain("lokiSearchTerms");
+  });
+
+  it("RCA_REPORT_SCHEMA has dashboardLinks field", () => {
+    const schema = RCA_REPORT_SCHEMA.json_schema.schema as { required: string[] };
+    expect(schema.required).toContain("dashboardLinks");
+  });
+
+  it("LOG_CORRELATION_PROMPT instructs LLM to collect log samples", () => {
+    expect(LOG_CORRELATION_PROMPT).toContain("log sample");
+  });
+
+  it("METRIC_DEEP_DIVE_PROMPT instructs LLM to get dashboard details", () => {
+    expect(METRIC_DEEP_DIVE_PROMPT).toContain("get_dashboard_by_uid");
+  });
 });
