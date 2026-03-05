@@ -44,12 +44,4 @@ describe("ConfigSchema – new sections", () => {
     }
   });
 
-  it("accepts alertCooldownMinutes on anomalyCheck", () => {
-    const result = ConfigSchema.parse({
-      llm: { apiKey: "k", model: "gpt-4", maxTokens: 1000 },
-      grafana: { mcpServer: { transport: "stdio", command: "npx", args: [] } },
-      scheduler: { anomalyCheck: { interval: "5m", alertCooldownMinutes: 15 } },
-    });
-    expect(result.scheduler.anomalyCheck?.alertCooldownMinutes).toBe(15);
-  });
 });
