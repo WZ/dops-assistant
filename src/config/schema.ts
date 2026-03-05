@@ -37,17 +37,6 @@ const LlmSchema = z.object({
   baseURL: z.string().optional(),
 });
 
-const AnomalyCheckSchema = z.object({
-  interval: z.string().default("5m"),
-  services: z.array(z.string()).optional(),
-  maxConcurrency: z.number().default(3),
-  alertCooldownMinutes: z.number().default(30),
-});
-
-const SchedulerSchema = z.object({
-  anomalyCheck: AnomalyCheckSchema.optional(),
-});
-
 const ConversationMemorySchema = z.object({
   maxMessages: z.number().default(20),
   ttlMinutes: z.number().default(60),
@@ -64,25 +53,6 @@ const AgentSchema = z.object({
     "is slow",
     "root cause",
   ]),
-});
-
-const SlackNotificationsSchema = z.object({
-  webhookUrl: z.string(),
-  channel: z.string().default("#ops-alerts"),
-});
-
-const NotificationsSchema = z.object({
-  slack: SlackNotificationsSchema.optional(),
-});
-
-const SlackInterfaceSchema = z.object({
-  enabled: z.boolean().default(false),
-  botToken: z.string().optional(),
-  appToken: z.string().optional(),
-});
-
-const InterfacesSchema = z.object({
-  slack: SlackInterfaceSchema.optional(),
 });
 
 const TimeoutsSchema = z.object({
@@ -115,10 +85,7 @@ export const ConfigSchema = z.object({
   llm: LlmSchema,
   grafana: GrafanaSchema,
   services: z.array(ServiceSchema).default([]),
-  scheduler: SchedulerSchema.optional().default({}),
   agent: AgentSchema.optional().default({}),
-  notifications: NotificationsSchema.optional().default({}),
-  interfaces: InterfacesSchema.optional().default({}),
   timeouts: TimeoutsSchema.optional().default({}),
   retry: RetrySchema.optional().default({}),
   observability: ObservabilitySchema.optional().default({}),
@@ -128,7 +95,6 @@ export const ConfigSchema = z.object({
 export type Config = z.infer<typeof ConfigSchema>;
 export type ServiceConfig = z.infer<typeof ServiceSchema>;
 export type McpServerConfig = z.infer<typeof McpServerSchema>;
-export type AnomalyCheckConfig = z.infer<typeof AnomalyCheckSchema>;
 export type TimeoutsConfig = z.infer<typeof TimeoutsSchema>;
 export type RetryConfig = z.infer<typeof RetrySchema>;
 export type ObservabilityConfig = z.infer<typeof ObservabilitySchema>;

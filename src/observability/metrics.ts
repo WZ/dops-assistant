@@ -44,23 +44,3 @@ export const toolDurationSeconds = new Histogram({
   registers: [registry],
 });
 
-export const schedulerChecksTotal = new Counter({
-  name: "scheduler_checks_total",
-  help: "Total scheduler service checks",
-  labelNames: ["service", "status"] as const,
-  registers: [registry],
-});
-
-export const slackMessagesTotal = new Counter({
-  name: "slack_messages_total",
-  help: "Total Slack messages handled",
-  labelNames: ["status"] as const,
-  registers: [registry],
-});
-
-export const alertNotificationsTotal = new Counter({
-  name: "alert_notifications_total",
-  help: "Total anomaly alert notifications sent",
-  labelNames: ["status"] as const,
-  registers: [registry],
-});
