@@ -6,6 +6,7 @@ import {
 import type { AgentTask, AgentResult, ImageAttachment } from "./types.js";
 import type { LlmClient, Message } from "../llm/openai.js";
 import type { McpClient } from "../mcp/client.js";
+import type { OpenAITool, ToolResult } from "../mcp/client.js";
 import { TimeoutError } from "../utils/timeout.js";
 import {
   agentRunsTotal,
@@ -29,6 +30,35 @@ export function sanitizeToolResult(text: string): string {
   return cleaned;
 }
 
+const CREATE_TEMP_PANEL_TOOL: OpenAITool = {
+  type: "function",
+  function: {
+    name: "create_temp_panel",
+    description:
+      "Create a temporary Grafana dashboard with a single timeseries panel and return a screenshot. " +
+      "Use this when the user asks for a visual/panel/graph and no existing dashboard has a matching panel.",
+    parameters: {
+      type: "object",
+      properties: {
+        title: {
+          type: "string",
+          description: "Dashboard title, e.g. 'CPU usage for node blade-198-18-1-2'",
+        },
+        expr: {
+          type: "string",
+          description: "PromQL expression for the panel, e.g. '100 - (rate(node_cpu_seconds_total{instance=\"198.18.1.2:9100\",mode=\"idle\"}[5m]) * 100)'",
+        },
+        unit: {
+          type: "string",
+          description: "Panel unit (default: 'percent'). Common values: percent, short, bytes, s, reqps",
+        },
+      },
+      required: ["title", "expr"],
+      additionalProperties: false,
+    },
+  },
+};
+
 export class AgentCore {
   private llm: LlmClient;
   private mcp: McpClient;
@@ -40,12 +70,77 @@ export class AgentCore {
     this.maxIterations = opts.maxIterations;
   }
 
+  private hasUpdateDashboard(): boolean {
+    return this.mcp.getTools().some((t) => t.function.name === "update_dashboard");
+  }
+
+  private async handleCreateTempPanel(args: Record<string, unknown>): Promise<ToolResult> {
+    const title = String(args["title"] ?? "Temp panel");
+    const expr = String(args["expr"] ?? "up");
+    const unit = String(args["unit"] ?? "percent");
+
+    const dashboardPayload = {
+      dashboard: {
+        uid: null,
+        title: `dops-temp: ${title}`,
+        panels: [
+          {
+            id: 1,
+            type: "timeseries",
+            title,
+            gridPos: { h: 12, w: 24, x: 0, y: 0 },
+            targets: [
+              { datasource: { type: "prometheus" }, expr, refId: "A" },
+            ],
+            fieldConfig: { defaults: { unit }, overrides: [] },
+          },
+        ],
+      },
+      overwrite: true,
+      message: "Auto-created by dops-assistant",
+    };
+
+    const createResult = await this.mcp.callTool("update_dashboard", dashboardPayload);
+
+    // Extract the dashboard UID from the response
+    let dashUid: string | undefined;
+    try {
+      const parsed = JSON.parse(createResult.text) as { uid?: string };
+      dashUid = parsed.uid;
+    } catch {
+      // Try to find uid in the text
+      const match = createResult.text.match(/"uid"\s*:\s*"([^"]+)"/);
+      dashUid = match?.[1];
+    }
+
+    if (!dashUid) {
+      return { text: `Dashboard created but could not extract UID. Response: ${createResult.text}`, images: [] };
+    }
+
+    const imageResult = await this.mcp.callTool("get_panel_image", {
+      dashboardUid: dashUid,
+      panelId: 1,
+      timeRange: { from: "now-1h", to: "now" },
+      width: 1000,
+      height: 500,
+      theme: "dark",
+    });
+
+    return {
+      text: `Created temporary dashboard "${title}" (uid: ${dashUid}) and captured panel image.`,
+      images: imageResult.images,
+    };
+  }
+
   async run(task: AgentTask): Promise<AgentResult> {
     const log = logger.child({
       component: "agent",
       correlationId: task.correlationId,
     });
-    const tools = this.mcp.getTools();
+    const mcpTools = this.mcp.getTools();
+    const tools = this.hasUpdateDashboard()
+      ? [...mcpTools, CREATE_TEMP_PANEL_TOOL]
+      : mcpTools;
     const systemPrompt = buildSystemPrompt(task.mode, task.serviceContext);
     const responseFormat =
       task.mode === "proactive"
@@ -98,7 +193,11 @@ export class AgentCore {
         }
 
         const settled = await Promise.allSettled(
-          response.calls.map((call) => this.mcp.callTool(call.name, call.args)),
+          response.calls.map((call) =>
+            call.name === "create_temp_panel"
+              ? this.handleCreateTempPanel(call.args)
+              : this.mcp.callTool(call.name, call.args),
+          ),
         );
         for (let j = 0; j < response.calls.length; j++) {
           const outcome = settled[j]!;
