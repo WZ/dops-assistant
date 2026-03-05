@@ -88,13 +88,18 @@ function stripInlineFormatting(text: string): string {
   return text.replace(/\*\*([^*]*)\*\*/g, "$1").replace(/`([^`]*)`/g, "$1");
 }
 
+function truncate(text: string, maxWidth: number): string {
+  if (text.length <= maxWidth) return text;
+  return maxWidth <= 1 ? "…" : text.slice(0, maxWidth - 1) + "…";
+}
+
 function MarkdownTable({ rows }: { rows: string[][] }) {
   if (rows.length < 2) return null;
 
   const headers = rows[0]!;
   const dataRows = rows.slice(1);
 
-  // Calculate column widths
+  // Calculate natural column widths
   const colWidths = headers.map((h, c) => {
     const headerLen = stripInlineFormatting(h).length;
     const maxDataLen = dataRows.reduce(
@@ -104,8 +109,24 @@ function MarkdownTable({ rows }: { rows: string[][] }) {
     return Math.max(headerLen, maxDataLen);
   });
 
-  const pad = (text: string, width: number) =>
-    text + " ".repeat(Math.max(0, width - text.length));
+  // Cap columns to fit terminal width
+  const termWidth = process.stdout.columns || 80;
+  const gapWidth = (colWidths.length - 1) * 2; // "  " between columns
+  const availableWidth = termWidth - gapWidth;
+  const totalNatural = colWidths.reduce((sum, w) => sum + w, 0);
+
+  if (totalNatural > availableWidth && availableWidth > 0) {
+    const scale = availableWidth / totalNatural;
+    const minCol = 4; // minimum column width
+    for (let c = 0; c < colWidths.length; c++) {
+      colWidths[c] = Math.max(minCol, Math.floor(colWidths[c]! * scale));
+    }
+  }
+
+  const pad = (text: string, width: number) => {
+    const truncated = truncate(text, width);
+    return truncated + " ".repeat(Math.max(0, width - truncated.length));
+  };
 
   const separator = colWidths.map((w) => "─".repeat(w)).join("──");
 

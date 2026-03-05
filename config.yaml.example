@@ -31,31 +31,11 @@ services:
     logLabels:
       app: checkout-service
 
-scheduler:
-  anomalyCheck:
-    interval: "5m"
-    services:
-      - payments-api
-      - checkout-service
-    maxConcurrency: 3
-    alertCooldownMinutes: 30
-
 agent:
   maxIterations: 20
   conversationMemory:
     maxMessages: 20
     ttlMinutes: 60
-
-notifications:
-  slack:
-    webhookUrl: "${SLACK_WEBHOOK_URL}"
-    channel: "#ops-alerts"
-
-interfaces:
-  slack:
-    enabled: true
-    botToken: "${SLACK_BOT_TOKEN}"
-    appToken: "${SLACK_APP_TOKEN}"
 
 timeouts:
   mcpConnectMs: 30000
