@@ -31,4 +31,6 @@ export type AnomalyAssessment = {
   summary: string;
   affectedMetrics: string[];
   recommendedAction: string;
+  timeRangeFrom: string;
+  timeRangeTo: string;
 };

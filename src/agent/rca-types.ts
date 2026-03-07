@@ -1,24 +1,66 @@
 import type { PanelImage } from "../mcp/client.js";
 
+// ── Structured observation types ─────────────────────────────────────────────
+
+export type MetricObservation = {
+  metric: string;
+  currentValue: string;
+  baselineValue: string;
+  timestamp: string;
+  severity: "normal" | "warning" | "critical";
+};
+
 export type MetricFindings = {
-  observations: string[];  // key metric values with timestamps
-  baseline: string;        // normal range for comparison
-  anomalyWindow: string;   // when the anomaly started
+  observations: MetricObservation[];
+  anomalyWindow: string;
+  summary: string;
+};
+
+export type LogObservation = {
+  pattern: string;
+  count: string;
+  firstSeen: string;
+  lastSeen: string;
+  sample: string;
+  sampleLines: string[];
 };
 
 export type LogFindings = {
-  errorPatterns: string[];   // recurring error messages
-  stackTraces: string[];     // relevant stack traces
-  logSamples: string[];      // up to 5 raw log lines from Loki
-  lokiSearchTerms: string[]; // ready-to-use Loki queries (e.g. {job="x"} |= "error")
-  firstOccurrence: string;   // ISO timestamp or "unknown"
+  observations: LogObservation[];
+  summary: string;
+};
+
+export type InfraObservation = {
+  resource: string;
+  status: string;
+  detail: string;
+  timestamp: string;
 };
 
 export type InfraFindings = {
-  podHealth: string[];    // restarts, OOMKilled, CrashLoopBackOff
-  nodeHealth: string[];   // CPU/memory pressure
-  recentEvents: string[]; // k8s events, alerts
+  observations: InfraObservation[];
+  summary: string;
 };
+
+// ── Phase types ──────────────────────────────────────────────────────────────
+
+export type InvestigationPlan = {
+  hypotheses: Array<{ hypothesis: string; evidenceNeeded: string }>;
+  metricFocus: string[];
+  logFocus: string[];
+  infraFocus: string[];
+};
+
+export type ReflectionResult = {
+  validationNotes: string;
+  revisedRootCause: string;
+  revisedSeverity: "low" | "medium" | "high" | "critical";
+  revisedConfidence: "low" | "medium" | "high";
+  revisedSummary: string;
+  issues: string[];
+};
+
+// ── Report types ─────────────────────────────────────────────────────────────
 
 export type RcaReport = {
   service: string;
@@ -30,8 +72,8 @@ export type RcaReport = {
     logs: string[];
     infra: string[];
   };
-  dashboardLinks: string[];       // Grafana panel URLs
-  panelImages: PanelImage[]; // panel screenshots (raw base64)
+  dashboardLinks: string[];
+  panelImages: PanelImage[];
   recommendedActions: string[];
   confidence: "low" | "medium" | "high";
   investigatedAt: string;
