@@ -4,6 +4,9 @@
   "description": "Agentic infrastructure monitoring assistant — Grafana MCP + CLI",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "rca-agent": "bin/rca-agent.mjs"
+  },
   "scripts": {
 
     "build": "tsc",
