@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useRef } from "react";
 import { Box, Static, Text, useApp, useInput } from "ink";
-import { TextInput, Spinner } from "@inkjs/ui";
+import { Spinner } from "@inkjs/ui";
+import { CliTextInput } from "./CliTextInput.js";
 import { Markdown } from "./Markdown.js";
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
@@ -8,7 +9,7 @@ import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChatAgent } from "../../agent/core.js";
-import { matchService, type IntentClassifier } from "../../agent/intent.js";
+import { matchService, matchServiceFromText, type IntentRouter } from "../../agent/intent.js";
 import type { InvestigationAgent } from "../../agent/investigation.js";
 import type { ConversationMemory } from "../../memory/conversation.js";
 import type { ServiceConfig } from "../../config/schema.js";
@@ -33,7 +34,7 @@ type AppProps = {
   agent: ChatAgent;
   memory: ConversationMemory;
   services: ServiceConfig[];
-  classifier: IntentClassifier;
+  router: IntentRouter;
   investigationAgent: InvestigationAgent;
   toolCount: number;
 };
@@ -56,15 +57,21 @@ export function formatRcaText(report: RcaReport): string {
   };
   const emoji = severityEmoji[report.severity] ?? "⚪";
 
+  const confidenceEmoji: Record<string, string> = {
+    low: "⬜", medium: "🔷", high: "✅",
+  };
+
   const lines: string[] = [
     `# ${emoji} RCA: ${report.service}`,
     "",
-    `**Severity:** ${report.severity} | **Confidence:** ${report.confidence} | **Investigated:** ${report.investigatedAt}`,
+    `${emoji} **Severity:** ${report.severity}  ·  ${confidenceEmoji[report.confidence] ?? "⬜"} **Confidence:** ${report.confidence}  ·  🕐 ${report.investigatedAt}`,
     "",
-    `## Summary`,
+    `## 📋 Summary`,
+    "",
     report.summary,
     "",
-    `## Root Cause`,
+    `## 🔍 Root Cause`,
+    "",
     report.rootCause,
   ];
 
@@ -75,22 +82,22 @@ export function formatRcaText(report: RcaReport): string {
     report.evidence.infra.length > 0;
 
   if (hasEvidence) {
-    lines.push("", "## Evidence");
+    lines.push("", `## 📊 Evidence`);
 
     if (report.evidence.metrics.length > 0) {
-      lines.push("", "### Metrics");
+      lines.push("", "### 📈 Metrics");
       for (const m of report.evidence.metrics) {
         lines.push(`- ${stripLeadingBullet(m)}`);
       }
     }
     if (report.evidence.logs.length > 0) {
-      lines.push("", "### Logs");
+      lines.push("", "### 📝 Logs");
       for (const l of report.evidence.logs) {
         lines.push(`- ${stripLeadingBullet(l)}`);
       }
     }
     if (report.evidence.infra.length > 0) {
-      lines.push("", "### Infrastructure");
+      lines.push("", "### 🖥️ Infrastructure");
       for (const i of report.evidence.infra) {
         lines.push(`- ${stripLeadingBullet(i)}`);
       }
@@ -98,14 +105,14 @@ export function formatRcaText(report: RcaReport): string {
   }
 
   if (report.dashboardLinks.length > 0) {
-    lines.push("", "## Dashboard Links");
+    lines.push("", "## 🔗 Dashboard Links");
     for (const l of report.dashboardLinks) {
       lines.push(`- ${stripLeadingBullet(l)}`);
     }
   }
 
   if (report.recommendedActions.length > 0) {
-    lines.push("", "## Recommended Actions");
+    lines.push("", "## 🛠️ Recommended Actions");
     for (let i = 0; i < report.recommendedActions.length; i++) {
       lines.push(`${i + 1}. ${stripLeadingBullet(report.recommendedActions[i]!)}`);
     }
@@ -140,7 +147,7 @@ export function saveAndOpenImages(images: ImageAttachment[]): string[] {
   return saved;
 }
 
-export function App({ agent, memory, services, classifier, investigationAgent, toolCount }: AppProps) {
+export function App({ agent, memory, services, router, investigationAgent, toolCount }: AppProps) {
   const { exit } = useApp();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isThinking, setIsThinking] = useState(false);
@@ -151,10 +158,30 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
   const inputHistory = useRef<string[]>([]);
   const historyIndex = useRef(-1);
   const tokenTotals = useRef({ inputTokens: 0, outputTokens: 0 });
+  const abortRef = useRef<AbortController | null>(null);
+  const lastEscRef = useRef(0);
   const threadId = "cli-session";
 
-  useInput((_input, key) => {
+  useInput((input, key) => {
+    if (key.escape && isThinking) {
+      const now = Date.now();
+      if (now - lastEscRef.current < 500) {
+        abortRef.current?.abort();
+        lastEscRef.current = 0;
+      } else {
+        lastEscRef.current = now;
+      }
+      return;
+    }
     if (isThinking) return;
+    if (key.ctrl && input === "d") {
+      exit();
+      return;
+    }
+    if (key.ctrl && input === "l") {
+      setMessages([]);
+      return;
+    }
     if (key.upArrow) {
       const hist = inputHistory.current;
       if (hist.length === 0) return;
@@ -202,6 +229,8 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
     setToolCalls([]);
     tokenTotals.current = { inputTokens: 0, outputTokens: 0 };
 
+    const abort = new AbortController();
+    abortRef.current = abort;
     const correlationId = randomUUID().slice(0, 8);
 
     let pendingTokens: string | undefined;
@@ -214,11 +243,21 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
 
     try {
       const serviceNames = services.map((s) => s.name);
-      const intent = await classifier.classify(trimmed, serviceNames);
+      const intent = await router.route(trimmed, serviceNames);
+      if (abort.signal.aborted) throw new DOMException("Aborted", "AbortError");
 
+      // Resolve service: try direct message matching first (more reliable),
+      // fall back to LLM-extracted service name
       const service = intent.intent === "investigation"
-        ? matchService(intent.service, services)
+        ? (matchServiceFromText(trimmed, services) ?? matchService(intent.service, services))
         : undefined;
+
+      const routeLabel = service
+        ? `▸ Routed to investigation agent (service: ${service.name})`
+        : intent.intent === "investigation"
+          ? `▸ Routed to conversation agent (service "${intent.service}" not found)`
+          : `▸ Routed to conversation agent`;
+      addMessage({ id: randomUUID(), role: "toolcalls", content: routeLabel });
 
       if (service) {
         // Run structured RCA investigation for matched service
@@ -228,7 +267,10 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
             const tokens = pendingTokens;
             pendingTokens = undefined;
             setToolCalls((prev) => [...prev, { name, args: summary, tokens }]);
+          }, (phase: string) => {
+            setThinkingLabel(phase);
           });
+        if (abort.signal.aborted) throw new DOMException("Aborted", "AbortError");
         addMessage({ id: randomUUID(), role: "rca", content: formatRcaText(report) });
         if (report.panelImages.length > 0) {
           const paths = saveAndOpenImages(panelImagesToAttachments(report.panelImages));
@@ -256,6 +298,7 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
           onTokenUsage,
         });
 
+        if (abort.signal.aborted) throw new DOMException("Aborted", "AbortError");
         memory.append(threadId, { role: "assistant", content: result.response });
         addMessage({ id: randomUUID(), role: "assistant", content: result.response });
 
@@ -267,9 +310,14 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
         }
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      addMessage({ id: randomUUID(), role: "error", content: msg });
+      if (err instanceof DOMException && err.name === "AbortError") {
+        addMessage({ id: randomUUID(), role: "error", content: "Query aborted" });
+      } else {
+        const msg = err instanceof Error ? err.message : String(err);
+        addMessage({ id: randomUUID(), role: "error", content: msg });
+      }
     } finally {
+      abortRef.current = null;
       setIsThinking(false);
       setToolCalls((prev) => {
         const parts: string[] = [];
@@ -286,7 +334,7 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
         return [];
       });
     }
-  }, [agent, memory, services, classifier, investigationAgent, addMessage, exit]);
+  }, [agent, memory, services, router, investigationAgent, addMessage, exit]);
 
   return (
     <>
@@ -333,7 +381,7 @@ export function App({ agent, memory, services, classifier, investigationAgent, t
         ) : (
           <Box marginTop={messages.length > 0 ? 1 : 0}>
             <Text bold color="cyan">{"> "}</Text>
-            <TextInput
+            <CliTextInput
               key={inputKey}
               placeholder="Ask a question or type 'investigate <service>'..."
               defaultValue={inputDefault}

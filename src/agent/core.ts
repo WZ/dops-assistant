@@ -36,7 +36,8 @@ const CREATE_TEMP_PANEL_TOOL: OpenAITool = {
     name: "create_temp_panel",
     description:
       "Create a temporary Grafana dashboard with a single timeseries panel and return a screenshot. " +
-      "Use this when the user asks for a visual/panel/graph and no existing dashboard has a matching panel.",
+      "Use this when the user asks for a visual/panel/graph and no existing dashboard has a matching panel. " +
+      "IMPORTANT: Always set 'from' and 'to' to match the time range the user is asking about.",
     parameters: {
       type: "object",
       properties: {
@@ -51,6 +52,18 @@ const CREATE_TEMP_PANEL_TOOL: OpenAITool = {
         unit: {
           type: "string",
           description: "Panel unit (default: 'percent'). Common values: percent, short, bytes, s, reqps",
+        },
+        datasourceUid: {
+          type: "string",
+          description: "Prometheus datasource UID. If omitted, the agent will auto-detect it.",
+        },
+        from: {
+          type: "string",
+          description: "Start of the time range for the panel screenshot. Accepts relative (e.g. 'now-24h', 'now-7d') or RFC3339 (e.g. '2026-03-06T00:00:00Z'). Defaults to 'now-1h'.",
+        },
+        to: {
+          type: "string",
+          description: "End of the time range for the panel screenshot. Accepts relative (e.g. 'now') or RFC3339 (e.g. '2026-03-06T23:59:59Z'). Defaults to 'now'.",
         },
       },
       required: ["title", "expr"],
@@ -74,10 +87,32 @@ export class ChatAgent {
     return this.mcp.getTools().some((t) => t.function.name === "update_dashboard");
   }
 
+  private async resolvePrometheusDatasourceUid(): Promise<string | undefined> {
+    const toolNames = this.mcp.getTools().map((t) => t.function.name);
+    if (!toolNames.includes("list_datasources")) return undefined;
+    try {
+      const result = await this.mcp.callTool("list_datasources", {});
+      const datasources = JSON.parse(result.text) as Array<{ uid: string; type: string }>;
+      return datasources.find((d) => d.type === "prometheus")?.uid;
+    } catch {
+      return undefined;
+    }
+  }
+
   private async handleCreateTempPanel(args: Record<string, unknown>): Promise<ToolResult> {
     const title = String(args["title"] ?? "Temp panel");
     const expr = String(args["expr"] ?? "up");
     const unit = String(args["unit"] ?? "percent");
+    let dsUid = args["datasourceUid"] ? String(args["datasourceUid"]) : undefined;
+
+    // Auto-detect Prometheus datasource UID if not provided
+    if (!dsUid) {
+      dsUid = await this.resolvePrometheusDatasourceUid();
+    }
+
+    const datasource = dsUid
+      ? { type: "prometheus", uid: dsUid }
+      : { type: "prometheus" };
 
     const dashboardPayload = {
       dashboard: {
@@ -89,8 +124,9 @@ export class ChatAgent {
             type: "timeseries",
             title,
             gridPos: { h: 12, w: 24, x: 0, y: 0 },
+            datasource,
             targets: [
-              { datasource: { type: "prometheus" }, expr, refId: "A" },
+              { datasource, expr, refId: "A" },
             ],
             fieldConfig: { defaults: { unit }, overrides: [] },
           },
@@ -117,10 +153,12 @@ export class ChatAgent {
       return { text: `Dashboard created but could not extract UID. Response: ${createResult.text}`, images: [] };
     }
 
+    const from = args["from"] ? String(args["from"]) : "now-1h";
+    const to = args["to"] ? String(args["to"]) : "now";
     const imageResult = await this.mcp.callTool("get_panel_image", {
       dashboardUid: dashUid,
       panelId: 1,
-      timeRange: { from: "now-1h", to: "now" },
+      timeRange: { from, to },
       width: 1000,
       height: 500,
       theme: "dark",
