@@ -246,12 +246,15 @@ export class LlmClient {
     }
 
     // Detect truncated responses (Responses API equivalent of finish_reason=length)
+    const effectiveMaxTokens = opts?.maxOutputTokens ?? this.config.maxTokens;
     if (response.status === "incomplete") {
       const reason = (response as unknown as { incomplete_details?: { reason?: string } }).incomplete_details?.reason ?? "unknown";
-      throw new Error(
-        `LLM response truncated (status=incomplete, reason=${reason}, max_tokens=${this.config.maxTokens}). ` +
-        `Increase llm.maxTokens or reduce context size.`,
+      logger.warn(
+        { reason, effectiveMaxTokens, outputTokens: response.usage?.output_tokens },
+        "LLM response truncated — returning partial content for caller to handle",
       );
+      // Instead of throwing, return whatever text was produced so the caller can retry.
+      // The caller's JSON parse will fail and trigger its own recovery logic.
     }
 
     // Parse response.output items
@@ -297,29 +300,38 @@ export class LlmClient {
     }, "LLM response received");
 
     if (functionCalls.length > 0) {
-      return {
-        type: "tool_calls",
-        usage,
-        calls: functionCalls.map((fc) => {
-          let args: Record<string, unknown>;
-          try {
-            args = JSON.parse(fc.arguments) as Record<string, unknown>;
-          } catch {
-            throw new Error(
-              `Failed to parse tool arguments for "${fc.name}": ${fc.arguments}`,
-            );
-          }
-          return { id: fc.id, name: fc.name, args };
-        }),
-      };
+      // When no tools were provided, any function_call items are hallucinations
+      // (e.g. "<|constrain|>json"). Ignore them and fall through to text handling.
+      if (tools.length > 0) {
+        return {
+          type: "tool_calls",
+          usage,
+          calls: functionCalls.map((fc) => {
+            let args: Record<string, unknown>;
+            try {
+              args = JSON.parse(fc.arguments) as Record<string, unknown>;
+            } catch {
+              throw new Error(
+                `Failed to parse tool arguments for "${fc.name}": ${fc.arguments}`,
+              );
+            }
+            return { id: fc.id, name: fc.name, args };
+          }),
+        };
+      } else {
+        logger.warn(
+          { hallucinated: functionCalls.map((fc) => fc.name) },
+          "Ignoring hallucinated function calls (no tools were provided)",
+        );
+      }
     }
 
-    if (response.output.length === 0) {
+    if (response.output.length === 0 && response.status !== "incomplete") {
       throw new Error(
         "LLM returned no output (possible content filter or API error)",
       );
     }
 
-    return { type: "text", content: textContent, usage };
+    return { type: "text", content: textContent || "{}", usage };
   }
 }
