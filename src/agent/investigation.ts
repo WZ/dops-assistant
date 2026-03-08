@@ -227,6 +227,82 @@ export function buildTimeline(
 }
 
 /**
+ * Attempt to repair a truncated JSON string by closing open strings, arrays, and objects.
+ * Returns the original string if repair fails.
+ */
+export function repairTruncatedJson(text: string): string {
+  try {
+    JSON.parse(text);
+    return text; // Already valid
+  } catch {
+    // Continue to repair
+  }
+
+  let repaired = text.trimEnd();
+
+  // Remove trailing comma
+  repaired = repaired.replace(/,\s*$/, "");
+
+  // If we're inside a string (odd number of unescaped quotes), close it
+  let inString = false;
+  for (let i = 0; i < repaired.length; i++) {
+    if (repaired[i] === '"' && (i === 0 || repaired[i - 1] !== '\\')) {
+      inString = !inString;
+    }
+  }
+  if (inString) {
+    repaired = repaired.replace(/\\$/, "");
+    repaired += '"';
+  }
+
+  // Try balancing brackets first (preserves the most data)
+  const balanced = balanceBrackets(repaired);
+  try {
+    JSON.parse(balanced);
+    return balanced;
+  } catch {
+    // Balancing alone wasn't enough — try removing the last partial entry
+  }
+
+  // Strip trailing partial key-value pair and try again
+  const lastComma = repaired.lastIndexOf(",");
+  if (lastComma > 0) {
+    const candidate = repaired.slice(0, lastComma);
+    const candidateBalanced = balanceBrackets(candidate);
+    try {
+      JSON.parse(candidateBalanced);
+      return candidateBalanced;
+    } catch {
+      // Still not parseable
+    }
+  }
+
+  return text; // Unrepairable
+}
+
+/** Close unmatched { and [ brackets in order. */
+function balanceBrackets(s: string): string {
+  const stack: string[] = [];
+  let inStr = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]!;
+    if (ch === '"' && (i === 0 || s[i - 1] !== '\\')) {
+      inStr = !inStr;
+      continue;
+    }
+    if (inStr) continue;
+    if (ch === "{" || ch === "[") stack.push(ch);
+    else if (ch === "}" || ch === "]") stack.pop();
+  }
+  let result = s;
+  while (stack.length > 0) {
+    const opener = stack.pop()!;
+    result += opener === "{" ? "}" : "]";
+  }
+  return result;
+}
+
+/**
  * Deterministic severity validator.
  * Checks whether the LLM-assigned severity is consistent with the actual findings.
  * Returns a corrected severity if the LLM got it wrong, or null if it's fine.
