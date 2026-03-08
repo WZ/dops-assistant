@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { InvestigationAgent, extractDashboardPanelHints, buildTimeline, validateSeverity } from "./investigation.js";
+import { InvestigationAgent, extractDashboardPanelHints, buildTimeline, validateSeverity, repairTruncatedJson } from "./investigation.js";
 import type { LlmClient } from "../llm/openai.js";
 import type { McpClient } from "../mcp/client.js";
 import type { AnomalyAssessment } from "./types.js";
@@ -558,5 +558,47 @@ describe("extractTimeRange (fallback)", () => {
   it("defaults to last 6h when no ISO date found", () => {
     const range = agent.extractTimeRange("ingestion rate anomaly", "investigate ingestion");
     expect(range).toEqual({ from: "now-6h", to: "now" });
+  });
+});
+
+describe("repairTruncatedJson", () => {
+  it("returns valid JSON unchanged", () => {
+    const valid = '{"severity":"high","summary":"Error spike"}';
+    expect(repairTruncatedJson(valid)).toBe(valid);
+  });
+
+  it("repairs truncated string value", () => {
+    const truncated = '{"severity":"high","summary":"Error spike at 14:';
+    const repaired = repairTruncatedJson(truncated);
+    const parsed = JSON.parse(repaired);
+    expect(parsed.severity).toBe("high");
+    expect(parsed.summary).toContain("Error spike");
+  });
+
+  it("repairs truncated array", () => {
+    const truncated = '{"items":["a","b","c';
+    const repaired = repairTruncatedJson(truncated);
+    const parsed = JSON.parse(repaired);
+    expect(parsed.items).toContain("a");
+    expect(parsed.items).toContain("b");
+  });
+
+  it("repairs truncated nested object", () => {
+    const truncated = '{"impact":{"duration":"25 min","description":"Error';
+    const repaired = repairTruncatedJson(truncated);
+    const parsed = JSON.parse(repaired);
+    expect(parsed.impact.duration).toBe("25 min");
+  });
+
+  it("repairs truncated mid-key", () => {
+    const truncated = '{"severity":"high","summ';
+    const repaired = repairTruncatedJson(truncated);
+    const parsed = JSON.parse(repaired);
+    expect(parsed.severity).toBe("high");
+  });
+
+  it("returns original string if unrepairable", () => {
+    const garbage = "not json at all";
+    expect(repairTruncatedJson(garbage)).toBe(garbage);
   });
 });
