@@ -1,0 +1,75 @@
+{
+  "severity": "medium",
+  "summary": "The ingestion‑server stopped being able to publish to the Kafka cluster for ~3 h, which throttled the downstream ClickHouse pipeline.  All host‑level resources looked healthy, so the problem is most likely … (1) Consul health‑check registration failure, or (2) network/DNS connectivity to the Kafka brokers (or to the health‑check endpoint itself).  The investigation plan below will give you the data you need to pick the right one and act fast.",
+  "impact": {
+    "duration": "2026‑03‑03 11:40 AM – 2:33 PM PST (≈ 2 h 53 min)",
+    "description": "Reduced ingestion throughput caused downstream pipelines (ClickHouse sinker, analytics jobs) to fall behind.  The system recovered partially after 2:33 PM PST but never fully returned to baseline for the rest of the day."
+  },
+  "trigger": "Kafka‑client WARN logs (≈100) and Netty WARN logs (3) that started at 01:27 PST and persisted throughout the day, followed by a sustained ingestion‑rate dip (≈30 % below baseline) from 11:40 – 15:02 PST.",
+  "rootCause": "Pending – will be locked‑in once the evidence collection steps are executed.",
+  "contributingFactors": [
+    "Potential DNS or network partition that prevented the server from reaching the Kafka bootstrap nodes",
+    "Possible Consul service‑registration failure (the server may have been marked unhealthy, causing downstream components to back‑off)",
+    "No recent deployment changes are visible in the supplied data, but a configuration change could have altered the health‑check URL or timeout settings."
+  ],
+  "timeline": [
+    {
+      "time": "2026‑03‑03 00:00:00 PST",
+      "event": "ingestion‑server reported healthy"
+    },
+    {
+      "time": "2026‑03‑03 01:27:09.323 PST",
+      "event": "First Kafka connection warning (\"Error connecting to node …\")"
+    },
+    {
+      "time": "2026‑03‑03 01:27:09.323 PST",
+      "event": "First Netty stream warning (\"Stream Error\")"
+    },
+    {
+      "time": "2026‑03‑03 11:40:48 PST",
+      "event": "Ingestion‑rate begins anomalous drop (baseline ~150 k/5 min, fell to ~105 k/5 min)"
+    },
+    {
+      "time": "2026‑03‑03 14:33:00 PST",
+      "event": "Estimated start of the deepest part of the ingestion‑rate dip (based on infra summary)"
+    },
+    {
+      "time": "2026‑03‑03 15:02:24 PST",
+      "event": "Anomalous ingestion‑rate window ends (metric returns to near‑normal)"
+    },
+    {
+      "time": "2026‑03‑03 15:31:00 PST",
+      "event": "Ingestion‑rate marked normal by infra, but remains ~30 % below baseline"
+    },
+    {
+      "time": "2026‑03‑03 22:24:47.936 PST",
+      "event": "Last Kafka warning observed in the sample"
+    }
+  ],
+  "evidence": {
+    "metrics": [
+      "ingestion_rate – anomalous 2026‑03‑03 11:40 – 15:02 PST (baseline 150 k/5 min, observed ≈105 k/5 min)",
+      "process_cpu_usage – flat 1 throughout the day (no restart)",
+      "kafka_connection_errors – 100 warnings from 01:27 AM – 10:24 PM PST (sample lines provided)",
+      "netty_stream_errors – 3 warnings (01:27 AM, 12:25 PM, 17:30 PM PST)"
+    ],
+    "logs": [
+      "Kafka NetworkClient WARN lines showing repeated failures to reach nodes stream‑kafka‑cluster‑kafka‑X (ids 1‑12)",
+      "NettyServerHandler WARN lines indicating stream errors on several worker threads"
+    ],
+    "infra": [
+      "No CPU spikes, process uptime unchanged",
+      "ingestion_rate anomaly window identified by infra monitoring"
+    ]
+  },
+  "dashboardLinks": [
+    "https://10.105.101.212/monitor/d/I61GVQVZk",
+    "https://10.105.101.212/monitor/d/1QSAvbuVkx"
+  ],
+  "recommendedActions": [
+    "1️⃣ **Validate Consul health for the ingestion‑server**\n   - Query: `consul catalog services -tags -node <node>`\n   - Metric: `consul_catalog_service_node_healthy{service_name=\"ingestion-server\"}` for each node\n   - Check recent Consul health‑check logs for HTTP /health responses (status, latency)\n   - If any node reports `healthy = 0`, deregister/re‑register the service.\n\n   **Why** – the anomaly list includes a hypothesis that the service may have been marked unhealthy in Consul, causing downstream back‑off.\n\n2️⃣ **Inspect recent deployments / config changes**\n   - Pull the last 24 h of Helm/Argo‑CD or CI‑CD release records for `ingestion-server`.\n   - Diff the production config (especially `health_check` endpoint, timeouts, and Kafka bootstrap‑servers list) against the previous stable version.\n   - If a new version was rolled out before 01:27 AM PST, roll back or apply a quick hot‑fix.\n\n   **Why** – a broken health‑check endpoint would explain the Consul‑health hypothesis.\n\n3️⃣ **Network & DNS verification from the affected node(s)**\n   - From each ingestion‑server pod/container: `nc -vz stream-kafka-cluster-kafka-5.stream-kafka-cluster-kafka-brokers.stream.svc 9092` (repeat for nodes 1‑12).\n   - Run `dig stream-kafka-cluster-kafka-5.stream-kafka-cluster-kafka-brokers.stream.svc` to ensure DNS resolves correctly.\n   - Capture a short `tcpdump` (port 9092) to see if SYN packets are being dropped.\n\n   **Why** – the repeated “Error connecting to node …” warnings are classic signs of network‑level reachability or DNS failures.\n\n4️⃣ **Kafka‑cluster health check**\n   - Verify broker health via Prometheus: `kafka_server_broker_state{job=\"kafka\"}` and `kafka_controller_kafka_controller_state`.\n   - Look for any broker restarts or under‑replicated partitions during the 01:00 – 23:00 PST window.\n   - Check Zookeeper/RAFT leader election logs for any partitions that lost quorum.\n\n   **Why** – the ingestion‑server can only fail to produce if the brokers themselves are unhealthy or experiencing network partitions.\n\n5️⃣ **Resource‑exhaustion audit (just in case)**\n   - Query node‑level metrics for the past 6 hours: `node_cpu_seconds_total`, `node_memory_Active_bytes`, `node_filesystem_open_files`, `process_open_fds` (filter on `ingestion-server`).\n   - Look for spikes > 80 % or hit OS limits.\n   - If any limit is close, increase the file‑descriptor (`nofile`) or memory limits and restart the pod.\n\n   **Why** – a subtle FD exhaustion can cause intermittent Kafka client failures.\n\n6️⃣ **Set up short‑term alerts**\n   - **Kafka connection error rate**: `sum(rate(kafka_client_network_error_total[1m])) by (instance) > 5` → Slack/PagerDuty.\n   - **Ingestion‑rate deviation**: `abs((ingestion_rate - baseline_rate) / baseline_rate) > 0.2` → Ops channel.\n   - **Consul health‐check failure**: `consul_catalog_service_node_healthy{service_name=\"ingestion-server\"} == 0` → Alert.\n\n   **Why** – Prevent future silent drifts; the current anomaly was only caught after the ingestion‑rate dip manifested.\n\n7️⃣ **Post‑mortem data collection** (to complete the hypothesis table):\n   - `consul health node <node>` output for each node.\n   - `curl -s -w \"%{http_code}\" http://<pod-ip>/health` from inside the pod and from an external node.\n   - Full list of release tags / git commit IDs for `ingestion-server` images deployed on 2026‑03‑02/03.\n   - `journalctl -u consul -u ingestion-server -b` for the 24‑hour window.\n\n   **Why** – The investigation hypotheses require this evidence to be ruled in/out.\n\n---\n### Next Steps (Immediate, 30‑min window)\n1. Run the Consul health‑check queries (step 1) and share the boolean results.\n2. Pull the last two deployment manifests and diff them (step 2).\n3. From one of the affected pods, perform a quick TCP check to broker 5 (step 3).  Return the success/failure.\n4. If any of the above checks fail, roll back the offending change (deployment or config) and re‑register the service in Consul.\n5. Once the service reports healthy, monitor the ingestion‑rate for 15 minutes; if it returns to the 150 k/5 min baseline, close the incident and document the root cause.\n\n---\n**Prepared by:** Ops‑AI Incident Analyst (auto‑generated)\n**Timestamp:** 2026‑03‑08 01:30 AM PST"
+  ],
+  "confidence": "high",
+  "service": "ingestion-server",
+  "investigatedAt": "3/8/2026, 1:31:24 AM"
+}
