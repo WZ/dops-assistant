@@ -162,14 +162,14 @@ export class LlmClient {
   async chat(
     messages: Message[],
     tools: OpenAITool[],
-    opts?: { responseFormat?: ResponseFormat; maxOutputTokens?: number },
+    opts?: { responseFormat?: ResponseFormat; maxOutputTokens?: number; timeoutMs?: number },
   ): Promise<LlmResponse> {
     try {
       return await withRetry(
         () =>
           withTimeout(
             this.doChat(messages, tools, opts),
-            this.timeouts.llmCallMs,
+            opts?.timeoutMs ?? this.timeouts.llmCallMs,
             "LLM chat",
           ),
         {
@@ -332,6 +332,6 @@ export class LlmClient {
       );
     }
 
-    return { type: "text", content: textContent || "{}", usage };
+    return { type: "text", content: textContent, usage };
   }
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { McpClient, normalizeGrafanaTime } from "./client.js";
+import { McpClient, normalizeGrafanaTime, coerceArgsToSchema } from "./client.js";
 import type { McpServerConfig } from "../config/schema.js";
 import { TimeoutError } from "../utils/timeout.js";
 
@@ -374,6 +374,60 @@ describe("McpClient – get_panel_image timeRange normalization", () => {
     await client.callTool("query_prometheus", args);
 
     const sentArgs = instance.callTool.mock.calls[0][0].arguments;
-    expect(sentArgs).toBe(args); // exact same reference, no transformation
+    expect(sentArgs).toEqual(args);
+  });
+});
+
+describe("coerceArgsToSchema", () => {
+  const schema = {
+    type: "object",
+    properties: {
+      query: { type: "string" },
+      stepSeconds: { type: "number" },
+      panelId: { type: "integer" },
+      limit: { type: "number" },
+      verbose: { type: "boolean" },
+    },
+  };
+
+  it("coerces string→number for numeric fields", () => {
+    const result = coerceArgsToSchema({ stepSeconds: "3600", limit: "30" }, schema);
+    expect(result.stepSeconds).toBe(3600);
+    expect(result.limit).toBe(30);
+  });
+
+  it("coerces string→integer for integer fields", () => {
+    const result = coerceArgsToSchema({ panelId: "1" }, schema);
+    expect(result.panelId).toBe(1);
+  });
+
+  it("coerces number→string for string fields", () => {
+    const result = coerceArgsToSchema({ query: 42 }, schema);
+    expect(result.query).toBe("42");
+  });
+
+  it("coerces string→boolean", () => {
+    expect(coerceArgsToSchema({ verbose: "true" }, schema).verbose).toBe(true);
+    expect(coerceArgsToSchema({ verbose: "false" }, schema).verbose).toBe(false);
+  });
+
+  it("leaves correctly-typed values unchanged", () => {
+    const result = coerceArgsToSchema({ query: "up", stepSeconds: 300, verbose: true }, schema);
+    expect(result).toEqual({ query: "up", stepSeconds: 300, verbose: true });
+  });
+
+  it("ignores fields not in schema", () => {
+    const result = coerceArgsToSchema({ unknown: "foo" }, schema);
+    expect(result.unknown).toBe("foo");
+  });
+
+  it("returns args unchanged if schema has no properties", () => {
+    const result = coerceArgsToSchema({ a: "1" }, { type: "object" });
+    expect(result.a).toBe("1");
+  });
+
+  it("does not coerce non-numeric strings to number", () => {
+    const result = coerceArgsToSchema({ stepSeconds: "abc" }, schema);
+    expect(result.stepSeconds).toBe("abc");
   });
 });

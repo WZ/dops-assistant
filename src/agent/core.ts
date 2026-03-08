@@ -92,7 +92,11 @@ export class ChatAgent {
     if (!toolNames.includes("list_datasources")) return undefined;
     try {
       const result = await this.mcp.callTool("list_datasources", {});
-      const datasources = JSON.parse(result.text) as Array<{ uid: string; type: string }>;
+      const parsed = JSON.parse(result.text) as
+        | Array<{ uid: string; type: string }>
+        | { datasources?: Array<{ uid: string; type: string }> };
+      const datasources = Array.isArray(parsed) ? parsed : parsed?.datasources;
+      if (!datasources) return undefined;
       return datasources.find((d) => d.type === "prometheus")?.uid;
     } catch {
       return undefined;
