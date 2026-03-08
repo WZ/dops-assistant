@@ -312,6 +312,59 @@ describe("InvestigationAgent", () => {
     expect(panelCalls.length).toBeGreaterThanOrEqual(1);
     expect(panelCalls[0]![1].dashboardUid).toBe("ing1");
   });
+
+  it("retries synthesis when root cause is non-conclusive and evidence exists", async () => {
+    const nonConclusiveReport = JSON.stringify({
+      severity: "medium",
+      summary: "Ingestion rate dropped",
+      impact: { duration: "3 hours", description: "30% drop" },
+      trigger: "Unknown",
+      rootCause: "Not yet identified — pending further investigation",
+      contributingFactors: [],
+      timeline: [],
+      evidence: { metrics: ["ingestion_rate dropped 30%"], logs: ["Kafka connection errors"], infra: [] },
+      dashboardLinks: [],
+      recommendedActions: ["Investigate Kafka"],
+      confidence: "low",
+    });
+    const conclusiveReport = JSON.stringify({
+      severity: "medium",
+      summary: "Ingestion rate dropped due to Kafka failure",
+      impact: { duration: "3 hours", description: "30% drop" },
+      trigger: "Kafka broker restart",
+      rootCause: "Kafka broker-5 restarted, causing producer connection failures and ingestion back-pressure",
+      contributingFactors: ["No retry backoff configured"],
+      timeline: [{ time: "14:30 UTC", event: "Kafka broker restart" }],
+      evidence: { metrics: ["ingestion_rate dropped 30%"], logs: ["Kafka connection errors"], infra: [] },
+      dashboardLinks: [],
+      recommendedActions: ["Add retry backoff"],
+      confidence: "medium",
+    });
+
+    // LLM calls: plan, metrics, logs, infra, synthesis(non-conclusive), synthesis(retry), reflection
+    const llm = makeMockLlm([
+      basePlanResponse, baseMetricFindings, baseLogFindings, baseInfraFindings,
+      nonConclusiveReport, conclusiveReport, baseReflectionResponse,
+    ]);
+    const agent = new InvestigationAgent(llm, mockMcp, { maxIterations: 5 });
+
+    const report = await agent.investigate(service, anomaly, "corr-quality");
+
+    expect(report.rootCause).toContain("Kafka broker-5");
+    // 7 calls: plan + 3 evidence + synthesis + synthesis retry + reflection
+    expect((llm.chat as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(7);
+  });
+
+  it("keeps original synthesis when root cause is conclusive", async () => {
+    // 6 LLM calls: plan, metrics, logs, infra, synthesis, reflection — no retry
+    const llm = makeMockLlm([basePlanResponse, baseMetricFindings, baseLogFindings, baseInfraFindings, baseRcaReport, baseReflectionResponse]);
+    const agent = new InvestigationAgent(llm, mockMcp, { maxIterations: 5 });
+
+    const report = await agent.investigate(service, anomaly, "corr-no-retry");
+
+    expect(report.rootCause).toBe("DB connection pool exhausted");
+    expect((llm.chat as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(6);
+  });
 });
 
 describe("extractDashboardPanelHints", () => {
