@@ -31,46 +31,211 @@ graph TD
 
 ## RCA Investigation Pipeline
 
-The investigation agent runs a 6-phase pipeline applying agentic design patterns:
+The investigation agent runs a multi-phase pipeline applying agentic design patterns:
 
-```mermaid
-flowchart TD
-    A[User: investigate service-x] --> B[Intent Router]
-    B --> C[Phase 1: Anomaly Detection]
-    C --> D{Anomaly?}
-    D -- No --> E[No anomaly - done]
-    D -- Yes --> F[Phase 1.5: Planning]
-    F --> G[Phases 2+3+4 in parallel]
-    G --> G1[Metric Deep Dive]
-    G --> G2[Log Correlation]
-    G --> G3[Infra Health Check]
-    G --> G4[Panel Capture]
-    G1 --> H[Build Event Timeline]
-    G2 --> H
-    G3 --> H
-    G4 --> H
-    H --> I[Phase 5: Synthesis]
-    I --> J[Phase 6: Reflection]
-    J --> K{Issues?}
-    K -- No --> L[Final RCA Report]
-    K -- Yes --> M[Apply corrections] --> L
+```
+  User message: "investigate spike in ingestion rate on March 3"
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  PRE-FETCH (deterministic, no LLM)                                  │
+│                                                                     │
+│  Parallel MCP calls to front-load context:                          │
+│   • getDatasourceHint()      → Prometheus/Loki UIDs                 │
+│   • getPanelQueriesContext()  → PromQL from relevant dashboards     │
+│   • getLokiLabelsHint()      → available Loki label names           │
+│   • getWorkingLogSelector()  → probes Loki to find a selector       │
+│                                that actually returns logs           │
+│                                                                     │
+│  Purpose: eliminate 2-3 discovery iterations from evidence phases   │
+└─────────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  PHASE 1: ANOMALY DETECTION + TIME EXTRACTION                       │
+│                                                                     │
+│  Two paths:                                                         │
+│                                                                     │
+│  A) User-reported issue (most common):                              │
+│     ┌──────────────────────────────────────────┐                    │
+│     │  🤖 LLM call: extractTimeRangeViaLlm()  │                    │
+│     │                                          │                    │
+│     │  Input:  user message (natural language)  │                    │
+│     │  Output: {from, to} as ISO timestamps    │                    │
+│     │  Tokens: ~128 (lightweight, no tools)    │                    │
+│     └──────────────────────────────────────────┘                    │
+│     Skips full anomaly detection — trusts the user.                 │
+│                                                                     │
+│  B) Proactive mode (no user message):                               │
+│     ┌──────────────────────────────────────────┐                    │
+│     │  🤖 LLM call: runPhase (7 iterations)   │                    │
+│     │                                          │                    │
+│     │  System: "Check services for anomalies"  │                    │
+│     │  Tools:  query_prometheus, query_loki,   │                    │
+│     │          search_dashboards, etc.         │                    │
+│     │  Output: AnomalyAssessment JSON          │                    │
+│     │          {isAnomaly, severity, summary,  │                    │
+│     │           timeRangeFrom, timeRangeTo}    │                    │
+│     └──────────────────────────────────────────┘                    │
+│     If isAnomaly=false → early exit, return "no anomaly" report     │
+└─────────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  PHASE 1.5: INVESTIGATION PLANNING                                  │
+│  ┌──────────────────────────────────────────────┐                   │
+│  │  🤖 LLM call: runPhase (3 iters, NO tools)  │                   │
+│  │                                              │                   │
+│  │  Input:  service name, anomaly summary,      │                   │
+│  │          severity, metrics, log labels        │                   │
+│  │  Output: InvestigationPlan JSON              │                   │
+│  │          {hypotheses[],                      │                   │
+│  │           metricFocus[], logFocus[],          │                   │
+│  │           infraFocus[]}                      │                   │
+│  └──────────────────────────────────────────────┘                   │
+│  Pure reasoning — generates hypotheses and focus areas              │
+│  that guide the 3 evidence phases below.                            │
+└─────────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  PHASES 2/3/4 + PANEL CAPTURE  (all 4 run in PARALLEL)              │
+│                                                                     │
+│  ┌─────────────────────┐  ┌─────────────────────┐                   │
+│  │  PHASE 2: METRICS   │  │  PHASE 3: LOGS      │                   │
+│  │  🤖 LLM (6 iters)  │  │  🤖 LLM (6 iters)  │                   │
+│  │                     │  │                     │                   │
+│  │  Tools:             │  │  Tools:             │                   │
+│  │  • query_prometheus │  │  • query_loki_logs  │                   │
+│  │  • get_panel_image  │  │  • get_panel_image  │                   │
+│  │                     │  │                     │                   │
+│  │  Context injected:  │  │  Context injected:  │                   │
+│  │  • PromQL from      │  │  • Validated log    │                   │
+│  │    dashboard panels │  │    selector         │                   │
+│  │  • Datasource UIDs  │  │  • Loki label names │                   │
+│  │  • Time window      │  │  • Time window      │                   │
+│  │  • Plan focus areas │  │  • Plan focus areas │                   │
+│  │                     │  │                     │                   │
+│  │  Output:            │  │  Output:            │                   │
+│  │  MetricFindings     │  │  LogFindings        │                   │
+│  │  {observations[],   │  │  {observations[],   │                   │
+│  │   anomalyWindow,    │  │   summary}          │                   │
+│  │   summary}          │  │  + sampleLines[]    │                   │
+│  └─────────────────────┘  └─────────────────────┘                   │
+│                                                                     │
+│  ┌─────────────────────┐  ┌─────────────────────┐                   │
+│  │  PHASE 4: INFRA     │  │  PANEL CAPTURE      │                   │
+│  │  🤖 LLM (6 iters)  │  │  (no LLM)           │                   │
+│  │                     │  │                     │                   │
+│  │  Tools:             │  │  Deterministic:     │                   │
+│  │  • query_prometheus │  │  • search_dashboards│                   │
+│  │  • get_panel_image  │  │  • get_dashboard    │                   │
+│  │                     │  │  • get_panel_image  │                   │
+│  │  Checks:            │  │                     │                   │
+│  │  • Pod restarts     │  │  Ranks dashboards   │                   │
+│  │  • CPU/memory       │  │  by service name,   │                   │
+│  │  • OOMKilled        │  │  captures top 3     │                   │
+│  │  • CrashLoopBackOff │  │  panels with the    │                   │
+│  │                     │  │  correct time range │                   │
+│  │  Output:            │  │                     │                   │
+│  │  InfraFindings      │  │  Output:            │                   │
+│  │  {observations[],   │  │  PanelImage[]       │                   │
+│  │   summary}          │  │  (binary PNG data)  │                   │
+│  └─────────────────────┘  └─────────────────────┘                   │
+│                                                                     │
+│  Each evidence LLM phase:                                           │
+│   • Iterations 0-3: tools available (4 productive rounds)           │
+│   • Iteration 3: midpoint nudge ("start wrapping up")               │
+│   • Iterations 4-5: wind-down, tools withheld, force JSON output    │
+│   • If exhausted: forced JSON extraction via fresh summarization    │
+└─────────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  TIMELINE CONSTRUCTION (deterministic, no LLM)                      │
+│                                                                     │
+│  buildTimeline() merges timestamped observations from all 3         │
+│  evidence phases, sorts chronologically → text timeline             │
+└─────────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  PHASE 5: SYNTHESIS                                                 │
+│  ┌──────────────────────────────────────────────┐                   │
+│  │  🤖 LLM call: runPhase (3 iters, NO tools)  │                   │
+│  │                                              │                   │
+│  │  Input:                                      │                   │
+│  │  • Condensed metric findings + raw data pts  │                   │
+│  │  • Condensed log findings + sample lines     │                   │
+│  │  • Condensed infra findings                  │                   │
+│  │  • Chronological timeline                    │                   │
+│  │  • Investigation hypotheses from plan        │                   │
+│  │  • Real dashboard URLs                       │                   │
+│  │                                              │                   │
+│  │  Reasoning: correlate → hypothesize →        │                   │
+│  │             validate → conclude              │                   │
+│  │                                              │                   │
+│  │  Output: RCA Report JSON                     │                   │
+│  │  {severity, summary, rootCause,              │                   │
+│  │   evidence{metrics[], logs[], infra[]},      │                   │
+│  │   dashboardLinks[], recommendedActions[],    │                   │
+│  │   confidence}                                │                   │
+│  └──────────────────────────────────────────────┘                   │
+└─────────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  PHASE 6: REFLECTION                                                │
+│  ┌──────────────────────────────────────────────┐                   │
+│  │  🤖 LLM call: runPhase (3 iters, NO tools)  │                   │
+│  │                                              │                   │
+│  │  Input: synthesis report + phase summaries   │                   │
+│  │                                              │                   │
+│  │  Checks:                                     │                   │
+│  │  • Does root cause explain all symptoms?     │                   │
+│  │  • Is severity consistent with evidence?     │                   │
+│  │  • Contradictory evidence ignored?           │                   │
+│  │  • Are actions specific & actionable?        │                   │
+│  │                                              │                   │
+│  │  Output: ReflectionResult JSON               │                   │
+│  │  {revisedSeverity, revisedRootCause,         │                   │
+│  │   revisedSummary, revisedConfidence,         │                   │
+│  │   issues[]}                                  │                   │
+│  └──────────────────────────────────────────────┘                   │
+└─────────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  POST-PROCESSING (deterministic, no LLM)                            │
+│                                                                     │
+│  • Apply reflection corrections (severity, root cause, summary)     │
+│  • validateSeverity() — deterministic guardrail catches             │
+│    severity/evidence mismatches that both LLM phases missed         │
+│  • Override dashboardLinks with real URLs from pre-fetch            │
+│  • Cap arrays (max 5 per evidence category)                         │
+│  • Attach panel images                                              │
+│                                                                     │
+│  Output: final RcaReport                                            │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-**Phase breakdown:**
+### LLM calls per phase
 
-| Phase | Name | Pattern | What it does |
-|-------|------|---------|--------------|
-| 1 | Anomaly Detection | Tool use | Queries dashboards and metrics via MCP to confirm the anomaly |
-| 1.5 | Planning | Planning | Generates hypotheses and focus areas to guide evidence gathering |
-| 2 | Metric Deep Dive | Domain knowledge | Runs PromQL queries with service-specific metrics, compares against baselines |
-| 3 | Log Correlation | Domain knowledge | Queries Loki with service log labels, captures error patterns and sample lines |
-| 4 | Infra Health | Domain knowledge | Checks pod restarts, OOMKill, resource pressure via Prometheus |
-| 4+ | Panel Capture | Deterministic | Screenshots relevant dashboard panels with the anomaly time range |
-| — | Timeline | Programmatic | Merges all observations into a chronological event timeline (no LLM) |
-| 5 | Synthesis | Chain-of-thought | CORRELATE → HYPOTHESIZE → VALIDATE → CONCLUDE reasoning chain |
-| 6 | Reflection | Self-critique | Validates evidence consistency, calibrates confidence, applies corrections |
+| Phase | LLM? | Tools? | Iterations | Purpose |
+|-------|------|--------|------------|---------|
+| Pre-fetch | No | MCP only | — | Front-load datasource UIDs, panel queries, Loki labels, log selector |
+| 1: Anomaly | Yes (lightweight) | No | 1 shot | Extract time range from natural language |
+| 1.5: Planning | Yes | No | 3 | Generate hypotheses and focus areas |
+| 2: Metrics | Yes | Yes (Prometheus) | 6 | Query metrics, find anomalous values |
+| 3: Logs | Yes | Yes (Loki) | 6 | Query logs, capture error patterns + sample lines |
+| 4: Infra | Yes | Yes (Prometheus) | 6 | Check CPU, memory, pod restarts, OOM |
+| Panel capture | No | MCP only | — | Deterministic image capture from ranked dashboards |
+| Timeline | No | — | — | Sort observations chronologically |
+| 5: Synthesis | Yes | No | 3 | Correlate all evidence → root cause + report |
+| 6: Reflection | Yes | No | 3 | Self-review: catch severity/evidence mismatches |
+| Post-processing | No | — | — | Apply corrections, cap arrays, attach images |
 
-Phases 2, 3, 4, and panel capture run **in parallel**. Phases 1.5, 5, and 6 are pure reasoning (no tool calls).
+Phases 2, 3, 4, and panel capture run **in parallel** — that's the main efficiency win. The 3 evidence LLM phases are isolated from each other (zero shared context), which is why synthesis exists: to merge and reason across all evidence.
 
 ---
 
