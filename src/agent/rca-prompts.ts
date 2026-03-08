@@ -103,27 +103,30 @@ export const RCA_REFLECTION_PROMPT = `You are reviewing an RCA report for qualit
 
 Evaluate the report against the evidence provided:
 1. Does the root cause EXPLAIN all the observed symptoms?
-2. Is there contradictory evidence that was ignored?
-3. Is the SEVERITY consistent with the findings? If the report says "no anomaly" or "within normal range" but severity is medium/high/critical, that is a BUG — revise severity to "low".
-4. Are the recommended actions specific and actionable?
-5. Is the confidence level justified by the evidence quality?
-6. Are there alternative explanations that should be considered?
+2. Is the TRIGGER (proximate cause) clearly separated from the ROOT CAUSE (systemic vulnerability)?
+3. Is there contradictory evidence that was ignored?
+4. Is the SEVERITY consistent with the findings? If the report says "no anomaly" or "within normal range" but severity is medium/high/critical, that is a BUG — revise severity to "low".
+5. Are the recommended actions specific and actionable?
+6. Is the confidence level justified by the evidence quality?
+7. Are there alternative explanations that should be considered?
 
 If the report has issues, provide corrections in the revised fields and list the issues found.
-If the report is sound, return it unchanged (copy rootCause to revisedRootCause, summary to revisedSummary, confidence to revisedConfidence, severity to revisedSeverity) with empty issues array.
+If the report is sound, return it unchanged (copy rootCause to revisedRootCause, trigger to revisedTrigger, summary to revisedSummary, confidence to revisedConfidence, severity to revisedSeverity) with empty issues array.
 
 CRITICAL: Be concise. validationNotes should be 1-3 sentences. Each issue should be 1 sentence. Revised fields should be similar length to originals.
 Respond ONLY with valid JSON matching the required schema. Do not include any explanatory text outside the JSON.`;
 
 // ── Synthesis prompt (enhanced with chain-of-thought) ────────────────────────
 
-export const RCA_SYNTHESIS_PROMPT = `You are performing root cause analysis. You have metric, log, and infrastructure findings plus a chronological timeline.
+export const RCA_SYNTHESIS_PROMPT = `You are performing root cause analysis following SRE postmortem standards. You have metric, log, and infrastructure findings plus a chronological timeline.
 
 REASONING PROCESS — follow these steps:
-1. CORRELATE: Which events in the timeline are temporally related? What happened first?
-2. HYPOTHESIZE: Based on the timeline, what is the most likely causal chain?
-3. VALIDATE: Does your hypothesis explain ALL the evidence? Flag any contradictions.
-4. CONCLUDE: State the root cause, severity, and recommended actions.
+1. TIMELINE: Order all events chronologically. Identify the first anomalous signal and the cascade that followed.
+2. IMPACT: Quantify the blast radius — duration, affected metrics/users, severity of degradation.
+3. TRIGGER vs ROOT CAUSE: The trigger is the proximate event that set off the incident (e.g. "kafka-5 disk filled up"). The root cause is the systemic vulnerability that allowed the trigger to cause damage (e.g. "no log rotation configured for Kafka audit logs"). These MUST be different — if you can only identify one, put it in trigger and set rootCause to "Under investigation".
+4. CONTRIBUTING FACTORS: Other conditions that enabled or worsened the incident (e.g. "replication factor of 1", "no disk usage alerting"). These are NOT the root cause but made the impact worse.
+5. VALIDATE: Does your causal chain explain ALL the evidence? Flag any contradictions.
+6. CONCLUDE: State severity, confidence, and recommended actions.
 
 Severity calibration:
 - low: No anomaly found, or only cosmetic/informational findings with no user impact. USE THIS when all metrics are within normal range and no outage or degradation occurred.
@@ -139,20 +142,24 @@ Confidence calibration:
 
 Extract any Grafana dashboard URLs found in the metric findings observations and include them in dashboardLinks.
 
-EVIDENCE REQUIREMENTS — the evidence section is the most important part of the report:
-- evidence.metrics: Include 3-5 items. Each item: metric name, anomalous value vs baseline, and timestamp. Example: "ingestion_rate spiked to 45k/s (baseline: 12k/s) at 2026-03-03T14:00Z"
-- evidence.logs: Include 3-5 items. Each item MUST quote actual log lines verbatim from the sampleLines in the log findings. Include the full timestamp, log level, and error message. Example: "2026-03-03 14:12:03 WARN NetworkClient: Error connecting to kafka-5:9092 (repeated 23 times)"
-- evidence.infra: Include 1-3 items if any infra anomalies found. Each item: resource, status, and value.
-- If a category has no findings, use an empty array — do NOT fabricate evidence.
+TIMELINE: Include 3-8 events in chronological order. Each: timestamp + 1-sentence description. Start with first anomalous signal, end with resolution or current state.
 
-FORMATTING: Do NOT use markdown tables in the summary or any text fields. Use bullet lists or plain text instead. The output will be rendered in a terminal that does not support tables.
+IMPACT: duration = how long (e.g. "47 minutes (14:02–14:49 UTC)"). description = 1-2 sentences quantifying the blast radius.
 
 SIZING:
 - Summary: 2-4 sentences. Include the specific time window and quantify the impact.
-- RootCause: 1-3 sentences. Be specific about the causal chain.
-- Each recommended action: 1 sentence max, no markdown, no tables, no checklists.
-- Max 5 recommended actions.
-- Max 5 dashboard links.
+- Trigger: 1-2 sentences. The specific event that initiated the incident.
+- RootCause: 1-3 sentences. The systemic vulnerability that allowed the trigger to cause damage.
+- Contributing factors: 1-4 items, each 1 sentence.
+- Each recommended action: 1 sentence max. Max 5 actions. Max 5 dashboard links.
+
+FORMATTING: Do NOT use markdown tables. Use bullet lists or plain text. Output renders in a terminal.
+
+CRITICAL — EVIDENCE REQUIREMENTS (do NOT skip any category):
+- evidence.metrics: MUST include 3-5 items. Each: metric name, anomalous value vs baseline, timestamp. Example: "ingestion_rate spiked to 45k/s (baseline: 12k/s) at 2026-03-03T14:00Z"
+- evidence.logs: MUST include 3-5 items copied VERBATIM from the sampleLines in the log findings. Copy the FULL log line including timestamp, level, and message. Example: "2026-03-03 14:12:03 WARN NetworkClient: Error connecting to kafka-5:9092 (repeated 23 times)". If log findings have ANY sampleLines, you MUST include them. An empty logs array when log findings exist is a BUG.
+- evidence.infra: Include 1-3 items if any infra anomalies found.
+- If a category has NO findings at all, use an empty array — do NOT fabricate evidence.
 
 Respond ONLY with valid JSON matching the required schema. Do not include any other text.`;
 
@@ -161,13 +168,33 @@ export function buildIntentClassifierPrompt(serviceNames?: string[]): string {
     ? `\nFor reference, known services include: ${serviceNames.join(", ")}\nIf the user mentions a service or component, extract the key identifying term (e.g. "ingestion log rate drop" → "ingestion", "kudu tserver is slow" → "kudu-tserver"). Prefer using a known service name if it clearly matches, but you may also extract the user's own wording.`
     : "";
 
-  return `You are classifying a user message as either an investigation request or a regular question.
-An investigation request asks you to diagnose, investigate, or find the root cause of an issue with a specific service.
-A question asks for information, data, or status.
-${serviceList}
-Extract the service name if mentioned. Common patterns: "investigate X", "why is X slow", "X is down", "what's wrong with X".
+  return `You are classifying a user message as either an "investigation" request or a "question".
 
-Respond ONLY with valid JSON matching the required schema. Do not include any other text.`;
+CLASSIFY AS "investigation" when the user:
+- Reports a problem, symptom, or error (slow, down, failing, errors, spike, drop, timeout, OOM, crash)
+- Asks to investigate, diagnose, troubleshoot, or check a service/component
+- Describes an anomaly or unexpected behavior
+- Asks to check health, performance, or status of a specific service
+- Uses words like: investigate, check, diagnose, troubleshoot, look into, what's wrong, why is
+
+CLASSIFY AS "question" when the user:
+- Asks for information without implying a problem ("what dashboards do we have?", "list services")
+- Asks how something works ("how does ingestion work?")
+- Asks for general status without concern ("show me the current metrics")
+
+EXAMPLES:
+- "data-server queries are running slow" → investigation, service: "data-server"
+- "check ClickHouse cluster health" → investigation, service: "clickhouse"
+- "data-server is throwing ClickHouse connection errors" → investigation, service: "data-server"
+- "something seems off with the system, investigate" → investigation, service: ""
+- "are there any issues with the Kafka cluster?" → investigation, service: "kafka"
+- "check CPU usage across all nodes" → investigation, service: ""
+- "what dashboards do we have available?" → question, service: ""
+- "how does the ingestion pipeline work?" → question, service: ""
+
+When in doubt, classify as "investigation" — it is better to investigate and find nothing than to miss a real issue.
+${serviceList}
+Extract the service name if mentioned. Respond ONLY with valid JSON matching the required schema.`;
 }
 
 // ── JSON schemas ──────────────────────────────────────────────────────────────
@@ -303,15 +330,26 @@ export const RCA_REFLECTION_SCHEMA: ResponseFormat = {
       properties: {
         validationNotes: { type: "string" },
         revisedRootCause: { type: "string" },
+        revisedTrigger: { type: "string" },
         revisedSeverity: { type: "string", enum: ["low", "medium", "high", "critical"] },
         revisedConfidence: { type: "string", enum: ["low", "medium", "high"] },
         revisedSummary: { type: "string" },
         issues: { type: "array", items: { type: "string" } },
       },
-      required: ["validationNotes", "revisedRootCause", "revisedSeverity", "revisedConfidence", "revisedSummary", "issues"],
+      required: ["validationNotes", "revisedRootCause", "revisedTrigger", "revisedSeverity", "revisedConfidence", "revisedSummary", "issues"],
       additionalProperties: false,
     },
   },
+};
+
+const timelineEventSchema = {
+  type: "object" as const,
+  properties: {
+    time: { type: "string" as const },
+    event: { type: "string" as const },
+  },
+  required: ["time", "event"] as const,
+  additionalProperties: false as const,
 };
 
 export const RCA_REPORT_SCHEMA: ResponseFormat = {
@@ -324,7 +362,19 @@ export const RCA_REPORT_SCHEMA: ResponseFormat = {
       properties: {
         severity: { type: "string", enum: ["low", "medium", "high", "critical"] },
         summary: { type: "string" },
+        impact: {
+          type: "object",
+          properties: {
+            duration: { type: "string" },
+            description: { type: "string" },
+          },
+          required: ["duration", "description"],
+          additionalProperties: false,
+        },
+        trigger: { type: "string" },
         rootCause: { type: "string" },
+        contributingFactors: { type: "array", items: { type: "string" } },
+        timeline: { type: "array", items: timelineEventSchema },
         evidence: {
           type: "object",
           properties: {
@@ -339,7 +389,7 @@ export const RCA_REPORT_SCHEMA: ResponseFormat = {
         recommendedActions: { type: "array", items: { type: "string" } },
         confidence: { type: "string", enum: ["low", "medium", "high"] },
       },
-      required: ["severity", "summary", "rootCause", "evidence", "dashboardLinks", "recommendedActions", "confidence"],
+      required: ["severity", "summary", "impact", "trigger", "rootCause", "contributingFactors", "timeline", "evidence", "dashboardLinks", "recommendedActions", "confidence"],
       additionalProperties: false,
     },
   },

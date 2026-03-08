@@ -76,12 +76,18 @@ function truncateToolResponse(text: string, toolName: string): string {
             const vals = r.values;
             const step = Math.max(1, Math.floor(vals.length / 50));
             const sampled = vals.filter((_, i) => i % step === 0 || i === vals.length - 1);
-            const numVals = vals.map(([, v]) => parseFloat(v));
+            let min = Infinity, max = -Infinity, sum = 0;
+            for (const [, v] of vals) {
+              const n = parseFloat(v);
+              if (n < min) min = n;
+              if (n > max) max = n;
+              sum += n;
+            }
             return {
               m: key, instance,
-              min: Math.min(...numVals).toFixed(0),
-              max: Math.max(...numVals).toFixed(0),
-              avg: (numVals.reduce((a, b) => a + b, 0) / numVals.length).toFixed(0),
+              min: min.toFixed(0),
+              max: max.toFixed(0),
+              avg: (sum / vals.length).toFixed(0),
               points: vals.length,
               // Include actual [timestamp, value] pairs so LLM sees level changes
               values: sampled.map(([ts, v]) => [new Date(ts * 1000).toISOString(), parseFloat(v).toFixed(0)]),
@@ -95,15 +101,24 @@ function truncateToolResponse(text: string, toolName: string): string {
     } catch { /* fall through */ }
   }
 
-  // Compact Loki log responses: drop verbose labels, keep timestamp + line
+  // Compact Loki log responses: drop verbose labels, keep timestamp + line + level
   if (toolName === "query_loki_logs") {
     try {
       const parsed = JSON.parse(text);
       const data = parsed?.data ?? [];
       if (Array.isArray(data) && data.length > 0) {
-        const compact = data.map((entry: { timestamp?: string; line?: string; labels?: Record<string, string> }) => ({
-          line: (entry.line ?? "").trim().slice(0, 300),
-        })).filter((e: { line: string }) => e.line.length > 0);
+        const compact = data
+          .map((entry: { timestamp?: string; line?: string; labels?: Record<string, string> }) => {
+            const line = (entry.line ?? "").trim().slice(0, 300);
+            if (!line) return null;
+            const level = entry.labels?.level ?? entry.labels?.severity ?? entry.labels?.loglevel;
+            return {
+              line,
+              ...(entry.timestamp ? { timestamp: entry.timestamp } : {}),
+              ...(level ? { level } : {}),
+            };
+          })
+          .filter((e): e is { line: string; timestamp?: string; level?: string } => e !== null);
         const compactJson = JSON.stringify({ data: compact, totalEntries: data.length });
         if (compactJson.length < text.length) return compactJson;
       }
@@ -198,7 +213,16 @@ export function buildTimeline(
     }
   }
 
-  events.sort((a, b) => a.time.localeCompare(b.time));
+  events.sort((a, b) => {
+    const ta = Date.parse(a.time);
+    const tb = Date.parse(b.time);
+    const aValid = !Number.isNaN(ta);
+    const bValid = !Number.isNaN(tb);
+    if (aValid && bValid) return ta - tb;
+    if (aValid) return -1;
+    if (bValid) return 1;
+    return a.time.localeCompare(b.time);
+  });
   return events.map((e) => `[${e.time}] [${e.source}] ${e.detail}`).join("\n");
 }
 
@@ -312,7 +336,11 @@ export class InvestigationAgent {
         service: service.name,
         severity: "low",
         summary: anomaly.summary,
+        impact: { duration: "No impact detected", description: "No anomaly found during the investigation window." },
+        trigger: "N/A",
         rootCause: "No anomaly detected",
+        contributingFactors: [],
+        timeline: [],
         evidence: { metrics: [], logs: [], infra: [] },
         dashboardLinks: [],
         panelImages: collectedImages,
@@ -334,6 +362,7 @@ export class InvestigationAgent {
       `Log labels: ${JSON.stringify(service.logLabels)}`,
     ].join("\n");
 
+    const PLAN_MAX_TOKENS = 2048;
     const planResult = await this.runPhase<InvestigationPlan>(
       INVESTIGATION_PLAN_PROMPT,
       planMessage,
@@ -342,8 +371,14 @@ export class InvestigationAgent {
       onTokenUsage,
       onToolCall,
       false, // planning is pure reasoning, no tools needed
+      PLAN_MAX_TOKENS,
     );
-    const plan = planResult.parsed;
+    const plan: InvestigationPlan = {
+      hypotheses: planResult.parsed?.hypotheses ?? [],
+      metricFocus: planResult.parsed?.metricFocus ?? [],
+      logFocus: planResult.parsed?.logFocus ?? [],
+      infraFocus: planResult.parsed?.infraFocus ?? [],
+    };
     log.debug({ hypotheses: plan.hypotheses.length }, "Investigation plan created");
 
     // Phases 2/3/4 + panel capture in parallel
@@ -404,15 +439,16 @@ export class InvestigationAgent {
     const infraMessageFull = prefetchedContext ? `${infraMessage}\n\n${prefetchedContext}` : infraMessage;
 
     const EVIDENCE_MAX_TOKENS = 8192;
+    const EVIDENCE_TIMEOUT_MS = 180_000; // 3min — evidence phases need headroom for slow models
 
     // Pre-fetched panel queries + datasource UIDs + Loki labels mean the LLM can
     // skip discovery and go straight to querying. 6 iterations = 4 productive + 2 wind-down.
     const EVIDENCE_ITERATIONS = 6;
 
     const [metricResult, logResult, infraResult, panelCaptureResult] = await Promise.allSettled([
-      this.runPhase<MetricFindings>(metricPrompt, metricMessageFull, METRIC_FINDINGS_SCHEMA, EVIDENCE_ITERATIONS, onTokenUsage, onToolCall, true, EVIDENCE_MAX_TOKENS),
-      this.runPhase<LogFindings>(logPrompt, logMessageFull, LOG_FINDINGS_SCHEMA, EVIDENCE_ITERATIONS, onTokenUsage, onToolCall, true, EVIDENCE_MAX_TOKENS),
-      this.runPhase<InfraFindings>(infraPrompt, infraMessageFull, INFRA_FINDINGS_SCHEMA, EVIDENCE_ITERATIONS, onTokenUsage, onToolCall, true, EVIDENCE_MAX_TOKENS),
+      this.runPhase<MetricFindings>(metricPrompt, metricMessageFull, METRIC_FINDINGS_SCHEMA, EVIDENCE_ITERATIONS, onTokenUsage, onToolCall, true, EVIDENCE_MAX_TOKENS, EVIDENCE_TIMEOUT_MS),
+      this.runPhase<LogFindings>(logPrompt, logMessageFull, LOG_FINDINGS_SCHEMA, EVIDENCE_ITERATIONS, onTokenUsage, onToolCall, true, EVIDENCE_MAX_TOKENS, EVIDENCE_TIMEOUT_MS),
+      this.runPhase<InfraFindings>(infraPrompt, infraMessageFull, INFRA_FINDINGS_SCHEMA, EVIDENCE_ITERATIONS, onTokenUsage, onToolCall, true, EVIDENCE_MAX_TOKENS, EVIDENCE_TIMEOUT_MS),
       this.capturePanelImages(service.name, anomaly.summary, userMessage, onToolCall),
     ]);
 
@@ -475,8 +511,8 @@ export class InvestigationAgent {
     const condensedLogs = {
       summary: logFindings.summary,
       observations: logFindings.observations.slice(0, 8).map((o) => ({
-        pattern: o.pattern, count: o.count, firstSeen: o.firstSeen, lastSeen: o.lastSeen, sample: o.sample?.slice(0, 200),
-        sampleLines: (o.sampleLines ?? []).slice(0, 5).map((l) => l.slice(0, 200)),
+        pattern: o.pattern, count: o.count, firstSeen: o.firstSeen, lastSeen: o.lastSeen, sample: o.sample?.slice(0, 400),
+        sampleLines: (o.sampleLines ?? []).slice(0, 5).map((l) => l.slice(0, 400)),
       })),
     };
     const condensedInfra = {
@@ -486,19 +522,31 @@ export class InvestigationAgent {
       })),
     };
 
-    // Extract raw Prometheus data from the metric phase for synthesis (sampled to stay compact)
+    // Extract raw Prometheus data from the metric phase for synthesis (sampled to stay compact).
+    // Handles both original Prometheus format ({ data: { result: [...] } }) and compacted format
+    // ({ data: [{ m, values, ... }] }) produced by truncateToolResponse().
     const rawMetricToolData = metricResult.status === "fulfilled"
       ? metricResult.value.toolData
         .map((text) => {
           try {
             const parsed = JSON.parse(text);
-            // Prometheus range query results: compact to sampled [time, value] pairs
+            // Original Prometheus format: { data: { result: [...] } }
             const results = parsed?.data?.result ?? parsed?.result ?? [];
-            if (Array.isArray(results) && results.length > 0) {
+            if (Array.isArray(results) && results.length > 0 && results[0]?.metric) {
               return results.slice(0, 3).map((r: { metric?: Record<string, string>; values?: [number, string][] }) => {
                 const metricName = r.metric ? Object.values(r.metric).join("/") : "unknown";
                 const values = (r.values ?? []).filter((_: [number, string], i: number) => i % 2 === 0).slice(0, 12);
                 return `${metricName}: ${values.map((v: [number, string]) => `[${new Date(v[0] * 1000).toISOString()}, ${v[1]}]`).join(", ")}`;
+              }).join("\n");
+            }
+            // Compacted format from truncateToolResponse(): { data: [{ m, min, max, avg, values }] }
+            const compactData = parsed?.data;
+            if (Array.isArray(compactData) && compactData.length > 0 && compactData[0]?.m) {
+              return compactData.slice(0, 3).map((r: { m: string; instance?: string; min?: string; max?: string; avg?: string; values?: [string, string][] }) => {
+                const label = r.instance ? `${r.m}(${r.instance})` : r.m;
+                const stats = [r.min && `min=${r.min}`, r.max && `max=${r.max}`, r.avg && `avg=${r.avg}`].filter(Boolean).join(", ");
+                const vals = (r.values ?? []).slice(0, 12).map(([t, v]) => `[${t}, ${v}]`).join(", ");
+                return `${label}: ${stats}${vals ? ` | ${vals}` : ""}`;
               }).join("\n");
             }
           } catch { /* not JSON or not Prometheus data */ }
@@ -529,12 +577,17 @@ export class InvestigationAgent {
     ].join("\n");
 
     const SYNTHESIS_MAX_TOKENS = 8192;
+    const REASONING_TIMEOUT_MS = 240_000; // 4min — synthesis/reflection are slow on large models
 
     type SynthesisResult = Omit<RcaReport, "service" | "investigatedAt" | "panelImages">;
     const defaultSynthesis: SynthesisResult = {
       severity: "medium",
       summary: anomaly.summary,
+      impact: { duration: "Unknown", description: anomaly.summary },
+      trigger: "Unable to determine — synthesis phase failed",
       rootCause: "Unable to determine — synthesis phase failed",
+      contributingFactors: [],
+      timeline: [],
       evidence: { metrics: [], logs: [], infra: [] },
       dashboardLinks: [],
       recommendedActions: [],
@@ -552,6 +605,7 @@ export class InvestigationAgent {
         onToolCall,
         false, // synthesis is pure reasoning, no tools needed
         SYNTHESIS_MAX_TOKENS,
+        REASONING_TIMEOUT_MS,
       );
       collectedImages.push(...synthesisResult.images);
     } catch (err) {
@@ -570,7 +624,7 @@ export class InvestigationAgent {
       `Investigation plan hypotheses: ${JSON.stringify(plan.hypotheses)}`,
     ].join("\n");
 
-    const REFLECTION_MAX_TOKENS = 4096;
+    const REFLECTION_MAX_TOKENS = 8192;
     let reflectionResult: PhaseResult<ReflectionResult>;
     try {
       reflectionResult = await this.runPhase<ReflectionResult>(
@@ -582,10 +636,11 @@ export class InvestigationAgent {
         onToolCall,
         false, // reflection is pure reasoning, no tools needed
         REFLECTION_MAX_TOKENS,
+        REASONING_TIMEOUT_MS,
       );
     } catch (err) {
       log.error({ err }, "Reflection phase failed, skipping corrections");
-      reflectionResult = { parsed: { validationNotes: "", revisedRootCause: "", revisedSeverity: "medium", revisedConfidence: "low", revisedSummary: "", issues: [] }, images: [], toolData: [] };
+      reflectionResult = { parsed: { validationNotes: "", revisedRootCause: "", revisedTrigger: "", revisedSeverity: "medium", revisedConfidence: "low", revisedSummary: "", issues: [] }, images: [], toolData: [] };
     }
 
     // Apply corrections from reflection (guard against partial/empty responses)
@@ -597,7 +652,11 @@ export class InvestigationAgent {
     const report = {
       severity: synthesisResult.parsed.severity ?? "medium",
       summary: synthesisResult.parsed.summary ?? anomaly.summary,
+      impact: synthesisResult.parsed.impact ?? { duration: "Unknown", description: anomaly.summary },
+      trigger: synthesisResult.parsed.trigger ?? "Unable to determine",
       rootCause: synthesisResult.parsed.rootCause ?? "Unable to determine — insufficient data from evidence phases",
+      contributingFactors: (synthesisResult.parsed.contributingFactors ?? []).slice(0, 4),
+      timeline: (synthesisResult.parsed.timeline ?? []).slice(0, 8),
       evidence,
       dashboardLinks: realDashboardUrls.length > 0 ? realDashboardUrls.slice(0, 5) : (synthesisResult.parsed.dashboardLinks ?? []).slice(0, 5),
       recommendedActions: (synthesisResult.parsed.recommendedActions ?? []).filter((a: string) => a.trim().length > 0).slice(0, 5),
@@ -612,6 +671,7 @@ export class InvestigationAgent {
     if (issues.length > 0 && reflection.revisedRootCause) {
       log.info({ issues }, "Reflection found issues, applying corrections");
       report.rootCause = reflection.revisedRootCause;
+      if (reflection.revisedTrigger) report.trigger = reflection.revisedTrigger;
       report.confidence = reflection.revisedConfidence ?? report.confidence;
       report.summary = reflection.revisedSummary ?? report.summary;
     }
@@ -838,10 +898,32 @@ export class InvestigationAgent {
   /** Suggest step size for range queries. Aims for ~100 data points. */
   private suggestStepSeconds(window: { from: string; to: string }): number {
     try {
-      const from = new Date(/^\d{4}/.test(window.from) ? window.from : new Date());
-      const to = new Date(/^\d{4}/.test(window.to) ? window.to : new Date());
+      const parseTimeExpr = (expr: string): Date => {
+        if (/^\d{4}-\d{2}-\d{2}/.test(expr)) return new Date(expr);
+        const m = expr.match(/^now(?:-(\d+)([smhdw]))?(?:\/d)?$/);
+        const d = new Date();
+        if (m) {
+          const amount = m[1] ? parseInt(m[1], 10) : 0;
+          const unit = m[2];
+          if (amount > 0 && unit) {
+            switch (unit) {
+              case "s": d.setSeconds(d.getSeconds() - amount); break;
+              case "m": d.setMinutes(d.getMinutes() - amount); break;
+              case "h": d.setHours(d.getHours() - amount); break;
+              case "d": d.setDate(d.getDate() - amount); break;
+              case "w": d.setDate(d.getDate() - amount * 7); break;
+            }
+          }
+          return d;
+        }
+        return d;
+      };
+      const from = parseTimeExpr(window.from);
+      const to = parseTimeExpr(window.to);
       const durationSec = Math.abs(to.getTime() - from.getTime()) / 1000;
-      if (durationSec > 0) return Math.max(300, Math.round(durationSec / 100));
+      if (durationSec > 0 && Number.isFinite(durationSec)) {
+        return Math.max(300, Math.round(durationSec / 100));
+      }
     } catch { /* fall through */ }
     return 900;
   }
@@ -1121,6 +1203,7 @@ export class InvestigationAgent {
     onToolCall?: (name: string, args: Record<string, unknown>) => void,
     useTools = true,
     maxOutputTokens?: number,
+    timeoutMs?: number,
   ): Promise<PhaseResult<T>> {
     // Exclude tools we pre-fetch (datasources, dashboards, panel queries)
     // and tools known to be unreliable (metric metadata returns 404, alert rules return 500).
@@ -1129,7 +1212,7 @@ export class InvestigationAgent {
       "search_dashboards",
       "get_dashboard_panel_queries",
       "get_dashboard_by_uid",
-      "list_prometheus_metric_metadata",  // Often returns 404 in practice
+      // list_prometheus_metric_metadata: re-enabled — excluding it causes hallucinated calls that waste iterations
       "list_alert_rules",                 // Grafana-managed: empty; datasource-managed: 500
       "get_alert_rule_by_uid",
       "list_loki_label_names",            // Pre-fetched into context
@@ -1172,7 +1255,7 @@ export class InvestigationAgent {
       // with tools causes an output mode conflict where the model's attempt
       // to switch to JSON output gets misinterpreted as a tool call.
       const iterationFormat = iterationTools.length === 0 ? responseFormat : undefined;
-      const response = await this.llm.chat(messages, iterationTools, { responseFormat: iterationFormat, maxOutputTokens });
+      const response = await this.llm.chat(messages, iterationTools, { responseFormat: iterationFormat, maxOutputTokens, timeoutMs });
 
       if (response.usage) onTokenUsage?.(response.usage);
 
@@ -1202,7 +1285,7 @@ export class InvestigationAgent {
                 ].join("\n"),
               },
             ];
-            const retryResponse = await this.llm.chat(freshRetryMessages, [], { responseFormat, maxOutputTokens: maxOutputTokens ? Math.max(maxOutputTokens, 8192) : 8192 });
+            const retryResponse = await this.llm.chat(freshRetryMessages, [], { responseFormat, maxOutputTokens: maxOutputTokens ? Math.max(maxOutputTokens, 8192) : 8192, timeoutMs });
             if (retryResponse.usage) onTokenUsage?.(retryResponse.usage);
             if (retryResponse.type === "text") {
               return { parsed: JSON.parse(retryResponse.content) as T, images: phaseImages, toolData: phaseToolData };
