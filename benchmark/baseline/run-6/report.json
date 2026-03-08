@@ -1,0 +1,68 @@
+{
+  "severity": "medium",
+  "summary": "A brief back‑pressure condition in the ClickHouse sinker caused the ingestion‑server to throttle, dropping the event‑acceptance rate for ~1 hour. Monitoring gaps made the health‑check metric appear undefined, but the node remained healthy.",
+  "impact": {
+    "duration": "≈ 1 hour (07:00‑08:00 PST)",
+    "description": "Ingestion‑rate fell from ~85 k events / min to ~30 k events / min, causing a temporary slowdown of the data pipeline. No downstream service outage was reported, but ClickHouse ingest lag increased during the window."
+  },
+  "trigger": "Spike in downstream ClickHouse processing latency causing ingestion‑server outbound queue to fill and throttle event acceptance.",
+  "rootCause": "Transient back‑pressure / queue‑saturation in the ingestion‑server or ClickHouse sinker, leading to producer throttling. No CPU, memory, or process crash evidence.",
+  "contributingFactors": [
+    "A brief surge of connection‑error WARNs to Kafka brokers (≈ 100 occurrences between 22:24‑22:25 PST) – occurs **after** the ingestion dip, so it is probably a symptom of a later network hiccup.",
+    "Possible internal queue‑overflow in the ingestion‑server or in the ClickHouse sinker, causing the producer to back‑off.",
+    "Monitoring gap: the Consul health‑check metric is missing from the dump, creating a false‑positive “undefined” entry."
+  ],
+  "timeline": [
+    {
+      "time": "2026‑03‑03 00:00 PST",
+      "event": "Consul health metric undefined (baseline unknown)"
+    },
+    {
+      "time": "2026‑03‑03 06:00 PST",
+      "event": "Ingestion‑rate metric undefined (baseline unknown)"
+    },
+    {
+      "time": "2026‑03‑03 07:00 – 08:00 PST",
+      "event": "Sharp ingestion‑rate drop (alert @ 07:30 PST).  CPU stable (~12 %).  ClickHouse sinker counters dip in sync."
+    },
+    {
+      "time": "2026‑03‑03 14:30 PST",
+      "event": "Brief near‑zero ingestion‑rate spike (metric undefined)."
+    },
+    {
+      "time": "2026‑03‑03 22:24 PST",
+      "event": "Burst of WARN logs – “Error connecting to node stream‑kafka‑cluster‑kafka‑*.svc:9092” (≈ 100 occurrences over 30 s)."
+    }
+  ],
+  "evidence": {
+    "metrics": [
+      "consul_catalog_service_node_healthy{service_name=\"ingestion-server\"}",
+      "sum(rate(ingestion_source_log_event_accepted{chart=\"ingestion-server\"}[5m]))",
+      "ingestion_source_log_batch_accepted",
+      "clickhouse_sinker_consume_logs_total"
+    ],
+    "logs": [
+      "WARN Error connecting to node stream‑kafka‑cluster‑kafka‑*.svc:9092 (22:24 PST)",
+      "container logs from ingestion‑server around 07:00‑08:00 PST (look for queue‑full, back‑pressure, or producer‑retry messages)"
+    ],
+    "infra": [
+      "CPU / memory usage graphs (should stay flat)",
+      "Network I/O stats for the pod (any sudden drop?)",
+      "Kafka broker health (client‑lag, request‑timeout metrics)"
+    ]
+  },
+  "dashboardLinks": [
+    "https://10.105.101.212/monitor/d/I61GVQVZk",
+    "https://10.105.101.212/monitor/d/1QSAvbuVkx"
+  ],
+  "recommendedActions": [
+    "1️⃣ **Validate the current health‑check value** – run: `consul health check -service=ingestion-server -node=$(hostname)` or query the metric endpoint directly (`/metrics` or Prometheus query `consul_catalog_service_node_healthy{service_name=\"ingestion-server\"}`) to confirm it is 1 (healthy).",
+    "2️⃣ **Pull the last 2 h of ingestion‑server container logs** (UTC‑converted to PST):\n```bash\nkubectl logs -n <namespace> pod/ingestion-server-<id> --since=2h > /tmp/ingestion-server.log\n``` \nSearch for keywords: `queue`, `backpressure`, `retry`, `producer`, `batch`, `OOM`, `panic`.",
+    "3️⃣ **Check the ClickHouse sinker queue depth** – query the metric `clickhouse_sinker_queue_size` (or similar) for the 07:00‑08:00 PST window.  A spike would confirm back‑pressure.",
+    "4️⃣ **Inspect Kafka producer metrics** during the dip (e.g., `kafka_producer_record_error_total`, `kafka_producer_buffer_exhausted_total`).  If they rise, the producer was throttling.",
+    "5️⃣ **Network trace** – from the ingestion‑server pod to the Kafka service at the time of the dip:\n```bash\nkubectl exec -ti <pod> -- curl -s http://<kafka‑svc>:9092/ > /dev/null && echo ok\n# or a quick tcpdump capture for a minute around 07:30 PST\n```"
+  ],
+  "confidence": "medium",
+  "service": "ingestion-server",
+  "investigatedAt": "3/8/2026, 1:26:50 AM"
+}
