@@ -237,6 +237,44 @@ The investigation agent runs a multi-phase pipeline applying agentic design patt
 
 Phases 2, 3, 4, and panel capture run **in parallel** — that's the main efficiency win. The 3 evidence LLM phases are isolated from each other (zero shared context), which is why synthesis exists: to merge and reason across all evidence.
 
+### How pre-fetch relates to the discovery agent
+
+The discovery agent and the investigation pre-fetch are separate concerns that feed into the same pipeline through different paths:
+
+```
+DISCOVERY AGENT (runs once, ahead of time)       INVESTIGATION PRE-FETCH (runs every investigation)
+──────────────────────────────────────────       ──────────────────────────────────────────────────
+
+Discovers services via LLM + MCP:                Queries MCP directly (no LLM):
+ • query_prometheus for metric names              • list_datasources → Prometheus/Loki UIDs
+ • list_loki_label_values for log labels          • search_dashboards + get_dashboard_panel_queries
+ • Outputs: ServiceConfig[]                         → PromQL from dashboard panels
+   {name, metrics[], logLabels{}}                 • list_loki_label_names → available labels
+                                                  • query_loki_logs (limit=1) → probe selectors
+        │                                                    │
+        ▼                                                    ▼
+   config.yaml / services.yaml                    Injected into LLM phase context as text
+   (persisted to disk)                            (ephemeral, per-investigation)
+        │                                                    │
+        └───────────────► ServiceConfig ◄────────────────────┘
+                               │
+                               ▼
+                     investigate(service, ...)
+```
+
+**Discovery** runs separately (`npm run discover`) and produces a `ServiceConfig` with the service's `name`, `metrics[]` (PromQL queries), and `logLabels{}` (Loki label selectors). This is saved to config and passed into `investigate(service, ...)`.
+
+**Pre-fetch** happens at the start of each investigation and queries the MCP server for live operational context:
+
+| Pre-fetch call | What it does | Why not from discovery? |
+|---|---|---|
+| `getDatasourceHint()` | `list_datasources` → Prometheus/Loki UIDs | UIDs can change if Grafana is redeployed |
+| `getPanelQueriesContext()` | `search_dashboards` + `get_dashboard_panel_queries` → PromQL from relevant dashboard panels | Dashboards change frequently; service config only has a few hand-picked metrics |
+| `getLokiLabelsHint()` | `list_loki_label_names` → shows the LLM what labels exist | Labels may be added/removed over time |
+| `getWorkingLogSelector()` | Probes Loki with the service's `logLabels` from config (discovery's output) + fallback selectors → returns one that actually returns data | Discovery's `logLabels` might be stale, or the service might not be logging during the default time window |
+
+The key connection: **discovery populates `ServiceConfig.logLabels`**, and then **pre-fetch's `getWorkingLogSelector()` uses those labels as the first candidate to probe**, falling back to common patterns (`{job="default/svc"}`, `{container_name="svc"}`, etc.) if they don't work.
+
 ---
 
 ## Demo Examples
