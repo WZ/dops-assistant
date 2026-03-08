@@ -71,6 +71,8 @@ Tool parameter differences:
 - get_panel_image uses timeRange: { from, to } (supports RFC3339 or relative)
 When the user references relative times (e.g. "yesterday afternoon"), convert to the appropriate time format. Present all timestamps in the user's local timezone.
 
+IMPORTANT: Extract the investigation time window from the user's message. Convert any date reference (e.g. "March 3", "yesterday", "this Thursday", "2026-03-03", "last week") into ISO 8601 timestamps for timeRangeFrom and timeRangeTo. For a specific day, use T00:00:00Z to T23:59:59Z. If no time reference is given, default to the last 6 hours.
+
 After investigating, respond ONLY with a valid json object matching the required schema. Do not include any other text.
 
 ${serviceList || "No services configured."}`;
@@ -93,6 +95,8 @@ export const ANOMALY_ASSESSMENT_RESPONSE_FORMAT: ResponseFormat =
           summary: { type: "string" },
           affectedMetrics: { type: "array", items: { type: "string" } },
           recommendedAction: { type: "string" },
+          timeRangeFrom: { type: "string", description: "Start of the investigation window in ISO 8601 format (e.g. 2026-03-03T00:00:00Z). For relative references like 'yesterday' or 'this Thursday', compute the actual date." },
+          timeRangeTo: { type: "string", description: "End of the investigation window in ISO 8601 format (e.g. 2026-03-03T23:59:59Z)." },
         },
         required: [
           "isAnomaly",
@@ -100,6 +104,8 @@ export const ANOMALY_ASSESSMENT_RESPONSE_FORMAT: ResponseFormat =
           "summary",
           "affectedMetrics",
           "recommendedAction",
+          "timeRangeFrom",
+          "timeRangeTo",
         ],
         additionalProperties: false,
       },

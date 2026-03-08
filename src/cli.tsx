@@ -1,28 +1,47 @@
 import { config as loadDotenv } from "dotenv";
 import { resolve } from "node:path";
 
+// Capture user's explicit LOG_LEVEL before dotenv can override it
+const userLogLevel = process.env["LOG_LEVEL"];
+
 const envPath = process.env["DOTENV_PATH"] ?? resolve(process.cwd(), "dev/.env");
 loadDotenv({ path: envPath });
 
-import React from "react";
-import { render } from "ink";
-import { loadConfig } from "./config/loader.js";
-import { McpClient } from "./mcp/client.js";
-import { LlmClient } from "./llm/openai.js";
-import { ChatAgent } from "./agent/core.js";
-import { InvestigationAgent } from "./agent/investigation.js";
-import { IntentClassifier } from "./agent/intent.js";
-import { ConversationMemory } from "./memory/conversation.js";
-import { App } from "./interfaces/cli/App.js";
+// Silence pino loggers — their stdout output corrupts Ink's terminal rendering.
+// Only allow verbose logging if the user explicitly set LOG_LEVEL on the command line.
+process.env["LOG_LEVEL"] = userLogLevel ?? "silent";
 
-// Silence pino loggers — their stdout output corrupts Ink's terminal rendering
-if (!process.env["LOG_LEVEL"]) {
-  process.env["LOG_LEVEL"] = "silent";
-}
+// IMPORTANT: All modules that create pino loggers at module-load time must be
+// dynamically imported AFTER LOG_LEVEL is set. ESM hoists static imports above
+// all module-level code, so static imports would capture the wrong LOG_LEVEL.
 
 const configPath = process.env["CONFIG_PATH"] ?? "dev/config.yaml";
 
 async function main(): Promise<void> {
+  const [
+    { default: React },
+    { render },
+    { loadConfig },
+    { McpClient },
+    { LlmClient },
+    { ChatAgent },
+    { InvestigationAgent },
+    { IntentRouter },
+    { ConversationMemory },
+    { App },
+  ] = await Promise.all([
+    import("react"),
+    import("ink"),
+    import("./config/loader.js"),
+    import("./mcp/client.js"),
+    import("./llm/openai.js"),
+    import("./agent/core.js"),
+    import("./agent/investigation.js"),
+    import("./agent/intent.js"),
+    import("./memory/conversation.js"),
+    import("./interfaces/cli/App.js"),
+  ]);
+
   const config = loadConfig(configPath);
 
   const R = "\x1b[31m";   // red (Fortinet brand)
@@ -31,11 +50,11 @@ async function main(): Promise<void> {
   const X = "\x1b[0m";    // reset
 
   console.log(`
-  ${R}███${X} ${R}███${X} ${R}███${X}   ${B}dops-assistant${X} ${DM}v0.1.0${X}
+  ${R}███${X} ${R}███${X} ${R}███${X}
 
-  ${R}███${X}     ${R}███${X}   AI-powered DevOps monitoring
+  ${R}███${X}     ${R}███${X}        ${B}dops-assistant${X} ${DM}v0.1.0${X}
 
-  ${R}███${X} ${R}███${X} ${R}███${X}   Grafana + MCP
+  ${R}███${X} ${R}███${X} ${R}███${X}   Agentic DevOps Assistant for RCA
 
   `);
   console.log("  Connecting to Grafana MCP server...");
@@ -51,14 +70,14 @@ async function main(): Promise<void> {
   const agent = new ChatAgent(llm, mcp, { maxIterations: config.agent.maxIterations });
   const memory = new ConversationMemory(config.agent.conversationMemory);
   const investigationAgent = new InvestigationAgent(llm, mcp, { maxIterations: config.agent.maxIterations });
-  const classifier = new IntentClassifier(llm);
+  const router = new IntentRouter(llm);
 
   const { waitUntilExit } = render(
     <App
       agent={agent}
       memory={memory}
       services={config.services}
-      classifier={classifier}
+      router={router}
       investigationAgent={investigationAgent}
       toolCount={toolCount}
     />,
