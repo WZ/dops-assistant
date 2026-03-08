@@ -689,6 +689,34 @@ export class InvestigationAgent {
       synthesisResult = { parsed: defaultSynthesis, images: [], toolData: [] };
     }
 
+    // Root cause quality gate: retry synthesis if non-conclusive and evidence exists
+    const nonConclusivePattern = /\b(not yet|pending|under investigation|to be determined|unable to determine|not identified|needs? further|cannot determine|inconclusive)\b/i;
+    const hasEvidence = metricFindings.observations.length > 0 || logFindings.observations.length > 0 || infraFindings.observations.length > 0;
+    if (nonConclusivePattern.test(synthesisResult.parsed.rootCause ?? "") && hasEvidence) {
+      log.info({ rootCause: synthesisResult.parsed.rootCause?.slice(0, 80) }, "Non-conclusive root cause detected, retrying synthesis");
+      const retryMessage = synthesisMessage + "\n\nIMPORTANT: Your previous response had a non-conclusive root cause. You MUST state your best-hypothesis root cause based on the evidence. If uncertain, state the most likely cause with explicit caveats (e.g. 'Most likely: X, pending confirmation of Y'). NEVER say 'pending' or 'not yet determined'.";
+      try {
+        const retryResult = await this.runPhase<SynthesisResult>(
+          RCA_SYNTHESIS_PROMPT,
+          retryMessage,
+          RCA_REPORT_SCHEMA,
+          3,
+          onTokenUsage,
+          onToolCall,
+          false,
+          SYNTHESIS_MAX_TOKENS,
+          REASONING_TIMEOUT_MS,
+        );
+        if (!nonConclusivePattern.test(retryResult.parsed.rootCause ?? "")) {
+          log.info({ rootCause: retryResult.parsed.rootCause?.slice(0, 80) }, "Synthesis retry produced conclusive root cause");
+          synthesisResult = retryResult;
+          collectedImages.push(...retryResult.images);
+        }
+      } catch (err) {
+        log.warn({ err }, "Synthesis retry failed, keeping original");
+      }
+    }
+
     // Phase 6: Reflection
     onPhase?.("Validating report");
     log.debug("Running phase 6: reflection");
