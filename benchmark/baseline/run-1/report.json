@@ -1,0 +1,63 @@
+{
+  "severity": "medium",
+  "summary": "The ingestion‑server stopped publishing events after it could no longer resolve its target Kafka topic/partition. The exact cause (topic deletion, Consul health‑check failure, process crash, or network block) is still unknown – we need concrete metric and log values to decide.",
+  "impact": {
+    "duration": "≈ 5 days (2026‑03‑03 → 2026‑03‑08)",
+    "description": "Reduced or halted log‑event acceptance may cause downstream analytics pipelines to miss data, potentially breaching SLAs and inflating alert fatigue."
+  },
+  "trigger": "Burst of 49 WARN logs from Kafka `NetworkClient` (UNKNOWN_TOPIC_OR_PARTITION) + a single ERROR from the sink runner at 14:42 – 14:44 PST on 2026‑03‑03, followed by a measurable dip in `ingestion_source_log_event_accepted` (the ingestion‑rate metric).",
+  "rootCause": "Not yet identified – we need the missing metrics, process‑state snapshots, network checks, and deployment artefacts before we can pin the underlying failure.",
+  "contributingFactors": [
+    "Potential mis‑configured Kafka topic/partition (the WARN indicates the producer could not resolve the target topic)",
+    "Possible Consul health‑check failure that would stop the server from being discovered by the rest of the mesh",
+    "No recent process‑level health checks – the server may have hung or crashed after the WARN burst."
+  ],
+  "timeline": [
+    {
+      "time": "2026‑03‑03 14:42:55 PST",
+      "event": "ERROR – Unable to deliver event (single occurrence)"
+    },
+    {
+      "time": "2026‑03‑03 14:43:02 PST → 14:43:14 PST",
+      "event": "49 WARNs – Kafka metadata fetch failures (UNKNOWN_TOPIC_OR_PARTITION)"
+    },
+    {
+      "time": "2026‑03‑08 01:20:15 PST",
+      "event": "Infrastructure query for ingestion‑rate metric queued (status query_pending)"
+    }
+  ],
+  "evidence": {
+    "metrics": [
+      "`consul_catalog_service_node_healthy{service_name=\"ingestion-server\"}` – latest values for the past hour",
+      "`process_cpu_seconds_total{job=\"ingestion-server\"}` and `process_resident_memory_bytes{job=\"ingestion-server\"}` for the last 24 h",
+      "`kafka_producer_request_total{topic=\"<expected‑topic>\"}` – to confirm whether the target topic exists/has partitions",
+      "`ingestion_source_log_event_accepted` – to finally compare against the pending query once it completes"
+    ],
+    "logs": [
+      "Systemd journal (`journalctl -u ingestion-server -n 200 --since \"2026-03-02\"`)",
+      "Application stdout/stderr around 2026‑03‑03 14:30–15:00 PST",
+      "Consul agent logs on the same host for the same window",
+      "Kafka broker logs for the partitions/topics referenced"
+    ],
+    "infra": [
+      "`ps aux | grep ingestion-server` snapshot",
+      "`systemctl status ingestion-server`",
+      "`netstat -tulnp` (or `ss -tulnp`) to verify listeners on the ingestion‑server port and outbound connections to Consul/Kafka",
+      "`ping/TCPCAN` checks from the host to Consul agents and the Kafka bootstrap servers"
+    ]
+  },
+  "dashboardLinks": [
+    "https://10.105.101.212/monitor/d/I61GVQVZk",
+    "https://10.105.101.212/monitor/d/1QSAvbuVkx"
+  ],
+  "recommendedActions": [
+    "1️⃣ **Collect the missing evidence** – run the queries/commands listed in the *evidence* section and paste the results back.  This will let us quickly validate or discard each hypothesis.",
+    "2️⃣ **Check Kafka topic health** – verify that the topic(s) the ingestion‑server is configured to write to exist and have the expected number of partitions.  If they were deleted or the partition count changed, the producer will emit the `UNKNOWN_TOPIC_OR_PARTITION` WARNs we saw.",
+    "3️⃣ **Validate Consul health‑check** – pull the recent `consul_catalog_service_node_healthy{service_name=\"ingestion-server\"}` series (at least the last 6 h).  If the metric is 0 or fluctuating, the health‑check is failing and the service may be being deregistered.",
+    "4️⃣ **Inspect process health** – confirm the binary is still running, not in a zombie or stopped state, and that systemd reports `Active: active (running)`.  Look for OOM‑killer messages or core‑dump files in `/var/log/` or `coredumpctl`.",
+    "5️⃣ **Network sanity check** – from the host, run `nc -zv <consul‑agent-ip> 8500` and `nc -zv <kafka‑bootstrap-ip> 9092` (or the appropriate ports) to ensure TCP connectivity.  If firewall rules changed overnight, the server may no longer be able to reach its dependencies."
+  ],
+  "confidence": "medium",
+  "service": "ingestion-server",
+  "investigatedAt": "3/8/2026, 1:20:52 AM"
+}
