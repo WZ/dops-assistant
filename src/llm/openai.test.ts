@@ -76,7 +76,8 @@ describe("LlmClient", () => {
     });
 
     const client = new LlmClient(config, defaultTimeouts, defaultRetry);
-    const result = await client.chat([{ role: "user", content: "Check metrics." }], []);
+    const tools = [{ function: { name: "query_prometheus", description: "Query Prometheus", parameters: {} } }];
+    const result = await client.chat([{ role: "user", content: "Check metrics." }], tools);
     expect(result).toEqual({
       type: "tool_calls",
       usage: { inputTokens: 10, outputTokens: 5 },
@@ -123,8 +124,9 @@ describe("LlmClient", () => {
     });
 
     const client = new LlmClient(config, defaultTimeouts, defaultRetry);
+    const tools = [{ function: { name: "broken_tool", description: "A tool", parameters: {} } }];
     await expect(
-      client.chat([{ role: "user", content: "Run tool." }], [])
+      client.chat([{ role: "user", content: "Run tool." }], tools)
     ).rejects.toThrow('Failed to parse tool arguments for "broken_tool": not-valid-json{');
   });
 });

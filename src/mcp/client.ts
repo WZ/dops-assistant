@@ -68,6 +68,40 @@ export function normalizeGrafanaTime(v: unknown): string | null {
   return null;
 }
 
+/**
+ * Coerce tool arguments to match the expected types from the tool's JSON schema.
+ * LLMs (especially non-OpenAI models) often pass numbers as strings, e.g.
+ * stepSeconds: "3600" instead of stepSeconds: 3600. The MCP server rejects these.
+ */
+export function coerceArgsToSchema(
+  args: Record<string, unknown>,
+  schema: Record<string, unknown>,
+): Record<string, unknown> {
+  const properties = schema.properties as Record<string, { type?: string }> | undefined;
+  if (!properties) return args;
+
+  const coerced = { ...args };
+  for (const [key, value] of Object.entries(coerced)) {
+    const propSchema = properties[key];
+    if (!propSchema?.type) continue;
+
+    if (propSchema.type === "number" || propSchema.type === "integer") {
+      if (typeof value === "string") {
+        const num = Number(value);
+        if (!Number.isNaN(num)) coerced[key] = num;
+      }
+    } else if (propSchema.type === "string") {
+      if (typeof value === "number" || typeof value === "boolean") {
+        coerced[key] = String(value);
+      }
+    } else if (propSchema.type === "boolean") {
+      if (value === "true") coerced[key] = true;
+      else if (value === "false") coerced[key] = false;
+    }
+  }
+  return coerced;
+}
+
 function normalizeImageTimeRange(args: Record<string, unknown>): Record<string, unknown> {
   const raw = args.timeRange;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
@@ -160,9 +194,14 @@ export class McpClient {
     if (!this.client) throw new Error("MCP client not connected");
 
     const log = logger.child({ tool: name });
-    log.debug({ args }, "Calling tool");
 
-    const finalArgs = name === "get_panel_image" ? normalizeImageTimeRange(args) : args;
+    // Coerce argument types using the tool's JSON schema (fixes LLMs that pass numbers as strings)
+    const toolSchema = this.tools.find((t) => t.function.name === name)?.function.parameters;
+    const coerced = toolSchema ? coerceArgsToSchema(args, toolSchema) : args;
+
+    log.debug({ args: coerced }, "Calling tool");
+
+    const finalArgs = name === "get_panel_image" ? normalizeImageTimeRange(coerced) : coerced;
     const end = toolDurationSeconds.startTimer({ tool: name });
     try {
       const result = await withTimeout(

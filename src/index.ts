@@ -3,7 +3,7 @@ import { McpClient } from "./mcp/client.js";
 import { LlmClient } from "./llm/openai.js";
 import { ChatAgent } from "./agent/core.js";
 import { InvestigationAgent } from "./agent/investigation.js";
-import { IntentClassifier } from "./agent/intent.js";
+import { IntentRouter } from "./agent/intent.js";
 import { ConversationMemory } from "./memory/conversation.js";
 import { ObservabilityServer } from "./observability/server.js";
 import { DiscoveryAgent } from "./agent/discovery.js";
@@ -49,7 +49,7 @@ async function main(): Promise<void> {
   const investigationAgent = new InvestigationAgent(llm, mcp, {
     maxIterations: config.agent.maxIterations,
   });
-  const classifier = new IntentClassifier(llm);
+  const router = new IntentRouter(llm);
 
   // Service discovery: optionally merge discovered services with static config
   let services = config.services;

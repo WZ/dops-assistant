@@ -87,7 +87,14 @@ describe("formatRcaText", () => {
     service: "payments-api",
     severity: "high",
     summary: "Elevated error rate detected",
+    impact: { duration: "23 minutes (14:02–14:25 UTC)", description: "Error rate spiked to 15% affecting checkout flow" },
+    trigger: "Connection pool saturated after traffic spike",
     rootCause: "Database connection pool exhaustion",
+    contributingFactors: ["No connection pool auto-scaling configured"],
+    timeline: [
+      { time: "2026-03-03T14:02:00Z", event: "Traffic spike begins" },
+      { time: "2026-03-03T14:05:00Z", event: "Connection pool saturated" },
+    ],
     evidence: { metrics: ["error_rate=15%"], logs: ["connection timeout"], infra: [] },
     dashboardLinks: [],
     panelImages: [],
@@ -99,14 +106,23 @@ describe("formatRcaText", () => {
   it("formats a complete RCA report with markdown headers", () => {
     const text = formatRcaText(baseReport);
     expect(text).toContain("# 🟠 RCA: payments-api");
-    expect(text).toContain("**Severity:** high | **Confidence:** high");
-    expect(text).toContain("## Root Cause");
+    expect(text).toContain("**Severity:** high");
+    expect(text).toContain("**Confidence:** high");
+    expect(text).toContain("## ⏱️ Impact");
+    expect(text).toContain("23 minutes (14:02–14:25 UTC)");
+    expect(text).toContain("## ⚡ Trigger");
+    expect(text).toContain("Connection pool saturated after traffic spike");
+    expect(text).toContain("## 🔍 Root Cause");
     expect(text).toContain("Database connection pool exhaustion");
-    expect(text).toContain("## Summary");
+    expect(text).toContain("## 🔗 Contributing Factors");
+    expect(text).toContain("No connection pool auto-scaling configured");
+    expect(text).toContain("## 🕐 Timeline");
+    expect(text).toContain("Traffic spike begins");
+    expect(text).toContain("## 📋 Summary");
     expect(text).toContain("Elevated error rate detected");
     expect(text).toContain("1. Scale connection pool");
     expect(text).toContain("2. Add circuit breaker");
-    expect(text).toContain("**Investigated:** 3/3/2026, 8:52:13 AM");
+    expect(text).toContain("3/3/2026, 8:52:13 AM");
   });
 
   it("uses correct severity emojis", () => {
@@ -118,7 +134,7 @@ describe("formatRcaText", () => {
 
   it("omits actions section when empty", () => {
     const text = formatRcaText({ ...baseReport, recommendedActions: [] });
-    expect(text).not.toContain("## Recommended Actions");
+    expect(text).not.toContain("## 🛠️ Recommended Actions");
   });
 
   it("renders evidence metrics as markdown bullets", () => {
@@ -126,7 +142,7 @@ describe("formatRcaText", () => {
       ...baseReport,
       evidence: { metrics: ["error_rate=15%"], logs: [], infra: [] },
     });
-    expect(text).toContain("### Metrics");
+    expect(text).toContain("### 📈 Metrics");
     expect(text).toContain("- error_rate=15%");
   });
 
@@ -135,7 +151,7 @@ describe("formatRcaText", () => {
       ...baseReport,
       evidence: { metrics: [], logs: ["connection timeout"], infra: [] },
     });
-    expect(text).toContain("### Logs");
+    expect(text).toContain("### 📝 Logs");
     expect(text).toContain("- connection timeout");
   });
 
@@ -144,7 +160,7 @@ describe("formatRcaText", () => {
       ...baseReport,
       evidence: { metrics: [], logs: [], infra: ["node-1 unreachable"] },
     });
-    expect(text).toContain("### Infrastructure");
+    expect(text).toContain("### 🖥️ Infrastructure");
     expect(text).toContain("- node-1 unreachable");
   });
 
@@ -153,7 +169,7 @@ describe("formatRcaText", () => {
       ...baseReport,
       dashboardLinks: ["https://grafana/d/abc?panelId=1"],
     });
-    expect(text).toContain("## Dashboard Links");
+    expect(text).toContain("## 🔗 Dashboard Links");
     expect(text).toContain("- https://grafana/d/abc?panelId=1");
   });
 
@@ -163,9 +179,9 @@ describe("formatRcaText", () => {
       evidence: { metrics: [], logs: [], infra: [] },
       dashboardLinks: [],
     });
-    expect(text).not.toContain("### Metrics");
-    expect(text).not.toContain("### Logs");
-    expect(text).not.toContain("## Dashboard Links");
+    expect(text).not.toContain("### 📈 Metrics");
+    expect(text).not.toContain("### 📝 Logs");
+    expect(text).not.toContain("## 🔗 Dashboard Links");
   });
 
   it("strips leading bullet markers from LLM output", () => {
