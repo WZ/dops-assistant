@@ -58,9 +58,9 @@ The investigation agent runs a multi-phase pipeline applying agentic design patt
 │                                                                     │
 │  A) User-reported issue (most common):                              │
 │     ┌──────────────────────────────────────────┐                    │
-│     │  🤖 LLM call: extractTimeRangeViaLlm()  │                    │
+│     │  🤖 LLM call: extractTimeRangeViaLlm()   │                    │
 │     │                                          │                    │
-│     │  Input:  user message (natural language)  │                    │
+│     │  Input:  user message (natural language) │                    │
 │     │  Output: {from, to} as ISO timestamps    │                    │
 │     │  Tokens: ~128 (lightweight, no tools)    │                    │
 │     └──────────────────────────────────────────┘                    │
@@ -68,7 +68,7 @@ The investigation agent runs a multi-phase pipeline applying agentic design patt
 │                                                                     │
 │  B) Proactive mode (no user message):                               │
 │     ┌──────────────────────────────────────────┐                    │
-│     │  🤖 LLM call: runPhase (7 iterations)   │                    │
+│     │  🤖 LLM call: runPhase (7 iterations)    │                    │
 │     │                                          │                    │
 │     │  System: "Check services for anomalies"  │                    │
 │     │  Tools:  query_prometheus, query_loki,   │                    │
@@ -84,13 +84,13 @@ The investigation agent runs a multi-phase pipeline applying agentic design patt
 ┌─────────────────────────────────────────────────────────────────────┐
 │  PHASE 1.5: INVESTIGATION PLANNING                                  │
 │  ┌──────────────────────────────────────────────┐                   │
-│  │  🤖 LLM call: runPhase (3 iters, NO tools)  │                   │
+│  │  🤖 LLM call: runPhase (3 iters, NO tools)   │                   │
 │  │                                              │                   │
 │  │  Input:  service name, anomaly summary,      │                   │
-│  │          severity, metrics, log labels        │                   │
+│  │          severity, metrics, log labels       │                   │
 │  │  Output: InvestigationPlan JSON              │                   │
 │  │          {hypotheses[],                      │                   │
-│  │           metricFocus[], logFocus[],          │                   │
+│  │           metricFocus[], logFocus[],         │                   │
 │  │           infraFocus[]}                      │                   │
 │  └──────────────────────────────────────────────┘                   │
 │  Pure reasoning — generates hypotheses and focus areas              │
@@ -103,7 +103,7 @@ The investigation agent runs a multi-phase pipeline applying agentic design patt
 │                                                                     │
 │  ┌─────────────────────┐  ┌─────────────────────┐                   │
 │  │  PHASE 2: METRICS   │  │  PHASE 3: LOGS      │                   │
-│  │  🤖 LLM (6 iters)  │  │  🤖 LLM (6 iters)  │                   │
+│  │  🤖 LLM (6 iters)  │  │  🤖 LLM (6 iters)    │                   │
 │  │                     │  │                     │                   │
 │  │  Tools:             │  │  Tools:             │                   │
 │  │  • query_prometheus │  │  • query_loki_logs  │                   │
@@ -125,7 +125,7 @@ The investigation agent runs a multi-phase pipeline applying agentic design patt
 │                                                                     │
 │  ┌─────────────────────┐  ┌─────────────────────┐                   │
 │  │  PHASE 4: INFRA     │  │  PANEL CAPTURE      │                   │
-│  │  🤖 LLM (6 iters)  │  │  (no LLM)           │                   │
+│  │  🤖 LLM (6 iters)  │  │  (no LLM)            │                   │
 │  │                     │  │                     │                   │
 │  │  Tools:             │  │  Deterministic:     │                   │
 │  │  • query_prometheus │  │  • search_dashboards│                   │
@@ -162,7 +162,7 @@ The investigation agent runs a multi-phase pipeline applying agentic design patt
 ┌─────────────────────────────────────────────────────────────────────┐
 │  PHASE 5: SYNTHESIS                                                 │
 │  ┌──────────────────────────────────────────────┐                   │
-│  │  🤖 LLM call: runPhase (3 iters, NO tools)  │                   │
+│  │  🤖 LLM call: runPhase (3 iters, NO tools)   │                   │
 │  │                                              │                   │
 │  │  Input:                                      │                   │
 │  │  • Condensed metric findings + raw data pts  │                   │
@@ -187,7 +187,7 @@ The investigation agent runs a multi-phase pipeline applying agentic design patt
 ┌─────────────────────────────────────────────────────────────────────┐
 │  PHASE 6: REFLECTION                                                │
 │  ┌──────────────────────────────────────────────┐                   │
-│  │  🤖 LLM call: runPhase (3 iters, NO tools)  │                   │
+│  │  🤖 LLM call: runPhase (3 iters, NO tools)   │                   │
 │  │                                              │                   │
 │  │  Input: synthesis report + phase summaries   │                   │
 │  │                                              │                   │
@@ -239,41 +239,58 @@ Phases 2, 3, 4, and panel capture run **in parallel** — that's the main effici
 
 ### How pre-fetch relates to the discovery agent
 
-The discovery agent and the investigation pre-fetch are separate concerns that feed into the same pipeline through different paths:
+Two separate processes feed into the investigation pipeline:
 
 ```
-DISCOVERY AGENT (runs once, ahead of time)       INVESTIGATION PRE-FETCH (runs every investigation)
-──────────────────────────────────────────       ──────────────────────────────────────────────────
-
-Discovers services via LLM + MCP:                Queries MCP directly (no LLM):
- • query_prometheus for metric names              • list_datasources → Prometheus/Loki UIDs
- • list_loki_label_values for log labels          • search_dashboards + get_dashboard_panel_queries
- • Outputs: ServiceConfig[]                         → PromQL from dashboard panels
-   {name, metrics[], logLabels{}}                 • list_loki_label_names → available labels
-                                                  • query_loki_logs (limit=1) → probe selectors
-        │                                                    │
-        ▼                                                    ▼
-   config.yaml / services.yaml                    Injected into LLM phase context as text
-   (persisted to disk)                            (ephemeral, per-investigation)
-        │                                                    │
-        └───────────────► ServiceConfig ◄────────────────────┘
-                               │
-                               ▼
-                     investigate(service, ...)
+┌─────────────────────────────────────────┐
+│            DISCOVERY AGENT              │
+│        (runs once, ahead of time)       │
+│                                         │
+│  Uses LLM + MCP to find services:       │
+│  • query_prometheus → metric names      │
+│  • list_loki_label_values → log labels  │
+│                                         │
+│  Output: ServiceConfig[]                │
+│    { name, metrics[], logLabels{} }     │
+└────────────────┬────────────────────────┘
+                 │
+                 ▼
+       config.yaml (persisted)
+                 │
+                 ▼
+┌────────────────────────────────────────────┐
+│  investigate(service, userMessage)         │
+│                                            │
+│  ┌──────────────────────────────────────┐  │
+│  │    INVESTIGATION PRE-FETCH           │  │
+│  │  (runs every investigation, no LLM)  │  │
+│  │                                      │  │
+│  │  Queries MCP for live context:       │  │
+│  │  • list_datasources                  │  │
+│  │    → Prometheus/Loki UIDs            │  │
+│  │  • search_dashboards                 │  │
+│  │    + get_dashboard_panel_queries     │  │
+│  │    → PromQL from dashboard panels    │  │
+│  │  • list_loki_label_names             │  │
+│  │    → available log labels            │  │
+│  │  • query_loki_logs (limit=1)         │  │
+│  │    → probe selectors until one works │  │
+│  └──────────────┬───────────────────────┘  │
+│                 │                          │
+│                 ▼                          │
+│   ServiceConfig + live MCP context         │
+│   merged into phase prompts                │
+│                 │                          │
+│                 ▼                          │
+│  [ evidence phases → synthesis → report ]  │
+└────────────────────────────────────────────┘
 ```
 
-**Discovery** runs separately (`npm run discover`) and produces a `ServiceConfig` with the service's `name`, `metrics[]` (PromQL queries), and `logLabels{}` (Loki label selectors). This is saved to config and passed into `investigate(service, ...)`.
+**Discovery** runs separately (`npm run discover`) and produces a `ServiceConfig` with `name`, `metrics[]` (PromQL queries), and `logLabels{}` (Loki label selectors). This is saved to the config and passed into the investigation agent.
 
-**Pre-fetch** happens at the start of each investigation and queries the MCP server for live operational context:
+**Pre-fetch** runs at the start of every investigation and queries the MCP server for live context that can't be baked into config.
 
-| Pre-fetch call | What it does | Why not from discovery? |
-|---|---|---|
-| `getDatasourceHint()` | `list_datasources` → Prometheus/Loki UIDs | UIDs can change if Grafana is redeployed |
-| `getPanelQueriesContext()` | `search_dashboards` + `get_dashboard_panel_queries` → PromQL from relevant dashboard panels | Dashboards change frequently; service config only has a few hand-picked metrics |
-| `getLokiLabelsHint()` | `list_loki_label_names` → shows the LLM what labels exist | Labels may be added/removed over time |
-| `getWorkingLogSelector()` | Probes Loki with the service's `logLabels` from config (discovery's output) + fallback selectors → returns one that actually returns data | Discovery's `logLabels` might be stale, or the service might not be logging during the default time window |
-
-The key connection: **discovery populates `ServiceConfig.logLabels`**, and then **pre-fetch's `getWorkingLogSelector()` uses those labels as the first candidate to probe**, falling back to common patterns (`{job="default/svc"}`, `{container_name="svc"}`, etc.) if they don't work.
+The key connection: **discovery populates `ServiceConfig.logLabels`**, and **pre-fetch's `getWorkingLogSelector()` uses those labels as the first candidate to probe**.
 
 ---
 

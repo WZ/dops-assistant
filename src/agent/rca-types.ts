@@ -54,6 +54,7 @@ export type InvestigationPlan = {
 export type ReflectionResult = {
   validationNotes: string;
   revisedRootCause: string;
+  revisedTrigger: string;
   revisedSeverity: "low" | "medium" | "high" | "critical";
   revisedConfidence: "low" | "medium" | "high";
   revisedSummary: string;
@@ -62,11 +63,23 @@ export type ReflectionResult = {
 
 // ── Report types ─────────────────────────────────────────────────────────────
 
+export type TimelineEvent = {
+  time: string;
+  event: string;
+};
+
 export type RcaReport = {
   service: string;
   severity: "low" | "medium" | "high" | "critical";
   summary: string;
+  impact: {
+    duration: string;
+    description: string;
+  };
+  trigger: string;
   rootCause: string;
+  contributingFactors: string[];
+  timeline: TimelineEvent[];
   evidence: {
     metrics: string[];
     logs: string[];

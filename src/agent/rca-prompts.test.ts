@@ -99,10 +99,12 @@ describe("RCA prompt builders – edge cases", () => {
 });
 
 describe("RCA prompt constants", () => {
-  it("RCA_SYNTHESIS_PROMPT instructs chain-of-thought reasoning", () => {
+  it("RCA_SYNTHESIS_PROMPT instructs SRE-standard reasoning", () => {
     expect(RCA_SYNTHESIS_PROMPT).toContain("root cause");
-    expect(RCA_SYNTHESIS_PROMPT).toContain("CORRELATE");
-    expect(RCA_SYNTHESIS_PROMPT).toContain("HYPOTHESIZE");
+    expect(RCA_SYNTHESIS_PROMPT).toContain("TIMELINE");
+    expect(RCA_SYNTHESIS_PROMPT).toContain("TRIGGER vs ROOT CAUSE");
+    expect(RCA_SYNTHESIS_PROMPT).toContain("CONTRIBUTING FACTORS");
+    expect(RCA_SYNTHESIS_PROMPT).toContain("IMPACT");
     expect(RCA_SYNTHESIS_PROMPT).toContain("VALIDATE");
     expect(RCA_SYNTHESIS_PROMPT).toContain("JSON");
   });
@@ -111,6 +113,20 @@ describe("RCA prompt constants", () => {
     const prompt = buildIntentClassifierPrompt();
     expect(prompt).toContain("investigation");
     expect(prompt).toContain("JSON");
+  });
+
+  it("buildIntentClassifierPrompt includes few-shot examples", () => {
+    const prompt = buildIntentClassifierPrompt();
+    expect(prompt).toContain("EXAMPLES");
+    expect(prompt).toContain("connection errors");
+    expect(prompt).toContain("what dashboards");
+  });
+
+  it("buildIntentClassifierPrompt includes symptom and error patterns", () => {
+    const prompt = buildIntentClassifierPrompt();
+    expect(prompt).toContain("slow");
+    expect(prompt).toContain("error");
+    expect(prompt).toContain("check");
   });
 
   it("buildIntentClassifierPrompt includes service names when provided", () => {
@@ -180,6 +196,7 @@ describe("RCA schemas", () => {
     const schema = RCA_REFLECTION_SCHEMA.json_schema.schema as { required: string[] };
     expect(schema.required).toContain("validationNotes");
     expect(schema.required).toContain("revisedRootCause");
+    expect(schema.required).toContain("revisedTrigger");
     expect(schema.required).toContain("revisedConfidence");
     expect(schema.required).toContain("issues");
   });
@@ -187,6 +204,10 @@ describe("RCA schemas", () => {
   it("RCA_REPORT_SCHEMA has required fields", () => {
     const schema = RCA_REPORT_SCHEMA.json_schema.schema as { required: string[] };
     expect(schema.required).toContain("rootCause");
+    expect(schema.required).toContain("trigger");
+    expect(schema.required).toContain("impact");
+    expect(schema.required).toContain("contributingFactors");
+    expect(schema.required).toContain("timeline");
     expect(schema.required).toContain("confidence");
     expect(schema.required).toContain("recommendedActions");
     expect(schema.required).toContain("evidence");
