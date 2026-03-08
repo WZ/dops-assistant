@@ -652,7 +652,7 @@ export class InvestigationAgent {
       dashboardLinksHint,
     ].join("\n");
 
-    const SYNTHESIS_MAX_TOKENS = 8192;
+    const SYNTHESIS_MAX_TOKENS = 16384;
     const REASONING_TIMEOUT_MS = 240_000; // 4min — synthesis/reflection are slow on large models
 
     type SynthesisResult = Omit<RcaReport, "service" | "investigatedAt" | "panelImages">;
@@ -700,7 +700,7 @@ export class InvestigationAgent {
       `Investigation plan hypotheses: ${JSON.stringify(plan.hypotheses)}`,
     ].join("\n");
 
-    const REFLECTION_MAX_TOKENS = 8192;
+    const REFLECTION_MAX_TOKENS = 16384;
     let reflectionResult: PhaseResult<ReflectionResult>;
     try {
       reflectionResult = await this.runPhase<ReflectionResult>(
@@ -1339,9 +1339,16 @@ export class InvestigationAgent {
         logger.debug({ phaseImages: phaseImages.length, iteration: i }, "Phase complete");
         try {
           return { parsed: JSON.parse(response.content) as T, images: phaseImages, toolData: phaseToolData };
-        } catch (err) {
+        } catch {
+          const repaired = repairTruncatedJson(response.content);
+          if (repaired !== response.content) {
+            try {
+              logger.info({ originalLen: response.content.length, repairedLen: repaired.length }, "Recovered truncated JSON via repair");
+              return { parsed: JSON.parse(repaired) as T, images: phaseImages, toolData: phaseToolData };
+            } catch { /* fall through to fresh retry */ }
+          }
           logger.warn(
-            { err, contentLen: response.content.length, contentPreview: response.content.slice(0, 200) },
+            { contentLen: response.content.length, contentPreview: response.content.slice(0, 200) },
             "Failed to parse phase response as JSON, will retry with fresh prompt",
           );
           // Don't push the truncated content back — it can be 50k+ chars and crash the API.
@@ -1361,10 +1368,19 @@ export class InvestigationAgent {
                 ].join("\n"),
               },
             ];
-            const retryResponse = await this.llm.chat(freshRetryMessages, [], { responseFormat, maxOutputTokens: maxOutputTokens ? Math.max(maxOutputTokens, 8192) : 8192, timeoutMs });
+            const retryResponse = await this.llm.chat(freshRetryMessages, [], { responseFormat, maxOutputTokens: maxOutputTokens ? Math.max(maxOutputTokens, 16384) : 16384, timeoutMs });
             if (retryResponse.usage) onTokenUsage?.(retryResponse.usage);
             if (retryResponse.type === "text") {
-              return { parsed: JSON.parse(retryResponse.content) as T, images: phaseImages, toolData: phaseToolData };
+              try {
+                return { parsed: JSON.parse(retryResponse.content) as T, images: phaseImages, toolData: phaseToolData };
+              } catch {
+                const repaired = repairTruncatedJson(retryResponse.content);
+                if (repaired !== retryResponse.content) {
+                  try {
+                    return { parsed: JSON.parse(repaired) as T, images: phaseImages, toolData: phaseToolData };
+                  } catch { /* fall through */ }
+                }
+              }
             }
           } catch (retryErr) {
             logger.error({ retryErr }, "Fresh-prompt retry also failed");
@@ -1470,15 +1486,24 @@ export class InvestigationAgent {
       },
     ];
 
-    const retryResponse = await this.llm.chat(freshMessages, [], { responseFormat, maxOutputTokens: maxOutputTokens ? Math.max(maxOutputTokens, 8192) : 8192 });
+    const retryResponse = await this.llm.chat(freshMessages, [], { responseFormat, maxOutputTokens: maxOutputTokens ? Math.max(maxOutputTokens, 16384) : 16384 });
     if (retryResponse.usage) onTokenUsage?.(retryResponse.usage);
 
     if (retryResponse.type === "text") {
       logger.info({ phaseImages: phaseImages.length }, "Phase completed via fresh summarization prompt");
       try {
         return { parsed: JSON.parse(retryResponse.content) as T, images: phaseImages, toolData: phaseToolData };
-      } catch (err) {
-        logger.error({ err, contentLen: retryResponse.content.length, contentPreview: retryResponse.content.slice(0, 200) }, "Fresh prompt also failed to produce valid JSON");
+      } catch {
+        const repaired = repairTruncatedJson(retryResponse.content);
+        if (repaired !== retryResponse.content) {
+          try {
+            return { parsed: JSON.parse(repaired) as T, images: phaseImages, toolData: phaseToolData };
+          } catch (err) {
+            logger.error({ err, contentLen: retryResponse.content.length, contentPreview: retryResponse.content.slice(0, 200) }, "Fresh prompt also failed to produce valid JSON");
+          }
+        } else {
+          logger.error({ contentLen: retryResponse.content.length, contentPreview: retryResponse.content.slice(0, 200) }, "Fresh prompt also failed to produce valid JSON");
+        }
       }
     }
 
