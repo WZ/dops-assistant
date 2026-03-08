@@ -87,7 +87,14 @@ describe("formatRcaText", () => {
     service: "payments-api",
     severity: "high",
     summary: "Elevated error rate detected",
+    impact: { duration: "23 minutes (14:02–14:25 UTC)", description: "Error rate spiked to 15% affecting checkout flow" },
+    trigger: "Connection pool saturated after traffic spike",
     rootCause: "Database connection pool exhaustion",
+    contributingFactors: ["No connection pool auto-scaling configured"],
+    timeline: [
+      { time: "2026-03-03T14:02:00Z", event: "Traffic spike begins" },
+      { time: "2026-03-03T14:05:00Z", event: "Connection pool saturated" },
+    ],
     evidence: { metrics: ["error_rate=15%"], logs: ["connection timeout"], infra: [] },
     dashboardLinks: [],
     panelImages: [],
@@ -101,8 +108,16 @@ describe("formatRcaText", () => {
     expect(text).toContain("# 🟠 RCA: payments-api");
     expect(text).toContain("**Severity:** high");
     expect(text).toContain("**Confidence:** high");
+    expect(text).toContain("## ⏱️ Impact");
+    expect(text).toContain("23 minutes (14:02–14:25 UTC)");
+    expect(text).toContain("## ⚡ Trigger");
+    expect(text).toContain("Connection pool saturated after traffic spike");
     expect(text).toContain("## 🔍 Root Cause");
     expect(text).toContain("Database connection pool exhaustion");
+    expect(text).toContain("## 🔗 Contributing Factors");
+    expect(text).toContain("No connection pool auto-scaling configured");
+    expect(text).toContain("## 🕐 Timeline");
+    expect(text).toContain("Traffic spike begins");
     expect(text).toContain("## 📋 Summary");
     expect(text).toContain("Elevated error rate detected");
     expect(text).toContain("1. Scale connection pool");

@@ -65,15 +65,50 @@ export function formatRcaText(report: RcaReport): string {
     `# ${emoji} RCA: ${report.service}`,
     "",
     `${emoji} **Severity:** ${report.severity}  ·  ${confidenceEmoji[report.confidence] ?? "⬜"} **Confidence:** ${report.confidence}  ·  🕐 ${report.investigatedAt}`,
+  ];
+
+  // Impact
+  if (report.impact) {
+    lines.push(
+      "",
+      `## ⏱️ Impact`,
+      "",
+      `**Duration:** ${report.impact.duration}`,
+      report.impact.description,
+    );
+  }
+
+  lines.push(
     "",
     `## 📋 Summary`,
     "",
     report.summary,
     "",
+    `## ⚡ Trigger`,
+    "",
+    report.trigger,
+    "",
     `## 🔍 Root Cause`,
     "",
     report.rootCause,
-  ];
+  );
+
+  // Contributing factors
+  if (report.contributingFactors?.length > 0) {
+    lines.push("", `## 🔗 Contributing Factors`);
+    for (const f of report.contributingFactors) {
+      lines.push(`- ${stripLeadingBullet(f)}`);
+    }
+  }
+
+  // Timeline
+  if (report.timeline?.length > 0) {
+    lines.push("", `## 🕐 Timeline`);
+    for (const e of report.timeline) {
+      const time = e.time.replace(/.*T/, "").replace(/Z$/, "");
+      lines.push(`- **${time}** — ${e.event}`);
+    }
+  }
 
   // Evidence
   const hasEvidence =

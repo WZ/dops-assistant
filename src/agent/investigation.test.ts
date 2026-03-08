@@ -70,7 +70,14 @@ const baseInfraFindings = JSON.stringify({
 const baseRcaReport = JSON.stringify({
   severity: "high",
   summary: "High error rate caused by DB connection pool exhaustion",
+  impact: { duration: "25 minutes (14:30–14:55 UTC)", description: "Error rate spiked to 18% affecting checkout flow" },
+  trigger: "Traffic spike saturated connection pool",
   rootCause: "DB connection pool exhausted",
+  contributingFactors: ["No auto-scaling on connection pool"],
+  timeline: [
+    { time: "14:30 UTC", event: "Traffic spike begins" },
+    { time: "14:35 UTC", event: "Connection pool saturated" },
+  ],
   evidence: { metrics: ["error_rate: 18%"], logs: ["connection timeout"], infra: ["restarted 3x"] },
   dashboardLinks: [],
   recommendedActions: ["Scale connection pool"],
@@ -80,6 +87,7 @@ const baseRcaReport = JSON.stringify({
 const baseReflectionResponse = JSON.stringify({
   validationNotes: "Report is consistent with evidence. Root cause explains all symptoms.",
   revisedRootCause: "DB connection pool exhausted",
+  revisedTrigger: "Traffic spike saturated connection pool",
   revisedConfidence: "high",
   revisedSummary: "High error rate caused by DB connection pool exhaustion",
   issues: [],
@@ -224,7 +232,11 @@ describe("InvestigationAgent", () => {
     const weakRcaReport = JSON.stringify({
       severity: "medium",
       summary: "Something might be wrong",
+      impact: { duration: "Unknown", description: "Minor error rate increase" },
+      trigger: "Unknown trigger",
       rootCause: "Unknown cause",
+      contributingFactors: [],
+      timeline: [],
       evidence: { metrics: ["error_rate: 5%"], logs: [], infra: [] },
       dashboardLinks: [],
       recommendedActions: ["Monitor"],
@@ -233,6 +245,7 @@ describe("InvestigationAgent", () => {
     const correctionReflection = JSON.stringify({
       validationNotes: "Root cause is vague, confidence is overestimated given only 1 evidence type",
       revisedRootCause: "Likely intermittent network issue based on error rate spike",
+      revisedTrigger: "Brief network disruption",
       revisedConfidence: "low",
       revisedSummary: "Intermittent error rate increase, cause uncertain",
       issues: ["Root cause too vague", "Confidence overestimated with only metric evidence"],
@@ -434,7 +447,11 @@ describe("InvestigationAgent – degradation", () => {
         .mockResolvedValueOnce({ type: "text", content: JSON.stringify({
           severity: "high",
           summary: "High error rate",
+          impact: { duration: "25 minutes", description: "Error rate spiked to 18%" },
+          trigger: "Traffic spike",
           rootCause: "DB connection pool exhausted",
+          contributingFactors: [],
+          timeline: [],
           evidence: { metrics: ["error_rate: 18%"], logs: [], infra: ["restarted 3x"] },
           dashboardLinks: [],
           recommendedActions: ["Scale connection pool"],
