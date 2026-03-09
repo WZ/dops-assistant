@@ -22,7 +22,7 @@ async function main(): Promise<void> {
     { default: React },
     { render },
     { loadConfig },
-    { McpClient },
+    { createMultiMcpClient },
     { LlmClient },
     { ChatAgent },
     { InvestigationAgent },
@@ -33,7 +33,7 @@ async function main(): Promise<void> {
     import("react"),
     import("ink"),
     import("./config/loader.js"),
-    import("./mcp/client.js"),
+    import("./mcp/factory.js"),
     import("./llm/openai.js"),
     import("./agent/core.js"),
     import("./agent/investigation.js"),
@@ -57,13 +57,13 @@ async function main(): Promise<void> {
   ${R}███${X} ${R}███${X} ${R}███${X}   Agentic DevOps Assistant for RCA
 
   `);
-  console.log("  Connecting to Grafana MCP server...");
+  console.log("  Connecting to MCP providers...");
 
-  const mcp = new McpClient(config.grafana.mcpServer, config.timeouts);
+  const mcp = createMultiMcpClient(config);
   await mcp.connect();
 
   const toolCount = mcp.getTools().length;
-  console.log(`  Connected to Grafana MCP (${toolCount} tools available)`);
+  console.log(`  Connected to MCP providers (${toolCount} tools available)`);
   console.log("");
 
   const llm = new LlmClient(config.llm, config.timeouts, config.retry);

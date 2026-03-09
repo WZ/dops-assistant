@@ -67,6 +67,69 @@ describe("RCA prompt builders", () => {
   });
 });
 
+describe("buildLogCorrelationPrompt – provider fragments", () => {
+  it("uses provider prompt fragment instead of hardcoded Loki instructions", () => {
+    const prompt = buildLogCorrelationPrompt(
+      { name: "test-svc", metrics: [], logLabels: {} },
+      "anomaly context",
+      undefined,
+      "Custom VictoriaLogs instructions here",
+    );
+    expect(prompt).toContain("Custom VictoriaLogs instructions here");
+    expect(prompt).not.toContain("query_loki_logs");
+  });
+
+  it("falls back to default Loki instructions when no fragment provided", () => {
+    const prompt = buildLogCorrelationPrompt(
+      { name: "test-svc", metrics: [], logLabels: {} },
+      "anomaly context",
+    );
+    expect(prompt).toContain("query_loki_logs");
+  });
+});
+
+describe("buildMetricDeepDivePrompt – provider fragments", () => {
+  it("uses provider fragment when provided", () => {
+    const prompt = buildMetricDeepDivePrompt(
+      { name: "test-svc", metrics: [], logLabels: {} },
+      "anomaly context",
+      undefined,
+      "Custom metric instructions",
+    );
+    expect(prompt).toContain("Custom metric instructions");
+    expect(prompt).not.toContain("query_prometheus");
+  });
+
+  it("falls back to default Prometheus instructions when no fragment", () => {
+    const prompt = buildMetricDeepDivePrompt(
+      { name: "test-svc", metrics: [], logLabels: {} },
+      "anomaly context",
+    );
+    expect(prompt).toContain("query_prometheus");
+  });
+});
+
+describe("buildInfraHealthPrompt – provider fragments", () => {
+  it("uses provider fragment when provided", () => {
+    const prompt = buildInfraHealthPrompt(
+      { name: "test-svc", metrics: [], logLabels: {} },
+      "anomaly context",
+      undefined,
+      "Custom infra instructions",
+    );
+    expect(prompt).toContain("Custom infra instructions");
+    expect(prompt).not.toContain("query_prometheus");
+  });
+
+  it("falls back to default Prometheus/Grafana instructions when no fragment", () => {
+    const prompt = buildInfraHealthPrompt(
+      { name: "test-svc", metrics: [], logLabels: {} },
+      "anomaly context",
+    );
+    expect(prompt).toContain("query_prometheus");
+  });
+});
+
 describe("RCA prompt builders – edge cases", () => {
   const emptyService = { name: "bare-service", metrics: [], logLabels: {} };
 

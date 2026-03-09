@@ -15,3 +15,6 @@ dev/
 # Logs
 *.log
 logs/
+
+# Design/plan docs (internal)
+docs/plans/
