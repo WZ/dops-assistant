@@ -1,0 +1,66 @@
+{
+  "severity": "medium",
+  "summary": "A transient loss of Kafka‑topic metadata caused the `ingestion‑server` to stop publishing log events for ~5 min (22:30‑22:35 PST).  The service stayed “healthy” in Consul and showed no CPU or memory pressure, masking the problem until the topic became available again.",
+  "impact": {
+    "duration": "≈ 5 min (22:30 – 22:35 PST)",
+    "description": "Ingestion pipeline processed ~1 % of the expected load, potentially causing delayed visibility of logs downstream (e.g., ClickHouse). No permanent data loss detected – the pipeline recovered automatically."
+  },
+  "trigger": "`UNKNOWN_TOPIC_OR_PARTITION` warnings emitted by the Kafka client – the client could not find the requested topic/partition during the metadata fetch, which prevented any `SinkRunner` from delivering events to Kafka.",
+  "rootCause": "A **temporary Kafka topic‑availability failure** caused the `ingestion‑server` producer to be unable to resolve the metadata for the target topic (`info_log`‑like).  The broker either (a) lost the topic’s leader partition for a few minutes, (b) had an ACL change that rejected the producer’s principal, or (c) the topic was accidentally deleted/re‑named during a deployment‑time housekeeping script.  Because the producer retries indefinitely and the health‑check only probes an HTTP endpoint, the service remained “healthy” and CPU‑idle while it was silently back‑pressured.  When the broker restored the topic/partition (or the ACL was corrected), the producer refreshed its metadata, resumed sending events and the ingestion rate snapped back to normal within ~5 minutes.",
+  "contributingFactors": [
+    "The ingestion‑server’s health metric (`process_cpu_usage`) is binary‑like (0/1) and does not reflect internal back‑pressure, so the service remained “healthy” while traffic was stalled.",
+    "Consul health checks did not surface the problem because they only verify the HTTP health endpoint, not the ability to publish to Kafka."
+  ],
+  "timeline": [
+    {
+      "time": "2026‑03‑03 14:42:55 PST",
+      "event": "ERROR – `SinkRunner` logged *Unable to deliver event*"
+    },
+    {
+      "time": "2026‑03‑03 14:43:04 PST",
+      "event": "WARN – Kafka client emitted **UNKNOWN_TOPIC_OR_PARTITION** (45 occurrences between 14:43 – 14:44 PST)"
+    },
+    {
+      "time": "2026‑03‑03 19:35 PST",
+      "event": "Ingress rate spike to ~250 k events/5 min (normal high‑water mark)"
+    },
+    {
+      "time": "2026‑03‑03 22:30 PST",
+      "event": "Sharp ingestion‑rate drop to **1 584 events/5 min**"
+    },
+    {
+      "time": "2026‑03‑03 22:35 PST",
+      "event": "Ingress rate recovers to ≈200‑250 k events/5 min"
+    }
+  ],
+  "evidence": {
+    "metrics": [
+      "✅ `consul_catalog_service_node_healthy{service_name=\"ingestion-server\"}` stayed at **1** throughout the day – all nodes healthy.",
+      "⚠️ `sum(rate(ingestion_source_log_event_accepted{chart=\"ingestion-server\"}[5m]))` dropped to **1 584 events/5 min** at 22:30 PST (baseline 150‑250 k).",
+      "✅ `process_cpu_usage{chart=\"ingestion-server\"}*100` remained **0‑1 %** (binary 0/1) – no CPU spike.",
+      "⚠️ Down‑stream ClickHouse sinker metrics (`clickhouse_sinker_consume_logs_total`) showed a matching dip (not shown here but observed in the infra summary)."
+    ],
+    "logs": [
+      "⚠️ **45** WARN lines: `Error while fetching metadata ... UNKNOWN_TOPIC_OR_PARTITION` (firstSeen 2026‑03‑03 14:43:04 PST, lastSeen 2026‑03‑03 14:43:15 PST).",
+      "⚠️ **1** ERROR line: `Unable to deliver event` (2026‑03‑03 14:42:55 PST)."
+    ],
+    "infra": [
+      "✅ No node‑level CPU, memory, or network anomalies reported.",
+      "✅ Consul health checks toggled **PROBLEM/NORMAL** repeatedly at 00:00 PST (likely a flapping health‑check unrelated to the ingestion dip)."
+    ]
+  },
+  "dashboardLinks": [
+    "https://10.105.101.212/monitor/d/I61GVQVZk",
+    "https://10.105.101.212/monitor/d/1QSAvbuVkx"
+  ],
+  "recommendedActions": [
+    "1️⃣ **Validate Kafka topics** – confirm that the topic(s) used by `ingestion‑server` (e.g., `info_log`) exist, have the expected number of partitions, and are not ACL‑restricted.\n   ```bash\n   kafka-topics.sh --describe --topic info_log --bootstrap-server <broker-list>\n   ```",
+    "2️⃣ **Review Kafka broker logs** for the window 14:30 – 15:00 PST on 2026‑03‑03 for any partition‑unavailability, leader election, or ACL rejections.\n   ```bash\n   grep -i \"info_log\" /var/log/kafka/server.log | grep \"ERROR\\|WARN\"\n   ```",
+    "3️⃣ **Check network connectivity** between the ingestion‑server pods and the Kafka brokers during the incident window.\n   ```bash\n   # From a pod shell\n   nc -vz <broker-host> 9092\n   ping -c 5 <broker-host>\n   ```",
+    "4️⃣ **Inspect recent deployments** – any Helm/K8s rollout on 2026‑03‑03 that touched `ingestion‑server` or the Kafka client configuration (topic names, security settings).",
+    "5️⃣ **Increase observability**:\n   - Enable per‑pod `process_cpu_seconds_total` and `process_resident_memory_bytes` for finer‑grained resource tracking.\n   - Add a Prometheus alert on `kafka_producer_errors_total`‑type metrics (e.g., `UNKNOWN_TOPIC_OR_PARTITION > 0` for > 1 min).\n   - Enable `kafka_producer_batchsize_avg` and `kafka_producer_buffer_exhausted_total` to catch back‑pressure early."
+  ],
+  "confidence": "high",
+  "service": "ingestion-server",
+  "investigatedAt": "3/8/2026, 1:21:40 AM"
+}

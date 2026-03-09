@@ -189,6 +189,7 @@ export class LlmClient {
     messages: Message[],
     tools: OpenAITool[],
     opts?: { responseFormat?: ResponseFormat; maxOutputTokens?: number },
+    retryCount: number = 0,
   ): Promise<LlmResponse> {
     const { instructions, input } = convertToResponsesInput(messages);
 
@@ -320,9 +321,16 @@ export class LlmClient {
         };
       } else {
         logger.warn(
-          { hallucinated: functionCalls.map((fc) => fc.name) },
+          { hallucinated: functionCalls.map((fc) => fc.name), retryCount },
           "Ignoring hallucinated function calls (no tools were provided)",
         );
+        if (textContent === "" && retryCount < 2) {
+          const nudgedMessages: Message[] = [
+            ...messages,
+            { role: "user", content: "Respond with valid JSON only. Do not call any functions." },
+          ];
+          return this.doChat(nudgedMessages, tools, opts, retryCount + 1);
+        }
       }
     }
 

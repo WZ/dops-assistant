@@ -109,6 +109,60 @@ describe("LlmClient", () => {
     ).rejects.toThrow("LLM returned no output (possible content filter or API error)");
   });
 
+  it("retries when hallucinated function calls produce empty content (no tools provided)", async () => {
+    const mockCreate = await getMockCreate();
+    mockCreate.mockResolvedValueOnce({
+      output: [
+        { type: "function_call", call_id: "fake_1", name: "<|constrain|>json", arguments: "{}" },
+      ],
+      usage: { input_tokens: 100, output_tokens: 50 },
+    });
+    mockCreate.mockResolvedValueOnce({
+      output: [
+        { type: "message", role: "assistant", content: [{ type: "output_text", text: '{"result": "ok"}' }] },
+      ],
+      usage: { input_tokens: 110, output_tokens: 60 },
+    });
+
+    const client = new LlmClient(config, defaultTimeouts, defaultRetry);
+    const result = await client.chat([{ role: "user", content: "Produce JSON." }], []);
+    expect(result.type).toBe("text");
+    expect(result.content).toBe('{"result": "ok"}');
+    expect(mockCreate).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns empty content after max hallucination retries exhausted", async () => {
+    const mockCreate = await getMockCreate();
+    mockCreate.mockResolvedValue({
+      output: [
+        { type: "function_call", call_id: "fake_1", name: "<|constrain|>json", arguments: "{}" },
+      ],
+      usage: { input_tokens: 100, output_tokens: 50 },
+    });
+
+    const client = new LlmClient(config, defaultTimeouts, defaultRetry);
+    const result = await client.chat([{ role: "user", content: "Produce JSON." }], []);
+    expect(result.type).toBe("text");
+    expect(result.content).toBe("");
+    expect(mockCreate).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not retry hallucinated calls when tools are provided", async () => {
+    const mockCreate = await getMockCreate();
+    mockCreate.mockResolvedValue({
+      output: [
+        { type: "function_call", call_id: "call_1", name: "query_prometheus", arguments: '{"query":"up"}' },
+      ],
+      usage: { input_tokens: 10, output_tokens: 5 },
+    });
+
+    const client = new LlmClient(config, defaultTimeouts, defaultRetry);
+    const tools = [{ function: { name: "query_prometheus", description: "Query", parameters: {} } }];
+    const result = await client.chat([{ role: "user", content: "Check." }], tools);
+    expect(result.type).toBe("tool_calls");
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+  });
+
   it("throws when tool arguments contain malformed JSON", async () => {
     const mockCreate = await getMockCreate();
     mockCreate.mockResolvedValue({
