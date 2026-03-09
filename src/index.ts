@@ -1,5 +1,5 @@
 import { loadConfig } from "./config/loader.js";
-import { McpClient } from "./mcp/client.js";
+import { createMultiMcpClient } from "./mcp/factory.js";
 import { LlmClient } from "./llm/openai.js";
 import { ChatAgent } from "./agent/core.js";
 import { InvestigationAgent } from "./agent/investigation.js";
@@ -29,10 +29,10 @@ async function main(): Promise<void> {
   logger.info({ port: config.observability.port }, "Observability server started");
 
   // Layer 1: MCP client
-  const mcp = new McpClient(config.grafana.mcpServer, config.timeouts);
-  logger.info("Connecting to Grafana MCP server...");
+  const mcp = createMultiMcpClient(config);
+  logger.info("Connecting to MCP providers...");
   await mcp.connect();
-  logger.info("MCP connected");
+  logger.info("MCP providers connected");
 
   // Layer 2: LLM client
   const llm = new LlmClient(config.llm, config.timeouts, config.retry);
