@@ -35,7 +35,7 @@ const mockMcp = {
   isConnected: vi.fn().mockReturnValue(true),
   getProvidersByRole: vi.fn().mockReturnValue([]),
   getToolsByRole: vi.fn().mockReturnValue([]),
-  hasRole: vi.fn().mockReturnValue(false),
+  hasRole: vi.fn().mockImplementation((role: string) => role === "dashboards" || role === "metrics" || role === "logs"),
 } as unknown as MultiMcpClient;
 
 // New structured mock data
@@ -299,7 +299,7 @@ describe("InvestigationAgent", () => {
       }),
       getProvidersByRole: vi.fn().mockReturnValue([]),
       getToolsByRole: vi.fn().mockReturnValue([]),
-      hasRole: vi.fn().mockReturnValue(false),
+      hasRole: vi.fn().mockImplementation((role: string) => role === "dashboards" || role === "metrics" || role === "logs"),
     } as unknown as MultiMcpClient;
 
     const llm = makeMockLlm([basePlanResponse, baseMetricFindings, baseLogFindings, baseInfraFindings, baseRcaReport, baseReflectionResponse]);
