@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import type { PhaseStats } from "../../shared/ws-types.js";
 
 export type PhaseStatus = "pending" | "running" | "complete" | "failed";
 
@@ -7,6 +8,7 @@ export interface PhaseState {
   label: string;
   status: PhaseStatus;
   substatus?: string;
+  stats?: PhaseStats;
 }
 
 const icons: Record<PhaseStatus, string> = {
@@ -57,6 +59,28 @@ export function PhaseStepper({ phases }: { phases: PhaseState[] }) {
               <p className="text-[11px] font-mono text-muted-foreground/50 mt-0.5 animate-fade-in">
                 {phase.substatus}
               </p>
+            )}
+            {phase.stats && phase.status === "complete" && (
+              <div className="flex flex-wrap gap-1 mt-1.5 animate-fade-in">
+                {phase.stats.observationCount > 0 && (
+                  <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-primary/10 text-primary/60 border border-primary/15">
+                    {phase.stats.observationCount} found
+                  </span>
+                )}
+                {phase.stats.criticalCount > 0 && (
+                  <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-destructive/10 text-destructive/60 border border-destructive/15">
+                    {phase.stats.criticalCount} critical
+                  </span>
+                )}
+                {phase.stats.toolCalls > 0 && (
+                  <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-secondary/40 text-muted-foreground/40 border border-border/20">
+                    {phase.stats.toolCalls} tools
+                  </span>
+                )}
+                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-secondary/40 text-muted-foreground/40 border border-border/20">
+                  {phase.stats.durationMs < 1000 ? `${phase.stats.durationMs}ms` : `${(phase.stats.durationMs / 1000).toFixed(1)}s`}
+                </span>
+              </div>
             )}
           </div>
         </div>
