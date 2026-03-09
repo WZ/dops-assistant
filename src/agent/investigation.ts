@@ -495,10 +495,6 @@ export class InvestigationAgent {
     const fullContext = `${datasourceHint}\n${timeCtx}\nPresent all timestamps in the user's local timezone, not UTC.\n\n${windowHint}\n\nKnown issue: ${anomalyContext}`;
     const userContext = userMessage ? `\nUser reported: "${userMessage}"` : "";
 
-    const metricPrompt = buildMetricDeepDivePrompt(service, anomalyContext, plan.metricFocus);
-    const logPrompt = buildLogCorrelationPrompt(service, anomalyContext, plan.logFocus);
-    const infraPrompt = buildInfraHealthPrompt(service, anomalyContext, plan.infraFocus);
-
     const metricMessage = `${fullContext}${userContext}\nService metrics: ${service.metrics.map((m) => m.query).join(", ")}`;
     const logMessage = `${fullContext}${userContext}\nLog labels: ${JSON.stringify(service.logLabels)}`;
     const infraMessage = `${fullContext}${userContext}\nService: ${service.name}`;
@@ -511,6 +507,11 @@ export class InvestigationAgent {
     const defaultPromUid = promUidMatch?.[1];
 
     const logAdapter = this.resolveLogAdapter(datasourceHint);
+
+    const logFragment = logAdapter?.getPromptFragment();
+    const metricPrompt = buildMetricDeepDivePrompt(service, anomalyContext, plan.metricFocus);
+    const logPrompt = buildLogCorrelationPrompt(service, anomalyContext, plan.logFocus, logFragment);
+    const infraPrompt = buildInfraHealthPrompt(service, anomalyContext, plan.infraFocus);
 
     // Convert investigation window to RFC3339 for Loki probe queries
     const lokiProbeWindow = this.toRfc3339Window(investigationWindow);
