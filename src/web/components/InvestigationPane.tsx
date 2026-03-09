@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { PhaseStepper, type PhaseState } from "./PhaseStepper";
 import { EvidenceCards } from "./EvidenceCards";
 import { RcaReport } from "./RcaReport";
@@ -150,11 +151,41 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, send }:
       }
       if (msg.type === "investigation:complete" && msg.id === investigationId) {
         setReport(msg.report);
+        // Extract evidence from report for live investigations
+        const rpt = msg.report as Record<string, unknown> | null;
+        if (rpt?.evidence) {
+          const ev = rpt.evidence as Record<string, unknown>;
+          setEvidence((prev) => {
+            const updated = { ...prev };
+            if (Array.isArray(ev.metrics) && ev.metrics.length > 0 && !updated["metrics"]) {
+              updated["metrics"] = { observations: ev.metrics };
+            }
+            if (Array.isArray(ev.logs) && ev.logs.length > 0 && !updated["logs"]) {
+              updated["logs"] = { observations: ev.logs };
+            }
+            if (Array.isArray(ev.infra) && ev.infra.length > 0 && !updated["infra"]) {
+              updated["infra"] = { observations: ev.infra };
+            }
+            return updated;
+          });
+        }
       }
     }
   }, [wsMessages, investigationId]);
 
   const isRunning = phases.some((p) => p.status === "running");
+  const isComplete = !!report;
+  const [timelineOpen, setTimelineOpen] = useState(true);
+
+  // Auto-collapse timeline when investigation completes
+  useEffect(() => {
+    if (isComplete) setTimelineOpen(false);
+  }, [isComplete]);
+
+  // Auto-expand timeline when investigation starts
+  useEffect(() => {
+    if (isRunning) setTimelineOpen(true);
+  }, [isRunning]);
 
   return (
     <div className={`h-full flex flex-col relative z-[2] ${isRunning ? "scanlines" : ""}`}>
@@ -191,27 +222,63 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, send }:
             </div>
           }
           centerPanel={
-            <div className="h-full flex flex-col">
-              {report ? (
-                <Tabs defaultValue="report" className="h-full flex flex-col">
-                  <TabsList className="mx-4 mt-3 bg-secondary/30 border border-border/30 rounded-lg p-0.5 shrink-0">
-                    <TabsTrigger value="report" className="flex-1 text-[11px] font-mono">Report</TabsTrigger>
-                    <TabsTrigger value="deepdive" className="flex-1 text-[11px] font-mono">Deep Dive</TabsTrigger>
-                  </TabsList>
-                  <TabsContent value="report" className="flex-1 overflow-y-auto p-4 mt-0">
-                    <RcaReport report={report as any} />
-                  </TabsContent>
-                  <TabsContent value="deepdive" className="flex-1 overflow-hidden mt-0">
-                    <DeepInvestigationPane
-                      investigationId={investigationId}
-                      wsMessages={wsMessages}
-                      send={send}
-                    />
-                  </TabsContent>
-                </Tabs>
-              ) : (
-                <ActivityTimeline events={timelineEvents} />
-              )}
+            <div className="h-full flex flex-col overflow-hidden">
+              {/* Activity Timeline — always visible, collapsible after completion */}
+              <Collapsible open={timelineOpen} onOpenChange={setTimelineOpen}>
+                <CollapsibleTrigger className="w-full px-4 py-2 border-b border-border/30 flex items-center justify-between hover:bg-secondary/20 transition-colors cursor-pointer shrink-0">
+                  <div className="flex items-center gap-2">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" className={`transition-transform duration-200 text-muted-foreground/40 ${timelineOpen ? "rotate-90" : ""}`}>
+                      <path d="M8 5l8 7-8 7z"/>
+                    </svg>
+                    <span className="text-[11px] font-display font-semibold uppercase tracking-wide text-muted-foreground/50">
+                      Activity
+                    </span>
+                    {timelineEvents.length > 0 && (
+                      <span className="text-[9px] font-mono text-muted-foreground/30">
+                        {timelineEvents.filter((e) => e.type === "tool_call").length} calls
+                      </span>
+                    )}
+                  </div>
+                  {isRunning && (
+                    <div className="flex items-center gap-1">
+                      <div className="w-1.5 h-1.5 rounded-full bg-primary animate-status-pulse" />
+                      <span className="text-[9px] font-mono text-primary/50">live</span>
+                    </div>
+                  )}
+                </CollapsibleTrigger>
+                <CollapsibleContent className={`${isRunning ? "flex-1 min-h-0" : "max-h-[50vh]"} overflow-hidden`}>
+                  <ActivityTimeline events={timelineEvents} />
+                </CollapsibleContent>
+              </Collapsible>
+
+              {/* Report + Deep Dive section */}
+              <div className="flex-1 min-h-0 overflow-hidden">
+                {report ? (
+                  <Tabs defaultValue="report" className="h-full flex flex-col">
+                    <TabsList className="mx-4 mt-3 bg-secondary/30 border border-border/30 rounded-lg p-0.5 shrink-0">
+                      <TabsTrigger value="report" className="flex-1 text-[11px] font-mono">Report</TabsTrigger>
+                      <TabsTrigger value="deepdive" className="flex-1 text-[11px] font-mono">Deep Dive</TabsTrigger>
+                    </TabsList>
+                    <TabsContent value="report" className="flex-1 overflow-y-auto p-4 mt-0">
+                      <RcaReport report={report as any} />
+                    </TabsContent>
+                    <TabsContent value="deepdive" className="flex-1 overflow-hidden mt-0">
+                      <DeepInvestigationPane
+                        investigationId={investigationId}
+                        wsMessages={wsMessages}
+                        send={send}
+                      />
+                    </TabsContent>
+                  </Tabs>
+                ) : !isRunning ? (
+                  <div className="flex-1 flex items-center justify-center p-4">
+                    <div className="space-y-2.5 w-full">
+                      <Skeleton className="h-6 w-40 rounded-md" />
+                      <Skeleton className="h-28 w-full rounded-lg" />
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             </div>
           }
           rightPanel={
