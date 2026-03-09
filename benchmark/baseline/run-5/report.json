@@ -1,0 +1,62 @@
+{
+  "severity": "medium",
+  "summary": "Missing Kafka topic caused ingestion‑server throughput degradation; no host resource exhaustion or Consul issues were observed.",
+  "impact": {
+    "duration": "≈ 24 h (2026‑03‑03 00:00 – 2026‑03‑04 00:00 PST)",
+    "description": "Reduced ingestion‑rate and batch‑rate caused downstream pipelines to receive far fewer events; no hard failures or crashes were recorded."
+  },
+  "trigger": "Metadata fetch for `info_log` returned UNKNOWN_TOPIC_OR_PARTITION, and the sink timed‑out after 60 s.",
+  "rootCause": "Kafka topic `info_log` was unavailable (deleted, renamed, or moved), causing producer metadata fetch failures and sink publish errors, which led to the ~70 % throughput drop.",
+  "contributingFactors": [
+    "No alert on Kafka‑topic deletion – the monitoring stack only watches ingestion‑server metrics, not Kafka‑topic existence.",
+    "The ingestion‑server retries metadata fetches aggressively, generating a burst of WARN logs that mask the original failure."
+  ],
+  "timeline": [
+    {
+      "time": "2026‑03‑03 12:00 PST",
+      "event": "Ingestion‑server status changed to **degraded** (log‑event accepted rate ↓ ≈ 70 %)."
+    },
+    {
+      "time": "2026‑03‑03 22:42:55 PST",
+      "event": "ERROR – SinkRunner could not deliver event; KafkaSink failed to publish."
+    },
+    {
+      "time": "2026‑03‑03 22:42:55 PST",
+      "event": "WARN – SinkCallback: “Error sending message to Kafka Topic info_log not present in metadata after 60000 ms.”"
+    },
+    {
+      "time": "2026‑03‑03 22:43 – 22:44 PST (≈ 98 occurrences)",
+      "event": "WARN – NetworkClient repeatedly reports `UNKNOWN_TOPIC_OR_PARTITION` for `info_log`."
+    }
+  ],
+  "evidence": {
+    "metrics": [
+      "ingestion‑server log‑event accepted rate ↓ 70 % (2026‑03‑03 12:00 PST)",
+      "ingestion‑server batch‑accepted rate ↓ 65 % (same window)",
+      "CPU ≈ 45 % (normal) – no resource saturation"
+    ],
+    "logs": [
+      "2026‑03‑03 22:42:55.025 PST ERROR 1 --- [ltSinkProcessor] o.a.f.SinkRunner : Unable to deliver event. Exception follows.",
+      "2026‑03‑03 22:42:55.025 PST WARN 1 --- [ltSinkProcessor] c.f.i.s.i.s.SinkCallback : Error sending message to Kafka Topic info_log not present in metadata after 60000 ms.",
+      "2026‑03‑03 22:43:15.044 PST WARN 1 --- [ad | producer-1] o.a.k.c.NetworkClient : [Producer clientId=producer‑1] Error while fetching metadata … {info_log=UNKNOWN_TOPIC_OR_PARTITION}"
+    ],
+    "infra": [
+      "No increase in error/failure counters other than the sink‑specific ones.",
+      "All other host‑level metrics (CPU, memory, disk I/O, file‑descriptors) stayed within normal ranges."
+    ]
+  },
+  "dashboardLinks": [
+    "https://10.105.101.212/monitor/d/I61GVQVZk",
+    "https://10.105.101.212/monitor/d/1QSAvbuVkx"
+  ],
+  "recommendedActions": [
+    "1️⃣ Verify the Kafka topic:",
+    "   ```bash",
+    "   # From any broker or a client with admin rights",
+    "   kafka-topics.sh --bootstrap-server <broker-list> --describe --topic info_log",
+    "   ```"
+  ],
+  "confidence": "high",
+  "service": "ingestion-server",
+  "investigatedAt": "3/8/2026, 1:25:32 AM"
+}

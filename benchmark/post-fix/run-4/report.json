@@ -1,0 +1,76 @@
+{
+  "severity": "medium",
+  "summary": "A transient Kafka‑topic‑absence caused the ingestion‑server’s producer to fail, dropping > 99 % of incoming log events for ~8 minutes.  The system recovered automatically after the producer gave up and the client refreshed its metadata cache.",
+  "impact": {
+    "duration": "≈ 5‑10 min (15:42‑15:50 PST / 22:42‑22:50 UTC)",
+    "description": "Ingress rate collapsed by > 99 % causing a temporary loss of log events that should have been stored in ClickHouse. No permanent data loss is expected because the producer dropped the events; they were not persisted elsewhere."
+  },
+  "trigger": "Kafka broker returned `UNKNOWN_TOPIC_OR_PARTITION` for the `info_log` topic during the metadata‑fetch phase.  The root trigger is a missing or mis‑configured Kafka topic (deleted, never created, or partition/replication mismatch).",
+  "rootCause": "The `info_log` Kafka topic did not exist (or its metadata was stale) on the broker cluster at 2026‑03‑03 15:42 PST.  The ingestion‑server’s producer fetched metadata, received `UNKNOWN_TOPIC_OR_PARTITION`, and consequently dropped every event it tried to publish.  Because the producer does not buffer on this error, the ingestion‑rate fell from ~250 k events / s to ~1.5 k events / s until the client gave up and the internal retry loop timed‑out.  No pod‑level or CPU‑related issue contributed to the outage.",
+  "contributingFactors": [],
+  "timeline": [
+    {
+      "time": "2026‑03‑03 15:42:41 PST (2026‑03‑03 22:42:41 UTC)",
+      "event": "WARN Kafka NetworkClient – `UNKNOWN_TOPIC_OR_PARTITION` for `info_log` (first occurrence)"
+    },
+    {
+      "time": "2026‑03‑03 15:42:55 PST (2026‑03‑03 22:42:55 UTC)",
+      "event": "ERROR SinkProcessor – Unable to deliver event; KafkaSink reports `Failed to publish events`"
+    },
+    {
+      "time": "2026‑03‑03 15:43:15 PST (2026‑03‑03 22:43:15 UTC)",
+      "event": "Last WARN observed in the sampled window"
+    },
+    {
+      "time": "2026‑03‑03 15:05:00 PDT (2026‑03‑03 22:05:00 UTC)",
+      "event": "Ingestion‑log rate peaks at ~250 k events / s (early‑day average ~150 k)"
+    },
+    {
+      "time": "2026‑03‑03 15:05:00 PDT (2026‑03‑03 22:05:00 UTC)",
+      "event": "Sharp drop to ~1.5 k events / s (≈ 99 % drop)"
+    },
+    {
+      "time": "2026‑03‑03 12:40 PDT (2026‑03‑03 19:40 UTC)",
+      "event": "Anomaly spikes on `ingestion_source_log_event_accepted` and `ingestion_server_siem_event_accepted` metrics (high acceptance rate)"
+    },
+    {
+      "time": "2026‑03‑03 04:00 PDT (2026‑03‑03 11:00 UTC)",
+      "event": "CPU usage sampled across the day – 0‑1 % per pod (normal)"
+    },
+    {
+      "time": "2026‑03‑03 All day",
+      "event": "Consul health check `consul_catalog_service_node_healthy{service_name=\"ingestion-server\"}` stays at 1 (healthy)"
+    }
+  ],
+  "evidence": {
+    "metrics": [
+      "ingestion_log_rate (sum rate(ingestion_source_log_event_accepted{chart=\"ingestion-server\"}[5m])) – 250 k events / s → 1.5 k events / s (15:05 PDT)",
+      "process_cpu_usage{chart=\"ingestion-server\"}*100 – 0‑1 % per pod (sampled every 5 min, unchanged)",
+      "consul_catalog_service_node_healthy{service_name=\"ingestion-server\"} – constantly 1 (healthy)"
+    ],
+    "logs": [
+      "WARN 1 --- [ad | producer-1] o.a.k.c.NetworkClient : [Producer clientId=producer-1] Error while fetching metadata with correlation id 26742073 : {info_log=UNKNOWN_TOPIC_OR_PARTITION} (15:42:41 PST)",
+      "ERROR 1 --- [ltSinkProcessor] o.a.f.SinkRunner : Unable to deliver event. Exception follows. (15:42:55 PST)",
+      "ERROR 1 --- [ltSinkProcessor] c.f.i.s.i.s.KafkaSink : Failed to publish events (15:42:55 PST)"
+    ],
+    "infra": [
+      "No pod restarts reported for ingestion‑server during the window.",
+      "All pods reported healthy via Consul.",
+      "Network latency / connectivity metrics not flagged."
+    ]
+  },
+  "dashboardLinks": [
+    "https://10.105.101.212/monitor/d/I61GVQVZk",
+    "https://10.105.101.212/monitor/d/1QSAvbuVkx"
+  ],
+  "recommendedActions": [
+    "1. **Validate the Kafka topic** – Run `kafka-topics.sh --describe --topic info_log --bootstrap-server <brokers>` and confirm that the topic exists with the expected number of partitions and replication factor.",
+    "2. **If the topic is missing**, recreate it with the proper configuration (e.g., `kafka-topics.sh --create --topic info_log --partitions <n> --replication-factor <r> --config cleanup.policy=delete`).",
+    "3. **Refresh producer metadata** – after the topic is present, either restart the ingestion‑server pods (`kubectl rollout restart deployment/ingestion-server`) or trigger a producer‑client reload if the application supports it.",
+    "4. **Check broker logs** for the same time window (22:40‑23:00 UTC) for any internal errors (e.g., broker quorum loss, topic deletion events, or ACL rejections).",
+    "5. **Verify ACLs / authentication** – ensure the ingestion‑server’s client principal has `Write` permission on `info_log`."
+  ],
+  "confidence": "high",
+  "service": "ingestion-server",
+  "investigatedAt": "3/8/2026, 4:30:04 PM"
+}
