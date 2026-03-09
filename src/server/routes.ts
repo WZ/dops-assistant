@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import type { Database, InvestigationRow, PhaseRow } from "./db.js";
+import type { Database, InvestigationRow, PhaseRow, EventRow } from "./db.js";
 import type { ServiceConfig } from "../config/schema.js";
 import type { MultiMcpClient } from "../mcp/multi-client.js";
 
@@ -19,7 +19,7 @@ export interface DependencyEdge {
 export interface RouteHandlers {
   getServices(): ServiceConfig[];
   listInvestigations(limit: number, offset: number): InvestigationRow[];
-  getInvestigation(id: string): { investigation: InvestigationRow; phases: PhaseRow[] } | undefined;
+  getInvestigation(id: string): { investigation: InvestigationRow; phases: PhaseRow[]; events: EventRow[] } | undefined;
   getDependencies(service: string): Promise<{ nodes: DependencyNode[]; edges: DependencyEdge[] }>;
 }
 
@@ -31,7 +31,8 @@ export function buildHandlers(db: Database, services: ServiceConfig[], mcp: Mult
       const investigation = db.getInvestigation(id);
       if (!investigation) return undefined;
       const phases = db.getPhases(id);
-      return { investigation, phases };
+      const events = db.getEvents(id);
+      return { investigation, phases, events };
     },
     getDependencies: async (service: string) => {
       if (!mcp.hasRole("dependencies")) {
@@ -78,6 +79,12 @@ export function registerRoutes(app: Express, db: Database, services: ServiceConf
       return;
     }
     res.json(result);
+  });
+
+  app.get("/api/messages", (req: Request, res: Response) => {
+    const limit = Math.min(Number(req.query["limit"]) || 50, 200);
+    const investigationId = req.query["investigationId"] as string | undefined;
+    res.json(db.listMessages(limit, investigationId));
   });
 
   app.get("/api/dependencies/:service", async (req: Request, res: Response) => {

@@ -501,6 +501,20 @@ export class InvestigationAgent {
     };
     log.debug({ hypotheses: plan.hypotheses.length }, "Investigation plan created");
 
+    // Emit plan hypotheses so the UI can show them
+    if (plan.hypotheses.length > 0) {
+      const hypothesisText = plan.hypotheses.map((h) => `${h.hypothesis} → ${h.evidenceNeeded}`).join(" | ");
+      onIteration?.("planning", 0, 1, `Hypotheses: ${hypothesisText}`);
+    }
+    if (plan.metricFocus.length > 0 || plan.logFocus.length > 0 || plan.infraFocus.length > 0) {
+      const focusItems = [
+        ...plan.metricFocus.map((f) => `metric: ${f}`),
+        ...plan.logFocus.map((f) => `log: ${f}`),
+        ...plan.infraFocus.map((f) => `infra: ${f}`),
+      ];
+      onIteration?.("planning", 0, 1, `Focus: ${focusItems.join(", ")}`);
+    }
+
     // Phases 2/3/4 + panel capture in parallel
     onPhase?.("Analyzing metrics, logs & infrastructure");
     log.debug("Running phases 2/3/4 + panel capture in parallel");
@@ -765,6 +779,14 @@ export class InvestigationAgent {
       } catch (err) {
         log.warn({ err }, "Synthesis retry failed, keeping original");
       }
+    }
+
+    // Emit synthesis summary so the UI can show it
+    if (synthesisResult.parsed.rootCause) {
+      onIteration?.("synthesis", 0, 1, `Root cause: ${synthesisResult.parsed.rootCause}`);
+    }
+    if (synthesisResult.parsed.trigger) {
+      onIteration?.("synthesis", 0, 1, `Trigger: ${synthesisResult.parsed.trigger}`);
     }
 
     // Phase 6: Reflection

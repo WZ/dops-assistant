@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 interface RcaReportData {
   rootCause: string;
@@ -15,130 +15,186 @@ interface RcaReportData {
   dashboardLinks: string[];
 }
 
+/** Parse inline markdown: **bold**, *italic*, `code` into JSX spans */
+function renderInline(text: string): ReactNode[] {
+  const parts: ReactNode[] = [];
+  const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`)/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+    if (match[2]) {
+      parts.push(<strong key={match.index} className="font-semibold text-foreground">{match[2]}</strong>);
+    } else if (match[3]) {
+      parts.push(<em key={match.index} className="italic">{match[3]}</em>);
+    } else if (match[4]) {
+      parts.push(<code key={match.index} className="px-1 py-0.5 rounded bg-secondary/50 text-[0.9em] font-mono text-foreground/80">{match[4]}</code>);
+    }
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+
+  return parts.length > 0 ? parts : [text];
+}
+
+/** Strip leading number prefixes from action text.
+ *  Handles: "1.", "1)", "**1.**", "1️⃣", keycap emoji (digit+VS16+U+20E3),
+ *  and keycap emoji embedded inside bold markers like "**1️⃣ Text**" */
+function stripLeadingNumber(text: string): string {
+  // Remove all keycap emoji anywhere in the text (digit + optional VS16 + combining enclosing keycap)
+  let cleaned = text.replace(/[\d][\uFE0F]?[\u20E3]/g, "");
+  // Strip leading bold-wrapped or plain number prefixes: "**1.**", "1.", "1)"
+  cleaned = cleaned.replace(/^\s*\*{0,2}\d+[.\)]\*{0,2}\s*/, "");
+  // Clean up any leftover leading whitespace or empty bold markers
+  cleaned = cleaned.replace(/^\s*\*\*\s*/, "**");
+  return cleaned.trim();
+}
+
+function severityColor(severity: string): string {
+  switch (severity) {
+    case "critical": return "destructive";
+    case "high": return "default";
+    default: return "secondary";
+  }
+}
+
+function SectionLabel({ children, color = "text-foreground/70" }: { children: ReactNode; color?: string }) {
+  return (
+    <h4 className={`text-xs font-display font-bold uppercase tracking-[0.08em] ${color} mb-1.5`}>
+      {children}
+    </h4>
+  );
+}
+
+function CollapsibleSection({ id, label, count, open, toggle, children }: { id: string; label: string; count: number; open: boolean; toggle: () => void; children: ReactNode }) {
+  return (
+    <Collapsible open={open} onOpenChange={toggle}>
+      <CollapsibleTrigger className="flex items-center gap-1.5 text-xs font-display font-bold uppercase tracking-[0.08em] text-foreground/70 hover:text-foreground transition-colors cursor-pointer">
+        <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" className={`transition-transform duration-200 ${open ? "rotate-90" : ""}`}>
+          <path d="M8 5l8 7-8 7z"/>
+        </svg>
+        {label} ({count})
+      </CollapsibleTrigger>
+      <CollapsibleContent className="mt-2.5">
+        {children}
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 export function RcaReport({ report }: { report: RcaReportData }) {
   const [open, setOpen] = useState<Set<string>>(new Set(["timeline", "actions"]));
   const toggle = (s: string) => setOpen((prev) => { const n = new Set(prev); if (n.has(s)) n.delete(s); else n.add(s); return n; });
 
-  const severityGlow = report.severity === "critical" ? "glow-red border-destructive/40" : "border-primary/30 glow-cyan";
+  const severityGlow =
+    report.severity === "critical" ? "glow-red border-destructive/30" :
+    report.severity === "high" ? "glow-amber border-accent/25" :
+    "border-primary/20 glow-cyan";
 
   return (
-    <div className={`rounded-xl border-2 ${severityGlow} bg-card/50 overflow-hidden animate-fade-up`}>
+    <div className={`rounded-xl border ${severityGlow} bg-card/50 overflow-hidden animate-fade-up`}>
       {/* Header */}
       <div className="px-5 py-4 border-b border-border/30">
         <div className="flex items-center justify-between">
-          <h3 className="font-display text-base font-bold tracking-tight text-foreground/90">
+          <h3 className="font-display text-base font-bold tracking-tight text-foreground">
             Root Cause Analysis
           </h3>
-          <div className="flex gap-2">
-            <Badge variant={report.severity === "critical" ? "destructive" : "default"} className="text-[10px]">
+          <div className="flex gap-1.5 items-center">
+            <Badge variant={severityColor(report.severity) as any} className="text-[9px] uppercase tracking-wider">
               {report.severity}
             </Badge>
-            <Badge variant="outline" className="text-[10px] border-border/40 text-muted-foreground/60">
+            <span className="text-[9px] font-mono text-muted-foreground">
               {report.confidence} confidence
-            </Badge>
+            </span>
           </div>
         </div>
+        {report.summary && (
+          <p className="text-xs font-body text-muted-foreground leading-relaxed mt-2">
+            {renderInline(report.summary)}
+          </p>
+        )}
       </div>
 
       {/* Body */}
-      <div className="px-5 py-4 space-y-5">
-        {/* Root Cause */}
-        <div>
-          <h4 className="text-[10px] font-display font-semibold uppercase tracking-[0.15em] text-primary/60 mb-1.5">
-            Root Cause
-          </h4>
-          <p className="text-sm font-body text-foreground/80 leading-relaxed">{report.rootCause}</p>
-        </div>
+      <div className="px-5 py-4 space-y-4">
+        {/* Root Cause, Trigger, Impact — aligned as a uniform list */}
+        <div className="space-y-4">
+          <div>
+            <SectionLabel color="text-primary">Root Cause</SectionLabel>
+            <p className="text-sm font-body text-foreground/90 leading-relaxed">{renderInline(report.rootCause)}</p>
+          </div>
 
-        {/* Trigger */}
-        <div>
-          <h4 className="text-[10px] font-display font-semibold uppercase tracking-[0.15em] text-accent/60 mb-1.5">
-            Trigger
-          </h4>
-          <p className="text-sm font-body text-foreground/70 leading-relaxed">{report.trigger}</p>
-        </div>
+          <div>
+            <SectionLabel color="text-accent">Trigger</SectionLabel>
+            <p className="text-sm font-body text-foreground/85 leading-relaxed">{renderInline(report.trigger)}</p>
+          </div>
 
-        {/* Impact */}
-        <div className="rounded-lg bg-secondary/30 border border-border/20 px-3.5 py-2.5">
-          <h4 className="text-[10px] font-display font-semibold uppercase tracking-[0.15em] text-muted-foreground/50 mb-1">
-            Impact
-          </h4>
-          <p className="text-sm font-body text-foreground/70">{report.impact.description}</p>
-          <span className="text-[11px] font-mono text-muted-foreground/40 mt-0.5 inline-block">Duration: {report.impact.duration}</span>
+          <div>
+            <SectionLabel>Impact</SectionLabel>
+            <p className="text-sm font-body text-foreground/85 leading-relaxed">{renderInline(report.impact.description)}</p>
+            <span className="text-[10px] font-mono text-muted-foreground mt-1 inline-block">
+              Duration: {report.impact.duration}
+            </span>
+          </div>
         </div>
 
         {/* Timeline */}
-        <Collapsible open={open.has("timeline")} onOpenChange={() => toggle("timeline")}>
-          <CollapsibleTrigger className="flex items-center gap-1.5 text-[11px] font-display font-semibold uppercase tracking-wide text-muted-foreground/50 hover:text-muted-foreground/70 transition-colors cursor-pointer">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" className={`transition-transform duration-200 ${open.has("timeline") ? "rotate-90" : ""}`}>
-              <path d="M8 5l8 7-8 7z"/>
-            </svg>
-            Timeline ({report.timeline.length})
-          </CollapsibleTrigger>
-          <CollapsibleContent className="mt-2.5">
-            <div className="border-l border-primary/20 pl-4 space-y-2.5 ml-1">
+        {report.timeline.length > 0 && (
+          <CollapsibleSection id="timeline" label="Timeline" count={report.timeline.length} open={open.has("timeline")} toggle={() => toggle("timeline")}>
+            <div className="border-l-2 border-primary/20 pl-4 space-y-2.5 ml-1">
               {report.timeline.map((evt, i) => (
                 <div key={i} className="flex items-start gap-2.5 animate-fade-up" style={{ animationDelay: `${i * 0.04}s` }}>
-                  <span className="text-[10px] font-mono text-primary/50 whitespace-nowrap mt-0.5">{evt.time}</span>
-                  <span className="text-xs font-body text-foreground/60">{evt.event}</span>
+                  <span className="text-[10px] font-mono text-primary/70 whitespace-nowrap mt-0.5">{evt.time}</span>
+                  <span className="text-xs font-body text-foreground/75">{renderInline(evt.event)}</span>
                 </div>
               ))}
             </div>
-          </CollapsibleContent>
-        </Collapsible>
+          </CollapsibleSection>
+        )}
 
         {/* Contributing Factors */}
         {report.contributingFactors.length > 0 && (
-          <Collapsible open={open.has("factors")} onOpenChange={() => toggle("factors")}>
-            <CollapsibleTrigger className="flex items-center gap-1.5 text-[11px] font-display font-semibold uppercase tracking-wide text-muted-foreground/50 hover:text-muted-foreground/70 transition-colors cursor-pointer">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" className={`transition-transform duration-200 ${open.has("factors") ? "rotate-90" : ""}`}>
-                <path d="M8 5l8 7-8 7z"/>
-              </svg>
-              Contributing Factors ({report.contributingFactors.length})
-            </CollapsibleTrigger>
-            <CollapsibleContent className="mt-2.5">
-              <ul className="space-y-1.5 ml-1">
-                {report.contributingFactors.map((f, i) => (
-                  <li key={i} className="flex items-start gap-2 text-xs font-body text-foreground/60">
-                    <span className="text-accent/50 mt-0.5">&bull;</span>{f}
-                  </li>
-                ))}
-              </ul>
-            </CollapsibleContent>
-          </Collapsible>
-        )}
-
-        {/* Recommended Actions */}
-        <Collapsible open={open.has("actions")} onOpenChange={() => toggle("actions")}>
-          <CollapsibleTrigger className="flex items-center gap-1.5 text-[11px] font-display font-semibold uppercase tracking-wide text-muted-foreground/50 hover:text-muted-foreground/70 transition-colors cursor-pointer">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" className={`transition-transform duration-200 ${open.has("actions") ? "rotate-90" : ""}`}>
-              <path d="M8 5l8 7-8 7z"/>
-            </svg>
-            Recommended Actions ({report.recommendedActions.length})
-          </CollapsibleTrigger>
-          <CollapsibleContent className="mt-2.5">
-            <ul className="space-y-2 ml-1">
-              {report.recommendedActions.map((a, i) => (
-                <li key={i} className="flex items-start gap-2.5 text-xs font-body text-foreground/60 animate-fade-up" style={{ animationDelay: `${i * 0.04}s` }}>
-                  <span className="w-4 h-4 rounded border border-primary/30 flex items-center justify-center text-[9px] text-primary/40 shrink-0 mt-0.5">
-                    {i + 1}
-                  </span>
-                  {a}
+          <CollapsibleSection id="factors" label="Contributing Factors" count={report.contributingFactors.length} open={open.has("factors")} toggle={() => toggle("factors")}>
+            <ul className="space-y-1.5 ml-1">
+              {report.contributingFactors.map((f, i) => (
+                <li key={i} className="flex items-start gap-2 text-xs font-body text-foreground/75">
+                  <span className="text-accent mt-0.5 shrink-0">&bull;</span>
+                  <span>{renderInline(stripLeadingNumber(f))}</span>
                 </li>
               ))}
             </ul>
-          </CollapsibleContent>
-        </Collapsible>
+          </CollapsibleSection>
+        )}
+
+        {/* Recommended Actions */}
+        {report.recommendedActions.length > 0 && (
+          <CollapsibleSection id="actions" label="Recommended Actions" count={report.recommendedActions.length} open={open.has("actions")} toggle={() => toggle("actions")}>
+            <ul className="space-y-2.5 ml-1">
+              {report.recommendedActions.map((a, i) => (
+                <li key={i} className="flex items-start gap-2 text-xs font-body text-foreground/75 animate-fade-up" style={{ animationDelay: `${i * 0.04}s` }}>
+                  <span className="text-[10px] font-mono text-primary/70 shrink-0 mt-px">{i + 1}.</span>
+                  <span className="leading-relaxed">{renderInline(stripLeadingNumber(a))}</span>
+                </li>
+              ))}
+            </ul>
+          </CollapsibleSection>
+        )}
 
         {/* Grafana Links */}
         {report.dashboardLinks.length > 0 && (
-          <div className="pt-2 border-t border-border/20">
-            <h4 className="text-[10px] font-display font-semibold uppercase tracking-[0.15em] text-muted-foreground/40 mb-2">
+          <div className="pt-3 border-t border-border/20">
+            <h4 className="text-[10px] font-display font-semibold uppercase tracking-[0.12em] text-muted-foreground mb-2">
               Dashboards
             </h4>
             <div className="flex flex-wrap gap-2">
               {report.dashboardLinks.map((link, i) => (
-                <a key={i} href={link} target="_blank" rel="noopener noreferrer" className="text-[11px] font-mono text-primary/60 hover:text-primary transition-colors underline underline-offset-2 decoration-primary/20 hover:decoration-primary/50">
+                <a key={i} href={link} target="_blank" rel="noopener noreferrer" className="text-[11px] font-mono text-primary hover:text-primary/80 transition-colors underline underline-offset-2 decoration-primary/30 hover:decoration-primary/60">
                   Dashboard {i + 1}
                 </a>
               ))}

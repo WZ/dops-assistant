@@ -39,7 +39,7 @@ function isStructuredInfra(obs: Observation): obs is StructuredInfra {
 function EvidenceItem({ children, index }: { children: React.ReactNode; index: number }) {
   return (
     <div
-      className="rounded-lg border border-border/30 bg-card/40 px-3.5 py-2.5 animate-fade-up"
+      className="rounded-lg border border-border/25 bg-card/30 px-3.5 py-2.5 animate-fade-up card-lift"
       style={{ animationDelay: `${index * 0.05}s` }}
     >
       {children}
@@ -62,10 +62,10 @@ export function EvidenceCards({ evidence }: { evidence: EvidenceData }) {
 
   return (
     <Tabs defaultValue="metrics" className="w-full">
-      <TabsList className="w-full bg-secondary/30 border border-border/30 rounded-lg p-0.5">
-        <TabsTrigger value="metrics" className="flex-1 text-[11px] font-mono">Metrics ({mc})</TabsTrigger>
-        <TabsTrigger value="logs" className="flex-1 text-[11px] font-mono">Logs ({lc})</TabsTrigger>
-        <TabsTrigger value="infra" className="flex-1 text-[11px] font-mono">Infra ({ic})</TabsTrigger>
+      <TabsList className="w-full bg-secondary/20 border border-border/25 rounded-lg p-0.5">
+        <TabsTrigger value="metrics" className="flex-1 text-[10px] font-mono uppercase tracking-wider">Metrics ({mc})</TabsTrigger>
+        <TabsTrigger value="logs" className="flex-1 text-[10px] font-mono uppercase tracking-wider">Logs ({lc})</TabsTrigger>
+        <TabsTrigger value="infra" className="flex-1 text-[10px] font-mono uppercase tracking-wider">Infra ({ic})</TabsTrigger>
       </TabsList>
 
       <TabsContent value="metrics" className="space-y-2 mt-3">
