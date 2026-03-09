@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { DiscoveryAgent, enrichLogLabels } from "./discovery.js";
 import type { LlmClient } from "../llm/openai.js";
-import type { McpClient } from "../mcp/client.js";
+import type { MultiMcpClient } from "../mcp/multi-client.js";
 import type { DiscoveryConfig, ServiceConfig } from "../config/schema.js";
 
 function mockLlm(response: string): LlmClient {
@@ -14,11 +14,14 @@ function mockLlm(response: string): LlmClient {
   } as unknown as LlmClient;
 }
 
-function mockMcp(): McpClient {
+function mockMcp(): MultiMcpClient {
   return {
     getTools: vi.fn().mockReturnValue([]),
     callTool: vi.fn().mockResolvedValue({ text: "", images: [] }),
-  } as unknown as McpClient;
+    getProvidersByRole: vi.fn().mockReturnValue([]),
+    getToolsByRole: vi.fn().mockReturnValue([]),
+    hasRole: vi.fn().mockReturnValue(false),
+  } as unknown as MultiMcpClient;
 }
 
 const discoveryConfig: DiscoveryConfig = {
@@ -71,7 +74,7 @@ function svc(name: string): ServiceConfig {
   return { name, metrics: [], logLabels: {} };
 }
 
-function mockMcpForLabels(labelNames: string[], labelValues: Record<string, string[]>): McpClient {
+function mockMcpForLabels(labelNames: string[], labelValues: Record<string, string[]>): MultiMcpClient {
   return {
     getTools: vi.fn().mockReturnValue([]),
     callTool: vi.fn().mockImplementation((_name: string, args: Record<string, unknown>) => {
@@ -84,7 +87,10 @@ function mockMcpForLabels(labelNames: string[], labelValues: Record<string, stri
       }
       return Promise.resolve({ text: "[]", images: [] });
     }),
-  } as unknown as McpClient;
+    getProvidersByRole: vi.fn().mockReturnValue([]),
+    getToolsByRole: vi.fn().mockReturnValue([]),
+    hasRole: vi.fn().mockReturnValue(false),
+  } as unknown as MultiMcpClient;
 }
 
 describe("enrichLogLabels", () => {

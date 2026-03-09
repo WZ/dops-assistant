@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ChatAgent } from "./core.js";
-import type { McpClient } from "../mcp/client.js";
+import type { MultiMcpClient } from "../mcp/multi-client.js";
 import type { LlmClient } from "../llm/openai.js";
 
 const mockLlm = {
@@ -15,7 +15,10 @@ const mockMcp = {
     },
   ]),
   callTool: vi.fn(),
-} as unknown as McpClient;
+  getProvidersByRole: vi.fn().mockReturnValue([]),
+  getToolsByRole: vi.fn().mockReturnValue([]),
+  hasRole: vi.fn().mockReturnValue(false),
+} as unknown as MultiMcpClient;
 
 describe("ChatAgent", () => {
   beforeEach(() => {
