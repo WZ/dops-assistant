@@ -6,7 +6,8 @@ import { EvidenceCards } from "./EvidenceCards";
 import { RcaReport } from "./RcaReport";
 import { InvestigationLayout } from "./InvestigationLayout";
 import { ActivityTimeline, type TimelineEvent } from "./ActivityTimeline";
-import type { ServerMessage } from "../../shared/ws-types.js";
+import { DeepInvestigationPane } from "./DeepInvestigationPane";
+import type { ClientMessage, ServerMessage } from "../../shared/ws-types.js";
 
 const DEFAULT_PHASES: PhaseState[] = [
   { name: "planning", label: "Planning", status: "pending" },
@@ -16,7 +17,7 @@ const DEFAULT_PHASES: PhaseState[] = [
   { name: "synthesis", label: "Synthesis", status: "pending" },
 ];
 
-export function InvestigationPane({ investigationId, wsMessages, onBack }: { investigationId: string; wsMessages: ServerMessage[]; onBack: () => void }) {
+export function InvestigationPane({ investigationId, wsMessages, onBack, send }: { investigationId: string; wsMessages: ServerMessage[]; onBack: () => void; send: (msg: ClientMessage) => void }) {
   const [phases, setPhases] = useState<PhaseState[]>(DEFAULT_PHASES);
   const [evidence, setEvidence] = useState<Record<string, unknown>>({});
   const [report, setReport] = useState<unknown | null>(null);
@@ -199,8 +200,12 @@ export function InvestigationPane({ investigationId, wsMessages, onBack }: { inv
                   <TabsContent value="report" className="flex-1 overflow-y-auto p-4 mt-0">
                     <RcaReport report={report as any} />
                   </TabsContent>
-                  <TabsContent value="deepdive" className="flex-1 overflow-y-auto p-4 mt-0">
-                    <div className="text-xs text-muted-foreground/40 text-center py-8 font-mono">Deep Investigation coming soon</div>
+                  <TabsContent value="deepdive" className="flex-1 overflow-hidden mt-0">
+                    <DeepInvestigationPane
+                      investigationId={investigationId}
+                      wsMessages={wsMessages}
+                      send={send}
+                    />
                   </TabsContent>
                 </Tabs>
               ) : (
