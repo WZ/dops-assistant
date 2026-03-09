@@ -1,0 +1,156 @@
+{
+  "results": [
+    {
+      "run": 1,
+      "durationMs": 83883,
+      "inputTokens": 106360,
+      "outputTokens": 19362,
+      "toolCalls": {
+        "search_dashboards": 1,
+        "get_dashboard_by_uid": 1,
+        "get_panel_image": 3,
+        "query_loki_logs": 1,
+        "query_prometheus": 8
+      },
+      "panelImages": 3,
+      "rcaGenerated": true
+    },
+    {
+      "run": 2,
+      "durationMs": 47338,
+      "inputTokens": 81972,
+      "outputTokens": 11965,
+      "toolCalls": {
+        "search_dashboards": 1,
+        "get_dashboard_by_uid": 1,
+        "get_panel_image": 3,
+        "query_prometheus": 8,
+        "query_loki_logs": 1
+      },
+      "panelImages": 3,
+      "rcaGenerated": true
+    },
+    {
+      "run": 3,
+      "durationMs": 114956,
+      "inputTokens": 97223,
+      "outputTokens": 26557,
+      "toolCalls": {
+        "search_dashboards": 1,
+        "get_dashboard_by_uid": 1,
+        "get_panel_image": 3,
+        "query_prometheus": 8,
+        "query_loki_logs": 1
+      },
+      "panelImages": 3,
+      "rcaGenerated": true
+    },
+    {
+      "run": 4,
+      "durationMs": 40566,
+      "inputTokens": 101049,
+      "outputTokens": 11809,
+      "toolCalls": {
+        "search_dashboards": 1,
+        "get_dashboard_by_uid": 1,
+        "get_panel_image": 3,
+        "query_prometheus": 8,
+        "query_loki_logs": 1
+      },
+      "panelImages": 3,
+      "rcaGenerated": true
+    },
+    {
+      "run": 5,
+      "durationMs": 77075,
+      "inputTokens": 83275,
+      "outputTokens": 19887,
+      "toolCalls": {
+        "search_dashboards": 1,
+        "get_dashboard_by_uid": 1,
+        "get_panel_image": 3,
+        "query_prometheus": 8,
+        "query_loki_logs": 1
+      },
+      "panelImages": 3,
+      "rcaGenerated": true
+    },
+    {
+      "run": 6,
+      "durationMs": 77568,
+      "inputTokens": 96154,
+      "outputTokens": 19102,
+      "toolCalls": {
+        "search_dashboards": 1,
+        "get_dashboard_by_uid": 1,
+        "get_panel_image": 3,
+        "query_prometheus": 6,
+        "query_loki_logs": 1
+      },
+      "panelImages": 3,
+      "rcaGenerated": true
+    },
+    {
+      "run": 7,
+      "durationMs": 36722,
+      "inputTokens": 95755,
+      "outputTokens": 11661,
+      "toolCalls": {
+        "search_dashboards": 1,
+        "get_dashboard_by_uid": 1,
+        "get_panel_image": 3,
+        "query_prometheus": 8,
+        "query_loki_logs": 1
+      },
+      "panelImages": 3,
+      "rcaGenerated": true
+    },
+    {
+      "run": 8,
+      "durationMs": 44577,
+      "inputTokens": 65632,
+      "outputTokens": 13301,
+      "toolCalls": {
+        "search_dashboards": 1,
+        "get_dashboard_by_uid": 1,
+        "get_panel_image": 3,
+        "query_prometheus": 7,
+        "query_loki_logs": 1,
+        "list_prometheus_metric_metadata": 1
+      },
+      "panelImages": 3,
+      "rcaGenerated": true
+    },
+    {
+      "run": 9,
+      "durationMs": 116947,
+      "inputTokens": 82060,
+      "outputTokens": 27822,
+      "toolCalls": {
+        "search_dashboards": 1,
+        "get_dashboard_by_uid": 1,
+        "get_panel_image": 3,
+        "query_prometheus": 8,
+        "query_loki_logs": 1
+      },
+      "panelImages": 3,
+      "rcaGenerated": true
+    },
+    {
+      "run": 10,
+      "durationMs": 76130,
+      "inputTokens": 95462,
+      "outputTokens": 19328,
+      "toolCalls": {
+        "search_dashboards": 1,
+        "get_dashboard_by_uid": 1,
+        "get_panel_image": 3,
+        "query_loki_logs": 1,
+        "query_prometheus": 7
+      },
+      "panelImages": 3,
+      "rcaGenerated": true
+    }
+  ],
+  "service": "ingestion-server"
+}

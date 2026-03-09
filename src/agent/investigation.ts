@@ -226,6 +226,99 @@ export function buildTimeline(
   return events.map((e) => `[${e.time}] [${e.source}] ${e.detail}`).join("\n");
 }
 
+/** Check whether the quote at position i is escaped by counting preceding backslashes. */
+function isEscaped(s: string, i: number): boolean {
+  let backslashes = 0;
+  let j = i - 1;
+  while (j >= 0 && s[j] === '\\') { backslashes++; j--; }
+  return backslashes % 2 === 1;
+}
+
+/**
+ * Attempt to repair a truncated JSON string by closing open strings, arrays, and objects.
+ * Returns the original string if repair fails.
+ */
+export function repairTruncatedJson(text: string): string {
+  try {
+    JSON.parse(text);
+    return text; // Already valid
+  } catch {
+    // Continue to repair
+  }
+
+  let repaired = text.trimEnd();
+
+  // Strip Markdown code fences (e.g. ```json ... ```) that models sometimes wrap around JSON
+  repaired = repaired.replace(/^```(?:json|jsonc)?\s*\n?/i, "").replace(/\n?```\s*$/, "");
+
+  // Extract from first { or [ if there's non-JSON preamble
+  const firstBrace = repaired.search(/[{[]/);
+  if (firstBrace > 0) {
+    repaired = repaired.slice(firstBrace);
+  }
+
+  // Remove trailing comma
+  repaired = repaired.replace(/,\s*$/, "");
+
+  // If we're inside a string (odd number of unescaped quotes), close it
+  let inString = false;
+  for (let i = 0; i < repaired.length; i++) {
+    if (repaired[i] === '"' && !isEscaped(repaired, i)) {
+      inString = !inString;
+    }
+  }
+  if (inString) {
+    repaired = repaired.replace(/\\$/, "");
+    repaired += '"';
+  }
+
+  // Try balancing brackets first (preserves the most data)
+  const balanced = balanceBrackets(repaired);
+  try {
+    JSON.parse(balanced);
+    return balanced;
+  } catch {
+    // Balancing alone wasn't enough — try removing the last partial entry
+  }
+
+  // Strip trailing partial key-value pair and try again
+  const lastComma = repaired.lastIndexOf(",");
+  if (lastComma > 0) {
+    const candidate = repaired.slice(0, lastComma);
+    const candidateBalanced = balanceBrackets(candidate);
+    try {
+      JSON.parse(candidateBalanced);
+      return candidateBalanced;
+    } catch {
+      // Still not parseable
+    }
+  }
+
+  return text; // Unrepairable
+}
+
+/** Close unmatched { and [ brackets in order. */
+function balanceBrackets(s: string): string {
+  const stack: string[] = [];
+  let inStr = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]!;
+    if (ch === '"' && !isEscaped(s, i)) {
+      inStr = !inStr;
+      continue;
+    }
+    if (inStr) continue;
+    if (ch === "{" || ch === "[") stack.push(ch);
+    else if (ch === "}" || ch === "]") stack.pop();
+  }
+  let result = s;
+  while (stack.length > 0) {
+    const opener = stack.pop()!;
+    result += opener === "{" ? "}" : "]";
+  }
+  return result;
+}
+
 /**
  * Deterministic severity validator.
  * Checks whether the LLM-assigned severity is consistent with the actual findings.
@@ -576,7 +669,7 @@ export class InvestigationAgent {
       dashboardLinksHint,
     ].join("\n");
 
-    const SYNTHESIS_MAX_TOKENS = 8192;
+    const SYNTHESIS_MAX_TOKENS = 16384;
     const REASONING_TIMEOUT_MS = 240_000; // 4min — synthesis/reflection are slow on large models
 
     type SynthesisResult = Omit<RcaReport, "service" | "investigatedAt" | "panelImages">;
@@ -613,6 +706,34 @@ export class InvestigationAgent {
       synthesisResult = { parsed: defaultSynthesis, images: [], toolData: [] };
     }
 
+    // Root cause quality gate: retry synthesis if non-conclusive and evidence exists
+    const nonConclusivePattern = /\b(not yet|pending|under investigation|to be determined|unable to determine|not identified|needs? further|cannot determine|inconclusive)\b/i;
+    const hasEvidence = metricFindings.observations.length > 0 || logFindings.observations.length > 0 || infraFindings.observations.length > 0;
+    if (nonConclusivePattern.test(synthesisResult.parsed.rootCause ?? "") && hasEvidence) {
+      log.info({ rootCause: synthesisResult.parsed.rootCause?.slice(0, 80) }, "Non-conclusive root cause detected, retrying synthesis");
+      const retryMessage = synthesisMessage + "\n\nIMPORTANT: Your previous response had a non-conclusive root cause. You MUST state your best-hypothesis root cause based on the evidence. If uncertain, state the most likely cause with explicit caveats (e.g. 'Most likely: X, awaiting confirmation of Y'). NEVER say 'pending' or 'not yet determined'.";
+      try {
+        const retryResult = await this.runPhase<SynthesisResult>(
+          RCA_SYNTHESIS_PROMPT,
+          retryMessage,
+          RCA_REPORT_SCHEMA,
+          3,
+          onTokenUsage,
+          onToolCall,
+          false,
+          SYNTHESIS_MAX_TOKENS,
+          REASONING_TIMEOUT_MS,
+        );
+        if (!nonConclusivePattern.test(retryResult.parsed.rootCause ?? "")) {
+          log.info({ rootCause: retryResult.parsed.rootCause?.slice(0, 80) }, "Synthesis retry produced conclusive root cause");
+          synthesisResult = retryResult;
+          collectedImages.push(...retryResult.images);
+        }
+      } catch (err) {
+        log.warn({ err }, "Synthesis retry failed, keeping original");
+      }
+    }
+
     // Phase 6: Reflection
     onPhase?.("Validating report");
     log.debug("Running phase 6: reflection");
@@ -624,7 +745,7 @@ export class InvestigationAgent {
       `Investigation plan hypotheses: ${JSON.stringify(plan.hypotheses)}`,
     ].join("\n");
 
-    const REFLECTION_MAX_TOKENS = 8192;
+    const REFLECTION_MAX_TOKENS = 16384;
     let reflectionResult: PhaseResult<ReflectionResult>;
     try {
       reflectionResult = await this.runPhase<ReflectionResult>(
@@ -1263,9 +1384,16 @@ export class InvestigationAgent {
         logger.debug({ phaseImages: phaseImages.length, iteration: i }, "Phase complete");
         try {
           return { parsed: JSON.parse(response.content) as T, images: phaseImages, toolData: phaseToolData };
-        } catch (err) {
+        } catch (parseErr) {
+          const repaired = repairTruncatedJson(response.content);
+          if (repaired !== response.content) {
+            try {
+              logger.info({ originalLen: response.content.length, repairedLen: repaired.length }, "Recovered truncated JSON via repair");
+              return { parsed: JSON.parse(repaired) as T, images: phaseImages, toolData: phaseToolData };
+            } catch { /* fall through to fresh retry */ }
+          }
           logger.warn(
-            { err, contentLen: response.content.length, contentPreview: response.content.slice(0, 200) },
+            { err: parseErr, contentLen: response.content.length, contentPreview: response.content.slice(0, 200) },
             "Failed to parse phase response as JSON, will retry with fresh prompt",
           );
           // Don't push the truncated content back — it can be 50k+ chars and crash the API.
@@ -1285,10 +1413,19 @@ export class InvestigationAgent {
                 ].join("\n"),
               },
             ];
-            const retryResponse = await this.llm.chat(freshRetryMessages, [], { responseFormat, maxOutputTokens: maxOutputTokens ? Math.max(maxOutputTokens, 8192) : 8192, timeoutMs });
+            const retryResponse = await this.llm.chat(freshRetryMessages, [], { responseFormat, maxOutputTokens: maxOutputTokens ? Math.max(maxOutputTokens, 16384) : 16384, timeoutMs });
             if (retryResponse.usage) onTokenUsage?.(retryResponse.usage);
             if (retryResponse.type === "text") {
-              return { parsed: JSON.parse(retryResponse.content) as T, images: phaseImages, toolData: phaseToolData };
+              try {
+                return { parsed: JSON.parse(retryResponse.content) as T, images: phaseImages, toolData: phaseToolData };
+              } catch {
+                const repaired = repairTruncatedJson(retryResponse.content);
+                if (repaired !== retryResponse.content) {
+                  try {
+                    return { parsed: JSON.parse(repaired) as T, images: phaseImages, toolData: phaseToolData };
+                  } catch { /* fall through */ }
+                }
+              }
             }
           } catch (retryErr) {
             logger.error({ retryErr }, "Fresh-prompt retry also failed");
@@ -1394,15 +1531,24 @@ export class InvestigationAgent {
       },
     ];
 
-    const retryResponse = await this.llm.chat(freshMessages, [], { responseFormat, maxOutputTokens: maxOutputTokens ? Math.max(maxOutputTokens, 8192) : 8192 });
+    const retryResponse = await this.llm.chat(freshMessages, [], { responseFormat, maxOutputTokens: maxOutputTokens ? Math.max(maxOutputTokens, 16384) : 16384 });
     if (retryResponse.usage) onTokenUsage?.(retryResponse.usage);
 
     if (retryResponse.type === "text") {
       logger.info({ phaseImages: phaseImages.length }, "Phase completed via fresh summarization prompt");
       try {
         return { parsed: JSON.parse(retryResponse.content) as T, images: phaseImages, toolData: phaseToolData };
-      } catch (err) {
-        logger.error({ err, contentLen: retryResponse.content.length, contentPreview: retryResponse.content.slice(0, 200) }, "Fresh prompt also failed to produce valid JSON");
+      } catch {
+        const repaired = repairTruncatedJson(retryResponse.content);
+        if (repaired !== retryResponse.content) {
+          try {
+            return { parsed: JSON.parse(repaired) as T, images: phaseImages, toolData: phaseToolData };
+          } catch (err) {
+            logger.error({ err, contentLen: retryResponse.content.length, contentPreview: retryResponse.content.slice(0, 200) }, "Fresh prompt also failed to produce valid JSON");
+          }
+        } else {
+          logger.error({ contentLen: retryResponse.content.length, contentPreview: retryResponse.content.slice(0, 200) }, "Fresh prompt also failed to produce valid JSON");
+        }
       }
     }
 

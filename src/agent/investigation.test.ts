@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { InvestigationAgent, extractDashboardPanelHints, buildTimeline, validateSeverity } from "./investigation.js";
+import { InvestigationAgent, extractDashboardPanelHints, buildTimeline, validateSeverity, repairTruncatedJson } from "./investigation.js";
 import type { LlmClient } from "../llm/openai.js";
 import type { McpClient } from "../mcp/client.js";
 import type { AnomalyAssessment } from "./types.js";
@@ -312,6 +312,59 @@ describe("InvestigationAgent", () => {
     expect(panelCalls.length).toBeGreaterThanOrEqual(1);
     expect(panelCalls[0]![1].dashboardUid).toBe("ing1");
   });
+
+  it("retries synthesis when root cause is non-conclusive and evidence exists", async () => {
+    const nonConclusiveReport = JSON.stringify({
+      severity: "medium",
+      summary: "Ingestion rate dropped",
+      impact: { duration: "3 hours", description: "30% drop" },
+      trigger: "Unknown",
+      rootCause: "Not yet identified — pending further investigation",
+      contributingFactors: [],
+      timeline: [],
+      evidence: { metrics: ["ingestion_rate dropped 30%"], logs: ["Kafka connection errors"], infra: [] },
+      dashboardLinks: [],
+      recommendedActions: ["Investigate Kafka"],
+      confidence: "low",
+    });
+    const conclusiveReport = JSON.stringify({
+      severity: "medium",
+      summary: "Ingestion rate dropped due to Kafka failure",
+      impact: { duration: "3 hours", description: "30% drop" },
+      trigger: "Kafka broker restart",
+      rootCause: "Kafka broker-5 restarted, causing producer connection failures and ingestion back-pressure",
+      contributingFactors: ["No retry backoff configured"],
+      timeline: [{ time: "14:30 UTC", event: "Kafka broker restart" }],
+      evidence: { metrics: ["ingestion_rate dropped 30%"], logs: ["Kafka connection errors"], infra: [] },
+      dashboardLinks: [],
+      recommendedActions: ["Add retry backoff"],
+      confidence: "medium",
+    });
+
+    // LLM calls: plan, metrics, logs, infra, synthesis(non-conclusive), synthesis(retry), reflection
+    const llm = makeMockLlm([
+      basePlanResponse, baseMetricFindings, baseLogFindings, baseInfraFindings,
+      nonConclusiveReport, conclusiveReport, baseReflectionResponse,
+    ]);
+    const agent = new InvestigationAgent(llm, mockMcp, { maxIterations: 5 });
+
+    const report = await agent.investigate(service, anomaly, "corr-quality");
+
+    expect(report.rootCause).toContain("Kafka broker-5");
+    // 7 calls: plan + 3 evidence + synthesis + synthesis retry + reflection
+    expect((llm.chat as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(7);
+  });
+
+  it("keeps original synthesis when root cause is conclusive", async () => {
+    // 6 LLM calls: plan, metrics, logs, infra, synthesis, reflection — no retry
+    const llm = makeMockLlm([basePlanResponse, baseMetricFindings, baseLogFindings, baseInfraFindings, baseRcaReport, baseReflectionResponse]);
+    const agent = new InvestigationAgent(llm, mockMcp, { maxIterations: 5 });
+
+    const report = await agent.investigate(service, anomaly, "corr-no-retry");
+
+    expect(report.rootCause).toBe("DB connection pool exhausted");
+    expect((llm.chat as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(6);
+  });
 });
 
 describe("extractDashboardPanelHints", () => {
@@ -558,5 +611,47 @@ describe("extractTimeRange (fallback)", () => {
   it("defaults to last 6h when no ISO date found", () => {
     const range = agent.extractTimeRange("ingestion rate anomaly", "investigate ingestion");
     expect(range).toEqual({ from: "now-6h", to: "now" });
+  });
+});
+
+describe("repairTruncatedJson", () => {
+  it("returns valid JSON unchanged", () => {
+    const valid = '{"severity":"high","summary":"Error spike"}';
+    expect(repairTruncatedJson(valid)).toBe(valid);
+  });
+
+  it("repairs truncated string value", () => {
+    const truncated = '{"severity":"high","summary":"Error spike at 14:';
+    const repaired = repairTruncatedJson(truncated);
+    const parsed = JSON.parse(repaired);
+    expect(parsed.severity).toBe("high");
+    expect(parsed.summary).toContain("Error spike");
+  });
+
+  it("repairs truncated array", () => {
+    const truncated = '{"items":["a","b","c';
+    const repaired = repairTruncatedJson(truncated);
+    const parsed = JSON.parse(repaired);
+    expect(parsed.items).toContain("a");
+    expect(parsed.items).toContain("b");
+  });
+
+  it("repairs truncated nested object", () => {
+    const truncated = '{"impact":{"duration":"25 min","description":"Error';
+    const repaired = repairTruncatedJson(truncated);
+    const parsed = JSON.parse(repaired);
+    expect(parsed.impact.duration).toBe("25 min");
+  });
+
+  it("repairs truncated mid-key", () => {
+    const truncated = '{"severity":"high","summ';
+    const repaired = repairTruncatedJson(truncated);
+    const parsed = JSON.parse(repaired);
+    expect(parsed.severity).toBe("high");
+  });
+
+  it("returns original string if unrepairable", () => {
+    const garbage = "not json at all";
+    expect(repairTruncatedJson(garbage)).toBe(garbage);
   });
 });

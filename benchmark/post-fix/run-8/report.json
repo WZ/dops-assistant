@@ -1,0 +1,73 @@
+{
+  "severity": "medium",
+  "summary": "~6 min loss of connectivity between **ingestion‑server** and the **Kafka brokers** caused a cascade of producer‑connection warnings, throttling both log‑event and SIEM‑event ingestion to ≈ 0.  The service stayed “healthy” in Consul, so the outage was downstream, not a Consul‑orchestrated problem.",
+  "impact": {
+    "duration": "2026‑03‑03 15:24 – 15:30 PDT (6 min)",
+    "description": "Ingress pipeline stopped accepting ≈ 150 k log events/5 min and ≈ 250 k SIEM events/5 min. No downstream alerts were raised because the service’s own health‑check stayed up."
+  },
+  "trigger": "A brief routing flap or firewall rule change (or an internal CoreDNS hiccup) that prevented outbound TCP / 9092 traffic from the ingestion‑server namespace to the Kafka broker Service IPs.  The exact network‑layer component (e.g., an edge‑router, CNI policy, or CoreDNS pod) was not captured in the logs, but the symptom pattern (rapid DNS‑lookup latency → TCP SYN timeout → producer‑retry loop) matches a DNS‑resolution or routing outage.",
+  "rootCause": "A **transient network/DNS interruption** between the `ingestion‑server` pods and the `stream‑kafka-cluster‑kafka‑*` broker endpoints.  The interruption lasted ~30 seconds (15:24:17‑15:24:47 PDT) and manifested as a burst of 97 Kafka‑producer connection‑error warnings.  Because the Kafka producer stopped being able to send records, the ingestion‑server’s *event‑acceptance* metrics fell to zero.  The service’s own health‑check (a simple TCP / HTTP probe) never failed, so Consul kept the node marked **healthy** throughout the event.  No broker‑side failure, no Consul‑orchestrated problem, and no pod restart were observed.",
+  "contributingFactors": [
+    "Kafka client was configured with aggressive retry/back‑off; the short burst of errors caused the producer to pause sending data until the connection succeeded again.",
+    "No circuit‑breaker or back‑pressure handling in ingestion‑server; once the producer stalled, the ingestion‑rate metrics fell to zero."
+  ],
+  "timeline": [
+    {
+      "time": "2026‑03‑02 18:27 PDT",
+      "event": "First “Stream Error” warning (unrelated, isolated)."
+    },
+    {
+      "time": "2026‑03‑03 15:24 PDT",
+      "event": "Ingress rate (log events) drops from ~150 k/5 min to near‑zero."
+    },
+    {
+      "time": "2026‑03‑03 15:24:17 PDT",
+      "event": "First Kafka connection‑error warning logged."
+    },
+    {
+      "time": "2026‑03‑03 15:24:17‑15:24:47 PDT",
+      "event": "97 Kafka connection‑error warnings emitted (4‑second burst)."
+    },
+    {
+      "time": "2026‑03‑03 15:28 PDT",
+      "event": "SIEM‑event ingestion rate falls to 0 events/5 min."
+    },
+    {
+      "time": "2026‑03‑03 15:30 PDT",
+      "event": "Both ingestion rates recover to baseline (~150 k / 250 k events per 5 min)."
+    },
+    {
+      "time": "2026‑03‑03 12:00 PDT",
+      "event": "Operator marked *ingestion‑server* “investigated” in the infra tracker."
+    }
+  ],
+  "evidence": {
+    "metrics": [
+      "sum(rate(ingestion_source_log_event_accepted{chart=\"ingestion-server\"}[5m])): ≈ 150 k events/5 min → 0 events/5 min (15:24‑15:30 PDT)",
+      "sum(rate(ingestion_server_siem_event_accepted{chart=\"ingestion-server\"}[5m])): ≈ 250 k events/5 min → 0 events/5 min (15:28‑15:30 PDT)",
+      "consul_catalog_service_node_healthy: 1 (healthy all day)"
+    ],
+    "logs": [
+      "97× `WARN … Error connecting to node stream‑kafka‑cluster‑kafka‑*.svc:9092` between 15:24:17‑15:24:47 PDT",
+      "3× “Stream Error” warnings (spanning 2026‑03‑02 → 2026‑03‑03) – not correlated with the 15:24 PDT event window"
+    ],
+    "infra": [
+      "No health‑check state change reported for ingestion‑server",
+      "Operator note: “investigated” at 12:00 PDT on 2026‑03‑03"
+    ]
+  },
+  "dashboardLinks": [
+    "https://10.105.101.212/monitor/d/I61GVQVZk",
+    "https://10.105.101.212/monitor/d/1QSAvbuVkx"
+  ],
+  "recommendedActions": [
+    "1. **Validate network path** – from the ingestion‑server node(s) to each Kafka broker endpoint:",
+    "   - `curl -v http://stream‑kafka‑cluster‑kafka-5.stream‑kafka‑cluster‑kafka‑brokers.stream.svc:9092` (repeat for ids 1‑12).",
+    "   - `dig stream‑kafka‑cluster‑kafka-5.stream‑kafka‑cluster‑kafka‑brokers.stream.svc` to confirm DNS resolution latency.",
+    "   - Capture a short packet‑capture (`tcpdump`) around the next occurrence (if any) to look for drops or resets.",
+    "2. **Check Kafka broker health** at the time of the incident:"
+  ],
+  "confidence": "high",
+  "service": "ingestion-server",
+  "investigatedAt": "3/8/2026, 4:38:14 PM"
+}
