@@ -198,3 +198,14 @@ input:focus, textarea:focus {
   background: hsl(185 100% 50% / 0.6);
   box-shadow: 0 0 8px hsl(185 100% 50% / 0.3);
 }
+
+/* ── React Flow overrides ── */
+.react-flow__controls button {
+  background: hsl(222 30% 10%) !important;
+  border: 1px solid hsl(222 18% 20%) !important;
+  color: hsl(210 40% 92%) !important;
+  fill: hsl(210 40% 92%) !important;
+}
+.react-flow__controls button:hover {
+  background: hsl(222 30% 14%) !important;
+}

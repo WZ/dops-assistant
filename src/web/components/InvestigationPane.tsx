@@ -6,6 +6,7 @@ import { EvidenceCards } from "./EvidenceCards";
 import { RcaReport } from "./RcaReport";
 import { InvestigationLayout } from "./InvestigationLayout";
 import { ActivityTimeline, type TimelineEvent } from "./ActivityTimeline";
+import { DependencyGraph } from "./DependencyGraph";
 import { DeepInvestigationPane } from "./DeepInvestigationPane";
 import type { ClientMessage, ServerMessage } from "../../shared/ws-types.js";
 
@@ -229,8 +230,8 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, send }:
                   <EvidenceCards evidence={evidence as any} />
                 )}
               </TabsContent>
-              <TabsContent value="dependencies" className="flex-1 overflow-y-auto p-4 mt-0">
-                <div className="text-xs text-muted-foreground/40 text-center py-8 font-mono">Dependency graph coming soon</div>
+              <TabsContent value="dependencies" className="flex-1 overflow-hidden mt-0">
+                <DependencyGraph service={service} />
               </TabsContent>
             </Tabs>
           }
