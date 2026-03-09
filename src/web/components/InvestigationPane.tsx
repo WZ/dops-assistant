@@ -20,6 +20,79 @@ export function InvestigationPane({ investigationId, wsMessages, onBack }: { inv
   const [service, setService] = useState("");
   const processedCount = useRef(0);
 
+  // Determine if this investigation is active (has WS messages) or historical
+  const isActive = wsMessages.some(
+    (m) => (m.type === "investigation:started" && m.id === investigationId) ||
+           (m.type === "investigation:complete" && m.id === investigationId),
+  );
+
+  // Fetch historical investigation data from REST API when not active
+  useEffect(() => {
+    if (isActive) return;
+
+    let cancelled = false;
+    fetch(`/api/investigations/${investigationId}`)
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((data: { investigation: { service: string; status: string; report: string | null }; phases: Array<{ phase: string; status: string; findings: string | null }> }) => {
+        if (cancelled) return;
+        setService(data.investigation.service);
+
+        // Map stored phases to PhaseState
+        const phaseMap = new Map(data.phases.map((p) => [p.phase, p]));
+        setPhases(DEFAULT_PHASES.map((dp) => {
+          const stored = phaseMap.get(dp.name);
+          if (stored) {
+            return { ...dp, status: stored.status as PhaseState["status"] };
+          }
+          // If the investigation is complete, mark all phases as complete
+          if (data.investigation.status === "complete") {
+            return { ...dp, status: "complete" as const };
+          }
+          return dp;
+        }));
+
+        // Extract evidence from phase findings
+        const evidenceData: Record<string, unknown> = {};
+        for (const p of data.phases) {
+          if (p.findings) {
+            try { evidenceData[p.phase] = JSON.parse(p.findings); } catch { /* ignore */ }
+          }
+        }
+        // Also extract evidence from the report if phases don't have individual findings
+        if (data.investigation.report) {
+          try {
+            const rpt = JSON.parse(data.investigation.report);
+            if (rpt.evidence) {
+              if (rpt.evidence.metrics?.length && !evidenceData["metrics"]) {
+                evidenceData["metrics"] = { observations: rpt.evidence.metrics };
+              }
+              if (rpt.evidence.logs?.length && !evidenceData["logs"]) {
+                evidenceData["logs"] = { observations: rpt.evidence.logs };
+              }
+              if (rpt.evidence.infra?.length && !evidenceData["infra"]) {
+                evidenceData["infra"] = { observations: rpt.evidence.infra };
+              }
+            }
+          } catch { /* ignore */ }
+        }
+        if (Object.keys(evidenceData).length > 0) {
+          setEvidence(evidenceData);
+        }
+
+        // Set report
+        if (data.investigation.report) {
+          try { setReport(JSON.parse(data.investigation.report)); } catch { /* ignore */ }
+        }
+      })
+      .catch(() => { /* silently fail — investigation may not exist */ });
+
+    return () => { cancelled = true; };
+  }, [investigationId, isActive]);
+
+  // Process live WebSocket messages
   useEffect(() => {
     const newMessages = wsMessages.slice(processedCount.current);
     processedCount.current = wsMessages.length;

@@ -13,7 +13,7 @@ interface InvestigationSummary {
   created_at: string;
 }
 
-export function Dashboard({ onInvestigationClick }: { onInvestigationClick: (id: string) => void }) {
+export function Dashboard({ onInvestigationClick, onInvestigateService }: { onInvestigationClick: (id: string) => void; onInvestigateService: (serviceName: string) => void }) {
   const [services, setServices] = useState<ServiceConfig[]>([]);
   const [investigations, setInvestigations] = useState<InvestigationSummary[]>([]);
 
@@ -42,7 +42,7 @@ export function Dashboard({ onInvestigationClick }: { onInvestigationClick: (id:
         ) : (
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
             {services.map((svc) => (
-              <ServiceCard key={svc.name} name={svc.name} onClick={() => {}} />
+              <ServiceCard key={svc.name} name={svc.name} onClick={() => onInvestigateService(svc.name)} />
             ))}
           </div>
         )}
