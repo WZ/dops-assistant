@@ -30,6 +30,19 @@ const GrafanaSchema = z.object({
   mcpServer: McpServerSchema,
 });
 
+export const ProviderRoleSchema = z.enum([
+  "metrics", "logs", "dashboards", "dependencies",
+]);
+
+export const ProviderSchema = z.object({
+  name: z.string(),
+  roles: z.array(ProviderRoleSchema).min(1),
+  mcpServer: McpServerSchema,
+});
+
+export type ProviderRole = z.infer<typeof ProviderRoleSchema>;
+export type ProviderConfig = z.infer<typeof ProviderSchema>;
+
 const LlmSchema = z.object({
   model: z.string().default("gpt-4"),
   maxTokens: z.number().default(4096),
@@ -83,16 +96,42 @@ const DiscoverySchema = z.object({
 
 export const ConfigSchema = z.object({
   llm: LlmSchema,
-  grafana: GrafanaSchema,
+  grafana: GrafanaSchema.optional(),
+  providers: z.array(ProviderSchema).optional(),
   services: z.array(ServiceSchema).default([]),
   agent: AgentSchema.optional().default({}),
   timeouts: TimeoutsSchema.optional().default({}),
   retry: RetrySchema.optional().default({}),
   observability: ObservabilitySchema.optional().default({}),
   discovery: DiscoverySchema.optional().default({}),
+}).superRefine((data, ctx) => {
+  if (!data.providers?.length && !data.grafana) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Config must include either 'providers' or 'grafana'",
+    });
+  }
+}).transform((data) => {
+  if (data.providers && data.providers.length > 0) {
+    // Preserve grafana for backward compat with existing code that reads config.grafana
+    const grafana = data.grafana ?? { mcpServer: data.providers[0].mcpServer };
+    return { ...data, grafana, providers: data.providers };
+  }
+  // grafana backward compat: convert to single provider
+  return {
+    ...data,
+    grafana: data.grafana!,
+    providers: [
+      {
+        name: "grafana" as const,
+        roles: ["metrics", "logs", "dashboards", "dependencies"] as ProviderRole[],
+        mcpServer: data.grafana!.mcpServer,
+      },
+    ],
+  };
 });
 
-export type Config = z.infer<typeof ConfigSchema>;
+export type Config = z.output<typeof ConfigSchema>;
 export type ServiceConfig = z.infer<typeof ServiceSchema>;
 export type McpServerConfig = z.infer<typeof McpServerSchema>;
 export type TimeoutsConfig = z.infer<typeof TimeoutsSchema>;
