@@ -1198,16 +1198,19 @@ export class InvestigationAgent {
     const logProviders = this.mcp.getProvidersByRole("logs");
     if (logProviders.length === 0) return null;
 
-    const provider = logProviders[0];
-    // Grafana Loki: needs datasource UID from pre-fetched hint
-    if (provider.name === "grafana") {
+    // Find a provider that has Loki tools (query_loki_logs) — detect by capability, not name
+    const lokiProvider = logProviders.find((p) => {
+      const toolNames = p.client.getTools().map((t) => t.function.name);
+      return toolNames.includes("query_loki_logs");
+    });
+    if (lokiProvider) {
       const lokiUidMatch = datasourceHint.match(/loki: datasourceUid="([^"]+)"/);
       const lokiUid = lokiUidMatch?.[1];
       if (!lokiUid) return null;
-      return new GrafanaLokiAdapter(provider.client, lokiUid);
+      return new GrafanaLokiAdapter(lokiProvider.client, lokiUid);
     }
 
-    // Future: VictoriaLogs, Coroot, etc. would be resolved here
+    // Future: VictoriaLogs, Coroot, etc. would be resolved here by checking their tools
     return null;
   }
 
@@ -1244,10 +1247,9 @@ export class InvestigationAgent {
     maxOutputTokens?: number,
     timeoutMs?: number,
   ): Promise<PhaseResult<T>> {
-    // Dynamically exclude pre-fetched tools — only exclude tools from providers that are present
-    const excludedTools = new Set<string>();
-    // Grafana-specific pre-fetched tools — only exclude if we have those tools
-    const grafanaExcluded = [
+    // Dynamically exclude pre-fetched tools — only exclude tools from providers that are present.
+    // Must handle both original names and collision-prefixed names (e.g. "provider__tool_name").
+    const prefetchedToolBases = new Set([
       "list_datasources",
       "search_dashboards",
       "get_dashboard_panel_queries",
@@ -1256,13 +1258,16 @@ export class InvestigationAgent {
       "get_alert_rule_by_uid",
       "list_loki_label_names",
       "list_loki_label_values",
-    ];
-    const allToolNames = new Set(this.mcp.getTools().map((t) => t.function.name));
-    for (const name of grafanaExcluded) {
-      if (allToolNames.has(name)) excludedTools.add(name);
-    }
+    ]);
+    const isExcluded = (toolName: string): boolean => {
+      if (prefetchedToolBases.has(toolName)) return true;
+      // Handle collision-prefixed names like "grafana__list_datasources"
+      const sep = toolName.indexOf("__");
+      if (sep !== -1) return prefetchedToolBases.has(toolName.slice(sep + 2));
+      return false;
+    };
     const tools = useTools
-      ? this.mcp.getTools().filter((t) => !excludedTools.has(t.function.name))
+      ? this.mcp.getTools().filter((t) => !isExcluded(t.function.name))
       : [];
     const messages: Message[] = [
       { role: "system", content: systemPrompt },

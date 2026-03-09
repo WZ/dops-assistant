@@ -126,4 +126,23 @@ describe("ConfigSchema – providers", () => {
     const result = ConfigSchema.safeParse({ llm, providers: [] });
     expect(result.success).toBe(false);
   });
+
+  it("rejects provider name with invalid characters", () => {
+    const result = ConfigSchema.safeParse({
+      llm,
+      providers: [{ name: "grafana cloud!", roles: ["metrics"], mcpServer: stdioMcp }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects duplicate provider names", () => {
+    const result = ConfigSchema.safeParse({
+      llm,
+      providers: [
+        { name: "grafana", roles: ["metrics"], mcpServer: stdioMcp },
+        { name: "grafana", roles: ["logs"], mcpServer: stdioMcp },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
 });
