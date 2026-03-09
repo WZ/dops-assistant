@@ -226,6 +226,14 @@ export function buildTimeline(
   return events.map((e) => `[${e.time}] [${e.source}] ${e.detail}`).join("\n");
 }
 
+/** Check whether the quote at position i is escaped by counting preceding backslashes. */
+function isEscaped(s: string, i: number): boolean {
+  let backslashes = 0;
+  let j = i - 1;
+  while (j >= 0 && s[j] === '\\') { backslashes++; j--; }
+  return backslashes % 2 === 1;
+}
+
 /**
  * Attempt to repair a truncated JSON string by closing open strings, arrays, and objects.
  * Returns the original string if repair fails.
@@ -240,13 +248,22 @@ export function repairTruncatedJson(text: string): string {
 
   let repaired = text.trimEnd();
 
+  // Strip Markdown code fences (e.g. ```json ... ```) that models sometimes wrap around JSON
+  repaired = repaired.replace(/^```(?:json|jsonc)?\s*\n?/i, "").replace(/\n?```\s*$/, "");
+
+  // Extract from first { or [ if there's non-JSON preamble
+  const firstBrace = repaired.search(/[{[]/);
+  if (firstBrace > 0) {
+    repaired = repaired.slice(firstBrace);
+  }
+
   // Remove trailing comma
   repaired = repaired.replace(/,\s*$/, "");
 
   // If we're inside a string (odd number of unescaped quotes), close it
   let inString = false;
   for (let i = 0; i < repaired.length; i++) {
-    if (repaired[i] === '"' && (i === 0 || repaired[i - 1] !== '\\')) {
+    if (repaired[i] === '"' && !isEscaped(repaired, i)) {
       inString = !inString;
     }
   }
@@ -286,7 +303,7 @@ function balanceBrackets(s: string): string {
   let inStr = false;
   for (let i = 0; i < s.length; i++) {
     const ch = s[i]!;
-    if (ch === '"' && (i === 0 || s[i - 1] !== '\\')) {
+    if (ch === '"' && !isEscaped(s, i)) {
       inStr = !inStr;
       continue;
     }
@@ -694,7 +711,7 @@ export class InvestigationAgent {
     const hasEvidence = metricFindings.observations.length > 0 || logFindings.observations.length > 0 || infraFindings.observations.length > 0;
     if (nonConclusivePattern.test(synthesisResult.parsed.rootCause ?? "") && hasEvidence) {
       log.info({ rootCause: synthesisResult.parsed.rootCause?.slice(0, 80) }, "Non-conclusive root cause detected, retrying synthesis");
-      const retryMessage = synthesisMessage + "\n\nIMPORTANT: Your previous response had a non-conclusive root cause. You MUST state your best-hypothesis root cause based on the evidence. If uncertain, state the most likely cause with explicit caveats (e.g. 'Most likely: X, pending confirmation of Y'). NEVER say 'pending' or 'not yet determined'.";
+      const retryMessage = synthesisMessage + "\n\nIMPORTANT: Your previous response had a non-conclusive root cause. You MUST state your best-hypothesis root cause based on the evidence. If uncertain, state the most likely cause with explicit caveats (e.g. 'Most likely: X, awaiting confirmation of Y'). NEVER say 'pending' or 'not yet determined'.";
       try {
         const retryResult = await this.runPhase<SynthesisResult>(
           RCA_SYNTHESIS_PROMPT,
@@ -1367,7 +1384,7 @@ export class InvestigationAgent {
         logger.debug({ phaseImages: phaseImages.length, iteration: i }, "Phase complete");
         try {
           return { parsed: JSON.parse(response.content) as T, images: phaseImages, toolData: phaseToolData };
-        } catch {
+        } catch (parseErr) {
           const repaired = repairTruncatedJson(response.content);
           if (repaired !== response.content) {
             try {
@@ -1376,7 +1393,7 @@ export class InvestigationAgent {
             } catch { /* fall through to fresh retry */ }
           }
           logger.warn(
-            { contentLen: response.content.length, contentPreview: response.content.slice(0, 200) },
+            { err: parseErr, contentLen: response.content.length, contentPreview: response.content.slice(0, 200) },
             "Failed to parse phase response as JSON, will retry with fresh prompt",
           );
           // Don't push the truncated content back — it can be 50k+ chars and crash the API.
