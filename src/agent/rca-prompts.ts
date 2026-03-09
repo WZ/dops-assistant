@@ -59,7 +59,9 @@ export function buildLogCorrelationPrompt(service: ServiceConfig, anomalyContext
 
 IMPORTANT: Only report VERIFIABLE counts. The "count" field must reflect the number of matching lines actually returned by Loki, not an extrapolated estimate. If Loki returned 15 error lines, report count as "15", not "hundreds" or "~500".`;
 
-  return `You are investigating a service anomaly for "${service.name}". Query logs using Loki tools.
+  const headerVerb = logProviderFragment ? "Query logs using the available log tools." : "Query logs using Loki tools.";
+
+  return `You are investigating a service anomaly for "${service.name}". ${headerVerb}
 
 KNOWN ISSUE: ${anomalyContext}
 
