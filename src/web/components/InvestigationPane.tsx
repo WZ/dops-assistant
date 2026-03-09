@@ -1,8 +1,10 @@
 import { useEffect, useState, useRef } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PhaseStepper, type PhaseState } from "./PhaseStepper";
 import { EvidenceCards } from "./EvidenceCards";
 import { RcaReport } from "./RcaReport";
+import { InvestigationLayout } from "./InvestigationLayout";
 import type { ServerMessage } from "../../shared/ws-types.js";
 
 const DEFAULT_PHASES: PhaseState[] = [
@@ -121,67 +123,91 @@ export function InvestigationPane({ investigationId, wsMessages, onBack }: { inv
   const isRunning = phases.some((p) => p.status === "running");
 
   return (
-    <div className={`h-full overflow-y-auto p-6 relative z-[2] ${isRunning ? "scanlines" : ""}`}>
-      {/* Back button */}
-      <button
-        onClick={onBack}
-        className="flex items-center gap-1.5 text-xs font-mono text-muted-foreground/40 hover:text-primary/70 transition-colors mb-5 group"
-      >
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="group-hover:-translate-x-0.5 transition-transform">
-          <path d="M19 12H5"/><path d="m12 19-7-7 7-7"/>
-        </svg>
-        back to dashboard
-      </button>
-
-      {/* Title */}
-      <div className="mb-6 animate-fade-up">
-        <h2 className="font-display text-lg font-bold tracking-tight text-foreground/90">
-          Investigation
-        </h2>
-        {service && (
-          <div className="flex items-center gap-2 mt-1">
-            <div className={`w-1.5 h-1.5 rounded-full ${isRunning ? "bg-primary animate-status-pulse" : "bg-success"}`} />
-            <span className="text-xs font-mono text-muted-foreground/50">{service}</span>
-          </div>
-        )}
-      </div>
-
-      {/* Phase Stepper */}
-      <div className="mb-8">
-        <PhaseStepper phases={phases} />
-      </div>
-
-      {/* Evidence */}
-      <div className="mb-8 animate-fade-up delay-3">
-        <div className="flex items-center gap-2 mb-4">
-          <div className="w-1 h-4 rounded-full bg-accent/50" />
-          <h3 className="text-[11px] font-display font-semibold text-muted-foreground/50 uppercase tracking-[0.15em]">
-            Evidence
-          </h3>
+    <div className={`h-full flex flex-col relative z-[2] ${isRunning ? "scanlines" : ""}`}>
+      {/* Header bar */}
+      <div className="px-4 py-2.5 border-b border-border/40 flex items-center justify-between shrink-0">
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-xs font-mono text-muted-foreground/40 hover:text-primary/70 transition-colors group"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="group-hover:-translate-x-0.5 transition-transform">
+            <path d="M19 12H5"/><path d="m12 19-7-7 7-7"/>
+          </svg>
+          back
+        </button>
+        <div className="flex items-center gap-2">
+          {service && (
+            <>
+              <div className={`w-1.5 h-1.5 rounded-full ${isRunning ? "bg-primary animate-status-pulse" : "bg-success"}`} />
+              <span className="text-xs font-mono text-muted-foreground/50">{service}</span>
+            </>
+          )}
         </div>
-        {Object.keys(evidence).length === 0 ? (
-          <div className="space-y-2.5">
-            <Skeleton className="h-16 w-full rounded-lg" />
-            <Skeleton className="h-16 w-full rounded-lg" />
-          </div>
-        ) : (
-          <EvidenceCards evidence={evidence as any} />
-        )}
       </div>
 
-      {/* RCA Report */}
-      {report ? (
-        <div className="animate-fade-up delay-5">
-          <RcaReport report={report as any} />
-        </div>
-      ) : (
-        isRunning && (
-          <div className="space-y-2.5 animate-fade-in">
-            <Skeleton className="h-6 w-40 rounded-md" />
-            <Skeleton className="h-28 w-full rounded-lg" />
-          </div>
-        )
-      )}
+      {/* Three-panel layout */}
+      <div className="flex-1 min-h-0">
+        <InvestigationLayout
+          leftPanel={
+            <div className="p-4">
+              <h2 className="font-display text-sm font-bold tracking-tight text-foreground/90 mb-4">
+                Phases
+              </h2>
+              <PhaseStepper phases={phases} />
+            </div>
+          }
+          centerPanel={
+            <div className="h-full flex flex-col">
+              {report ? (
+                <Tabs defaultValue="report" className="h-full flex flex-col">
+                  <TabsList className="mx-4 mt-3 bg-secondary/30 border border-border/30 rounded-lg p-0.5 shrink-0">
+                    <TabsTrigger value="report" className="flex-1 text-[11px] font-mono">Report</TabsTrigger>
+                    <TabsTrigger value="deepdive" className="flex-1 text-[11px] font-mono">Deep Dive</TabsTrigger>
+                  </TabsList>
+                  <TabsContent value="report" className="flex-1 overflow-y-auto p-4 mt-0">
+                    <RcaReport report={report as any} />
+                  </TabsContent>
+                  <TabsContent value="deepdive" className="flex-1 overflow-y-auto p-4 mt-0">
+                    <div className="text-xs text-muted-foreground/40 text-center py-8 font-mono">Deep Investigation coming soon</div>
+                  </TabsContent>
+                </Tabs>
+              ) : (
+                <div className="flex-1 overflow-y-auto p-4">
+                  {isRunning ? (
+                    <div className="text-xs text-muted-foreground/40 text-center py-8 font-mono">Activity timeline coming soon</div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      <Skeleton className="h-6 w-40 rounded-md" />
+                      <Skeleton className="h-28 w-full rounded-lg" />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          }
+          rightPanel={
+            <Tabs defaultValue="evidence" className="h-full flex flex-col">
+              <TabsList className="mx-4 mt-3 bg-secondary/30 border border-border/30 rounded-lg p-0.5 shrink-0">
+                <TabsTrigger value="evidence" className="flex-1 text-[11px] font-mono">Evidence</TabsTrigger>
+                <TabsTrigger value="dependencies" className="flex-1 text-[11px] font-mono">Dependencies</TabsTrigger>
+              </TabsList>
+              <TabsContent value="evidence" className="flex-1 overflow-y-auto p-4 mt-0">
+                {Object.keys(evidence).length === 0 ? (
+                  <div className="space-y-2.5">
+                    <Skeleton className="h-16 w-full rounded-lg" />
+                    <Skeleton className="h-16 w-full rounded-lg" />
+                  </div>
+                ) : (
+                  <EvidenceCards evidence={evidence as any} />
+                )}
+              </TabsContent>
+              <TabsContent value="dependencies" className="flex-1 overflow-y-auto p-4 mt-0">
+                <div className="text-xs text-muted-foreground/40 text-center py-8 font-mono">Dependency graph coming soon</div>
+              </TabsContent>
+            </Tabs>
+          }
+        />
+      </div>
     </div>
   );
 }
