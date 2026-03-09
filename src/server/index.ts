@@ -7,7 +7,7 @@ import pino from "pino";
 import { Database } from "./db.js";
 import { registerRoutes } from "./routes.js";
 import { setupWebSocket } from "./ws-handler.js";
-import { McpClient } from "../mcp/client.js";
+import { createMultiMcpClient } from "../mcp/factory.js";
 import { LlmClient } from "../llm/openai.js";
 import { ChatAgent } from "../agent/core.js";
 import { InvestigationAgent } from "../agent/investigation.js";
@@ -24,18 +24,15 @@ async function main() {
   const dbPath = process.env["DB_PATH"] ?? "dops.sqlite";
   const db = new Database(dbPath);
 
-  const mcp = new McpClient(config.grafana.mcpServer, config.timeouts ?? {});
+  const mcp = createMultiMcpClient(config);
   await mcp.connect();
-  logger.info("MCP connected");
+  logger.info("MCP connected (%d tools)", mcp.getTools().length);
 
-  const llm = new LlmClient(config.llm, config.timeouts ?? {}, config.retry ?? {});
-  const agent = new ChatAgent(llm, mcp, { maxIterations: config.agent?.maxIterations ?? 20 });
-  const investigationAgent = new InvestigationAgent(llm, mcp, { maxIterations: config.agent?.maxIterations ?? 20 });
+  const llm = new LlmClient(config.llm, config.timeouts, config.retry);
+  const agent = new ChatAgent(llm, mcp, { maxIterations: config.agent.maxIterations });
+  const investigationAgent = new InvestigationAgent(llm, mcp, { maxIterations: config.agent.maxIterations });
   const router = new IntentRouter(llm);
-  const memory = new ConversationMemory({
-    maxMessages: config.agent?.conversationMemory?.maxMessages ?? 20,
-    ttlMinutes: config.agent?.conversationMemory?.ttlMinutes ?? 60,
-  });
+  const memory = new ConversationMemory(config.agent.conversationMemory);
 
   const app = express();
   const server = createServer(app);
