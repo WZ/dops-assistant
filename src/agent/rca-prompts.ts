@@ -3,7 +3,7 @@ import type { ServiceConfig } from "../config/schema.js";
 
 // ── Phase prompt builders ────────────────────────────────────────────────────
 
-export function buildMetricDeepDivePrompt(service: ServiceConfig, anomalyContext: string, planFocus?: string[]): string {
+export function buildMetricDeepDivePrompt(service: ServiceConfig, anomalyContext: string, planFocus?: string[], metricsProviderFragment?: string): string {
   const metricList = service.metrics
     .map((m) => `- ${m.description}: \`${m.query}\``)
     .join("\n");
@@ -12,15 +12,7 @@ export function buildMetricDeepDivePrompt(service: ServiceConfig, anomalyContext
     ? `\nPLANNED FOCUS AREAS:\n${planFocus.map((f) => `- ${f}`).join("\n")}`
     : "";
 
-  return `You are investigating a service anomaly for "${service.name}".
-
-KNOWN ISSUE: ${anomalyContext}
-
-SERVICE METRICS TO CHECK:
-${metricList || "(no pre-configured metrics)"}
-${focusSection}
-
-INVESTIGATION STEPS:
+  const metricsInstructions = metricsProviderFragment ?? `INVESTIGATION STEPS:
 1. The user message contains PRE-FETCHED panel queries from relevant dashboards. Use these PromQL expressions directly with query_prometheus — do NOT call get_dashboard_by_uid or get_dashboard_panel_queries.
 2. CRITICAL FIRST STEP: Run a RANGE query covering the FULL investigation window to see the trend over time. This is mandatory — you MUST see the historical shape of the data before concluding anything.
    Example: queryType="range", startTime="now-7d", endTime="now", stepSeconds=3600 (1h steps for 7-day window) or stepSeconds=900 (15m steps for 1-day window).
@@ -31,28 +23,31 @@ INVESTIGATION STEPS:
 IMPORTANT query_prometheus parameters:
 - queryType "range" (required for trend detection): needs startTime, endTime, stepSeconds. Choose stepSeconds based on window: 7d→3600, 1d→900, 6h→300.
 - queryType "instant": only shows current value, useless for detecting past anomalies. Only use for current health check AFTER range query.
-- startTime/endTime: use relative (e.g. "now-7d") or RFC3339 format.
+- startTime/endTime: use relative (e.g. "now-7d") or RFC3339 format.`;
+
+  return `You are investigating a service anomaly for "${service.name}".
+
+KNOWN ISSUE: ${anomalyContext}
+
+SERVICE METRICS TO CHECK:
+${metricList || "(no pre-configured metrics)"}
+${focusSection}
+
+${metricsInstructions}
 
 For each observation, provide the EXACT metric queried, current value, baseline value, and timestamp.
 Keep observations concise — max 8 observations. Summary should be 1-3 sentences.
 Be efficient — make at most 3 tool calls per round. Respond ONLY with valid JSON matching the required schema.`;
 }
 
-export function buildLogCorrelationPrompt(service: ServiceConfig, anomalyContext: string, planFocus?: string[]): string {
+export function buildLogCorrelationPrompt(service: ServiceConfig, anomalyContext: string, planFocus?: string[], logProviderFragment?: string): string {
   const logLabels = JSON.stringify(service.logLabels);
 
   const focusSection = planFocus?.length
     ? `\nPLANNED FOCUS AREAS:\n${planFocus.map((f) => `- ${f}`).join("\n")}`
     : "";
 
-  return `You are investigating a service anomaly for "${service.name}". Query logs using Loki tools.
-
-KNOWN ISSUE: ${anomalyContext}
-
-SERVICE LOG LABELS: ${logLabels}
-${focusSection}
-
-INVESTIGATION STEPS:
+  const logInstructions = logProviderFragment ?? `INVESTIGATION STEPS:
 1. FIRST: Check the user message for a VALIDATED LOG SELECTOR. If one is provided, use it as your primary selector — it has been pre-tested and confirmed to return real logs. The configured SERVICE LOG LABELS above may NOT work.
 2. Query logs DURING the anomaly window using the validated selector (or configured labels as fallback). No logs = evidence of outage.
 3. If empty with configured labels, try alternative selectors: {job="default/SERVICE_NAME"}, {container_name="SERVICE_NAME"}, {chart="SERVICE_NAME"}. The "job" label often uses "namespace/service-name" format.
@@ -62,29 +57,40 @@ INVESTIGATION STEPS:
 7. IMPORTANT: For each error pattern found, capture 5-8 ACTUAL log lines verbatim in the "sampleLines" array. These must be real log lines from Loki, not summaries. Include the full line with timestamp, level, and message.
 8. If no errors are found, query without the error regex to see if ANY logs exist for this service during the window. Zero logs is itself significant evidence.
 
-IMPORTANT: Only report VERIFIABLE counts. The "count" field must reflect the number of matching lines actually returned by Loki, not an extrapolated estimate. If Loki returned 15 error lines, report count as "15", not "hundreds" or "~500".
+IMPORTANT: Only report VERIFIABLE counts. The "count" field must reflect the number of matching lines actually returned by Loki, not an extrapolated estimate. If Loki returned 15 error lines, report count as "15", not "hundreds" or "~500".`;
+
+  return `You are investigating a service anomaly for "${service.name}". Query logs using Loki tools.
+
+KNOWN ISSUE: ${anomalyContext}
+
+SERVICE LOG LABELS: ${logLabels}
+${focusSection}
+
+${logInstructions}
 
 For each observation, provide the error pattern, occurrence count, first/last seen timestamps, a brief sample, AND an array of actual log line samples (sampleLines, max 8 lines each).
 Keep observations concise — max 8 observations. Summary should be 1-3 sentences.
 Be efficient — make at most 3 tool calls per round. Respond ONLY with valid JSON matching the required schema.`;
 }
 
-export function buildInfraHealthPrompt(service: ServiceConfig, anomalyContext: string, planFocus?: string[]): string {
+export function buildInfraHealthPrompt(service: ServiceConfig, anomalyContext: string, planFocus?: string[], infraProviderFragment?: string): string {
   const focusSection = planFocus?.length
     ? `\nPLANNED FOCUS AREAS:\n${planFocus.map((f) => `- ${f}`).join("\n")}`
     : "";
+
+  const infraInstructions = infraProviderFragment ?? `INVESTIGATION STEPS:
+1. The user message contains PRE-FETCHED panel queries from relevant dashboards. Use these PromQL expressions directly — do NOT call get_dashboard_by_uid or get_dashboard_panel_queries.
+2. Query Prometheus for pod restarts, CPU usage, memory using queries from the System/Services dashboards.
+3. Check for OOMKilled, CrashLoopBackOff, or other pod issues.
+4. Check node-level metrics (CPU, memory, disk) for the hosts running the service.
+IMPORTANT: query_prometheus requires "startTime" (e.g. "now-1h"). Use queryType "instant" for current values, "range" for time series (also requires "endTime" and "stepSeconds").`;
 
   return `You are investigating a service anomaly for "${service.name}". Check infrastructure health.
 
 KNOWN ISSUE: ${anomalyContext}
 ${focusSection}
 
-INVESTIGATION STEPS:
-1. The user message contains PRE-FETCHED panel queries from relevant dashboards. Use these PromQL expressions directly — do NOT call get_dashboard_by_uid or get_dashboard_panel_queries.
-2. Query Prometheus for pod restarts, CPU usage, memory using queries from the System/Services dashboards.
-3. Check for OOMKilled, CrashLoopBackOff, or other pod issues.
-4. Check node-level metrics (CPU, memory, disk) for the hosts running the service.
-IMPORTANT: query_prometheus requires "startTime" (e.g. "now-1h"). Use queryType "instant" for current values, "range" for time series (also requires "endTime" and "stepSeconds").
+${infraInstructions}
 
 For each observation, provide the resource name, status, details, and timestamp.
 Keep observations concise — max 8 observations. Summary should be 1-3 sentences.
