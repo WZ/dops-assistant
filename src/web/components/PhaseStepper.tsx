@@ -9,37 +9,54 @@ export interface PhaseState {
   substatus?: string;
 }
 
+const icons: Record<PhaseStatus, string> = {
+  complete: "\u2713",
+  failed: "\u2717",
+  running: "\u25C9",
+  pending: "\u25CB",
+};
+
 export function PhaseStepper({ phases }: { phases: PhaseState[] }) {
   return (
     <div className="space-y-0">
       {phases.map((phase, i) => (
-        <div key={phase.name} className="flex gap-3">
+        <div key={phase.name} className="flex gap-3.5 animate-fade-up" style={{ animationDelay: `${i * 0.06}s` }}>
+          {/* Indicator column */}
           <div className="flex flex-col items-center">
             <div className={cn(
-              "w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-all duration-300",
-              phase.status === "complete" && "bg-green-500 border-green-500 text-white",
-              phase.status === "running" && "border-blue-500 text-blue-500 animate-pulse",
-              phase.status === "failed" && "bg-red-500 border-red-500 text-white",
-              phase.status === "pending" && "border-muted-foreground/30 text-muted-foreground/30",
+              "w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-all duration-500",
+              phase.status === "complete" && "bg-success border-success text-success-foreground glow-green",
+              phase.status === "running" && "border-primary text-primary animate-glow-pulse",
+              phase.status === "failed" && "bg-destructive border-destructive text-destructive-foreground glow-red",
+              phase.status === "pending" && "border-border/60 text-muted-foreground/25",
             )}>
-              {phase.status === "complete" ? "\u2713" : phase.status === "failed" ? "\u2717" : phase.status === "running" ? "\u25C9" : "\u25CB"}
+              {icons[phase.status]}
             </div>
             {i < phases.length - 1 && (
-              <div className={cn("w-0.5 flex-1 min-h-[24px] transition-colors duration-300", phase.status === "complete" ? "bg-green-500" : "bg-muted-foreground/20")} />
+              <div className={cn(
+                "w-px flex-1 min-h-[20px] transition-all duration-500",
+                phase.status === "complete" ? "bg-success/50" :
+                phase.status === "running" ? "bg-primary/30" :
+                "bg-border/40"
+              )} />
             )}
           </div>
-          <div className="pb-6">
+
+          {/* Label column */}
+          <div className="pb-5 pt-0.5">
             <p className={cn(
-              "text-sm font-medium leading-6 transition-colors",
-              phase.status === "complete" && "text-foreground",
-              phase.status === "running" && "text-blue-500",
-              phase.status === "failed" && "text-red-500",
-              phase.status === "pending" && "text-muted-foreground/50",
+              "text-sm font-body font-medium leading-7 transition-colors duration-300",
+              phase.status === "complete" && "text-foreground/80",
+              phase.status === "running" && "text-primary",
+              phase.status === "failed" && "text-destructive",
+              phase.status === "pending" && "text-muted-foreground/30",
             )}>
               {phase.label}
             </p>
             {phase.substatus && (
-              <p className="text-xs text-muted-foreground mt-0.5">{phase.substatus}</p>
+              <p className="text-[11px] font-mono text-muted-foreground/50 mt-0.5 animate-fade-in">
+                {phase.substatus}
+              </p>
             )}
           </div>
         </div>

@@ -1,5 +1,4 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
 interface EvidenceData {
@@ -15,53 +14,55 @@ export function EvidenceCards({ evidence }: { evidence: EvidenceData }) {
 
   return (
     <Tabs defaultValue="metrics" className="w-full">
-      <TabsList className="w-full">
-        <TabsTrigger value="metrics" className="flex-1">Metrics ({mc})</TabsTrigger>
-        <TabsTrigger value="logs" className="flex-1">Logs ({lc})</TabsTrigger>
-        <TabsTrigger value="infra" className="flex-1">Infra ({ic})</TabsTrigger>
+      <TabsList className="w-full bg-secondary/30 border border-border/30 rounded-lg p-0.5">
+        <TabsTrigger value="metrics" className="flex-1 text-[11px] font-mono">Metrics ({mc})</TabsTrigger>
+        <TabsTrigger value="logs" className="flex-1 text-[11px] font-mono">Logs ({lc})</TabsTrigger>
+        <TabsTrigger value="infra" className="flex-1 text-[11px] font-mono">Infra ({ic})</TabsTrigger>
       </TabsList>
 
-      <TabsContent value="metrics" className="space-y-2 mt-2">
+      <TabsContent value="metrics" className="space-y-2 mt-3">
         {evidence.metrics?.observations.map((obs, i) => (
-          <Card key={i}>
-            <CardContent className="p-3">
-              <div className="flex items-center justify-between">
-                <span className="font-mono text-sm">{obs.metric}</span>
-                <Badge variant={obs.severity === "critical" ? "destructive" : "secondary"}>{obs.severity}</Badge>
-              </div>
-              <div className="text-xs text-muted-foreground mt-1">{obs.currentValue} (baseline: {obs.baselineValue})</div>
-            </CardContent>
-          </Card>
+          <div key={i} className="rounded-lg border border-border/30 bg-card/40 px-3.5 py-2.5 animate-fade-up" style={{ animationDelay: `${i * 0.05}s` }}>
+            <div className="flex items-center justify-between">
+              <span className="font-mono text-xs text-foreground/70">{obs.metric}</span>
+              <Badge variant={obs.severity === "critical" ? "destructive" : "secondary"} className="text-[10px]">{obs.severity}</Badge>
+            </div>
+            <div className="flex items-center gap-3 mt-1.5">
+              <span className="text-[11px] font-mono text-primary/70">{obs.currentValue}</span>
+              <span className="text-[10px] text-muted-foreground/30">/</span>
+              <span className="text-[11px] font-mono text-muted-foreground/40">baseline {obs.baselineValue}</span>
+            </div>
+          </div>
         ))}
-        {mc === 0 && <p className="text-sm text-muted-foreground">No metric findings yet</p>}
+        {mc === 0 && <p className="text-xs text-muted-foreground/35 py-4 text-center font-mono">No metric findings yet</p>}
       </TabsContent>
 
-      <TabsContent value="logs" className="space-y-2 mt-2">
+      <TabsContent value="logs" className="space-y-2 mt-3">
         {evidence.logs?.observations.map((obs, i) => (
-          <Card key={i}>
-            <CardContent className="p-3">
-              <div className="font-mono text-sm">{obs.pattern}</div>
-              <div className="text-xs text-muted-foreground mt-1">Count: {obs.count}</div>
-              {obs.sample && <pre className="text-xs bg-muted rounded p-2 mt-2 overflow-x-auto">{obs.sample}</pre>}
-            </CardContent>
-          </Card>
+          <div key={i} className="rounded-lg border border-border/30 bg-card/40 px-3.5 py-2.5 animate-fade-up" style={{ animationDelay: `${i * 0.05}s` }}>
+            <div className="flex items-center justify-between">
+              <span className="font-mono text-xs text-foreground/70">{obs.pattern}</span>
+              <span className="text-[10px] font-mono text-accent/60">{obs.count}x</span>
+            </div>
+            {obs.sample && (
+              <pre className="text-[11px] font-mono bg-background/60 rounded-md p-2.5 mt-2 overflow-x-auto text-muted-foreground/60 border border-border/20">{obs.sample}</pre>
+            )}
+          </div>
         ))}
-        {lc === 0 && <p className="text-sm text-muted-foreground">No log findings yet</p>}
+        {lc === 0 && <p className="text-xs text-muted-foreground/35 py-4 text-center font-mono">No log findings yet</p>}
       </TabsContent>
 
-      <TabsContent value="infra" className="space-y-2 mt-2">
+      <TabsContent value="infra" className="space-y-2 mt-3">
         {evidence.infra?.observations.map((obs, i) => (
-          <Card key={i}>
-            <CardContent className="p-3">
-              <div className="flex items-center justify-between">
-                <span className="font-mono text-sm">{obs.resource}</span>
-                <Badge variant={obs.status === "unhealthy" ? "destructive" : "secondary"}>{obs.status}</Badge>
-              </div>
-              <div className="text-xs text-muted-foreground mt-1">{obs.detail}</div>
-            </CardContent>
-          </Card>
+          <div key={i} className="rounded-lg border border-border/30 bg-card/40 px-3.5 py-2.5 animate-fade-up" style={{ animationDelay: `${i * 0.05}s` }}>
+            <div className="flex items-center justify-between">
+              <span className="font-mono text-xs text-foreground/70">{obs.resource}</span>
+              <Badge variant={obs.status === "unhealthy" ? "destructive" : "secondary"} className="text-[10px]">{obs.status}</Badge>
+            </div>
+            <p className="text-[11px] text-muted-foreground/45 mt-1">{obs.detail}</p>
+          </div>
         ))}
-        {ic === 0 && <p className="text-sm text-muted-foreground">No infra findings yet</p>}
+        {ic === 0 && <p className="text-xs text-muted-foreground/35 py-4 text-center font-mono">No infra findings yet</p>}
       </TabsContent>
     </Tabs>
   );
