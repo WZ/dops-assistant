@@ -68,6 +68,7 @@ export function App() {
                   investigationId={leftPane.id}
                   wsMessages={ws.messages}
                   onBack={() => setLeftPane({ type: "dashboard" })}
+                  send={ws.send}
                 />
               )}
             </div>
