@@ -94,7 +94,7 @@ export function Dashboard({ onInvestigationClick, onInvestigateService }: { onIn
                 <div
                   key={inv.id}
                   onClick={() => onInvestigationClick(inv.id)}
-                  className={`animate-fade-up delay-${Math.min(i + 1, 8)} group cursor-pointer rounded-lg border border-border/40 bg-card/40 hover:bg-card/70 hover:border-primary/25 px-4 py-3 transition-all`}
+                  className={`animate-fade-up delay-${Math.min(i + 1, 8)} group cursor-pointer rounded-lg border border-border/40 bg-card/40 hover:bg-card/70 hover:border-primary/25 px-4 py-3 transition-all card-lift`}
                 >
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center gap-2">

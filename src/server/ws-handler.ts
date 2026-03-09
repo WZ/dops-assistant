@@ -213,6 +213,14 @@ export async function handleClientMessage(
       const runningPhases = new Set<string>();
       const phaseStats = new Map<string, { toolCalls: number; iterations: number; startMs: number }>();
 
+      // Helper: send event to client AND persist to DB
+      const emit = (event: ServerMessage) => {
+        send(event);
+        if (event.type === "investigation:tool_call" || event.type === "investigation:iteration" || event.type === "investigation:phase") {
+          db.createEvent({ id: `evt_${ulid()}`, investigationId: invId, eventType: event.type, payload: JSON.stringify(event) });
+        }
+      };
+
       const report = await investigationAgent.investigate(
         service, undefined, invId, undefined, msg.message,
         // onToolCall — enriched
@@ -222,11 +230,11 @@ export async function handleClientMessage(
           if (stats && (result !== undefined || error !== undefined)) stats.toolCalls++;
 
           if (error) {
-            send({ type: "investigation:tool_call", phase: activePhase, tool: name, args, status: "error", result: error, durationMs });
+            emit({ type: "investigation:tool_call", phase: activePhase, tool: name, args, status: "error", result: error, durationMs });
           } else if (result !== undefined) {
-            send({ type: "investigation:tool_call", phase: activePhase, tool: name, args, status: "success", result, durationMs });
+            emit({ type: "investigation:tool_call", phase: activePhase, tool: name, args, status: "success", result, durationMs });
           } else {
-            send({ type: "investigation:tool_call", phase: activePhase, tool: name, args, status: "calling" });
+            emit({ type: "investigation:tool_call", phase: activePhase, tool: name, args, status: "calling" });
           }
         },
         // onPhase
@@ -237,7 +245,7 @@ export async function handleClientMessage(
             if (!frontendPhases.includes(prev)) {
               const stats = phaseStats.get(prev);
               const durationMs = stats ? Date.now() - stats.startMs : 0;
-              send({
+              emit({
                 type: "investigation:phase", phase: prev, status: "complete",
                 stats: stats ? { observationCount: 0, criticalCount: 0, toolCalls: stats.toolCalls, iterations: stats.iterations, durationMs } : undefined,
               });
@@ -247,7 +255,7 @@ export async function handleClientMessage(
 
           for (const fp of frontendPhases) {
             if (!runningPhases.has(fp)) {
-              send({ type: "investigation:phase", phase: fp, status: "running" });
+              emit({ type: "investigation:phase", phase: fp, status: "running" });
               runningPhases.add(fp);
               phaseStats.set(fp, { toolCalls: 0, iterations: 0, startMs: Date.now() });
             }
@@ -258,7 +266,7 @@ export async function handleClientMessage(
           const frontendPhase = runningPhases.has(phase) ? phase : (runningPhases.size > 0 ? [...runningPhases][0]! : phase);
           const stats = phaseStats.get(frontendPhase);
           if (stats) stats.iterations = Math.max(stats.iterations, iteration + 1);
-          send({ type: "investigation:iteration", phase: frontendPhase, iteration, maxIterations, description });
+          emit({ type: "investigation:iteration", phase: frontendPhase, iteration, maxIterations, description });
         },
       );
 
@@ -266,7 +274,7 @@ export async function handleClientMessage(
       for (const fp of runningPhases) {
         const stats = phaseStats.get(fp);
         const durationMs = stats ? Date.now() - stats.startMs : 0;
-        send({
+        emit({
           type: "investigation:phase", phase: fp, status: "complete",
           stats: stats ? { observationCount: 0, criticalCount: 0, toolCalls: stats.toolCalls, iterations: stats.iterations, durationMs } : undefined,
         });
