@@ -154,6 +154,7 @@ export async function handleClientMessage(
       send({ type: "chat", role: "assistant", content: summary });
       db.createMessage({ id: `msg_${ulid()}`, role: "assistant", content: summary, investigationId: invId });
     } catch (err) {
+      logger.error({ err, invId, service: service.name }, "Investigation failed");
       db.updateInvestigation(invId, { status: "failed" });
       const errorMsg = err instanceof Error ? err.message : "Unknown error";
       send({ type: "investigation:failed", id: invId, error: errorMsg });

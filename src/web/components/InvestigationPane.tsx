@@ -40,28 +40,24 @@ export function InvestigationPane({ investigationId, wsMessages, onBack }: { inv
         if (cancelled) return;
         setService(data.investigation.service);
 
-        // Map stored phases to PhaseState
         const phaseMap = new Map(data.phases.map((p) => [p.phase, p]));
         setPhases(DEFAULT_PHASES.map((dp) => {
           const stored = phaseMap.get(dp.name);
           if (stored) {
             return { ...dp, status: stored.status as PhaseState["status"] };
           }
-          // If the investigation is complete, mark all phases as complete
           if (data.investigation.status === "complete") {
             return { ...dp, status: "complete" as const };
           }
           return dp;
         }));
 
-        // Extract evidence from phase findings
         const evidenceData: Record<string, unknown> = {};
         for (const p of data.phases) {
           if (p.findings) {
             try { evidenceData[p.phase] = JSON.parse(p.findings); } catch { /* ignore */ }
           }
         }
-        // Also extract evidence from the report if phases don't have individual findings
         if (data.investigation.report) {
           try {
             const rpt = JSON.parse(data.investigation.report);
@@ -82,12 +78,11 @@ export function InvestigationPane({ investigationId, wsMessages, onBack }: { inv
           setEvidence(evidenceData);
         }
 
-        // Set report
         if (data.investigation.report) {
           try { setReport(JSON.parse(data.investigation.report)); } catch { /* ignore */ }
         }
       })
-      .catch(() => { /* silently fail — investigation may not exist */ });
+      .catch(() => { /* silently fail */ });
 
     return () => { cancelled = true; };
   }, [investigationId, isActive]);
@@ -123,35 +118,67 @@ export function InvestigationPane({ investigationId, wsMessages, onBack }: { inv
     }
   }, [wsMessages, investigationId]);
 
-  return (
-    <div className="h-full overflow-y-auto p-6">
-      <button onClick={onBack} className="text-sm text-muted-foreground hover:underline mb-4">&larr; Back to dashboard</button>
-      <h2 className="text-xl font-bold mb-1">Investigation</h2>
-      {service && <p className="text-sm text-muted-foreground mb-6">{service}</p>}
+  const isRunning = phases.some((p) => p.status === "running");
 
-      <div className="mb-6">
+  return (
+    <div className={`h-full overflow-y-auto p-6 relative z-[2] ${isRunning ? "scanlines" : ""}`}>
+      {/* Back button */}
+      <button
+        onClick={onBack}
+        className="flex items-center gap-1.5 text-xs font-mono text-muted-foreground/40 hover:text-primary/70 transition-colors mb-5 group"
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="group-hover:-translate-x-0.5 transition-transform">
+          <path d="M19 12H5"/><path d="m12 19-7-7 7-7"/>
+        </svg>
+        back to dashboard
+      </button>
+
+      {/* Title */}
+      <div className="mb-6 animate-fade-up">
+        <h2 className="font-display text-lg font-bold tracking-tight text-foreground/90">
+          Investigation
+        </h2>
+        {service && (
+          <div className="flex items-center gap-2 mt-1">
+            <div className={`w-1.5 h-1.5 rounded-full ${isRunning ? "bg-primary animate-status-pulse" : "bg-success"}`} />
+            <span className="text-xs font-mono text-muted-foreground/50">{service}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Phase Stepper */}
+      <div className="mb-8">
         <PhaseStepper phases={phases} />
       </div>
 
-      <div className="mb-6">
-        <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">Evidence</h3>
+      {/* Evidence */}
+      <div className="mb-8 animate-fade-up delay-3">
+        <div className="flex items-center gap-2 mb-4">
+          <div className="w-1 h-4 rounded-full bg-accent/50" />
+          <h3 className="text-[11px] font-display font-semibold text-muted-foreground/50 uppercase tracking-[0.15em]">
+            Evidence
+          </h3>
+        </div>
         {Object.keys(evidence).length === 0 ? (
-          <div className="space-y-2">
-            <Skeleton className="h-20 w-full" />
-            <Skeleton className="h-20 w-full" />
+          <div className="space-y-2.5">
+            <Skeleton className="h-16 w-full rounded-lg" />
+            <Skeleton className="h-16 w-full rounded-lg" />
           </div>
         ) : (
           <EvidenceCards evidence={evidence as any} />
         )}
       </div>
 
+      {/* RCA Report */}
       {report ? (
-        <RcaReport report={report as any} />
+        <div className="animate-fade-up delay-5">
+          <RcaReport report={report as any} />
+        </div>
       ) : (
-        phases.some((p) => p.status === "running") && (
-          <div className="space-y-2">
-            <Skeleton className="h-8 w-48" />
-            <Skeleton className="h-32 w-full" />
+        isRunning && (
+          <div className="space-y-2.5 animate-fade-in">
+            <Skeleton className="h-6 w-40 rounded-md" />
+            <Skeleton className="h-28 w-full rounded-lg" />
           </div>
         )
       )}
