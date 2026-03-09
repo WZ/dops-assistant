@@ -106,7 +106,7 @@ export function InvestigationPane({ investigationId, wsMessages, onBack }: { inv
       }
       if (msg.type === "investigation:phase") {
         setPhases((prev) => prev.map((p) =>
-          p.name === msg.phase ? { ...p, status: msg.status as PhaseState["status"], substatus: undefined } : p,
+          p.name === msg.phase ? { ...p, status: msg.status as PhaseState["status"], substatus: undefined, stats: msg.stats } : p,
         ));
         if (msg.status === "complete" && msg.data) {
           setEvidence((prev) => ({ ...prev, [msg.phase]: msg.data }));
