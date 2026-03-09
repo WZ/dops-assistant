@@ -12,6 +12,32 @@ import type { ClientMessage, ServerMessage } from "../shared/ws-types.js";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
 
+/**
+ * Map backend investigation phase names (from investigation.ts onPhase callback)
+ * to the short phase names the frontend expects ("planning", "metrics", "logs", "infra", "synthesis").
+ *
+ * Some backend phases map to multiple frontend phases (e.g. the parallel evidence
+ * phase covers metrics, logs, and infra simultaneously).
+ */
+function mapBackendPhase(backendPhase: string): string[] {
+  switch (backendPhase) {
+    case "Detecting anomalies":
+      return ["planning"];
+    case "Planning investigation":
+      return ["planning"];
+    case "Analyzing metrics, logs & infrastructure":
+      return ["metrics", "logs", "infra"];
+    case "Building event timeline":
+      return ["synthesis"];
+    case "Synthesizing root cause":
+      return ["synthesis"];
+    case "Validating report":
+      return ["synthesis"];
+    default:
+      return [];
+  }
+}
+
 export interface WsDeps {
   db: Database;
   agent: ChatAgent;
@@ -84,11 +110,42 @@ export async function handleClientMessage(
     send({ type: "chat", role: "assistant", content: `Starting investigation of **${service.name}**...` });
 
     try {
+      // Track currently-running frontend phases so we can emit "complete" when transitioning
+      const runningPhases = new Set<string>();
+
       const report = await investigationAgent.investigate(
         service, undefined, invId, undefined, msg.message,
-        (name, _args) => { send({ type: "investigation:progress", phase: "evidence", step: `Calling ${name}...` }); },
-        (phase) => { send({ type: "investigation:phase", phase, status: "running" }); },
+        (name, _args) => {
+          // Determine which frontend phase(s) are active for the progress substatus
+          const activePhase = runningPhases.size > 0 ? [...runningPhases][0]! : "evidence";
+          send({ type: "investigation:progress", phase: activePhase, step: `Calling ${name}...` });
+        },
+        (backendPhase) => {
+          const frontendPhases = mapBackendPhase(backendPhase);
+
+          // Complete any previously-running phases that are NOT in the new set
+          for (const prev of runningPhases) {
+            if (!frontendPhases.includes(prev)) {
+              send({ type: "investigation:phase", phase: prev, status: "complete" });
+              runningPhases.delete(prev);
+            }
+          }
+
+          // Start new phases that aren't already running
+          for (const fp of frontendPhases) {
+            if (!runningPhases.has(fp)) {
+              send({ type: "investigation:phase", phase: fp, status: "running" });
+              runningPhases.add(fp);
+            }
+          }
+        },
       );
+
+      // Complete any phases still marked as running
+      for (const fp of runningPhases) {
+        send({ type: "investigation:phase", phase: fp, status: "complete" });
+      }
+      runningPhases.clear();
 
       db.updateInvestigation(invId, { status: "complete", report: JSON.stringify(report) });
       send({ type: "investigation:complete", id: invId, report });

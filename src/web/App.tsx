@@ -28,6 +28,9 @@ export function App() {
               onInvestigationClick={(id) =>
                 setLeftPane({ type: "investigation", id })
               }
+              onInvestigateService={(serviceName) => {
+                ws.send({ type: "chat", message: `investigate ${serviceName}` });
+              }}
             />
           ) : (
             <InvestigationPane
