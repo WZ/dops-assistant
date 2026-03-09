@@ -31,7 +31,7 @@ export const ProviderRoleSchema = z.enum([
 ]);
 
 export const ProviderSchema = z.object({
-  name: z.string(),
+  name: z.string().regex(/^[a-zA-Z0-9_-]+$/, "Provider name must only contain alphanumeric characters, hyphens, and underscores"),
   roles: z.array(ProviderRoleSchema).min(1),
   mcpServer: McpServerSchema,
 });
@@ -92,7 +92,10 @@ const DiscoverySchema = z.object({
 
 export const ConfigSchema = z.object({
   llm: LlmSchema,
-  providers: z.array(ProviderSchema).min(1),
+  providers: z.array(ProviderSchema).min(1).refine(
+    (providers) => new Set(providers.map((p) => p.name)).size === providers.length,
+    { message: "Provider names must be unique" },
+  ),
   services: z.array(ServiceSchema).default([]),
   agent: AgentSchema.optional().default({}),
   timeouts: TimeoutsSchema.optional().default({}),

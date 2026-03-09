@@ -31,7 +31,8 @@ export class MultiMcpClient {
 
   /**
    * Build the tool index from all connected providers.
-   * Detects name collisions and prefixes with `providerName.toolName` when needed.
+   * Detects name collisions and prefixes with `providerName__toolName` when needed.
+   * Uses `__` as delimiter (OpenAI function names only allow `[a-zA-Z0-9_-]`).
    */
   private buildToolIndex(): void {
     // First pass: collect all tools grouped by name to detect collisions
@@ -59,7 +60,7 @@ export class MultiMcpClient {
       } else {
         // Collision — prefix each with provider name
         for (const { provider, tool } of entries) {
-          const prefixedName = `${provider.name}.${name}`;
+          const prefixedName = `${provider.name}__${name}`;
           const prefixedTool: OpenAITool = {
             type: "function",
             function: {
@@ -74,9 +75,20 @@ export class MultiMcpClient {
     }
   }
 
-  /** Connects all providers in parallel, then builds the tool index. */
+  /** Connects all providers in parallel, then builds the tool index. Rolls back on partial failure. */
   async connect(): Promise<void> {
-    await Promise.all(this.providers.map((p) => p.client.connect()));
+    const results = await Promise.allSettled(this.providers.map((p) => p.client.connect()));
+    const failed = results.filter((r) => r.status === "rejected");
+    if (failed.length > 0) {
+      // Disconnect any that succeeded before throwing
+      await Promise.allSettled(
+        this.providers
+          .filter((_, i) => results[i].status === "fulfilled")
+          .map((p) => p.client.disconnect()),
+      );
+      const reasons = failed.map((f) => (f as PromiseRejectedResult).reason);
+      throw new AggregateError(reasons, `${failed.length}/${this.providers.length} provider(s) failed to connect`);
+    }
     this.buildToolIndex();
   }
 

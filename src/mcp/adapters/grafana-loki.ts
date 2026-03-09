@@ -5,6 +5,30 @@ import pino from "pino";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
 
+/** Check if a Loki query response contains actual log data (not empty). */
+function hasLogData(text: string | undefined): boolean {
+  if (!text || text.length < 3) return false;
+  try {
+    const parsed = JSON.parse(text);
+    // Handle { data: [...] } and flat array formats
+    const data = Array.isArray(parsed) ? parsed : parsed?.data;
+    return Array.isArray(data) && data.length > 0;
+  } catch {
+    // If response isn't JSON, fall back to length heuristic (non-empty = has data)
+    return text.length > 10;
+  }
+}
+
+/** Escape a value for use in a LogQL exact-match selector (double-quoted). */
+function escapeLogQLValue(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+/** Escape a value for use in a LogQL regex selector. */
+function escapeLogQLRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export class GrafanaLokiAdapter implements LogProviderAdapter {
   private readonly mcp: McpClient;
   private readonly lokiUid: string;
@@ -55,17 +79,18 @@ export class GrafanaLokiAdapter implements LogProviderAdapter {
     // 1. Configured logLabels (what the service config says)
     const configuredLabels = service.logLabels;
     if (Object.keys(configuredLabels).length > 0) {
-      const parts = Object.entries(configuredLabels).map(([k, v]) => `${k}="${v}"`);
+      const parts = Object.entries(configuredLabels).map(([k, v]) => `${k}="${escapeLogQLValue(v)}"`);
       candidates.push({ selector: `{${parts.join(", ")}}`, source: "configured" });
     }
 
     // 2. Common fallback patterns
     const svcName = service.name;
+    const escapedName = escapeLogQLValue(svcName);
     candidates.push(
-      { selector: `{job="default/${svcName}"}`, source: "job" },
-      { selector: `{container_name="${svcName}"}`, source: "container_name" },
-      { selector: `{app_fortidata_name="${svcName}"}`, source: "app_fortidata_name" },
-      { selector: `{chart="${svcName}"}`, source: "chart" },
+      { selector: `{job="default/${escapedName}"}`, source: "job" },
+      { selector: `{container_name="${escapedName}"}`, source: "container_name" },
+      { selector: `{app_fortidata_name="${escapedName}"}`, source: "app_fortidata_name" },
+      { selector: `{chart="${escapedName}"}`, source: "chart" },
     );
 
     // Deduplicate
@@ -94,8 +119,7 @@ export class GrafanaLokiAdapter implements LogProviderAdapter {
           ...baseArgs,
           logql: candidate.selector,
         });
-        // Check if we got actual log lines (non-empty, non-error result)
-        if (result.text && result.text.length > 10 && !result.text.includes('"data":[]')) {
+        if (hasLogData(result.text)) {
           log.info({ selector: candidate.selector, source: candidate.source }, "Found working log selector");
           return candidate.selector;
         }
@@ -105,9 +129,10 @@ export class GrafanaLokiAdapter implements LogProviderAdapter {
     }
 
     // Try regex fallback: service name as a regex across common labels
+    const escapedRegex = escapeLogQLRegex(svcName);
     const regexCandidates = [
-      `{job=~".*${svcName}.*"}`,
-      `{container_name=~".*${svcName}.*"}`,
+      `{job=~".*${escapedRegex}.*"}`,
+      `{container_name=~".*${escapedRegex}.*"}`,
     ];
     for (const selector of regexCandidates) {
       try {
@@ -115,7 +140,7 @@ export class GrafanaLokiAdapter implements LogProviderAdapter {
           ...baseArgs,
           logql: selector,
         });
-        if (result.text && result.text.length > 10 && !result.text.includes('"data":[]')) {
+        if (hasLogData(result.text)) {
           log.info({ selector }, "Found working log selector via regex");
           return selector;
         }

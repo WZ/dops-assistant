@@ -66,6 +66,22 @@ describe("MultiMcpClient", () => {
       expect(multi.isConnected()).toBe(false);
     });
 
+    it("rolls back successful connections on partial failure", async () => {
+      const failClient = mockMcpClient([]);
+      (failClient.connect as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("connection refused"));
+
+      const partialProviders: ProviderEntry[] = [
+        { name: "grafana", roles: ["metrics"] as ProviderRole[], client: grafanaClient },
+        { name: "failing", roles: ["logs"] as ProviderRole[], client: failClient },
+      ];
+
+      const multi = new MultiMcpClient(partialProviders);
+      await expect(multi.connect()).rejects.toThrow(/failed to connect/);
+
+      // The successful provider should have been disconnected
+      expect(grafanaClient.disconnect).toHaveBeenCalledTimes(1);
+    });
+
     it("isConnected returns false if any provider is not connected", async () => {
       const multi = new MultiMcpClient(providers);
       await multi.connect();
@@ -130,8 +146,8 @@ describe("MultiMcpClient", () => {
 
       expect(tools).toHaveLength(2);
       const names = tools.map((t) => t.function.name);
-      expect(names).toContain("providerA.shared_tool");
-      expect(names).toContain("providerB.shared_tool");
+      expect(names).toContain("providerA__shared_tool");
+      expect(names).toContain("providerB__shared_tool");
     });
 
     it("routes prefixed tool name to correct provider, stripping prefix", async () => {
@@ -145,11 +161,11 @@ describe("MultiMcpClient", () => {
       const multi = new MultiMcpClient(collisionProviders);
       await multi.connect();
 
-      await multi.callTool("providerA.shared_tool", { foo: "bar" });
+      await multi.callTool("providerA__shared_tool", { foo: "bar" });
       expect(clientA.callTool).toHaveBeenCalledWith("shared_tool", { foo: "bar" });
       expect(clientB.callTool).not.toHaveBeenCalled();
 
-      await multi.callTool("providerB.shared_tool", { baz: 42 });
+      await multi.callTool("providerB__shared_tool", { baz: 42 });
       expect(clientB.callTool).toHaveBeenCalledWith("shared_tool", { baz: 42 });
     });
 
@@ -159,9 +175,9 @@ describe("MultiMcpClient", () => {
       const tools = multi.getTools();
       const names = tools.map((t) => t.function.name);
 
-      // None should have a dot prefix
+      // None should have a collision prefix
       for (const name of names) {
-        expect(name).not.toContain(".");
+        expect(name).not.toContain("__");
       }
     });
   });
