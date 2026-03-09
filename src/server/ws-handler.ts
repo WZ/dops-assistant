@@ -79,12 +79,112 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
   });
 }
 
+async function handleDeepInvestigate(
+  msg: { type: "deep_investigate"; investigationId: string; message: string },
+  send: (m: ServerMessage) => void,
+  deps: WsDeps,
+  threadId: string,
+): Promise<void> {
+  const { db, agent, memory } = deps;
+
+  const investigation = db.getInvestigation(msg.investigationId);
+  if (!investigation) {
+    send({ type: "deep_investigate:response", investigationId: msg.investigationId, content: "Investigation not found." });
+    return;
+  }
+
+  const phases = db.getPhases(msg.investigationId);
+
+  // Build context from investigation data
+  const contextParts: string[] = [
+    "You are a DevOps investigation assistant. The user is asking follow-up questions about a completed investigation.",
+    "You have access to Grafana MCP tools to make live queries if needed.",
+    "",
+    "## Investigation Context",
+    `Service: ${investigation.service}`,
+    `Query: ${investigation.query}`,
+    `Status: ${investigation.status}`,
+  ];
+
+  if (investigation.report) {
+    try {
+      const report = JSON.parse(investigation.report);
+      contextParts.push(
+        "",
+        "## RCA Report",
+        `Root Cause: ${report.rootCause}`,
+        `Trigger: ${report.trigger}`,
+        `Severity: ${report.severity}`,
+        `Confidence: ${report.confidence}`,
+        `Summary: ${report.summary}`,
+        `Impact: ${report.impact?.description} (duration: ${report.impact?.duration})`,
+        `Contributing Factors: ${(report.contributingFactors ?? []).join("; ")}`,
+        `Recommended Actions: ${(report.recommendedActions ?? []).join("; ")}`,
+      );
+      if (report.evidence) {
+        contextParts.push(
+          "",
+          "## Evidence",
+          `Metrics: ${JSON.stringify(report.evidence.metrics)}`,
+          `Logs: ${JSON.stringify(report.evidence.logs)}`,
+          `Infra: ${JSON.stringify(report.evidence.infra)}`,
+        );
+      }
+      if (report.timeline?.length) {
+        contextParts.push(
+          "",
+          "## Timeline",
+          ...report.timeline.map((t: { time: string; event: string }) => `- ${t.time}: ${t.event}`),
+        );
+      }
+    } catch { /* ignore parse errors */ }
+  }
+
+  for (const phase of phases) {
+    if (phase.findings) {
+      try {
+        const findings = JSON.parse(phase.findings);
+        contextParts.push("", `## ${phase.phase} Phase Findings`, JSON.stringify(findings, null, 2));
+      } catch { /* ignore */ }
+    }
+  }
+
+  const systemContext = contextParts.join("\n");
+  const memoryKey = `deep_${msg.investigationId}`;
+  const history = memory.get(memoryKey);
+
+  // On first message, prepend system context
+  const fullHistory = history.length === 0
+    ? [{ role: "system" as const, content: systemContext }]
+    : history;
+
+  try {
+    const result = await agent.chat({
+      mode: "conversational",
+      message: msg.message,
+      history: fullHistory,
+      serviceContext: deps.services,
+    });
+    memory.append(memoryKey, { role: "user", content: msg.message });
+    memory.append(memoryKey, { role: "assistant", content: result.response });
+    send({ type: "deep_investigate:response", investigationId: msg.investigationId, content: result.response });
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : "Unknown error";
+    send({ type: "deep_investigate:response", investigationId: msg.investigationId, content: `Error: ${errorMsg}` });
+  }
+}
+
 export async function handleClientMessage(
   msg: ClientMessage,
   send: (m: ServerMessage) => void,
   deps: WsDeps,
   threadId: string,
 ): Promise<void> {
+  if (msg.type === "deep_investigate") {
+    await handleDeepInvestigate(msg, send, deps, threadId);
+    return;
+  }
+
   if (msg.type !== "chat") return;
 
   const { db, agent, investigationAgent, router, memory, services } = deps;
