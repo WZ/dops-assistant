@@ -5,8 +5,8 @@ import {
 } from "./prompts.js";
 import type { ChatRequest, ChatResponse, ImageAttachment } from "./types.js";
 import type { LlmClient, Message } from "../llm/openai.js";
-import type { McpClient } from "../mcp/client.js";
 import type { OpenAITool, ToolResult } from "../mcp/client.js";
+import type { MultiMcpClient } from "../mcp/multi-client.js";
 import { TimeoutError } from "../utils/timeout.js";
 import {
   agentRunsTotal,
@@ -74,10 +74,10 @@ const CREATE_TEMP_PANEL_TOOL: OpenAITool = {
 
 export class ChatAgent {
   private llm: LlmClient;
-  private mcp: McpClient;
+  private mcp: MultiMcpClient;
   private maxIterations: number;
 
-  constructor(llm: LlmClient, mcp: McpClient, opts: { maxIterations: number }) {
+  constructor(llm: LlmClient, mcp: MultiMcpClient, opts: { maxIterations: number }) {
     this.llm = llm;
     this.mcp = mcp;
     this.maxIterations = opts.maxIterations;

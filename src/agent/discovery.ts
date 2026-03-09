@@ -1,5 +1,5 @@
 import type { LlmClient, Message, TokenUsage } from "../llm/openai.js";
-import type { McpClient } from "../mcp/client.js";
+import type { MultiMcpClient } from "../mcp/multi-client.js";
 import type { ServiceConfig, DiscoveryConfig } from "../config/schema.js";
 import { sanitizeToolResult } from "./core.js";
 import {
@@ -81,7 +81,7 @@ function findLabelMatch(serviceName: string, labelValues: string[], labelKey: st
  */
 export async function enrichLogLabels(
   services: ServiceConfig[],
-  mcp: McpClient,
+  mcp: MultiMcpClient,
   lokiDatasourceUid: string,
   onToolCall?: (name: string, args: Record<string, unknown>) => void,
 ): Promise<ServiceConfig[]> {
@@ -151,10 +151,10 @@ function tryParseJson(text: string): { parsed: DiscoveredServices } | { partial:
 
 export class DiscoveryAgent {
   private readonly llm: LlmClient;
-  private readonly mcp: McpClient;
+  private readonly mcp: MultiMcpClient;
   private readonly maxIterations: number;
 
-  constructor(llm: LlmClient, mcp: McpClient, opts: { maxIterations: number }) {
+  constructor(llm: LlmClient, mcp: MultiMcpClient, opts: { maxIterations: number }) {
     this.llm = llm;
     this.mcp = mcp;
     this.maxIterations = opts.maxIterations;

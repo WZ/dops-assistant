@@ -1,5 +1,6 @@
 import type { LlmClient, Message, ResponseFormat, TokenUsage } from "../llm/openai.js";
-import type { McpClient, PanelImage } from "../mcp/client.js";
+import type { PanelImage } from "../mcp/client.js";
+import type { MultiMcpClient } from "../mcp/multi-client.js";
 import type { ServiceConfig } from "../config/schema.js";
 import type { AnomalyAssessment } from "./types.js";
 import type { MetricFindings, LogFindings, InfraFindings, RcaReport, InvestigationPlan, ReflectionResult } from "./rca-types.js";
@@ -366,10 +367,10 @@ export function validateSeverity(
 
 export class InvestigationAgent {
   private readonly llm: LlmClient;
-  private readonly mcp: McpClient;
+  private readonly mcp: MultiMcpClient;
   private readonly maxIterations: number;
 
-  constructor(llm: LlmClient, mcp: McpClient, opts: { maxIterations: number }) {
+  constructor(llm: LlmClient, mcp: MultiMcpClient, opts: { maxIterations: number }) {
     this.llm = llm;
     this.mcp = mcp;
     this.maxIterations = opts.maxIterations;
