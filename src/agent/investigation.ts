@@ -19,6 +19,8 @@ import {
   RCA_REFLECTION_SCHEMA,
 } from "./rca-prompts.js";
 import { buildProactiveStructuredPrompt, ANOMALY_ASSESSMENT_RESPONSE_FORMAT, getTimeContext } from "./prompts.js";
+import { GrafanaLokiAdapter } from "../mcp/adapters/grafana-loki.js";
+import type { LogProviderAdapter } from "../mcp/adapters/types.js";
 import pino from "pino";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
@@ -508,16 +510,17 @@ export class InvestigationAgent {
     const promUidMatch = datasourceHint.match(/prometheus: datasourceUid="([^"]+)"/);
     const defaultPromUid = promUidMatch?.[1];
 
-    const lokiUidMatch = datasourceHint.match(/loki: datasourceUid="([^"]+)"/);
-    const lokiUid = lokiUidMatch?.[1];
+    const logAdapter = this.resolveLogAdapter(datasourceHint);
 
     // Convert investigation window to RFC3339 for Loki probe queries
     const lokiProbeWindow = this.toRfc3339Window(investigationWindow);
 
     const [panelQueriesResult, lokiLabelsHint, workingLogSelector] = await Promise.all([
-      this.getPanelQueriesContext(service.name, userMessage, anomaly.summary, defaultPromUid),
-      lokiUid ? this.getLokiLabelsHint(lokiUid) : Promise.resolve(""),
-      lokiUid ? this.getWorkingLogSelector(service, lokiUid, lokiProbeWindow) : Promise.resolve(""),
+      this.mcp.hasRole("dashboards")
+        ? this.getPanelQueriesContext(service.name, userMessage, anomaly.summary, defaultPromUid)
+        : Promise.resolve({ context: "", dashboardUrls: [] as string[] }),
+      logAdapter ? logAdapter.getLabelsHint() : Promise.resolve(""),
+      logAdapter ? logAdapter.getWorkingSelector(service, lokiProbeWindow) : Promise.resolve(""),
     ]);
     const panelQueriesContext = panelQueriesResult.context;
     const realDashboardUrls = panelQueriesResult.dashboardUrls;
@@ -1055,6 +1058,7 @@ export class InvestigationAgent {
    * Returns a context string with dashboard names/UIDs, or empty string if unavailable.
    */
   private async getDashboardContext(): Promise<string> {
+    if (!this.mcp.hasRole("dashboards")) return "";
     const toolNames = this.mcp.getTools().map((t) => t.function.name);
     if (!toolNames.includes("search_dashboards")) return "";
 
@@ -1085,6 +1089,7 @@ export class InvestigationAgent {
     defaultDatasourceUid?: string,
   ): Promise<{ context: string; dashboardUrls: string[] }> {
     const empty = { context: "", dashboardUrls: [] as string[] };
+    if (!this.mcp.hasRole("dashboards")) return empty;
     const toolNames = this.mcp.getTools().map((t) => t.function.name);
     if (!toolNames.includes("get_dashboard_panel_queries") || !toolNames.includes("search_dashboards")) return empty;
 
@@ -1184,121 +1189,32 @@ export class InvestigationAgent {
   }
 
   /**
-   * Pre-fetch Loki label names so the LLM knows which labels exist without calling list_loki_label_names.
+   * Resolve a LogProviderAdapter from the first provider with the "logs" role.
+   * Currently supports Grafana Loki; future providers (VictoriaLogs, Coroot, etc.)
+   * would be resolved here.
    */
-  private async getLokiLabelsHint(lokiUid: string): Promise<string> {
-    const toolNames = this.mcp.getTools().map((t) => t.function.name);
-    if (!toolNames.includes("list_loki_label_names")) return "";
+  private resolveLogAdapter(datasourceHint: string): LogProviderAdapter | null {
+    const logProviders = this.mcp.getProvidersByRole("logs");
+    if (logProviders.length === 0) return null;
 
-    try {
-      const result = await this.mcp.callTool("list_loki_label_names", { datasourceUid: lokiUid });
-      const parsed = JSON.parse(result.text);
-      const labels = Array.isArray(parsed) ? parsed : parsed?.labels ?? [];
-      if (labels.length === 0) return "";
-      return `Available Loki labels (do NOT call list_loki_label_names):\n${(labels as string[]).join(", ")}`;
-    } catch {
-      return "";
-    }
-  }
-
-  /**
-   * Find a Loki log selector that actually returns logs for a service.
-   * Tries the configured logLabels first, then falls back through common label patterns.
-   * Uses a time window for probing since Loki's default window may be too narrow.
-   * Returns a LogQL selector string like `{job="default/ingestion-server"}` or empty string.
-   */
-  private async getWorkingLogSelector(
-    service: ServiceConfig,
-    lokiUid: string,
-    probeWindow?: { startRfc3339: string; endRfc3339: string },
-  ): Promise<string> {
-    const log = logger.child({ component: "log-selector-probe", service: service.name });
-    const toolNames = this.mcp.getTools().map((t) => t.function.name);
-    if (!toolNames.includes("query_loki_logs")) return "";
-
-    // Build candidate selectors: configured labels first, then fallbacks
-    const candidates: Array<{ selector: string; source: string }> = [];
-
-    // 1. Configured logLabels (what the service config says)
-    const configuredLabels = service.logLabels;
-    if (Object.keys(configuredLabels).length > 0) {
-      const parts = Object.entries(configuredLabels).map(([k, v]) => `${k}="${v}"`);
-      candidates.push({ selector: `{${parts.join(", ")}}`, source: "configured" });
+    const provider = logProviders[0];
+    // Grafana Loki: needs datasource UID from pre-fetched hint
+    if (provider.name === "grafana") {
+      const lokiUidMatch = datasourceHint.match(/loki: datasourceUid="([^"]+)"/);
+      const lokiUid = lokiUidMatch?.[1];
+      if (!lokiUid) return null;
+      return new GrafanaLokiAdapter(provider.client, lokiUid);
     }
 
-    // 2. Common fallback patterns
-    const svcName = service.name;
-    candidates.push(
-      { selector: `{job="default/${svcName}"}`, source: "job" },
-      { selector: `{container_name="${svcName}"}`, source: "container_name" },
-      { selector: `{app_fortidata_name="${svcName}"}`, source: "app_fortidata_name" },
-      { selector: `{chart="${svcName}"}`, source: "chart" },
-    );
-
-    // Deduplicate
-    const seen = new Set<string>();
-    const unique = candidates.filter((c) => {
-      if (seen.has(c.selector)) return false;
-      seen.add(c.selector);
-      return true;
-    });
-
-    // Build probe args with time window — Loki's default range is often too narrow
-    // to find logs for services that aren't actively logging right now
-    const baseArgs: Record<string, unknown> = {
-      datasourceUid: lokiUid,
-      limit: 1,
-    };
-    if (probeWindow) {
-      baseArgs.startRfc3339 = probeWindow.startRfc3339;
-      baseArgs.endRfc3339 = probeWindow.endRfc3339;
-    }
-
-    // Test each candidate with a small query (limit 1) to see if it returns anything
-    for (const candidate of unique) {
-      try {
-        const result = await this.mcp.callTool("query_loki_logs", {
-          ...baseArgs,
-          logql: candidate.selector,
-        });
-        // Check if we got actual log lines (non-empty, non-error result)
-        if (result.text && result.text.length > 10 && !result.text.includes('"data":[]')) {
-          log.info({ selector: candidate.selector, source: candidate.source }, "Found working log selector");
-          return candidate.selector;
-        }
-      } catch (err) {
-        log.debug({ selector: candidate.selector, err }, "Log selector probe failed");
-      }
-    }
-
-    // Try regex fallback: service name as a regex across common labels
-    const regexCandidates = [
-      `{job=~".*${svcName}.*"}`,
-      `{container_name=~".*${svcName}.*"}`,
-    ];
-    for (const selector of regexCandidates) {
-      try {
-        const result = await this.mcp.callTool("query_loki_logs", {
-          ...baseArgs,
-          logql: selector,
-        });
-        if (result.text && result.text.length > 10 && !result.text.includes('"data":[]')) {
-          log.info({ selector }, "Found working log selector via regex");
-          return selector;
-        }
-      } catch {
-        // continue
-      }
-    }
-
-    log.warn("No working log selector found for service");
-    return "";
+    // Future: VictoriaLogs, Coroot, etc. would be resolved here
+    return null;
   }
 
   /**
    * Pre-fetch datasource UIDs so LLM phases don't waste iterations on list_datasources.
    */
   private async getDatasourceHint(): Promise<string> {
+    if (!this.mcp.hasRole("metrics") && !this.mcp.hasRole("dashboards")) return "";
     const toolNames = this.mcp.getTools().map((t) => t.function.name);
     if (!toolNames.includes("list_datasources")) return "";
 
@@ -1327,19 +1243,23 @@ export class InvestigationAgent {
     maxOutputTokens?: number,
     timeoutMs?: number,
   ): Promise<PhaseResult<T>> {
-    // Exclude tools we pre-fetch (datasources, dashboards, panel queries)
-    // and tools known to be unreliable (metric metadata returns 404, alert rules return 500).
-    const excludedTools = new Set([
+    // Dynamically exclude pre-fetched tools — only exclude tools from providers that are present
+    const excludedTools = new Set<string>();
+    // Grafana-specific pre-fetched tools — only exclude if we have those tools
+    const grafanaExcluded = [
       "list_datasources",
       "search_dashboards",
       "get_dashboard_panel_queries",
       "get_dashboard_by_uid",
-      // list_prometheus_metric_metadata: re-enabled — excluding it causes hallucinated calls that waste iterations
-      "list_alert_rules",                 // Grafana-managed: empty; datasource-managed: 500
+      "list_alert_rules",
       "get_alert_rule_by_uid",
-      "list_loki_label_names",            // Pre-fetched into context
-      "list_loki_label_values",           // Rarely worth an iteration; labels provided in context
-    ]);
+      "list_loki_label_names",
+      "list_loki_label_values",
+    ];
+    const allToolNames = new Set(this.mcp.getTools().map((t) => t.function.name));
+    for (const name of grafanaExcluded) {
+      if (allToolNames.has(name)) excludedTools.add(name);
+    }
     const tools = useTools
       ? this.mcp.getTools().filter((t) => !excludedTools.has(t.function.name))
       : [];
