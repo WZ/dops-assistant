@@ -21,7 +21,7 @@ export function App() {
 
   return (
     <div className="h-screen bg-background text-foreground">
-      <ResizablePanelGroup direction="horizontal">
+      <ResizablePanelGroup orientation="horizontal">
         <ResizablePanel defaultSize={60} minSize={30}>
           {leftPane.type === "dashboard" ? (
             <Dashboard
