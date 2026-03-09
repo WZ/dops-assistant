@@ -43,7 +43,7 @@ async function main() {
   const server = createServer(app);
   const port = Number(process.env["PORT"] ?? 3000);
 
-  registerRoutes(app, db, config.services);
+  registerRoutes(app, db, config.services, mcp);
 
   setupWebSocket(server, {
     db, agent, investigationAgent, router, memory,
