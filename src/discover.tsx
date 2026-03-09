@@ -14,7 +14,7 @@ import { Spinner } from "@inkjs/ui";
 import { writeFileSync } from "node:fs";
 import { stringify } from "yaml";
 import { loadConfig, getServicesFilePath } from "./config/loader.js";
-import { McpClient } from "./mcp/client.js";
+import { createMultiMcpClient } from "./mcp/factory.js";
 import { LlmClient } from "./llm/openai.js";
 import { DiscoveryAgent } from "./agent/discovery.js";
 import type { ServiceConfig } from "./config/schema.js";
@@ -40,7 +40,7 @@ function DiscoverApp() {
     async function run() {
       try {
         const config = loadConfig(configPath);
-        const mcp = new McpClient(config.grafana.mcpServer, config.timeouts);
+        const mcp = createMultiMcpClient(config);
         await mcp.connect();
         if (cancelled) return;
 

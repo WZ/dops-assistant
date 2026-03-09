@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { InvestigationAgent, extractDashboardPanelHints, buildTimeline, validateSeverity, repairTruncatedJson } from "./investigation.js";
 import type { LlmClient } from "../llm/openai.js";
-import type { McpClient } from "../mcp/client.js";
+import type { MultiMcpClient } from "../mcp/multi-client.js";
 import type { AnomalyAssessment } from "./types.js";
 import type { MetricFindings, LogFindings, InfraFindings } from "./rca-types.js";
 
@@ -33,7 +33,10 @@ const mockMcp = {
     return Promise.resolve({ text: "metric data", images: [] });
   }),
   isConnected: vi.fn().mockReturnValue(true),
-} as unknown as McpClient;
+  getProvidersByRole: vi.fn().mockReturnValue([]),
+  getToolsByRole: vi.fn().mockReturnValue([]),
+  hasRole: vi.fn().mockImplementation((role: string) => role === "dashboards" || role === "metrics" || role === "logs"),
+} as unknown as MultiMcpClient;
 
 // New structured mock data
 const basePlanResponse = JSON.stringify({
@@ -294,7 +297,10 @@ describe("InvestigationAgent", () => {
         if (name === "list_datasources") return Promise.resolve({ text: "[]", images: [] });
         return Promise.resolve({ text: "{}", images: [] });
       }),
-    } as unknown as McpClient;
+      getProvidersByRole: vi.fn().mockReturnValue([]),
+      getToolsByRole: vi.fn().mockReturnValue([]),
+      hasRole: vi.fn().mockImplementation((role: string) => role === "dashboards" || role === "metrics" || role === "logs"),
+    } as unknown as MultiMcpClient;
 
     const llm = makeMockLlm([basePlanResponse, baseMetricFindings, baseLogFindings, baseInfraFindings, baseRcaReport, baseReflectionResponse]);
     const agent = new InvestigationAgent(llm, customMcp, { maxIterations: 5 });

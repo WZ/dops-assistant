@@ -26,9 +26,18 @@ const McpServerSchema = z.discriminatedUnion("transport", [
   }),
 ]);
 
-const GrafanaSchema = z.object({
+export const ProviderRoleSchema = z.enum([
+  "metrics", "logs", "dashboards", "dependencies",
+]);
+
+export const ProviderSchema = z.object({
+  name: z.string().regex(/^[a-zA-Z0-9_-]+$/, "Provider name must only contain alphanumeric characters, hyphens, and underscores"),
+  roles: z.array(ProviderRoleSchema).min(1),
   mcpServer: McpServerSchema,
 });
+
+export type ProviderRole = z.infer<typeof ProviderRoleSchema>;
+export type ProviderConfig = z.infer<typeof ProviderSchema>;
 
 const LlmSchema = z.object({
   model: z.string().default("gpt-4"),
@@ -83,7 +92,10 @@ const DiscoverySchema = z.object({
 
 export const ConfigSchema = z.object({
   llm: LlmSchema,
-  grafana: GrafanaSchema,
+  providers: z.array(ProviderSchema).min(1).refine(
+    (providers) => new Set(providers.map((p) => p.name)).size === providers.length,
+    { message: "Provider names must be unique" },
+  ),
   services: z.array(ServiceSchema).default([]),
   agent: AgentSchema.optional().default({}),
   timeouts: TimeoutsSchema.optional().default({}),
