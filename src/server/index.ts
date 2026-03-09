@@ -1,4 +1,9 @@
-import "dotenv/config";
+import { config as loadDotenv } from "dotenv";
+import { resolve } from "node:path";
+
+const envPath = process.env["DOTENV_PATH"] ?? resolve(process.cwd(), "dev/.env");
+loadDotenv({ path: envPath });
+
 import express from "express";
 import { createServer } from "http";
 import path from "path";
