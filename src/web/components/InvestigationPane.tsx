@@ -5,6 +5,7 @@ import { PhaseStepper, type PhaseState } from "./PhaseStepper";
 import { EvidenceCards } from "./EvidenceCards";
 import { RcaReport } from "./RcaReport";
 import { InvestigationLayout } from "./InvestigationLayout";
+import { ActivityTimeline, type TimelineEvent } from "./ActivityTimeline";
 import type { ServerMessage } from "../../shared/ws-types.js";
 
 const DEFAULT_PHASES: PhaseState[] = [
@@ -20,6 +21,7 @@ export function InvestigationPane({ investigationId, wsMessages, onBack }: { inv
   const [evidence, setEvidence] = useState<Record<string, unknown>>({});
   const [report, setReport] = useState<unknown | null>(null);
   const [service, setService] = useState("");
+  const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
   const processedCount = useRef(0);
 
   // Determine if this investigation is active (has WS messages) or historical
@@ -100,6 +102,7 @@ export function InvestigationPane({ investigationId, wsMessages, onBack }: { inv
         setPhases([...DEFAULT_PHASES]);
         setEvidence({});
         setReport(null);
+        setTimelineEvents([]);
       }
       if (msg.type === "investigation:phase") {
         setPhases((prev) => prev.map((p) =>
@@ -108,6 +111,35 @@ export function InvestigationPane({ investigationId, wsMessages, onBack }: { inv
         if (msg.status === "complete" && msg.data) {
           setEvidence((prev) => ({ ...prev, [msg.phase]: msg.data }));
         }
+        setTimelineEvents((prev) => [...prev, {
+          type: "phase_change" as const,
+          phase: msg.phase,
+          status: msg.status as "running" | "complete" | "failed",
+          stats: msg.stats ? { toolCalls: msg.stats.toolCalls, iterations: msg.stats.iterations, durationMs: msg.stats.durationMs } : undefined,
+          timestamp: Date.now(),
+        }]);
+      }
+      if (msg.type === "investigation:tool_call") {
+        setTimelineEvents((prev) => [...prev, {
+          type: "tool_call",
+          phase: msg.phase,
+          tool: msg.tool,
+          args: msg.args,
+          status: msg.status,
+          result: msg.result,
+          durationMs: msg.durationMs,
+          timestamp: Date.now(),
+        }]);
+      }
+      if (msg.type === "investigation:iteration") {
+        setTimelineEvents((prev) => [...prev, {
+          type: "iteration",
+          phase: msg.phase,
+          iteration: msg.iteration,
+          maxIterations: msg.maxIterations,
+          description: msg.description,
+          timestamp: Date.now(),
+        }]);
       }
       if (msg.type === "investigation:progress") {
         setPhases((prev) => prev.map((p) =>
@@ -172,16 +204,7 @@ export function InvestigationPane({ investigationId, wsMessages, onBack }: { inv
                   </TabsContent>
                 </Tabs>
               ) : (
-                <div className="flex-1 overflow-y-auto p-4">
-                  {isRunning ? (
-                    <div className="text-xs text-muted-foreground/40 text-center py-8 font-mono">Activity timeline coming soon</div>
-                  ) : (
-                    <div className="space-y-2.5">
-                      <Skeleton className="h-6 w-40 rounded-md" />
-                      <Skeleton className="h-28 w-full rounded-lg" />
-                    </div>
-                  )}
-                </div>
+                <ActivityTimeline events={timelineEvents} />
               )}
             </div>
           }
