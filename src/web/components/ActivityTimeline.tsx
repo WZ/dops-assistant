@@ -27,40 +27,40 @@ function ToolCallEvent({ event }: { event: Extract<TimelineEvent, { type: "tool_
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="flex items-start gap-2.5 py-1.5 animate-fade-up">
-      <div className="mt-1 shrink-0">
+    <div className="flex items-start gap-2.5 py-1 animate-fade-up">
+      <div className="mt-1.5 shrink-0">
         {event.status === "calling" ? (
-          <div className="w-2 h-2 rounded-full bg-primary animate-status-pulse" />
+          <div className="w-1.5 h-1.5 rounded-full bg-primary animate-status-pulse" />
         ) : event.status === "success" ? (
-          <div className="w-2 h-2 rounded-full bg-success" />
+          <div className="w-1.5 h-1.5 rounded-full bg-success" />
         ) : (
-          <div className="w-2 h-2 rounded-full bg-destructive" />
+          <div className="w-1.5 h-1.5 rounded-full bg-destructive" />
         )}
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => setExpanded(!expanded)}
-            className="font-mono text-[11px] text-foreground/70 hover:text-primary transition-colors cursor-pointer"
+            className="font-mono text-[11px] text-foreground/60 hover:text-primary transition-colors cursor-pointer"
           >
             {event.tool}
           </button>
           {event.durationMs !== undefined && (
-            <span className={`text-[10px] font-mono ${durationColor(event.durationMs)}`}>
+            <span className={`text-[9px] font-mono ${durationColor(event.durationMs)}`}>
               {formatDuration(event.durationMs)}
             </span>
           )}
-          <span className="text-[9px] font-mono text-muted-foreground/25 ml-auto shrink-0">
+          <span className="text-[8px] font-mono text-muted-foreground/20 ml-auto shrink-0">
             {formatTimeAgo(event.timestamp)}
           </span>
         </div>
         {expanded && (
           <div className="mt-1.5 space-y-1 animate-fade-in">
-            <pre className="text-[10px] font-mono text-muted-foreground/40 bg-background/40 rounded p-2 overflow-x-auto border border-border/15">
+            <pre className="text-[10px] font-mono text-muted-foreground/35 bg-background/30 rounded p-2 overflow-x-auto border border-border/10">
               {JSON.stringify(event.args, null, 2)}
             </pre>
             {event.result && (
-              <pre className="text-[10px] font-mono text-muted-foreground/35 bg-background/40 rounded p-2 overflow-x-auto border border-border/15 max-h-24 overflow-y-auto">
+              <pre className="text-[10px] font-mono text-muted-foreground/30 bg-background/30 rounded p-2 overflow-x-auto border border-border/10 max-h-24 overflow-y-auto">
                 {event.result}
               </pre>
             )}
@@ -86,12 +86,12 @@ function IterationEvent({ event }: { event: Extract<TimelineEvent, { type: "iter
 function PhaseChangeEvent({ event }: { event: Extract<TimelineEvent, { type: "phase_change" }> }) {
   if (event.status === "running") {
     return (
-      <div className="flex items-center gap-2 py-2 animate-fade-up">
-        <div className="w-1 h-4 rounded-full bg-primary/50" />
-        <span className="text-[11px] font-display font-semibold text-primary/70 uppercase tracking-wide">
+      <div className="flex items-center gap-2 py-1.5 animate-fade-up">
+        <div className="w-0.5 h-3.5 rounded-full bg-primary/40" />
+        <span className="text-[10px] font-display font-semibold text-primary/60 uppercase tracking-[0.12em]">
           {event.phase}
         </span>
-        <div className="h-px flex-1 bg-primary/15" />
+        <div className="h-px flex-1 bg-primary/10" />
       </div>
     );
   }
@@ -101,15 +101,15 @@ function PhaseChangeEvent({ event }: { event: Extract<TimelineEvent, { type: "ph
     : "";
 
   return (
-    <div className="flex items-center gap-2 py-2 animate-fade-up">
-      <div className={`w-1 h-4 rounded-full ${event.status === "complete" ? "bg-success/50" : "bg-destructive/50"}`} />
-      <span className={`text-[11px] font-display font-semibold uppercase tracking-wide ${event.status === "complete" ? "text-success/70" : "text-destructive/70"}`}>
+    <div className="flex items-center gap-2 py-1.5 animate-fade-up">
+      <div className={`w-0.5 h-3.5 rounded-full ${event.status === "complete" ? "bg-success/40" : "bg-destructive/40"}`} />
+      <span className={`text-[10px] font-display font-semibold uppercase tracking-[0.12em] ${event.status === "complete" ? "text-success/60" : "text-destructive/60"}`}>
         {event.phase} {event.status === "complete" ? "\u2713" : "\u2717"}
       </span>
       {statsText && (
-        <span className="text-[9px] font-mono text-muted-foreground/30">{statsText}</span>
+        <span className="text-[8px] font-mono text-muted-foreground/25">{statsText}</span>
       )}
-      <div className="h-px flex-1 bg-border/15" />
+      <div className="h-px flex-1 bg-border/10" />
     </div>
   );
 }

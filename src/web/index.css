@@ -1,41 +1,71 @@
-@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=JetBrains+Mono:wght@400;500;600&display=swap');
 @import "tailwindcss";
 
 @layer base {
   :root {
-    /* Mission Control Dark — single dark theme */
-    --background: 225 50% 4%;
-    --foreground: 210 40% 92%;
-    --card: 222 30% 8%;
-    --card-foreground: 210 40% 92%;
-    --popover: 222 30% 10%;
-    --popover-foreground: 210 40% 92%;
-    --primary: 185 100% 50%;
-    --primary-foreground: 225 50% 4%;
-    --secondary: 222 20% 14%;
-    --secondary-foreground: 210 30% 75%;
-    --muted: 222 20% 12%;
-    --muted-foreground: 215 20% 50%;
-    --accent: 38 95% 55%;
-    --accent-foreground: 225 50% 4%;
-    --destructive: 0 75% 55%;
+    /* Warm Precision — Light */
+    --background: 48 20% 97%;
+    --foreground: 220 25% 14%;
+    --card: 0 0% 100%;
+    --card-foreground: 220 25% 14%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 25% 14%;
+    --primary: 192 75% 36%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 12% 93%;
+    --secondary-foreground: 220 15% 40%;
+    --muted: 45 10% 94%;
+    --muted-foreground: 220 10% 50%;
+    --accent: 28 90% 52%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 4 72% 50%;
     --destructive-foreground: 0 0% 98%;
-    --border: 222 18% 16%;
-    --input: 222 18% 16%;
-    --ring: 185 100% 50%;
-    --radius: 0.5rem;
-    --success: 155 80% 44%;
-    --success-foreground: 225 50% 4%;
-    --glow-cyan: 0 0 12px hsl(185 100% 50% / 0.35);
-    --glow-amber: 0 0 12px hsl(38 95% 55% / 0.3);
-    --glow-green: 0 0 12px hsl(155 80% 44% / 0.3);
-    --glow-red: 0 0 10px hsl(0 75% 55% / 0.25);
+    --border: 220 12% 88%;
+    --input: 220 12% 88%;
+    --ring: 192 75% 36%;
+    --radius: 0.625rem;
+    --success: 160 55% 38%;
+    --success-foreground: 0 0% 100%;
+    --glow-cyan: 0 0 10px hsl(192 75% 36% / 0.12);
+    --glow-amber: 0 0 10px hsl(28 90% 52% / 0.12);
+    --glow-green: 0 0 10px hsl(160 55% 38% / 0.12);
+    --glow-red: 0 0 10px hsl(4 72% 50% / 0.10);
+  }
+
+  .dark {
+    /* Deep Instrument — Dark */
+    --background: 228 35% 6%;
+    --foreground: 216 25% 88%;
+    --card: 225 28% 9%;
+    --card-foreground: 216 25% 88%;
+    --popover: 225 28% 11%;
+    --popover-foreground: 216 25% 88%;
+    --primary: 185 80% 48%;
+    --primary-foreground: 228 35% 6%;
+    --secondary: 225 18% 14%;
+    --secondary-foreground: 216 20% 68%;
+    --muted: 225 18% 12%;
+    --muted-foreground: 216 15% 48%;
+    --accent: 32 85% 55%;
+    --accent-foreground: 228 35% 6%;
+    --destructive: 0 68% 55%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 225 16% 17%;
+    --input: 225 16% 17%;
+    --ring: 185 80% 48%;
+    --radius: 0.625rem;
+    --success: 160 65% 42%;
+    --success-foreground: 228 35% 6%;
+    --glow-cyan: 0 0 14px hsl(185 80% 48% / 0.30);
+    --glow-amber: 0 0 14px hsl(32 85% 55% / 0.25);
+    --glow-green: 0 0 14px hsl(160 65% 42% / 0.25);
+    --glow-red: 0 0 12px hsl(0 68% 55% / 0.22);
   }
 }
 
 @theme inline {
-  --font-display: "Syne", sans-serif;
-  --font-body: "Instrument Sans", sans-serif;
+  --font-display: "Outfit", sans-serif;
+  --font-body: "DM Sans", sans-serif;
   --font-mono: "JetBrains Mono", monospace;
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
@@ -70,15 +100,16 @@
   }
   body {
     @apply bg-background text-foreground font-body antialiased;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
 }
 
-/* ── Grid texture background ── */
+/* ── Subtle dot-grid background ── */
 .bg-grid {
-  background-image:
-    linear-gradient(hsl(222 18% 16% / 0.4) 1px, transparent 1px),
-    linear-gradient(90deg, hsl(222 18% 16% / 0.4) 1px, transparent 1px);
-  background-size: 40px 40px;
+  background-image: radial-gradient(circle, hsl(var(--border) / 0.5) 1px, transparent 1px);
+  background-size: 24px 24px;
 }
 
 /* ── Glow utilities ── */
@@ -87,36 +118,20 @@
 .glow-green { box-shadow: var(--glow-green); }
 .glow-red { box-shadow: var(--glow-red); }
 
-/* ── Subtle scan-line overlay for active investigation ── */
-.scanlines::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    hsl(185 100% 50% / 0.015) 2px,
-    hsl(185 100% 50% / 0.015) 4px
-  );
-  pointer-events: none;
-  z-index: 1;
-}
-
-/* ── Noise texture ── */
+/* ── Noise texture — very subtle grain ── */
 .noise::before {
   content: "";
   position: absolute;
   inset: 0;
-  opacity: 0.03;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
   pointer-events: none;
   z-index: 0;
 }
 
 /* ── Entrance animations ── */
 @keyframes fade-up {
-  from { opacity: 0; transform: translateY(12px); }
+  from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
 @keyframes fade-in {
@@ -124,88 +139,146 @@
   to { opacity: 1; }
 }
 @keyframes slide-in-right {
-  from { opacity: 0; transform: translateX(16px); }
+  from { opacity: 0; transform: translateX(12px); }
   to { opacity: 1; transform: translateX(0); }
 }
 @keyframes glow-pulse {
-  0%, 100% { box-shadow: 0 0 8px hsl(185 100% 50% / 0.3); }
-  50% { box-shadow: 0 0 20px hsl(185 100% 50% / 0.55); }
+  0%, 100% { box-shadow: 0 0 6px hsl(var(--primary) / 0.25); }
+  50% { box-shadow: 0 0 16px hsl(var(--primary) / 0.45); }
 }
 @keyframes status-pulse {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  50% { opacity: 0.35; }
 }
-@keyframes typewriter-blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
 }
 
 .animate-fade-up {
-  animation: fade-up 0.5s ease-out both;
+  animation: fade-up 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
 }
 .animate-fade-in {
-  animation: fade-in 0.4s ease-out both;
+  animation: fade-in 0.35s ease-out both;
 }
 .animate-slide-in-right {
-  animation: slide-in-right 0.4s ease-out both;
+  animation: slide-in-right 0.35s ease-out both;
 }
 .animate-glow-pulse {
-  animation: glow-pulse 2s ease-in-out infinite;
+  animation: glow-pulse 2.5s ease-in-out infinite;
 }
 .animate-status-pulse {
-  animation: status-pulse 1.5s ease-in-out infinite;
+  animation: status-pulse 1.8s ease-in-out infinite;
 }
 
 /* ── Stagger delay utilities ── */
-.delay-1 { animation-delay: 0.05s; }
-.delay-2 { animation-delay: 0.1s; }
-.delay-3 { animation-delay: 0.15s; }
-.delay-4 { animation-delay: 0.2s; }
-.delay-5 { animation-delay: 0.25s; }
-.delay-6 { animation-delay: 0.3s; }
-.delay-7 { animation-delay: 0.35s; }
-.delay-8 { animation-delay: 0.4s; }
+.delay-1 { animation-delay: 0.04s; }
+.delay-2 { animation-delay: 0.08s; }
+.delay-3 { animation-delay: 0.12s; }
+.delay-4 { animation-delay: 0.16s; }
+.delay-5 { animation-delay: 0.20s; }
+.delay-6 { animation-delay: 0.24s; }
+.delay-7 { animation-delay: 0.28s; }
+.delay-8 { animation-delay: 0.32s; }
 
-/* ── Scrollbar styling ── */
+/* ── Scrollbar — refined and minimal ── */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: hsl(222 18% 22%);
-  border-radius: 3px;
+  background: hsl(var(--border));
+  border-radius: 999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(222 18% 30%);
+  background: hsl(var(--muted-foreground) / 0.35);
 }
 
-/* ── Custom input focus glow ── */
+/* ── Input focus — clean ring ── */
 input:focus, textarea:focus {
-  box-shadow: 0 0 0 1px hsl(185 100% 50% / 0.4), var(--glow-cyan);
+  box-shadow: 0 0 0 2px hsl(var(--primary) / 0.15);
+  outline: none;
 }
 
-/* ── Resizable handle styling ── */
+/* ── Resizable handles — hairline with accent on hover ── */
 [data-panel-group-direction="horizontal"] > [data-resize-handle] {
   width: 1px !important;
-  background: hsl(222 18% 16%);
-  transition: background 0.2s, box-shadow 0.2s;
+  background: hsl(var(--border));
+  transition: background 0.2s, width 0.2s;
 }
 [data-panel-group-direction="horizontal"] > [data-resize-handle]:hover,
 [data-panel-group-direction="horizontal"] > [data-resize-handle][data-resize-handle-active] {
-  background: hsl(185 100% 50% / 0.6);
-  box-shadow: 0 0 8px hsl(185 100% 50% / 0.3);
+  width: 2px !important;
+  background: hsl(var(--primary) / 0.5);
+}
+
+[data-panel-group-direction="vertical"] > [data-resize-handle] {
+  height: 1px !important;
+  background: hsl(var(--border));
+  transition: background 0.2s, height 0.2s;
+}
+[data-panel-group-direction="vertical"] > [data-resize-handle]:hover,
+[data-panel-group-direction="vertical"] > [data-resize-handle][data-resize-handle-active] {
+  height: 2px !important;
+  background: hsl(var(--primary) / 0.5);
 }
 
 /* ── React Flow overrides ── */
 .react-flow__controls button {
-  background: hsl(222 30% 10%) !important;
-  border: 1px solid hsl(222 18% 20%) !important;
-  color: hsl(210 40% 92%) !important;
-  fill: hsl(210 40% 92%) !important;
+  background: hsl(var(--card)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  color: hsl(var(--foreground)) !important;
+  fill: hsl(var(--foreground)) !important;
 }
 .react-flow__controls button:hover {
-  background: hsl(222 30% 14%) !important;
+  background: hsl(var(--secondary)) !important;
+}
+
+/* ── Report accent bar ── */
+.report-accent {
+  border-left: 3px solid hsl(var(--primary) / 0.4);
+  padding-left: 1rem;
+}
+.dark .report-accent {
+  border-left-color: hsl(var(--primary) / 0.3);
+}
+
+/* ── Phase stepper progress line fill ── */
+@keyframes line-fill {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+.phase-line-fill {
+  transform-origin: top;
+  animation: line-fill 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+}
+
+/* ── Card hover lift ── */
+.card-lift {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.card-lift:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px hsl(var(--foreground) / 0.06);
+}
+
+/* ── Indeterminate progress bar ── */
+@keyframes progress-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}
+.progress-bar-track {
+  height: 2px;
+  overflow: hidden;
+  background: hsl(var(--primary) / 0.08);
+}
+.progress-bar-fill {
+  width: 40%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, hsl(var(--primary) / 0.6), hsl(var(--primary)), hsl(var(--primary) / 0.6), transparent);
+  animation: progress-indeterminate 1.6s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+  border-radius: 2px;
 }

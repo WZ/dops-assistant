@@ -20,6 +20,14 @@ export interface PhaseRow {
   completed_at: string | null;
 }
 
+export interface EventRow {
+  id: string;
+  investigation_id: string;
+  event_type: string;
+  payload: string;
+  created_at: string;
+}
+
 export interface MessageRow {
   id: string;
   investigation_id: string | null;
@@ -62,6 +70,13 @@ export class Database {
         investigation_id  TEXT,
         role              TEXT NOT NULL,
         content           TEXT NOT NULL,
+        created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS investigation_events (
+        id                TEXT PRIMARY KEY,
+        investigation_id  TEXT NOT NULL REFERENCES investigations(id),
+        event_type        TEXT NOT NULL,
+        payload           TEXT NOT NULL,
         created_at        TEXT NOT NULL DEFAULT (datetime('now'))
       );
     `);
@@ -109,6 +124,14 @@ export class Database {
 
   getPhases(investigationId: string): PhaseRow[] {
     return this.db.prepare("SELECT * FROM investigation_phases WHERE investigation_id = ? ORDER BY started_at ASC").all(investigationId) as PhaseRow[];
+  }
+
+  createEvent(event: { id: string; investigationId: string; eventType: string; payload: string }): void {
+    this.db.prepare("INSERT INTO investigation_events (id, investigation_id, event_type, payload) VALUES (?, ?, ?, ?)").run(event.id, event.investigationId, event.eventType, event.payload);
+  }
+
+  getEvents(investigationId: string): EventRow[] {
+    return this.db.prepare("SELECT * FROM investigation_events WHERE investigation_id = ? ORDER BY created_at ASC, rowid ASC").all(investigationId) as EventRow[];
   }
 
   createMessage(msg: { id: string; role: string; content: string; investigationId?: string }): void {

@@ -1,15 +1,10 @@
 import { useEffect, useState, useRef } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { PhaseStepper, type PhaseState } from "./PhaseStepper";
 import { EvidenceCards } from "./EvidenceCards";
 import { RcaReport } from "./RcaReport";
-import { InvestigationLayout } from "./InvestigationLayout";
-import { ActivityTimeline, type TimelineEvent } from "./ActivityTimeline";
-import { DependencyGraph } from "./DependencyGraph";
-import { DeepInvestigationPane } from "./DeepInvestigationPane";
-import type { ClientMessage, ServerMessage } from "../../shared/ws-types.js";
+import type { TimelineEvent } from "./ActivityTimeline";
+import type { ServerMessage } from "../../shared/ws-types.js";
 
 const DEFAULT_PHASES: PhaseState[] = [
   { name: "planning", label: "Planning", status: "pending" },
@@ -19,7 +14,7 @@ const DEFAULT_PHASES: PhaseState[] = [
   { name: "synthesis", label: "Synthesis", status: "pending" },
 ];
 
-export function InvestigationPane({ investigationId, wsMessages, onBack, send }: { investigationId: string; wsMessages: ServerMessage[]; onBack: () => void; send: (msg: ClientMessage) => void }) {
+export function InvestigationPane({ investigationId, wsMessages, onBack }: { investigationId: string; wsMessages: ServerMessage[]; onBack: () => void }) {
   const [phases, setPhases] = useState<PhaseState[]>(DEFAULT_PHASES);
   const [evidence, setEvidence] = useState<Record<string, unknown>>({});
   const [report, setReport] = useState<unknown | null>(null);
@@ -43,7 +38,11 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, send }:
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
       })
-      .then((data: { investigation: { service: string; status: string; report: string | null }; phases: Array<{ phase: string; status: string; findings: string | null }> }) => {
+      .then((data: {
+        investigation: { service: string; status: string; report: string | null };
+        phases: Array<{ phase: string; status: string; findings: string | null }>;
+        events?: Array<{ event_type: string; payload: string; created_at: string }>;
+      }) => {
         if (cancelled) return;
         setService(data.investigation.service);
 
@@ -87,6 +86,25 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, send }:
 
         if (data.investigation.report) {
           try { setReport(JSON.parse(data.investigation.report)); } catch { /* ignore */ }
+        }
+
+        // Restore persisted timeline events
+        if (data.events && data.events.length > 0) {
+          const restored: TimelineEvent[] = [];
+          for (const row of data.events) {
+            try {
+              const payload = JSON.parse(row.payload);
+              const ts = new Date(row.created_at).getTime();
+              if (payload.type === "investigation:tool_call") {
+                restored.push({ type: "tool_call", phase: payload.phase, tool: payload.tool, args: payload.args ?? {}, status: payload.status, result: payload.result, durationMs: payload.durationMs, timestamp: ts });
+              } else if (payload.type === "investigation:iteration") {
+                restored.push({ type: "iteration", phase: payload.phase, iteration: payload.iteration, maxIterations: payload.maxIterations, description: payload.description, timestamp: ts });
+              } else if (payload.type === "investigation:phase") {
+                restored.push({ type: "phase_change", phase: payload.phase, status: payload.status, stats: payload.stats ? { toolCalls: payload.stats.toolCalls, iterations: payload.stats.iterations, durationMs: payload.stats.durationMs } : undefined, timestamp: ts });
+              }
+            } catch { /* ignore */ }
+          }
+          if (restored.length > 0) setTimelineEvents(restored);
         }
       })
       .catch(() => { /* silently fail */ });
@@ -151,7 +169,6 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, send }:
       }
       if (msg.type === "investigation:complete" && msg.id === investigationId) {
         setReport(msg.report);
-        // Extract evidence from report for live investigations
         const rpt = msg.report as Record<string, unknown> | null;
         if (rpt?.evidence) {
           const ev = rpt.evidence as Record<string, unknown>;
@@ -175,134 +192,73 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, send }:
 
   const isRunning = phases.some((p) => p.status === "running");
   const isComplete = !!report;
-  const [timelineOpen, setTimelineOpen] = useState(true);
-
-  // Auto-collapse timeline when investigation completes
-  useEffect(() => {
-    if (isComplete) setTimelineOpen(false);
-  }, [isComplete]);
-
-  // Auto-expand timeline when investigation starts
-  useEffect(() => {
-    if (isRunning) setTimelineOpen(true);
-  }, [isRunning]);
+  const hasEvidence = Object.keys(evidence).length > 0;
 
   return (
-    <div className={`h-full flex flex-col relative z-[2] ${isRunning ? "scanlines" : ""}`}>
-      {/* Header bar */}
-      <div className="px-4 py-2.5 border-b border-border/40 flex items-center justify-between shrink-0">
+    <div className="h-full flex flex-col overflow-hidden">
+      {/* Header */}
+      <div className="px-5 py-3 border-b border-border/40 flex items-center justify-between shrink-0">
         <button
           onClick={onBack}
-          className="flex items-center gap-1.5 text-xs font-mono text-muted-foreground/40 hover:text-primary/70 transition-colors group"
+          className="flex items-center gap-1.5 text-xs font-mono text-muted-foreground/60 hover:text-primary transition-colors group"
         >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="group-hover:-translate-x-0.5 transition-transform">
             <path d="M19 12H5"/><path d="m12 19-7-7 7-7"/>
           </svg>
           back
         </button>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           {service && (
             <>
-              <div className={`w-1.5 h-1.5 rounded-full ${isRunning ? "bg-primary animate-status-pulse" : "bg-success"}`} />
-              <span className="text-xs font-mono text-muted-foreground/50">{service}</span>
+              <div className={`w-2 h-2 rounded-full ${isRunning ? "bg-primary animate-status-pulse" : "bg-success"}`} />
+              <span className="text-sm font-mono font-medium text-foreground/70">{service}</span>
             </>
+          )}
+          {isRunning && (
+            <span className="text-[10px] font-mono text-primary/60 uppercase tracking-wider">investigating...</span>
           )}
         </div>
       </div>
 
-      {/* Three-panel layout */}
-      <div className="flex-1 min-h-0">
-        <InvestigationLayout
-          leftPanel={
-            <div className="p-4">
-              <h2 className="font-display text-sm font-bold tracking-tight text-foreground/90 mb-4">
-                Phases
-              </h2>
-              <PhaseStepper phases={phases} />
-            </div>
-          }
-          centerPanel={
-            <div className="h-full flex flex-col overflow-hidden">
-              {/* Activity Timeline — always visible, collapsible after completion */}
-              <Collapsible open={timelineOpen} onOpenChange={setTimelineOpen}>
-                <CollapsibleTrigger className="w-full px-4 py-2 border-b border-border/30 flex items-center justify-between hover:bg-secondary/20 transition-colors cursor-pointer shrink-0">
-                  <div className="flex items-center gap-2">
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" className={`transition-transform duration-200 text-muted-foreground/40 ${timelineOpen ? "rotate-90" : ""}`}>
-                      <path d="M8 5l8 7-8 7z"/>
-                    </svg>
-                    <span className="text-[11px] font-display font-semibold uppercase tracking-wide text-muted-foreground/50">
-                      Activity
-                    </span>
-                    {timelineEvents.length > 0 && (
-                      <span className="text-[9px] font-mono text-muted-foreground/30">
-                        {timelineEvents.filter((e) => e.type === "tool_call").length} calls
-                      </span>
-                    )}
-                  </div>
-                  {isRunning && (
-                    <div className="flex items-center gap-1">
-                      <div className="w-1.5 h-1.5 rounded-full bg-primary animate-status-pulse" />
-                      <span className="text-[9px] font-mono text-primary/50">live</span>
-                    </div>
-                  )}
-                </CollapsibleTrigger>
-                <CollapsibleContent className={`${isRunning ? "flex-1 min-h-0" : "max-h-[50vh]"} overflow-hidden`}>
-                  <ActivityTimeline events={timelineEvents} />
-                </CollapsibleContent>
-              </Collapsible>
+      {/* Progress bar — visible while running */}
+      {isRunning && (
+        <div className="progress-bar-track shrink-0">
+          <div className="progress-bar-fill" />
+        </div>
+      )}
 
-              {/* Report + Deep Dive section */}
-              <div className="flex-1 min-h-0 overflow-hidden">
-                {report ? (
-                  <Tabs defaultValue="report" className="h-full flex flex-col">
-                    <TabsList className="mx-4 mt-3 bg-secondary/30 border border-border/30 rounded-lg p-0.5 shrink-0">
-                      <TabsTrigger value="report" className="flex-1 text-[11px] font-mono">Report</TabsTrigger>
-                      <TabsTrigger value="deepdive" className="flex-1 text-[11px] font-mono">Deep Dive</TabsTrigger>
-                    </TabsList>
-                    <TabsContent value="report" className="flex-1 overflow-y-auto p-4 mt-0">
-                      <RcaReport report={report as any} />
-                    </TabsContent>
-                    <TabsContent value="deepdive" className="flex-1 overflow-hidden mt-0">
-                      <DeepInvestigationPane
-                        investigationId={investigationId}
-                        wsMessages={wsMessages}
-                        send={send}
-                      />
-                    </TabsContent>
-                  </Tabs>
-                ) : !isRunning ? (
-                  <div className="flex-1 flex items-center justify-center p-4">
-                    <div className="space-y-2.5 w-full">
-                      <Skeleton className="h-6 w-40 rounded-md" />
-                      <Skeleton className="h-28 w-full rounded-lg" />
-                    </div>
-                  </div>
-                ) : null}
-              </div>
+      {/* Scrollable content */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-4xl mx-auto px-5 py-6 space-y-6">
+
+          {/* Phase progress with merged activity */}
+          <section>
+            <PhaseStepper phases={phases} events={timelineEvents} evidence={evidence} isComplete={isComplete} />
+          </section>
+
+          {/* Report */}
+          {report ? (
+            <section className="animate-fade-up">
+              <RcaReport report={report as any} />
+            </section>
+          ) : !isRunning ? (
+            <div className="space-y-3">
+              <Skeleton className="h-6 w-48 rounded-md" />
+              <Skeleton className="h-32 w-full rounded-lg" />
             </div>
-          }
-          rightPanel={
-            <Tabs defaultValue="evidence" className="h-full flex flex-col">
-              <TabsList className="mx-4 mt-3 bg-secondary/30 border border-border/30 rounded-lg p-0.5 shrink-0">
-                <TabsTrigger value="evidence" className="flex-1 text-[11px] font-mono">Evidence</TabsTrigger>
-                <TabsTrigger value="dependencies" className="flex-1 text-[11px] font-mono">Dependencies</TabsTrigger>
-              </TabsList>
-              <TabsContent value="evidence" className="flex-1 overflow-y-auto p-4 mt-0">
-                {Object.keys(evidence).length === 0 ? (
-                  <div className="space-y-2.5">
-                    <Skeleton className="h-16 w-full rounded-lg" />
-                    <Skeleton className="h-16 w-full rounded-lg" />
-                  </div>
-                ) : (
-                  <EvidenceCards evidence={evidence as any} />
-                )}
-              </TabsContent>
-              <TabsContent value="dependencies" className="flex-1 overflow-hidden mt-0">
-                <DependencyGraph service={service} />
-              </TabsContent>
-            </Tabs>
-          }
-        />
+          ) : null}
+
+          {/* Evidence */}
+          {hasEvidence && (
+            <section>
+              <h3 className="text-[9px] font-display font-semibold uppercase tracking-[0.15em] text-muted-foreground/50 mb-3">
+                Evidence
+              </h3>
+              <EvidenceCards evidence={evidence as any} />
+            </section>
+          )}
+
+        </div>
       </div>
     </div>
   );
