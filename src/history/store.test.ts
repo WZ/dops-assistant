@@ -146,3 +146,59 @@ describe("getRecentIncidents", () => {
     expect(results[0]!.investigatedAt).toBe("2026-03-09T10:00:00Z");
   });
 });
+
+describe("pruning on write", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function writeIncident(record: IncidentRecord): void {
+    const dir = path.join(tmpDir, ".dops", "incidents", record.service);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, toFilename(record.investigatedAt)),
+      JSON.stringify(record, null, 2),
+    );
+  }
+
+  it("deletes files older than 30 days when saving", () => {
+    // Pre-seed an old incident (60 days ago)
+    const oldDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+    writeIncident(makeRecord({ investigatedAt: oldDate }));
+
+    // Save a new incident — should trigger prune
+    const newRecord = makeRecord({ investigatedAt: new Date().toISOString() });
+    saveIncident(newRecord, tmpDir);
+
+    const dir = path.join(tmpDir, ".dops", "incidents", "payments-api");
+    const files = fs.readdirSync(dir);
+    // Only the new file should remain (old one pruned)
+    expect(files).toHaveLength(1);
+    const content = JSON.parse(fs.readFileSync(path.join(dir, files[0]!), "utf-8"));
+    expect(new Date(content.investigatedAt).getTime()).toBeGreaterThan(
+      Date.now() - 31 * 24 * 60 * 60 * 1000,
+    );
+  });
+
+  it("keeps at most 10 files after saving", () => {
+    // Pre-seed 12 recent incidents (all within last 30 days)
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000).toISOString();
+      writeIncident(makeRecord({ investigatedAt: d }));
+    }
+
+    // Save a 13th incident — should trigger prune down to 10
+    const newRecord = makeRecord({ investigatedAt: new Date().toISOString() });
+    saveIncident(newRecord, tmpDir);
+
+    const dir = path.join(tmpDir, ".dops", "incidents", "payments-api");
+    const files = fs.readdirSync(dir);
+    expect(files.length).toBeLessThanOrEqual(10);
+  });
+});
