@@ -371,6 +371,36 @@ describe("InvestigationAgent", () => {
     expect(report.rootCause).toBe("DB connection pool exhausted");
     expect((llm.chat as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(6);
   });
+
+  it("injects recent incident history into planning prompt", async () => {
+    const { mkdtemp, writeFile, mkdir, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const pathMod = await import("node:path");
+    const tmpDir = await mkdtemp(pathMod.join(tmpdir(), "dops-test-"));
+
+    try {
+      const incDir = pathMod.join(tmpDir, ".dops", "incidents", "payments-api");
+      await mkdir(incDir, { recursive: true });
+      await writeFile(pathMod.join(incDir, "2026-03-08T10-00-00Z.json"), JSON.stringify({
+        service: "payments-api", severity: "high", summary: "Previous OOM incident",
+        rootCause: "Memory leak in v2.3", trigger: "deploy", confidence: "high",
+        investigatedAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+      }));
+
+      const llm = makeMockLlm([basePlanResponse, baseMetricFindings, baseLogFindings, baseInfraFindings, baseRcaReport, baseReflectionResponse]);
+      const agent = new InvestigationAgent(llm, mockMcp, { maxIterations: 20, projectRoot: tmpDir });
+      await agent.investigate(service, anomaly, "corr-history");
+
+      // Planning is call index 0
+      const chatCalls = (llm.chat as ReturnType<typeof vi.fn>).mock.calls;
+      const planCall = chatCalls[0]!;
+      const planUserMsg = planCall[0][1].content as string;
+      expect(planUserMsg).toContain("Recent incidents");
+      expect(planUserMsg).toContain("Previous OOM incident");
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("extractDashboardPanelHints", () => {
