@@ -21,7 +21,11 @@ export function useWebSocket() {
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data as string) as ServerMessage;
-        setMessages((prev) => [...prev, msg]);
+        setMessages((prev) => {
+          const next = [...prev, msg];
+          // Cap at 500 messages to prevent unbounded memory growth in long sessions
+          return next.length > 500 ? next.slice(-500) : next;
+        });
       } catch {
         /* ignore parse errors */
       }
