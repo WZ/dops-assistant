@@ -161,6 +161,13 @@
 .animate-fade-in {
   animation: fade-in 0.35s ease-out both;
 }
+@keyframes fade-in-fast {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in-fast {
+  animation: fade-in-fast 200ms ease-out both;
+}
 .animate-slide-in-right {
   animation: slide-in-right 0.35s ease-out both;
 }

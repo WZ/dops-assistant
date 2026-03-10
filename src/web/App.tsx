@@ -78,22 +78,24 @@ export function App() {
         <ResizablePanelGroup orientation="horizontal">
           <ResizablePanel defaultSize={60} minSize={30}>
             <div className="h-full bg-grid relative">
-              {leftPane.type === "dashboard" ? (
-                <Dashboard
-                  onInvestigationClick={(id) =>
-                    setLeftPane({ type: "investigation", id })
-                  }
-                  onInvestigateService={(serviceName) => {
-                    ws.send({ type: "chat", message: `investigate ${serviceName}` });
-                  }}
-                />
-              ) : (
-                <InvestigationPane
-                  investigationId={leftPane.id}
-                  wsMessages={ws.messages}
-                  onBack={() => setLeftPane({ type: "dashboard" })}
-                />
-              )}
+              <div key={leftPane.type === "investigation" ? `inv-${leftPane.id}` : "dashboard"} className="h-full animate-fade-in">
+                {leftPane.type === "dashboard" ? (
+                  <Dashboard
+                    onInvestigationClick={(id) =>
+                      setLeftPane({ type: "investigation", id })
+                    }
+                    onInvestigateService={(serviceName) => {
+                      ws.send({ type: "chat", message: `investigate ${serviceName}` });
+                    }}
+                  />
+                ) : (
+                  <InvestigationPane
+                    investigationId={leftPane.id}
+                    wsMessages={ws.messages}
+                    onBack={() => setLeftPane({ type: "dashboard" })}
+                  />
+                )}
+              </div>
             </div>
           </ResizablePanel>
           <ResizableHandle withHandle />

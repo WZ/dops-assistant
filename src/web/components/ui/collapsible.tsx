@@ -73,15 +73,18 @@ function CollapsibleContent({
 }: React.ComponentProps<"div">) {
   const { open } = useCollapsibleContext();
 
-  if (!open) return null;
-
   return (
     <div
-      data-state="open"
-      className={cn("", className)}
+      data-state={open ? "open" : "closed"}
+      className={cn(
+        "grid transition-[grid-template-rows,opacity] duration-300 ease-out",
+        open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+      )}
       {...props}
     >
-      {children}
+      <div className={cn("overflow-hidden", className)}>
+        {children}
+      </div>
     </div>
   );
 }

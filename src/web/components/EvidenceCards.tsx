@@ -1,5 +1,6 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { MetricChart, type TimeSeriesData } from "./MetricChart";
 
 /*
  * Evidence comes in two shapes:
@@ -18,6 +19,7 @@ interface EvidenceData {
   metrics?: { observations: Observation[]; summary?: string };
   logs?: { observations: Observation[]; summary?: string };
   infra?: { observations: Observation[]; summary?: string };
+  timeSeries?: TimeSeriesData[];
 }
 
 function isString(obs: Observation): obs is string {
@@ -69,6 +71,13 @@ export function EvidenceCards({ evidence }: { evidence: EvidenceData }) {
       </TabsList>
 
       <TabsContent value="metrics" className="space-y-2 mt-3">
+        {evidence.timeSeries && evidence.timeSeries.length > 0 && (
+          <div className="grid gap-2">
+            {evidence.timeSeries.map((ts, i) => (
+              <MetricChart key={`ts-${i}`} series={ts} />
+            ))}
+          </div>
+        )}
         {evidence.metrics?.observations.map((obs, i) =>
           isString(obs) ? (
             <StringEvidence key={i} text={obs} index={i} />
@@ -88,7 +97,7 @@ export function EvidenceCards({ evidence }: { evidence: EvidenceData }) {
             <StringEvidence key={i} text={JSON.stringify(obs)} index={i} />
           )
         )}
-        {mc === 0 && <p className="text-xs text-muted-foreground/35 py-4 text-center font-mono">No metric findings yet</p>}
+        {mc === 0 && (!evidence.timeSeries || evidence.timeSeries.length === 0) && <p className="text-xs text-muted-foreground/35 py-4 text-center font-mono">No metric findings yet</p>}
       </TabsContent>
 
       <TabsContent value="logs" className="space-y-2 mt-3">
