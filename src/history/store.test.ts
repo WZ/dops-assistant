@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { saveIncident, type IncidentRecord } from "./store.js";
+import { saveIncident, getRecentIncidents, toFilename, type IncidentRecord } from "./store.js";
 
 function makeTmpDir(): string {
   return fs.mkdtempSync(path.join(import.meta.dirname!, "tmp-test-"));
@@ -69,5 +69,80 @@ describe("saveIncident", () => {
     const dir = path.join(tmpDir, ".dops", "incidents", "new-service");
     expect(fs.existsSync(dir)).toBe(true);
     expect(fs.readdirSync(dir)).toHaveLength(1);
+  });
+});
+
+describe("getRecentIncidents", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function writeIncident(record: IncidentRecord): void {
+    const dir = path.join(tmpDir, ".dops", "incidents", record.service);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, toFilename(record.investigatedAt)),
+      JSON.stringify(record, null, 2),
+    );
+  }
+
+  it("returns incidents sorted newest-first", () => {
+    const older = makeRecord({ investigatedAt: "2026-03-07T10:00:00Z" });
+    const newer = makeRecord({ investigatedAt: "2026-03-09T10:00:00Z" });
+    writeIncident(older);
+    writeIncident(newer);
+
+    const results = getRecentIncidents("payments-api", tmpDir);
+    expect(results).toHaveLength(2);
+    expect(results[0]!.investigatedAt).toBe("2026-03-09T10:00:00Z");
+    expect(results[1]!.investigatedAt).toBe("2026-03-07T10:00:00Z");
+  });
+
+  it("returns at most 5 incidents", () => {
+    for (let i = 0; i < 7; i++) {
+      writeIncident(makeRecord({ investigatedAt: `2026-03-0${i + 1}T10:00:00Z` }));
+    }
+
+    const results = getRecentIncidents("payments-api", tmpDir);
+    expect(results).toHaveLength(5);
+    // newest first
+    expect(results[0]!.investigatedAt).toBe("2026-03-07T10:00:00Z");
+  });
+
+  it("returns empty array when directory does not exist", () => {
+    const results = getRecentIncidents("nonexistent-service", tmpDir);
+    expect(results).toEqual([]);
+  });
+
+  it("filters out incidents older than 30 days", () => {
+    const recent = makeRecord({ investigatedAt: new Date().toISOString() });
+    const old = makeRecord({ investigatedAt: "2025-01-01T10:00:00Z" });
+    writeIncident(recent);
+    writeIncident(old);
+
+    const results = getRecentIncidents("payments-api", tmpDir);
+    expect(results).toHaveLength(1);
+    expect(new Date(results[0]!.investigatedAt).getTime()).toBeGreaterThan(
+      Date.now() - 31 * 24 * 60 * 60 * 1000,
+    );
+  });
+
+  it("skips corrupted JSON files gracefully", () => {
+    const record = makeRecord({ investigatedAt: "2026-03-09T10:00:00Z" });
+    writeIncident(record);
+
+    // Write a corrupted file
+    const dir = path.join(tmpDir, ".dops", "incidents", "payments-api");
+    fs.writeFileSync(path.join(dir, "corrupted.json"), "not valid json{{{");
+
+    const results = getRecentIncidents("payments-api", tmpDir);
+    expect(results).toHaveLength(1);
+    expect(results[0]!.investigatedAt).toBe("2026-03-09T10:00:00Z");
   });
 });
