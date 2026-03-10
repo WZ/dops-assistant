@@ -93,7 +93,7 @@ function TabsContent({
       role="tabpanel"
       data-state="active"
       className={cn(
-        "mt-2 ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+        "mt-2 ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 animate-fade-in-fast",
         className,
       )}
       {...props}

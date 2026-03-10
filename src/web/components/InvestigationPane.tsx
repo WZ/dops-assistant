@@ -1,9 +1,10 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PhaseStepper, type PhaseState } from "./PhaseStepper";
 import { EvidenceCards } from "./EvidenceCards";
 import { RcaReport } from "./RcaReport";
 import type { TimelineEvent } from "./ActivityTimeline";
+import type { TimeSeriesData } from "./MetricChart";
 import type { ServerMessage } from "../../shared/ws-types.js";
 
 const DEFAULT_PHASES: PhaseState[] = [
@@ -192,7 +193,34 @@ export function InvestigationPane({ investigationId, wsMessages, onBack }: { inv
 
   const isRunning = phases.some((p) => p.status === "running");
   const isComplete = !!report;
-  const hasEvidence = Object.keys(evidence).length > 0;
+
+  // Extract time-series data from query_prometheus tool call results
+  const timeSeries = useMemo<TimeSeriesData[]>(() => {
+    const series: TimeSeriesData[] = [];
+    for (const evt of timelineEvents) {
+      if (evt.type !== "tool_call" || evt.tool !== "query_prometheus" || evt.status !== "success" || !evt.result) continue;
+      try {
+        const parsed = JSON.parse(evt.result);
+        const items = parsed?.data ?? parsed;
+        if (!Array.isArray(items)) continue;
+        for (const item of items) {
+          if (item.values && Array.isArray(item.values) && item.values.length >= 2) {
+            series.push({
+              metric: item.m ?? "unknown",
+              instance: item.instance,
+              values: item.values.map(([ts, v]: [string, string | number]) => [ts, typeof v === "string" ? parseFloat(v) : v]),
+              min: item.min != null ? parseFloat(item.min) : undefined,
+              max: item.max != null ? parseFloat(item.max) : undefined,
+              avg: item.avg != null ? parseFloat(item.avg) : undefined,
+            });
+          }
+        }
+      } catch { /* ignore unparseable results */ }
+    }
+    return series;
+  }, [timelineEvents]);
+
+  const hasEvidence = Object.keys(evidence).length > 0 || timeSeries.length > 0;
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -254,7 +282,7 @@ export function InvestigationPane({ investigationId, wsMessages, onBack }: { inv
               <h3 className="text-[9px] font-display font-semibold uppercase tracking-[0.15em] text-muted-foreground/50 mb-3">
                 Evidence
               </h3>
-              <EvidenceCards evidence={evidence as any} />
+              <EvidenceCards evidence={{ ...evidence, timeSeries } as any} />
             </section>
           )}
 

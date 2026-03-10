@@ -211,12 +211,13 @@ export function ChatPane({ ws, onInvestigationStarted, activeInvestigationId }: 
       {/* Deep mode shortcut chips — always visible */}
       {isDeepMode && (
         <div className="px-3 pt-2 flex flex-wrap gap-1.5">
-          {DEEP_DIVE_PROMPTS.map((prompt) => (
+          {DEEP_DIVE_PROMPTS.map((prompt, i) => (
             <button
               key={prompt}
+              style={{ animationDelay: `${i * 0.03}s` }}
               onClick={() => handleSubmit(prompt)}
               disabled={deepLoading || status !== "connected"}
-              className="px-2.5 py-1 text-[10px] font-mono rounded-full border border-accent/25 text-accent/70 hover:bg-accent/10 hover:border-accent/40 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              className="px-2.5 py-1 text-[10px] font-mono rounded-full border border-accent/25 text-accent/70 hover:bg-accent/10 hover:border-accent/40 transition-colors disabled:opacity-30 disabled:cursor-not-allowed animate-fade-in"
             >
               {prompt}
             </button>
