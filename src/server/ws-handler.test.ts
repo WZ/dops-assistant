@@ -11,6 +11,7 @@ function mockDeps(): WsDeps {
       createPhase: vi.fn(),
       updatePhase: vi.fn(),
       createMessage: vi.fn(),
+      createEvent: vi.fn(),
       getInvestigation: vi.fn(),
       getPhases: vi.fn(() => []),
     },
@@ -125,6 +126,7 @@ describe("handleClientMessage — enriched events", () => {
     const mockDeps = {
       db: {
         createMessage: vi.fn(),
+        createEvent: vi.fn(),
         createInvestigation: vi.fn(),
         updateInvestigation: vi.fn(),
         getInvestigation: vi.fn(),
@@ -181,6 +183,7 @@ describe("handleClientMessage — enriched events", () => {
     const mockDeps = {
       db: {
         createMessage: vi.fn(),
+        createEvent: vi.fn(),
         createInvestigation: vi.fn(),
         updateInvestigation: vi.fn(),
         getInvestigation: vi.fn(() => ({
@@ -230,6 +233,7 @@ describe("handleClientMessage — enriched events", () => {
         getInvestigation: vi.fn(() => undefined),
         getPhases: vi.fn(() => []),
         createMessage: vi.fn(),
+        createEvent: vi.fn(),
         createInvestigation: vi.fn(),
         updateInvestigation: vi.fn(),
         createPhase: vi.fn(),
