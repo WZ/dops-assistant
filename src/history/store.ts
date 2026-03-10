@@ -20,7 +20,8 @@ export function toFilename(isoDate: string): string {
 }
 
 function incidentDir(projectRoot: string, service: string): string {
-  return path.join(projectRoot, ".dops", "incidents", service);
+  const sanitized = service.replace(/[^a-zA-Z0-9_-]/g, "_");
+  return path.join(projectRoot, ".dops", "incidents", sanitized);
 }
 
 // ── saveIncident ────────────────────────────────────────────────────────────
