@@ -84,7 +84,7 @@ function truncateToolResponse(text: string, toolName: string): string {
       if (Array.isArray(results) && results.length > 0) {
         const compact = results.slice(0, 30).map((r: { metric: Record<string, string>; value?: [number, string]; values?: Array<[number, string]> }) => {
           const { __name__, job, instance, ...rest } = r.metric;
-          const key = __name__ ?? Object.values(rest).join("/") ?? "unknown";
+          const key = __name__ || Object.values(rest).filter(Boolean).join("/") || "";
           if (r.value) {
             return { m: key, instance, v: r.value[1], t: r.value[0] };
           }
@@ -1470,7 +1470,9 @@ export class InvestigationAgent {
         const call = calls[j]!;
         if (outcome.status === "fulfilled") {
           const text = truncateToolResponse(outcome.value.result.text, call.name);
-          onToolCall?.(call.name, call.args, text.slice(0, 200), outcome.value.durationMs);
+          const QUERY_TOOLS = new Set(["query_prometheus", "query_loki_logs"]);
+          const resultPreview = QUERY_TOOLS.has(call.name) ? text.slice(0, 8000) : text.slice(0, 200);
+          onToolCall?.(call.name, call.args, resultPreview, outcome.value.durationMs);
           messages.push({
             role: "tool",
             content: text,

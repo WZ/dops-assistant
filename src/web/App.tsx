@@ -105,6 +105,9 @@ export function App() {
               onInvestigationStarted={(id) =>
                 setLeftPane({ type: "investigation", id })
               }
+              onViewInvestigation={(id) =>
+                setLeftPane({ type: "investigation", id })
+              }
               activeInvestigationId={leftPane.type === "investigation" ? leftPane.id : undefined}
             />
           </ResizablePanel>
