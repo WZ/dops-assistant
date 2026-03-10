@@ -33,6 +33,8 @@ export function saveIncident(record: IncidentRecord, projectRoot: string): void 
 
   const filename = toFilename(record.investigatedAt);
   fs.writeFileSync(path.join(dir, filename), JSON.stringify(record, null, 2));
+
+  pruneIncidents(dir);
 }
 
 // ── getRecentIncidents ──────────────────────────────────────────────────────
@@ -70,4 +72,47 @@ export function getRecentIncidents(
   );
 
   return records.slice(0, MAX_RECENT);
+}
+
+// ── Pruning ─────────────────────────────────────────────────────────────────
+
+const MAX_FILES = 10;
+
+function pruneIncidents(dir: string): void {
+  if (!fs.existsSync(dir)) return;
+
+  const now = Date.now();
+
+  // Read all files with their parsed dates from file content
+  type FileEntry = { file: string; investigatedAt: number };
+  const entries: FileEntry[] = [];
+
+  for (const file of fs.readdirSync(dir)) {
+    if (!file.endsWith(".json")) continue;
+    const filePath = path.join(dir, file);
+    try {
+      const raw = fs.readFileSync(filePath, "utf-8");
+      const record: IncidentRecord = JSON.parse(raw);
+      const ts = new Date(record.investigatedAt).getTime();
+      const age = now - ts;
+
+      // Delete files older than 30 days
+      if (age > MAX_AGE_MS) {
+        fs.unlinkSync(filePath);
+        continue;
+      }
+
+      entries.push({ file, investigatedAt: ts });
+    } catch {
+      // skip corrupted files during pruning
+    }
+  }
+
+  // If still over the cap, delete oldest files
+  if (entries.length > MAX_FILES) {
+    entries.sort((a, b) => b.investigatedAt - a.investigatedAt);
+    for (const entry of entries.slice(MAX_FILES)) {
+      fs.unlinkSync(path.join(dir, entry.file));
+    }
+  }
 }
