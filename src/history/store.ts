@@ -116,3 +116,23 @@ function pruneIncidents(dir: string): void {
     }
   }
 }
+
+// ── formatIncidentHistory ───────────────────────────────────────────────────
+
+function relativeDate(isoDate: string): string {
+  const days = Math.floor((Date.now() - new Date(isoDate).getTime()) / (24 * 60 * 60 * 1000));
+  if (days < 1) return "today";
+  if (days === 1) return "1 day ago";
+  return `${days} days ago`;
+}
+
+export function formatIncidentHistory(records: IncidentRecord[]): string {
+  if (records.length === 0) return "";
+
+  return records
+    .map(
+      (r) =>
+        `- ${relativeDate(r.investigatedAt)} [${r.severity}] ${r.summary} (root cause: ${r.rootCause})`,
+    )
+    .join("\n");
+}

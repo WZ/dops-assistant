@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { saveIncident, getRecentIncidents, toFilename, type IncidentRecord } from "./store.js";
+import { saveIncident, getRecentIncidents, formatIncidentHistory, toFilename, type IncidentRecord } from "./store.js";
 
 function makeTmpDir(): string {
   return fs.mkdtempSync(path.join(import.meta.dirname!, "tmp-test-"));
@@ -200,5 +200,61 @@ describe("pruning on write", () => {
     const dir = path.join(tmpDir, ".dops", "incidents", "payments-api");
     const files = fs.readdirSync(dir);
     expect(files.length).toBeLessThanOrEqual(10);
+  });
+});
+
+describe("formatIncidentHistory", () => {
+  it("formats records as prompt-ready text with relative dates", () => {
+    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+    const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
+    const records: IncidentRecord[] = [
+      makeRecord({
+        investigatedAt: twoDaysAgo,
+        severity: "high",
+        summary: "DB pool exhaustion",
+        rootCause: "Connection leak",
+      }),
+      makeRecord({
+        investigatedAt: fiveDaysAgo,
+        severity: "critical",
+        summary: "Full outage",
+        rootCause: "Disk full",
+      }),
+    ];
+
+    const result = formatIncidentHistory(records);
+
+    expect(result).toContain("2 days ago");
+    expect(result).toContain("[high]");
+    expect(result).toContain("DB pool exhaustion");
+    expect(result).toContain("(root cause: Connection leak)");
+    expect(result).toContain("5 days ago");
+    expect(result).toContain("[critical]");
+    expect(result).toContain("Full outage");
+    expect(result).toContain("(root cause: Disk full)");
+  });
+
+  it("returns empty string when no records", () => {
+    expect(formatIncidentHistory([])).toBe("");
+  });
+
+  it("shows 'today' for incidents less than 1 day old", () => {
+    const now = new Date().toISOString();
+    const records: IncidentRecord[] = [
+      makeRecord({ investigatedAt: now, summary: "Recent issue", rootCause: "Bug" }),
+    ];
+
+    const result = formatIncidentHistory(records);
+    expect(result).toContain("today");
+  });
+
+  it("shows '1 day ago' for incidents exactly 1 day old", () => {
+    const oneDayAgo = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString();
+    const records: IncidentRecord[] = [
+      makeRecord({ investigatedAt: oneDayAgo, summary: "Yesterday issue", rootCause: "Config" }),
+    ];
+
+    const result = formatIncidentHistory(records);
+    expect(result).toContain("1 day ago");
   });
 });
