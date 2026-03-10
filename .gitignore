@@ -16,5 +16,8 @@ dev/
 *.log
 logs/
 
+# Local incident history
+.dops/
+
 # Design/plan docs (internal)
 docs/plans/

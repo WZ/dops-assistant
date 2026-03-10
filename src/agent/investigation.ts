@@ -372,7 +372,7 @@ export class InvestigationAgent {
   private readonly llm: LlmClient;
   private readonly mcp: MultiMcpClient;
   private readonly maxIterations: number;
-  private projectRoot?: string;
+  private readonly projectRoot?: string;
 
   constructor(llm: LlmClient, mcp: MultiMcpClient, opts: { maxIterations: number; projectRoot?: string }) {
     this.llm = llm;
