@@ -445,7 +445,7 @@ export class InvestigationAgent {
         panelImages: collectedImages,
         recommendedActions: [],
         confidence: "high",
-        investigatedAt: new Date().toLocaleString(),
+        investigatedAt: new Date().toISOString(),
       };
     }
 
