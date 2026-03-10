@@ -1,4 +1,4 @@
-import * as fs from "node:fs";
+import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -16,7 +16,7 @@ export type IncidentRecord = {
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 export function toFilename(isoDate: string): string {
-  return isoDate.replace(/:/g, "-") + ".json";
+  return isoDate.replace(/\.\d+/, "").replace(/:/g, "-") + ".json";
 }
 
 function incidentDir(projectRoot: string, service: string): string {
@@ -25,16 +25,16 @@ function incidentDir(projectRoot: string, service: string): string {
 
 // ── saveIncident ────────────────────────────────────────────────────────────
 
-export function saveIncident(record: IncidentRecord, projectRoot: string): void {
+export async function saveIncident(projectRoot: string, record: IncidentRecord): Promise<void> {
   if (record.severity === "low") return;
 
   const dir = incidentDir(projectRoot, record.service);
-  fs.mkdirSync(dir, { recursive: true });
+  await fsp.mkdir(dir, { recursive: true });
 
   const filename = toFilename(record.investigatedAt);
-  fs.writeFileSync(path.join(dir, filename), JSON.stringify(record, null, 2));
+  await fsp.writeFile(path.join(dir, filename), JSON.stringify(record, null, 2));
 
-  pruneIncidents(dir);
+  await pruneIncidents(dir);
 }
 
 // ── getRecentIncidents ──────────────────────────────────────────────────────
@@ -42,20 +42,26 @@ export function saveIncident(record: IncidentRecord, projectRoot: string): void 
 const MAX_RECENT = 5;
 const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
-export function getRecentIncidents(
-  service: string,
+export async function getRecentIncidents(
   projectRoot: string,
-): IncidentRecord[] {
+  service: string,
+): Promise<IncidentRecord[]> {
   const dir = incidentDir(projectRoot, service);
-  if (!fs.existsSync(dir)) return [];
+
+  let files: string[];
+  try {
+    files = await fsp.readdir(dir);
+  } catch {
+    return [];
+  }
 
   const now = Date.now();
   const records: IncidentRecord[] = [];
 
-  for (const file of fs.readdirSync(dir)) {
+  for (const file of files) {
     if (!file.endsWith(".json")) continue;
     try {
-      const raw = fs.readFileSync(path.join(dir, file), "utf-8");
+      const raw = await fsp.readFile(path.join(dir, file), "utf-8");
       const record: IncidentRecord = JSON.parse(raw);
       const age = now - new Date(record.investigatedAt).getTime();
       if (age <= MAX_AGE_MS) {
@@ -78,8 +84,13 @@ export function getRecentIncidents(
 
 const MAX_FILES = 10;
 
-function pruneIncidents(dir: string): void {
-  if (!fs.existsSync(dir)) return;
+async function pruneIncidents(dir: string): Promise<void> {
+  let files: string[];
+  try {
+    files = await fsp.readdir(dir);
+  } catch {
+    return;
+  }
 
   const now = Date.now();
 
@@ -87,52 +98,60 @@ function pruneIncidents(dir: string): void {
   type FileEntry = { file: string; investigatedAt: number };
   const entries: FileEntry[] = [];
 
-  for (const file of fs.readdirSync(dir)) {
+  for (const file of files) {
     if (!file.endsWith(".json")) continue;
     const filePath = path.join(dir, file);
+    let ts: number;
     try {
-      const raw = fs.readFileSync(filePath, "utf-8");
+      const raw = await fsp.readFile(filePath, "utf-8");
       const record: IncidentRecord = JSON.parse(raw);
-      const ts = new Date(record.investigatedAt).getTime();
-      const age = now - ts;
-
-      // Delete files older than 30 days
-      if (age > MAX_AGE_MS) {
-        fs.unlinkSync(filePath);
-        continue;
-      }
-
-      entries.push({ file, investigatedAt: ts });
+      ts = new Date(record.investigatedAt).getTime();
     } catch {
-      // skip corrupted files during pruning
+      // Corrupted files get epoch-zero so they are cleaned up by age cutoff
+      ts = new Date(0).getTime();
     }
+
+    const age = now - ts;
+
+    // Delete files older than 30 days
+    if (age > MAX_AGE_MS) {
+      await fsp.unlink(filePath);
+      continue;
+    }
+
+    entries.push({ file, investigatedAt: ts });
   }
 
   // If still over the cap, delete oldest files
   if (entries.length > MAX_FILES) {
     entries.sort((a, b) => b.investigatedAt - a.investigatedAt);
     for (const entry of entries.slice(MAX_FILES)) {
-      fs.unlinkSync(path.join(dir, entry.file));
+      await fsp.unlink(path.join(dir, entry.file));
     }
   }
 }
 
 // ── formatIncidentHistory ───────────────────────────────────────────────────
 
-function relativeDate(isoDate: string): string {
-  const days = Math.floor((Date.now() - new Date(isoDate).getTime()) / (24 * 60 * 60 * 1000));
+function relativeDate(isoDate: string, now: Date): string {
+  const days = Math.floor((now.getTime() - new Date(isoDate).getTime()) / (24 * 60 * 60 * 1000));
   if (days < 1) return "today";
   if (days === 1) return "1 day ago";
   return `${days} days ago`;
 }
 
-export function formatIncidentHistory(records: IncidentRecord[]): string {
+export function formatIncidentHistory(records: IncidentRecord[], now: Date = new Date()): string {
   if (records.length === 0) return "";
 
-  return records
+  const header = "Recent incidents for this service (last 30 days):";
+  const footer = "\nConsider whether the current anomaly is a recurrence or related to a previous root cause.";
+
+  const lines = records
     .map(
       (r) =>
-        `- ${relativeDate(r.investigatedAt)} [${r.severity}] ${r.summary} (root cause: ${r.rootCause})`,
+        `- ${relativeDate(r.investigatedAt, now)} [${r.severity}] ${r.summary} (root cause: ${r.rootCause})`,
     )
     .join("\n");
+
+  return header + "\n" + lines + footer;
 }
