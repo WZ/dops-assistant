@@ -23,6 +23,21 @@ import { GrafanaLokiAdapter } from "../mcp/adapters/grafana-loki.js";
 import type { LogProviderAdapter } from "../mcp/adapters/types.js";
 import pino from "pino";
 
+export type OnToolCallEnriched = (
+  name: string,
+  args: Record<string, unknown>,
+  result?: string,
+  durationMs?: number,
+  error?: string,
+) => void;
+
+export type OnIteration = (
+  phase: string,
+  iteration: number,
+  maxIterations: number,
+  description: string,
+) => void;
+
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
 
 const MAX_TOOL_RESPONSE_CHARS = 1500;
@@ -69,7 +84,7 @@ function truncateToolResponse(text: string, toolName: string): string {
       if (Array.isArray(results) && results.length > 0) {
         const compact = results.slice(0, 30).map((r: { metric: Record<string, string>; value?: [number, string]; values?: Array<[number, string]> }) => {
           const { __name__, job, instance, ...rest } = r.metric;
-          const key = __name__ ?? Object.values(rest).join("/") ?? "unknown";
+          const key = __name__ || Object.values(rest).filter(Boolean).join("/") || "";
           if (r.value) {
             return { m: key, instance, v: r.value[1], t: r.value[0] };
           }
@@ -384,8 +399,9 @@ export class InvestigationAgent {
     correlationId?: string,
     onTokenUsage?: (usage: TokenUsage) => void,
     userMessage?: string,
-    onToolCall?: (name: string, args: Record<string, unknown>) => void,
+    onToolCall?: OnToolCallEnriched,
     onPhase?: (phase: string) => void,
+    onIteration?: OnIteration,
   ): Promise<RcaReport> {
     const log = logger.child({ component: "investigation", service: service.name, correlationId });
     const collectedImages: PanelImage[] = [];
@@ -420,6 +436,11 @@ export class InvestigationAgent {
         7,
         onTokenUsage,
         onToolCall,
+        true,
+        undefined,
+        undefined,
+        onIteration,
+        "planning",
       );
       anomaly = result.parsed;
       collectedImages.push(...result.images);
@@ -468,6 +489,9 @@ export class InvestigationAgent {
       onToolCall,
       false, // planning is pure reasoning, no tools needed
       PLAN_MAX_TOKENS,
+      undefined,
+      onIteration,
+      "planning",
     );
     const plan: InvestigationPlan = {
       hypotheses: planResult.parsed?.hypotheses ?? [],
@@ -476,6 +500,20 @@ export class InvestigationAgent {
       infraFocus: planResult.parsed?.infraFocus ?? [],
     };
     log.debug({ hypotheses: plan.hypotheses.length }, "Investigation plan created");
+
+    // Emit plan hypotheses so the UI can show them
+    if (plan.hypotheses.length > 0) {
+      const hypothesisText = plan.hypotheses.map((h) => `${h.hypothesis} → ${h.evidenceNeeded}`).join(" | ");
+      onIteration?.("planning", 0, 1, `Hypotheses: ${hypothesisText}`);
+    }
+    if (plan.metricFocus.length > 0 || plan.logFocus.length > 0 || plan.infraFocus.length > 0) {
+      const focusItems = [
+        ...plan.metricFocus.map((f) => `metric: ${f}`),
+        ...plan.logFocus.map((f) => `log: ${f}`),
+        ...plan.infraFocus.map((f) => `infra: ${f}`),
+      ];
+      onIteration?.("planning", 0, 1, `Focus: ${focusItems.join(", ")}`);
+    }
 
     // Phases 2/3/4 + panel capture in parallel
     onPhase?.("Analyzing metrics, logs & infrastructure");
@@ -544,9 +582,9 @@ export class InvestigationAgent {
     const EVIDENCE_ITERATIONS = 6;
 
     const [metricResult, logResult, infraResult, panelCaptureResult] = await Promise.allSettled([
-      this.runPhase<MetricFindings>(metricPrompt, metricMessageFull, METRIC_FINDINGS_SCHEMA, EVIDENCE_ITERATIONS, onTokenUsage, onToolCall, true, EVIDENCE_MAX_TOKENS, EVIDENCE_TIMEOUT_MS),
-      this.runPhase<LogFindings>(logPrompt, logMessageFull, LOG_FINDINGS_SCHEMA, EVIDENCE_ITERATIONS, onTokenUsage, onToolCall, true, EVIDENCE_MAX_TOKENS, EVIDENCE_TIMEOUT_MS),
-      this.runPhase<InfraFindings>(infraPrompt, infraMessageFull, INFRA_FINDINGS_SCHEMA, EVIDENCE_ITERATIONS, onTokenUsage, onToolCall, true, EVIDENCE_MAX_TOKENS, EVIDENCE_TIMEOUT_MS),
+      this.runPhase<MetricFindings>(metricPrompt, metricMessageFull, METRIC_FINDINGS_SCHEMA, EVIDENCE_ITERATIONS, onTokenUsage, onToolCall, true, EVIDENCE_MAX_TOKENS, EVIDENCE_TIMEOUT_MS, onIteration, "metrics"),
+      this.runPhase<LogFindings>(logPrompt, logMessageFull, LOG_FINDINGS_SCHEMA, EVIDENCE_ITERATIONS, onTokenUsage, onToolCall, true, EVIDENCE_MAX_TOKENS, EVIDENCE_TIMEOUT_MS, onIteration, "logs"),
+      this.runPhase<InfraFindings>(infraPrompt, infraMessageFull, INFRA_FINDINGS_SCHEMA, EVIDENCE_ITERATIONS, onTokenUsage, onToolCall, true, EVIDENCE_MAX_TOKENS, EVIDENCE_TIMEOUT_MS, onIteration, "infra"),
       this.capturePanelImages(service.name, anomaly.summary, userMessage, onToolCall),
     ]);
 
@@ -704,6 +742,8 @@ export class InvestigationAgent {
         false, // synthesis is pure reasoning, no tools needed
         SYNTHESIS_MAX_TOKENS,
         REASONING_TIMEOUT_MS,
+        onIteration,
+        "synthesis",
       );
       collectedImages.push(...synthesisResult.images);
     } catch (err) {
@@ -728,6 +768,8 @@ export class InvestigationAgent {
           false,
           SYNTHESIS_MAX_TOKENS,
           REASONING_TIMEOUT_MS,
+          onIteration,
+          "synthesis",
         );
         if (!nonConclusivePattern.test(retryResult.parsed.rootCause ?? "")) {
           log.info({ rootCause: retryResult.parsed.rootCause?.slice(0, 80) }, "Synthesis retry produced conclusive root cause");
@@ -737,6 +779,14 @@ export class InvestigationAgent {
       } catch (err) {
         log.warn({ err }, "Synthesis retry failed, keeping original");
       }
+    }
+
+    // Emit synthesis summary so the UI can show it
+    if (synthesisResult.parsed.rootCause) {
+      onIteration?.("synthesis", 0, 1, `Root cause: ${synthesisResult.parsed.rootCause}`);
+    }
+    if (synthesisResult.parsed.trigger) {
+      onIteration?.("synthesis", 0, 1, `Trigger: ${synthesisResult.parsed.trigger}`);
     }
 
     // Phase 6: Reflection
@@ -763,6 +813,8 @@ export class InvestigationAgent {
         false, // reflection is pure reasoning, no tools needed
         REFLECTION_MAX_TOKENS,
         REASONING_TIMEOUT_MS,
+        onIteration,
+        "synthesis",
       );
     } catch (err) {
       log.error({ err }, "Reflection phase failed, skipping corrections");
@@ -1242,10 +1294,12 @@ export class InvestigationAgent {
     responseFormat: ResponseFormat,
     maxIterations = this.maxIterations,
     onTokenUsage?: (usage: TokenUsage) => void,
-    onToolCall?: (name: string, args: Record<string, unknown>) => void,
+    onToolCall?: OnToolCallEnriched,
     useTools = true,
     maxOutputTokens?: number,
     timeoutMs?: number,
+    onIteration?: OnIteration,
+    phaseName?: string,
   ): Promise<PhaseResult<T>> {
     // Dynamically exclude pre-fetched tools — only exclude tools from providers that are present.
     // Must handle both original names and collision-prefixed names (e.g. "provider__tool_name").
@@ -1279,6 +1333,7 @@ export class InvestigationAgent {
     const midpoint = Math.floor(maxIterations * 0.6);
 
     for (let i = 0; i < maxIterations; i++) {
+      onIteration?.(phaseName ?? "unknown", i, maxIterations, `Iteration ${i + 1}/${maxIterations}`);
       const isLastIteration = i === maxIterations - 1;
       // Last 2 iterations: withhold tools to force JSON output
       const isWindDown = i >= maxIterations - 2;
@@ -1399,23 +1454,34 @@ export class InvestigationAgent {
         calls.map((call) => {
           onToolCall?.(call.name, call.args);
           logger.debug({ toolName: call.name, isImageTool: call.name === "get_panel_image" }, "Tool call");
-          return this.mcp.callTool(call.name, call.args);
+          const start = Date.now();
+          return this.mcp.callTool(call.name, call.args).then(result => {
+            return { result, durationMs: Date.now() - start };
+          }).catch(err => {
+            const durationMs = Date.now() - start;
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            onToolCall?.(call.name, call.args, undefined, durationMs, errorMsg);
+            throw err;
+          });
         }),
       );
       for (let j = 0; j < calls.length; j++) {
         const outcome = settled[j]!;
         const call = calls[j]!;
         if (outcome.status === "fulfilled") {
-          const text = truncateToolResponse(outcome.value.text, call.name);
+          const text = truncateToolResponse(outcome.value.result.text, call.name);
+          const QUERY_TOOLS = new Set(["query_prometheus", "query_loki_logs"]);
+          const resultPreview = QUERY_TOOLS.has(call.name) ? text.slice(0, 8000) : text.slice(0, 200);
+          onToolCall?.(call.name, call.args, resultPreview, outcome.value.durationMs);
           messages.push({
             role: "tool",
             content: text,
             tool_call_id: call.id,
           });
           phaseToolData.push(text);
-          if (outcome.value.images.length > 0) {
-            phaseImages.push(...outcome.value.images);
-            logger.debug({ tool: call.name, newImages: outcome.value.images.length, totalPhaseImages: phaseImages.length }, "Images collected from tool call");
+          if (outcome.value.result.images.length > 0) {
+            phaseImages.push(...outcome.value.result.images);
+            logger.debug({ tool: call.name, newImages: outcome.value.result.images.length, totalPhaseImages: phaseImages.length }, "Images collected from tool call");
           }
         } else {
           messages.push({
