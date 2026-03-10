@@ -14,7 +14,7 @@ export type PhaseStats = {
 
 // Server to Client
 export type ServerMessage =
-  | { type: "chat"; role: "user" | "assistant" | "system"; content: string }
+  | { type: "chat"; role: "user" | "assistant" | "system"; content: string; investigationId?: string; report?: unknown }
   | { type: "investigation:started"; id: string; service: string }
   | { type: "investigation:phase"; phase: string; status: "running" | "complete" | "failed"; data?: unknown; stats?: PhaseStats }
   | { type: "investigation:progress"; phase: string; step: string }

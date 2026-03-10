@@ -203,11 +203,18 @@ export function InvestigationPane({ investigationId, wsMessages, onBack }: { inv
         const parsed = JSON.parse(evt.result);
         const items = parsed?.data ?? parsed;
         if (!Array.isArray(items)) continue;
+        // Try common parameter names for the PromQL expression
+        const a = evt.args ?? {};
+        const query = typeof a.query === "string" ? a.query
+          : typeof a.expr === "string" ? a.expr
+          : typeof a.expression === "string" ? a.expression
+          : undefined;
         for (const item of items) {
           if (item.values && Array.isArray(item.values) && item.values.length >= 2) {
             series.push({
-              metric: item.m ?? "unknown",
+              metric: item.m || "",
               instance: item.instance,
+              query,
               values: item.values.map(([ts, v]: [string, string | number]) => [ts, typeof v === "string" ? parseFloat(v) : v]),
               min: item.min != null ? parseFloat(item.min) : undefined,
               max: item.max != null ? parseFloat(item.max) : undefined,

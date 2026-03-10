@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, type ReactNode } from "react";
+import { Badge } from "@/components/ui/badge";
 import type { useWebSocket } from "../hooks/useWebSocket";
 
 /** Parse inline markdown: **bold**, *italic*, `code` into JSX spans */
@@ -22,14 +23,26 @@ function renderInline(text: string): ReactNode[] {
   return parts.length > 0 ? parts : [text];
 }
 
+interface RcaReportSummary {
+  rootCause: string;
+  trigger: string;
+  confidence: string;
+  severity: string;
+  summary: string;
+  service?: string;
+}
+
 interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
+  investigationId?: string;
+  report?: RcaReportSummary;
 }
 
 interface ChatPaneProps {
   ws: ReturnType<typeof useWebSocket>;
   onInvestigationStarted: (id: string) => void;
+  onViewInvestigation: (id: string) => void;
   activeInvestigationId?: string;
 }
 
@@ -40,7 +53,7 @@ const DEEP_DIVE_PROMPTS = [
   "What should we check first?",
 ];
 
-export function ChatPane({ ws, onInvestigationStarted, activeInvestigationId }: ChatPaneProps) {
+export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, activeInvestigationId }: ChatPaneProps) {
   const { status, messages: wsMessages, send } = ws;
   const [input, setInput] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -53,16 +66,40 @@ export function ChatPane({ ws, onInvestigationStarted, activeInvestigationId }: 
   const isDeepMode = !!activeInvestigationId;
   const messages = isDeepMode ? deepMessages : chatMessages;
 
-  // Load historical messages on mount
+  // Load historical messages on mount, enriching investigation summaries with report data
   useEffect(() => {
     if (historyLoaded.current) return;
     historyLoaded.current = true;
     fetch("/api/messages?limit=50")
       .then((r) => r.ok ? r.json() : [])
-      .then((msgs: Array<{ role: string; content: string }>) => {
-        if (msgs.length > 0) {
-          setChatMessages(msgs.map((m) => ({ role: m.role as ChatMessage["role"], content: m.content })));
-        }
+      .then(async (msgs: Array<{ role: string; content: string; investigation_id?: string | null }>) => {
+        if (msgs.length === 0) return;
+
+        // Find messages that have an investigation_id — these are RCA summaries
+        const invIds = [...new Set(msgs.map((m) => m.investigation_id).filter(Boolean))] as string[];
+
+        // Fetch reports for those investigations in parallel
+        const reports = new Map<string, RcaReportSummary>();
+        await Promise.all(invIds.map(async (id) => {
+          try {
+            const res = await fetch(`/api/investigations/${id}`);
+            if (!res.ok) return;
+            const data = await res.json();
+            if (data.investigation?.report) {
+              const rpt = JSON.parse(data.investigation.report);
+              reports.set(id, rpt);
+            }
+          } catch { /* ignore */ }
+        }));
+
+        setChatMessages(msgs.map((m) => {
+          const msg: ChatMessage = { role: m.role as ChatMessage["role"], content: m.content };
+          if (m.investigation_id && reports.has(m.investigation_id)) {
+            msg.investigationId = m.investigation_id;
+            msg.report = reports.get(m.investigation_id);
+          }
+          return msg;
+        }));
       })
       .catch(() => {});
   }, []);
@@ -80,7 +117,12 @@ export function ChatPane({ ws, onInvestigationStarted, activeInvestigationId }: 
 
     for (const msg of newMessages) {
       if (msg.type === "chat") {
-        setChatMessages((prev) => [...prev, { role: msg.role, content: msg.content }]);
+        setChatMessages((prev) => [...prev, {
+          role: msg.role,
+          content: msg.content,
+          investigationId: msg.investigationId,
+          report: msg.report as RcaReportSummary | undefined,
+        }]);
       }
       if (msg.type === "investigation:started") {
         onInvestigationStarted(msg.id);
@@ -188,6 +230,51 @@ export function ChatPane({ ws, onInvestigationStarted, activeInvestigationId }: 
                 <div className="max-w-[90%] px-3 py-1.5 text-[11px] font-mono text-muted-foreground/40 text-center">
                   {msg.content}
                 </div>
+              ) : msg.report && msg.investigationId ? (
+                <button
+                  onClick={() => onViewInvestigation(msg.investigationId!)}
+                  className="max-w-[92%] w-full text-left group"
+                >
+                  <div className={`rounded-xl border bg-card/50 overflow-hidden transition-all group-hover:border-primary/40 group-hover:shadow-md ${
+                    msg.report.severity === "critical" ? "border-destructive/30 glow-red" :
+                    msg.report.severity === "high" ? "border-accent/25 glow-amber" :
+                    "border-primary/20 glow-cyan"
+                  }`}>
+                    <div className="px-3.5 py-2.5 border-b border-border/20">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] font-display font-bold uppercase tracking-[0.08em] text-foreground/60">
+                          Root Cause Analysis
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <Badge variant={msg.report.severity === "critical" ? "destructive" : "secondary"} className="text-[8px] uppercase tracking-wider">
+                            {msg.report.severity}
+                          </Badge>
+                          <span className="text-[8px] font-mono text-muted-foreground/50">{msg.report.confidence}</span>
+                        </div>
+                      </div>
+                      {msg.report.summary && (
+                        <p className="text-xs font-body text-foreground/70 leading-relaxed line-clamp-2">
+                          {renderInline(msg.report.summary)}
+                        </p>
+                      )}
+                    </div>
+                    <div className="px-3.5 py-2 space-y-1.5">
+                      <div>
+                        <span className="text-[9px] font-display font-semibold uppercase tracking-wider text-primary/70">Root Cause</span>
+                        <p className="text-[11px] font-body text-foreground/75 leading-relaxed line-clamp-2">{renderInline(msg.report.rootCause)}</p>
+                      </div>
+                      <div>
+                        <span className="text-[9px] font-display font-semibold uppercase tracking-wider text-accent/70">Trigger</span>
+                        <p className="text-[11px] font-body text-foreground/65 leading-relaxed line-clamp-1">{renderInline(msg.report.trigger)}</p>
+                      </div>
+                    </div>
+                    <div className="px-3.5 py-1.5 bg-secondary/20 border-t border-border/15 flex items-center justify-between">
+                      <span className="text-[9px] font-mono text-primary/50 group-hover:text-primary/80 transition-colors">
+                        View full investigation →
+                      </span>
+                    </div>
+                  </div>
+                </button>
               ) : (
                 <div className="max-w-[85%] px-3.5 py-2 rounded-xl rounded-bl-sm bg-secondary/50 border border-border/40 text-sm font-body text-foreground/75 whitespace-pre-wrap">
                   {renderInline(msg.content)}

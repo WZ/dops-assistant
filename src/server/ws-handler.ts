@@ -285,7 +285,7 @@ export async function handleClientMessage(
       send({ type: "investigation:complete", id: invId, report });
 
       const summary = `**Root Cause:** ${report.rootCause}\n**Confidence:** ${report.confidence}\n**Trigger:** ${report.trigger}`;
-      send({ type: "chat", role: "assistant", content: summary });
+      send({ type: "chat", role: "assistant", content: summary, investigationId: invId, report });
       db.createMessage({ id: `msg_${ulid()}`, role: "assistant", content: summary, investigationId: invId });
     } catch (err) {
       logger.error({ err, invId, service: service.name }, "Investigation failed");

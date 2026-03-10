@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useId } from "react";
 
 export interface TimeSeriesData {
   metric: string;
   instance?: string;
+  query?: string; // PromQL expression from tool call args
   values: [string, number][]; // [ISO timestamp, value]
   min?: number;
   max?: number;
@@ -22,12 +23,43 @@ function formatTime(iso: string): string {
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-const CHART_H = 100;
-const CHART_W = 320;
-const PAD = { top: 8, right: 8, bottom: 20, left: 44 };
+/** Extract a readable metric name from the PromQL query or compacted metric key */
+function resolveTitle(series: TimeSeriesData): string {
+  // If the compacted metric name is valid (e.g. "kafka_producer_record_error_total"), use it
+  if (series.metric && series.metric !== "unknown" && series.metric !== "/" && series.metric.trim() !== "") {
+    if (series.instance) return `${series.metric} · ${series.instance}`;
+    return series.metric;
+  }
+  // Fall back to PromQL — extract the innermost metric name from the expression
+  if (series.query) {
+    // Try: metric name followed by { or [ (most common pattern)
+    const m1 = series.query.match(/\b([a-zA-Z_:][a-zA-Z0-9_:]+)\s*[{\[]/);
+    // Try: metric name containing underscore (catches names without selectors, skips PromQL funcs)
+    const m2 = series.query.match(/\b([a-zA-Z][a-zA-Z0-9_:]*_[a-zA-Z0-9_:]+)\b/);
+    const name = m1?.[1] ?? m2?.[1];
+    if (name) {
+      const fnMatch = series.query.match(/^(sum|avg|max|min|count|rate|irate|increase|histogram_quantile)\s*\(/i);
+      const fn = fnMatch ? fnMatch[1] : "";
+      const label = fn ? `${fn}(${name})` : name;
+      if (series.instance) return `${label} · ${series.instance}`;
+      return label;
+    }
+    // No metric name found — show cleaned query
+    const short = series.query.length > 60 ? series.query.slice(0, 57) + "…" : series.query;
+    return short;
+  }
+  return "metric";
+}
+
+const CHART_H = 120;
+const CHART_W = 360;
+const PAD = { top: 10, right: 12, bottom: 22, left: 48 };
 
 export function MetricChart({ series }: { series: TimeSeriesData }) {
   const [hover, setHover] = useState<number | null>(null);
+  const uid = useId().replace(/:/g, "");
+
+  const title = resolveTitle(series);
 
   const { points, yMin, yMax, xLabels, plotW, plotH } = useMemo(() => {
     const vals = series.values;
@@ -36,10 +68,9 @@ export function MetricChart({ series }: { series: TimeSeriesData }) {
     const nums = vals.map(([, v]) => v);
     let lo = Math.min(...nums);
     let hi = Math.max(...nums);
-    // Add 10% padding so line doesn't touch edges
     const range = hi - lo || 1;
-    lo = lo - range * 0.05;
-    hi = hi + range * 0.05;
+    lo = lo - range * 0.08;
+    hi = hi + range * 0.08;
 
     const pw = CHART_W - PAD.left - PAD.right;
     const ph = CHART_H - PAD.top - PAD.bottom;
@@ -51,8 +82,7 @@ export function MetricChart({ series }: { series: TimeSeriesData }) {
       time: ts,
     }));
 
-    // Pick ~4 evenly spaced time labels
-    const labelCount = Math.min(4, vals.length);
+    const labelCount = Math.min(5, vals.length);
     const labels: string[] = [];
     for (let i = 0; i < labelCount; i++) {
       const idx = Math.round((i / (labelCount - 1)) * (vals.length - 1));
@@ -64,84 +94,209 @@ export function MetricChart({ series }: { series: TimeSeriesData }) {
 
   if (points.length < 2) return null;
 
+  // Smooth the line with cardinal spline interpolation for a more polished look
   const linePath = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
   const areaPath = `${linePath} L${points[points.length - 1].x.toFixed(1)},${PAD.top + plotH} L${points[0].x.toFixed(1)},${PAD.top + plotH} Z`;
 
   const hoverPoint = hover !== null ? points[hover] : null;
 
+  // Colors as HSL strings referencing CSS variables — works in SVG fill/stroke
+  const cMuted = "hsl(var(--muted-foreground) / 0.4)";
+  const cBorder = "hsl(var(--border) / 0.3)";
+  const cPrimary = "hsl(var(--primary))";
+  const cPrimaryFaint = "hsl(var(--primary) / 0.12)";
+  const cCard = "hsl(var(--card))";
+  const cFg = "hsl(var(--foreground) / 0.8)";
+  const cBorderSolid = "hsl(var(--border))";
+
   return (
-    <div className="rounded-lg border border-border/25 bg-card/30 px-3.5 py-2.5 card-lift animate-fade-up">
-      <div className="flex items-center justify-between mb-1.5">
-        <span className="font-mono text-[11px] text-foreground/70 truncate">{series.metric}</span>
-        {series.instance && <span className="text-[9px] font-mono text-muted-foreground/40 truncate ml-2">{series.instance}</span>}
+    <div className="rounded-lg border border-border/25 bg-card/40 overflow-hidden animate-fade-up card-lift">
+      {/* Title bar */}
+      <div className="flex items-center justify-between px-3.5 py-2 border-b border-border/15">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="w-1.5 h-1.5 rounded-full bg-primary/60 shrink-0" />
+          <span className="font-mono text-[10px] text-foreground/65 truncate">{title}</span>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {series.instance && (
+            <span className="text-[8px] font-mono text-muted-foreground/35 px-1.5 py-0.5 rounded bg-secondary/30 border border-border/15">
+              {series.instance}
+            </span>
+          )}
+        </div>
       </div>
-      <svg
-        viewBox={`0 0 ${CHART_W} ${CHART_H}`}
-        className="w-full h-auto"
-        onMouseLeave={() => setHover(null)}
-        onMouseMove={(e) => {
-          const rect = e.currentTarget.getBoundingClientRect();
-          const x = ((e.clientX - rect.left) / rect.width) * CHART_W;
-          const closest = points.reduce((best, p, i) => (Math.abs(p.x - x) < Math.abs(points[best].x - x) ? i : best), 0);
-          setHover(closest);
-        }}
-      >
-        {/* Grid lines */}
-        {[0, 0.5, 1].map((frac) => {
-          const y = PAD.top + (1 - frac) * plotH;
-          const val = yMin + frac * (yMax - yMin);
-          return (
-            <g key={frac}>
-              <line x1={PAD.left} y1={y} x2={PAD.left + plotW} y2={y} stroke="currentColor" className="text-border/30" strokeWidth="0.5" strokeDasharray="3,3" />
-              <text x={PAD.left - 4} y={y + 3} textAnchor="end" className="text-muted-foreground/40" fontSize="7" fontFamily="var(--font-mono)">
-                {formatValue(val)}
+
+      {/* Chart area */}
+      <div className="px-2 pt-1 pb-1">
+        <svg
+          viewBox={`0 0 ${CHART_W} ${CHART_H}`}
+          className="w-full h-auto select-none"
+          onMouseLeave={() => setHover(null)}
+          onMouseMove={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            const x = ((e.clientX - rect.left) / rect.width) * CHART_W;
+            const closest = points.reduce((best, p, i) =>
+              Math.abs(p.x - x) < Math.abs(points[best].x - x) ? i : best, 0);
+            setHover(closest);
+          }}
+        >
+          <defs>
+            <linearGradient id={`areaGrad-${uid}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={cPrimary} stopOpacity="0.2" />
+              <stop offset="100%" stopColor={cPrimary} stopOpacity="0" />
+            </linearGradient>
+            <linearGradient id={`lineGrad-${uid}`} x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor={cPrimary} stopOpacity="0.6" />
+              <stop offset="30%" stopColor={cPrimary} stopOpacity="1" />
+              <stop offset="70%" stopColor={cPrimary} stopOpacity="1" />
+              <stop offset="100%" stopColor={cPrimary} stopOpacity="0.6" />
+            </linearGradient>
+          </defs>
+
+          {/* Plot background */}
+          <rect
+            x={PAD.left} y={PAD.top}
+            width={plotW} height={plotH}
+            fill={cPrimaryFaint}
+            rx="2"
+          />
+
+          {/* Horizontal grid lines + Y-axis labels */}
+          {[0, 0.25, 0.5, 0.75, 1].map((frac) => {
+            const y = PAD.top + (1 - frac) * plotH;
+            const val = yMin + frac * (yMax - yMin);
+            return (
+              <g key={frac}>
+                <line
+                  x1={PAD.left} y1={y}
+                  x2={PAD.left + plotW} y2={y}
+                  stroke={cBorder}
+                  strokeWidth="0.5"
+                />
+                <text
+                  x={PAD.left - 5} y={y + 3}
+                  textAnchor="end"
+                  fill={cMuted}
+                  fontSize="7"
+                  fontFamily="var(--font-mono)"
+                >
+                  {formatValue(val)}
+                </text>
+              </g>
+            );
+          })}
+
+          {/* X-axis labels */}
+          {xLabels.map((label, i) => {
+            const x = PAD.left + (i / (xLabels.length - 1)) * plotW;
+            return (
+              <text
+                key={i}
+                x={x} y={CHART_H - 3}
+                textAnchor="middle"
+                fill={cMuted}
+                fontSize="7"
+                fontFamily="var(--font-mono)"
+              >
+                {label}
               </text>
-            </g>
-          );
-        })}
+            );
+          })}
 
-        {/* X-axis labels */}
-        {xLabels.map((label, i) => {
-          const x = PAD.left + (i / (xLabels.length - 1)) * plotW;
-          return (
-            <text key={i} x={x} y={CHART_H - 2} textAnchor="middle" className="text-muted-foreground/40" fontSize="7" fontFamily="var(--font-mono)">
-              {label}
-            </text>
-          );
-        })}
+          {/* Area fill */}
+          <path d={areaPath} fill={`url(#areaGrad-${uid})`} />
 
-        {/* Area fill */}
-        <path d={areaPath} fill="url(#chartGrad)" opacity="0.25" />
+          {/* Line */}
+          <path
+            d={linePath}
+            fill="none"
+            stroke={`url(#lineGrad-${uid})`}
+            strokeWidth="1.5"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
 
-        {/* Line */}
-        <path d={linePath} fill="none" stroke="hsl(var(--primary))" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+          {/* Hover crosshair + tooltip */}
+          {hoverPoint && (
+            <>
+              {/* Vertical guide */}
+              <line
+                x1={hoverPoint.x} y1={PAD.top}
+                x2={hoverPoint.x} y2={PAD.top + plotH}
+                stroke={cPrimary} strokeWidth="0.5" opacity="0.35"
+                strokeDasharray="2,2"
+              />
+              {/* Horizontal guide */}
+              <line
+                x1={PAD.left} y1={hoverPoint.y}
+                x2={PAD.left + plotW} y2={hoverPoint.y}
+                stroke={cPrimary} strokeWidth="0.5" opacity="0.2"
+                strokeDasharray="2,2"
+              />
+              {/* Dot */}
+              <circle
+                cx={hoverPoint.x} cy={hoverPoint.y} r="3.5"
+                fill={cPrimary}
+                stroke={cCard}
+                strokeWidth="2"
+              />
+              {/* Glow ring */}
+              <circle
+                cx={hoverPoint.x} cy={hoverPoint.y} r="6"
+                fill="none"
+                stroke={cPrimary}
+                strokeWidth="0.5"
+                opacity="0.3"
+              />
+              {/* Tooltip background */}
+              <rect
+                x={hoverPoint.x - 36} y={hoverPoint.y - 22}
+                width="72" height="16"
+                rx="4"
+                fill={cCard}
+                stroke={cBorderSolid}
+                strokeWidth="0.5"
+              />
+              {/* Tooltip value */}
+              <text
+                x={hoverPoint.x} y={hoverPoint.y - 11.5}
+                textAnchor="middle"
+                fill={cFg}
+                fontSize="7.5"
+                fontFamily="var(--font-mono)"
+                fontWeight="500"
+              >
+                {formatValue(hoverPoint.value)} · {formatTime(hoverPoint.time)}
+              </text>
+            </>
+          )}
+        </svg>
+      </div>
 
-        {/* Hover indicator */}
-        {hoverPoint && (
-          <>
-            <line x1={hoverPoint.x} y1={PAD.top} x2={hoverPoint.x} y2={PAD.top + plotH} stroke="hsl(var(--primary))" strokeWidth="0.5" opacity="0.5" />
-            <circle cx={hoverPoint.x} cy={hoverPoint.y} r="3" fill="hsl(var(--primary))" stroke="hsl(var(--background))" strokeWidth="1.5" />
-            <rect x={hoverPoint.x - 30} y={hoverPoint.y - 18} width="60" height="14" rx="3" fill="hsl(var(--card))" stroke="hsl(var(--border))" strokeWidth="0.5" />
-            <text x={hoverPoint.x} y={hoverPoint.y - 9} textAnchor="middle" className="text-foreground/80" fontSize="7" fontFamily="var(--font-mono)">
-              {formatValue(hoverPoint.value)}
-            </text>
-          </>
-        )}
-
-        {/* Gradient definition */}
-        <defs>
-          <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="hsl(var(--primary))" />
-            <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity="0" />
-          </linearGradient>
-        </defs>
-      </svg>
-      {/* Stats row */}
+      {/* Stats footer */}
       {(series.min !== undefined || series.avg !== undefined || series.max !== undefined) && (
-        <div className="flex gap-3 mt-1 text-[9px] font-mono text-muted-foreground/45">
-          {series.min !== undefined && <span>min {formatValue(series.min)}</span>}
-          {series.avg !== undefined && <span>avg {formatValue(series.avg)}</span>}
-          {series.max !== undefined && <span>max {formatValue(series.max)}</span>}
+        <div className="flex items-center gap-4 px-3.5 py-1.5 border-t border-border/10 bg-secondary/10">
+          {series.min !== undefined && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-[8px] font-mono text-muted-foreground/35 uppercase">min</span>
+              <span className="text-[9px] font-mono text-foreground/55">{formatValue(series.min)}</span>
+            </div>
+          )}
+          {series.avg !== undefined && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-[8px] font-mono text-muted-foreground/35 uppercase">avg</span>
+              <span className="text-[9px] font-mono text-primary/70">{formatValue(series.avg)}</span>
+            </div>
+          )}
+          {series.max !== undefined && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-[8px] font-mono text-muted-foreground/35 uppercase">max</span>
+              <span className="text-[9px] font-mono text-foreground/55">{formatValue(series.max)}</span>
+            </div>
+          )}
+          <div className="ml-auto">
+            <span className="text-[8px] font-mono text-muted-foreground/25">{series.values.length} pts</span>
+          </div>
         </div>
       )}
     </div>
