@@ -48,6 +48,7 @@ async function main(): Promise<void> {
   // Layer 5: Investigation pipeline
   const investigationAgent = new InvestigationAgent(llm, mcp, {
     maxIterations: config.agent.maxIterations,
+    projectRoot: process.cwd(),
   });
   const router = new IntentRouter(llm);
 
