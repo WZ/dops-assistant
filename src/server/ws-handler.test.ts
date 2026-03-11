@@ -73,6 +73,9 @@ describe("handleClientMessage", () => {
     expect(messages.some((m: any) => m.type === "investigation:started")).toBe(true);
     expect(messages.some((m: any) => m.type === "investigation:complete")).toBe(true);
     expect(deps.db.createInvestigation).toHaveBeenCalled();
+    // Issue 1 fix: investigation should write to thread memory for context switch detection
+    expect(deps.memory.append).toHaveBeenCalledWith("thread_1", expect.objectContaining({ role: "user" }));
+    expect(deps.memory.append).toHaveBeenCalledWith("thread_1", expect.objectContaining({ role: "assistant" }));
   });
 
   it("asks user to specify service when none matched", async () => {

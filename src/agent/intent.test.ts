@@ -311,6 +311,55 @@ describe("IntentRouter", () => {
     // LLM should be called since symptom word blocks the display fast-path
   });
 
+  // --- Informational-request fast-path tests ---
+
+  it("informational fast-path: 'tell me about X health' routes to question", async () => {
+    const llm = makeLlm(JSON.stringify({ intent: "investigation", service: "ingestion-server" }));
+    const router = new IntentRouter(llm);
+    const result = await router.route("tell me about ingestion-server health");
+    expect(result.intent).toBe("question");
+    expect(llm.chat).not.toHaveBeenCalled();
+  });
+
+  it("informational fast-path: 'how is X' routes to question", async () => {
+    const llm = makeLlm(JSON.stringify({ intent: "investigation", service: "payments-api" }));
+    const router = new IntentRouter(llm);
+    const result = await router.route("how is the payments-api doing?");
+    expect(result.intent).toBe("question");
+    expect(llm.chat).not.toHaveBeenCalled();
+  });
+
+  it("informational fast-path: 'how's' routes to question", async () => {
+    const llm = makeLlm(JSON.stringify({ intent: "investigation", service: "ingestion-server" }));
+    const router = new IntentRouter(llm);
+    const result = await router.route("how's the ingestion-server?");
+    expect(result.intent).toBe("question");
+    expect(llm.chat).not.toHaveBeenCalled();
+  });
+
+  it("informational fast-path: 'what about X' routes to question", async () => {
+    const llm = makeLlm(JSON.stringify({ intent: "investigation", service: "" }));
+    const router = new IntentRouter(llm);
+    const result = await router.route("what about the kudu workload rate?");
+    expect(result.intent).toBe("question");
+    expect(llm.chat).not.toHaveBeenCalled();
+  });
+
+  it("informational fast-path: does NOT fire when symptom words present", async () => {
+    const llm = makeLlm(JSON.stringify({ intent: "investigation", service: "ingestion-server" }));
+    const router = new IntentRouter(llm);
+    const result = await router.route("tell me about the ingestion-server errors", ["ingestion-server"]);
+    // "errors" is a symptom word, so informational fast-path should NOT fire
+    expect(result.intent).toBe("investigation");
+  });
+
+  it("informational fast-path: 'how is X' with 'down' falls through to symptom check", async () => {
+    const llm = makeLlm(JSON.stringify({ intent: "investigation", service: "payments-api" }));
+    const router = new IntentRouter(llm);
+    const result = await router.route("how is payments-api? it seems down", ["payments-api"]);
+    expect(result.intent).toBe("investigation");
+  });
+
   // --- Keyword fast-path tests (bypasses LLM) ---
 
   it("fast-path: 'investigate' routes to investigation without calling LLM", async () => {
@@ -434,8 +483,8 @@ describe("IntentRouter", () => {
   it("passes service names to the system prompt", async () => {
     const llm = makeLlm(JSON.stringify({ intent: "investigation", service: "ingestion-server" }));
     const router = new IntentRouter(llm);
-    // Use a message without fast-path keywords or symptoms so the LLM is actually called
-    await router.route("tell me about ingestion-server health", ["ingestion-server", "payments-api"]);
+    // Use a message without any fast-path keywords so the LLM is actually called
+    await router.route("ingestion-server seems unusual today", ["ingestion-server", "payments-api"]);
     const systemPrompt = (llm.chat as ReturnType<typeof vi.fn>).mock.calls[0]![0][0].content as string;
     expect(systemPrompt).toContain("ingestion-server");
     expect(systemPrompt).toContain("payments-api");
