@@ -138,6 +138,12 @@ export class Database {
     this.db.prepare("INSERT INTO messages (id, investigation_id, role, content) VALUES (?, ?, ?, ?)").run(msg.id, msg.investigationId ?? null, msg.role, msg.content);
   }
 
+  listRecentMessages(limit: number): MessageRow[] {
+    return this.db.prepare(
+      "SELECT * FROM (SELECT * FROM messages ORDER BY created_at DESC LIMIT ?) ORDER BY created_at ASC"
+    ).all(limit) as MessageRow[];
+  }
+
   listMessages(limit: number, investigationId?: string): MessageRow[] {
     if (investigationId) {
       return this.db.prepare("SELECT * FROM messages WHERE investigation_id = ? ORDER BY created_at ASC LIMIT ?").all(investigationId, limit) as MessageRow[];
