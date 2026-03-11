@@ -22,6 +22,13 @@ const STRONG_INVESTIGATION_RE = /\b(investigate|investigation|diagnose|diagnosis
 const DISPLAY_REQUEST_RE = /\b(show\s+me|show\s+the|display|visualize|plot\b|graph\b)\b/i;
 
 /**
+ * Informational request patterns — "tell me about", "how is", "what about", etc.
+ * indicate the user wants information, not a formal investigation. When present
+ * without symptom words, we fast-path to the conversation agent.
+ */
+const INFORMATIONAL_REQUEST_RE = /\b(tell\s+me\s+about|how\s+is|how's|how\s+are|what\s+about|what\s+is|what's\s+the|describe|explain|overview|status\s+of|summary\s+of|info\s+on|details\s+on|report\s+on|give\s+me)\b/i;
+
+/**
  * Symptom/problem indicators — when combined with a recognizable service mention,
  * these strongly suggest investigation rather than a question.
  */
@@ -266,10 +273,17 @@ export class IntentRouter {
   }
 
   async route(message: string, serviceNames?: string[]): Promise<InvestigationIntent> {
-    // Fast-path 0: display/visualization requests route to conversation agent.
+    // Fast-path 0a: display/visualization requests route to conversation agent.
     // "show me X" without symptom words = user wants to SEE data, not investigate.
     if (DISPLAY_REQUEST_RE.test(message) && !SYMPTOM_RE.test(message)) {
       logger.debug({ message }, "Router: display-request fast-path → question");
+      return { intent: "question" };
+    }
+
+    // Fast-path 0b: informational requests route to conversation agent.
+    // "tell me about X health" without symptom words = user wants info, not investigation.
+    if (INFORMATIONAL_REQUEST_RE.test(message) && !SYMPTOM_RE.test(message)) {
+      logger.debug({ message }, "Router: informational-request fast-path → question");
       return { intent: "question" };
     }
 
