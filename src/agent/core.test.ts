@@ -404,8 +404,11 @@ describe("ChatAgent", () => {
     const core = new ChatAgent(mockLlm, mockMcp, { maxIterations: 10 });
     await core.chat({ mode: "conversational", message: "check", onToolCall });
 
-    expect(onToolCall).toHaveBeenCalledTimes(2);
+    // Called twice per tool: once before (no result), once after (with result)
+    expect(onToolCall).toHaveBeenCalledTimes(4);
     expect(onToolCall).toHaveBeenCalledWith("query_prometheus", { query: "up" });
+    expect(onToolCall).toHaveBeenCalledWith("query_prometheus", { query: "up" }, "data");
     expect(onToolCall).toHaveBeenCalledWith("query_loki", { query: "{app=\"x\"}" });
+    expect(onToolCall).toHaveBeenCalledWith("query_loki", { query: "{app=\"x\"}" }, "data");
   });
 });

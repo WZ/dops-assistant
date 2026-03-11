@@ -1,7 +1,10 @@
 import { useState, useRef, useEffect } from "react";
 import { Badge } from "@/components/ui/badge";
 import { renderInline } from "../lib/renderInline";
+import { renderMarkdown } from "../lib/renderMarkdown";
+import { MetricChart, type TimeSeriesData } from "./MetricChart";
 import type { useWebSocket } from "../hooks/useWebSocket";
+import type { ChartSeries } from "../../shared/ws-types.js";
 
 interface RcaReportSummary {
   rootCause: string;
@@ -17,6 +20,7 @@ interface ChatMessage {
   content: string;
   investigationId?: string;
   report?: RcaReportSummary;
+  chartData?: ChartSeries[];
 }
 
 interface ChatPaneProps {
@@ -33,18 +37,34 @@ const DEEP_DIVE_PROMPTS = [
   "What should we check first?",
 ];
 
+/** Convert ChartSeries (wire format) to TimeSeriesData (component prop) */
+function toTimeSeries(c: ChartSeries): TimeSeriesData {
+  return {
+    metric: c.metric,
+    instance: c.instance,
+    query: c.query,
+    values: c.values,
+    min: c.min,
+    max: c.max,
+    avg: c.avg,
+  };
+}
+
 export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, activeInvestigationId }: ChatPaneProps) {
   const { status, messages: wsMessages, send } = ws;
   const [input, setInput] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [deepMessages, setDeepMessages] = useState<ChatMessage[]>([]);
   const [deepLoading, setDeepLoading] = useState(false);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [activeTool, setActiveTool] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const processedCount = useRef(0);
   const historyLoaded = useRef(false);
 
   const isDeepMode = !!activeInvestigationId;
   const messages = isDeepMode ? deepMessages : chatMessages;
+  const isLoading = isDeepMode ? deepLoading : chatLoading;
 
   // Load historical messages on mount, enriching investigation summaries with report data
   useEffect(() => {
@@ -102,10 +122,20 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
           content: msg.content,
           investigationId: msg.investigationId,
           report: msg.report as RcaReportSummary | undefined,
+          chartData: msg.chartData,
         }]);
+        if (msg.role === "assistant") {
+          setChatLoading(false);
+          setActiveTool(null);
+        }
+      }
+      if (msg.type === "chat:tool_call") {
+        setActiveTool(msg.status === "calling" ? msg.tool : null);
       }
       if (msg.type === "investigation:started") {
         onInvestigationStarted(msg.id);
+        setChatLoading(false);
+        setActiveTool(null);
       }
       if (msg.type === "deep_investigate:response" && msg.investigationId === activeInvestigationId) {
         setDeepMessages((prev) => [...prev, { role: "assistant", content: msg.content }]);
@@ -116,7 +146,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [chatMessages, deepMessages]);
+  }, [chatMessages, deepMessages, chatLoading]);
 
   const handleSubmit = (text?: string) => {
     const trimmed = (text ?? input).trim();
@@ -129,6 +159,8 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
     } else {
       setChatMessages((prev) => [...prev, { role: "user", content: trimmed }]);
       send({ type: "chat", message: trimmed });
+      setChatLoading(true);
+      setActiveTool(null);
     }
     setInput("");
   };
@@ -171,7 +203,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4" ref={scrollRef}>
         <div className="space-y-3">
-          {messages.length === 0 && !isDeepMode && (
+          {messages.length === 0 && !isDeepMode && !chatLoading && (
             <div className="h-full min-h-[200px] flex flex-col items-center justify-center text-center animate-fade-in">
               <div className="w-11 h-11 rounded-xl bg-primary/8 border border-primary/15 flex items-center justify-center mb-3">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-primary/50">
@@ -256,18 +288,31 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                   </div>
                 </button>
               ) : (
-                <div className="max-w-[85%] px-3.5 py-2 rounded-xl rounded-bl-sm bg-secondary/50 border border-border/40 text-sm font-body text-foreground/75 whitespace-pre-wrap">
-                  {renderInline(msg.content)}
+                <div className="max-w-[85%] space-y-2">
+                  <div className="px-3.5 py-2.5 rounded-xl rounded-bl-sm bg-secondary/50 border border-border/40 text-sm font-body">
+                    {renderMarkdown(msg.content)}
+                  </div>
+                  {msg.chartData && msg.chartData.length > 0 && (
+                    <div className="space-y-2">
+                      {msg.chartData.map((c, ci) => (
+                        <MetricChart key={ci} series={toTimeSeries(c)} />
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           ))}
-          {deepLoading && (
+          {isLoading && (
             <div className="flex justify-start animate-fade-in">
               <div className="px-3.5 py-2 rounded-xl rounded-bl-sm bg-secondary/50 border border-border/40">
                 <div className="flex items-center gap-1.5">
-                  <div className="w-1.5 h-1.5 rounded-full bg-accent animate-status-pulse" />
-                  <span className="text-[11px] font-mono text-muted-foreground/50">investigating...</span>
+                  <div className={`w-1.5 h-1.5 rounded-full animate-status-pulse ${isDeepMode ? "bg-accent" : "bg-primary"}`} />
+                  <span className="text-[11px] font-mono text-muted-foreground/50">
+                    {activeTool
+                      ? `querying ${activeTool.replace(/_/g, " ")}...`
+                      : isDeepMode ? "investigating..." : "thinking..."}
+                  </span>
                 </div>
               </div>
             </div>
@@ -304,11 +349,11 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
               isDeepMode ? "Ask a follow-up about this investigation..." :
               "Type a message..."
             }
-            disabled={status !== "connected" || deepLoading}
+            disabled={status !== "connected" || isLoading}
           />
           <button
             type="submit"
-            disabled={status !== "connected" || !input.trim() || deepLoading}
+            disabled={status !== "connected" || !input.trim() || isLoading}
             className={`absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md transition-all disabled:opacity-15 ${isDeepMode ? "text-accent/40 hover:text-accent hover:bg-accent/10" : "text-muted-foreground/30 hover:text-primary hover:bg-primary/8"}`}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
