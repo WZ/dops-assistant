@@ -306,6 +306,7 @@ export async function handleClientMessage(
 
     const invId = `inv_${ulid()}`;
     db.createInvestigation({ id: invId, service: service.name, query: msg.message, status: "running" });
+    memory.append(threadId, { role: "user", content: msg.message });
     send({ type: "investigation:started", id: invId, service: service.name });
     send({ type: "chat", role: "assistant", content: `Starting investigation of **${service.name}**...` });
 
@@ -385,6 +386,7 @@ export async function handleClientMessage(
       send({ type: "investigation:complete", id: invId, report });
 
       const summary = `**Root Cause:** ${report.rootCause}\n**Confidence:** ${report.confidence}\n**Trigger:** ${report.trigger}`;
+      memory.append(threadId, { role: "assistant", content: `Investigation of ${service.name}: ${summary}` });
       send({ type: "chat", role: "assistant", content: summary, investigationId: invId, report });
       db.createMessage({ id: `msg_${ulid()}`, role: "assistant", content: summary, investigationId: invId });
     } catch (err) {
