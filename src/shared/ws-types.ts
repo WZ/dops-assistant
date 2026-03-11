@@ -13,8 +13,19 @@ export type PhaseStats = {
 };
 
 // Server to Client
+export type ChartSeries = {
+  metric: string;
+  instance?: string;
+  query?: string;
+  values: [string, number][];
+  min?: number;
+  max?: number;
+  avg?: number;
+};
+
 export type ServerMessage =
-  | { type: "chat"; role: "user" | "assistant" | "system"; content: string; investigationId?: string; report?: unknown }
+  | { type: "chat"; role: "user" | "assistant" | "system"; content: string; investigationId?: string; report?: unknown; chartData?: ChartSeries[] }
+  | { type: "chat:tool_call"; tool: string; status: "calling" | "complete" }
   | { type: "investigation:started"; id: string; service: string }
   | { type: "investigation:phase"; phase: string; status: "running" | "complete" | "failed"; data?: unknown; stats?: PhaseStats }
   | { type: "investigation:progress"; phase: string; step: string }

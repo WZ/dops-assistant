@@ -9,7 +9,7 @@ export type ChatRequest = {
   serviceContext?: ServiceConfig[];
   history?: Message[];
   correlationId?: string;
-  onToolCall?: (name: string, args: Record<string, unknown>) => void;
+  onToolCall?: (name: string, args: Record<string, unknown>, result?: string) => void;
   onTokenUsage?: (usage: TokenUsage) => void;
 };
 
