@@ -8,7 +8,7 @@ import type { InvestigationAgent } from "../agent/investigation.js";
 import type { IntentRouter } from "../agent/intent.js";
 import type { ConversationMemory } from "../memory/conversation.js";
 import type { ServiceConfig } from "../config/schema.js";
-import type { ClientMessage, ServerMessage, PhaseStats } from "../shared/ws-types.js";
+import type { ClientMessage, ServerMessage, PhaseStats, ChartSeries } from "../shared/ws-types.js";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
 
@@ -36,6 +36,76 @@ function mapBackendPhase(backendPhase: string): string[] {
     default:
       return [];
   }
+}
+
+const MAX_CHART_SERIES = 4;
+
+/** Return true when a series is a flat constant (no variation worth charting) */
+function isFlatSeries(values: [string, number][]): boolean {
+  if (values.length < 2) return true;
+  const first = values[0][1];
+  return values.every(([, v]) => v === first);
+}
+
+/** Extract chart-renderable time-series from a raw query_prometheus tool result */
+function extractChartSeries(rawResult: string, args: Record<string, unknown>): ChartSeries[] {
+  const series: ChartSeries[] = [];
+  try {
+    const parsed = JSON.parse(rawResult);
+    const query = typeof args.query === "string" ? args.query
+      : typeof args.expr === "string" ? args.expr
+      : typeof args.expression === "string" ? args.expression
+      : undefined;
+
+    let items: unknown[];
+    if (Array.isArray(parsed)) items = parsed;
+    else if (Array.isArray(parsed?.data?.result)) items = parsed.data.result;
+    else if (Array.isArray(parsed?.data)) items = parsed.data;
+    else return series;
+
+    for (const item of items) {
+      if (typeof item !== "object" || item === null) continue;
+      const obj = item as Record<string, unknown>;
+
+      // Compacted format: { m, instance, values: [[iso, num], ...] }
+      if (obj.m !== undefined && Array.isArray(obj.values) && obj.values.length >= 2) {
+        const values: [string, number][] = (obj.values as [string, number][]).map(([ts, v]) => [
+          String(ts), typeof v === "string" ? parseFloat(v) : Number(v),
+        ]);
+        if (!isFlatSeries(values)) {
+          series.push({
+            metric: String(obj.m || ""),
+            instance: typeof obj.instance === "string" ? obj.instance : undefined,
+            query,
+            values,
+            min: obj.min != null ? Number(obj.min) : undefined,
+            max: obj.max != null ? Number(obj.max) : undefined,
+            avg: obj.avg != null ? Number(obj.avg) : undefined,
+          });
+        }
+        if (series.length >= MAX_CHART_SERIES) break;
+        continue;
+      }
+
+      // Raw Prometheus format: { metric: { __name__: ... }, values: [[unixTs, "val"], ...] }
+      if (typeof obj.metric === "object" && obj.metric !== null && Array.isArray(obj.values) && obj.values.length >= 2) {
+        const metricObj = obj.metric as Record<string, string>;
+        const values: [string, number][] = (obj.values as [number, string][]).map(([ts, v]) => [
+          new Date(ts * 1000).toISOString(), parseFloat(v),
+        ]);
+        if (!isFlatSeries(values)) {
+          series.push({
+            metric: metricObj.__name__ || "",
+            instance: metricObj.instance,
+            query,
+            values,
+          });
+        }
+        if (series.length >= MAX_CHART_SERIES) break;
+      }
+    }
+  } catch { /* ignore unparseable results */ }
+  return series;
 }
 
 export interface WsDeps {
@@ -297,10 +367,26 @@ export async function handleClientMessage(
   } else {
     const history = memory.get(threadId);
     try {
-      const result = await agent.chat({ mode: "conversational", message: msg.message, history, serviceContext: services });
+      const chartData: ChartSeries[] = [];
+      const result = await agent.chat({
+        mode: "conversational",
+        message: msg.message,
+        history,
+        serviceContext: services,
+        onToolCall: (name, args, rawResult) => {
+          if (rawResult === undefined) {
+            send({ type: "chat:tool_call", tool: name, status: "calling" });
+          } else {
+            send({ type: "chat:tool_call", tool: name, status: "complete" });
+            if (name === "query_prometheus") {
+              chartData.push(...extractChartSeries(rawResult, args));
+            }
+          }
+        },
+      });
       memory.append(threadId, { role: "user", content: msg.message });
       memory.append(threadId, { role: "assistant", content: result.response });
-      send({ type: "chat", role: "assistant", content: result.response });
+      send({ type: "chat", role: "assistant", content: result.response, chartData: chartData.length > 0 ? chartData : undefined });
       db.createMessage({ id: `msg_${ulid()}`, role: "assistant", content: result.response });
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "Unknown error";
