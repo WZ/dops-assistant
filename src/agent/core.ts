@@ -247,6 +247,7 @@ export class ChatAgent {
           let toolText: string;
           if (outcome.status === "fulfilled") {
             const toolResult = outcome.value;
+            task.onToolCall?.(call.name, call.args, toolResult.text);
             toolText = sanitizeToolResult(toolResult.text);
             for (const img of toolResult.images) {
               const ext = img.mimeType.split("/")[1] ?? "png";
