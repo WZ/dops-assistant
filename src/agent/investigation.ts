@@ -21,6 +21,7 @@ import {
 import { buildProactiveStructuredPrompt, ANOMALY_ASSESSMENT_RESPONSE_FORMAT, getTimeContext } from "./prompts.js";
 import { GrafanaLokiAdapter } from "../mcp/adapters/grafana-loki.js";
 import type { LogProviderAdapter } from "../mcp/adapters/types.js";
+import { getRecentIncidents, saveIncident, formatIncidentHistory } from "../history/store.js";
 import pino from "pino";
 
 export type OnToolCallEnriched = (
@@ -386,11 +387,13 @@ export class InvestigationAgent {
   private readonly llm: LlmClient;
   private readonly mcp: MultiMcpClient;
   private readonly maxIterations: number;
+  private readonly projectRoot?: string;
 
-  constructor(llm: LlmClient, mcp: MultiMcpClient, opts: { maxIterations: number }) {
+  constructor(llm: LlmClient, mcp: MultiMcpClient, opts: { maxIterations: number; projectRoot?: string }) {
     this.llm = llm;
     this.mcp = mcp;
     this.maxIterations = opts.maxIterations;
+    this.projectRoot = opts.projectRoot;
   }
 
   async investigate(
@@ -463,13 +466,25 @@ export class InvestigationAgent {
         panelImages: collectedImages,
         recommendedActions: [],
         confidence: "high",
-        investigatedAt: new Date().toLocaleString(),
+        investigatedAt: new Date().toISOString(),
       };
     }
 
     // Phase 1.5: Investigation Planning
     onPhase?.("Planning investigation");
     log.debug("Running phase 1.5: investigation planning");
+
+    let historyContext = "";
+    if (this.projectRoot) {
+      try {
+        const recentIncidents = await getRecentIncidents(this.projectRoot, service.name);
+        historyContext = formatIncidentHistory(recentIncidents);
+        if (historyContext) log.debug({ count: recentIncidents.length }, "Injecting incident history into planning");
+      } catch (err) {
+        log.warn({ err }, "Failed to read incident history");
+      }
+    }
+
     const planMessage = [
       `Service: ${service.name}`,
       `Anomaly: ${anomaly.summary}`,
@@ -477,6 +492,7 @@ export class InvestigationAgent {
       `Affected metrics: ${anomaly.affectedMetrics.join(", ")}`,
       `Service metrics: ${service.metrics.map((m) => `${m.description} (${m.query})`).join(", ") || "none configured"}`,
       `Log labels: ${JSON.stringify(service.logLabels)}`,
+      historyContext ? `\n${historyContext}` : "",
     ].join("\n");
 
     const PLAN_MAX_TOKENS = 2048;
@@ -864,12 +880,26 @@ export class InvestigationAgent {
 
     log.info({ totalPanelImages: collectedImages.length }, "Investigation complete");
 
-    return {
+    const finalReport: RcaReport = {
       ...report,
       service: service.name,
-      investigatedAt: new Date().toLocaleString(),
+      investigatedAt: new Date().toISOString(),
       panelImages: collectedImages,
     };
+
+    if (this.projectRoot) {
+      saveIncident(this.projectRoot, {
+        service: finalReport.service,
+        severity: finalReport.severity,
+        summary: finalReport.summary,
+        rootCause: finalReport.rootCause,
+        trigger: finalReport.trigger,
+        confidence: finalReport.confidence,
+        investigatedAt: finalReport.investigatedAt,
+      }).catch((err) => log.warn({ err }, "Failed to save incident record"));
+    }
+
+    return finalReport;
   }
 
   /**
