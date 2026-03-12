@@ -9,7 +9,7 @@ import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChatAgent } from "../../agent/core.js";
-import { matchService, matchServiceFromText, type IntentRouter } from "../../agent/intent.js";
+import { matchServiceFromText, validateLlmServiceMatch, resolveServiceFromHistory, type IntentRouter } from "../../agent/intent.js";
 import type { InvestigationAgent } from "../../agent/investigation.js";
 import type { ConversationMemory } from "../../memory/conversation.js";
 import type { ServiceConfig } from "../../config/schema.js";
@@ -281,10 +281,11 @@ export function App({ agent, memory, services, router, investigationAgent, toolC
       const intent = await router.route(trimmed, serviceNames);
       if (abort.signal.aborted) throw new DOMException("Aborted", "AbortError");
 
-      // Resolve service: try direct message matching first (more reliable),
-      // fall back to LLM-extracted service name
+      // Resolve service: direct match → LLM-validated → conversation history fallback
       const service = intent.intent === "investigation"
-        ? (matchServiceFromText(trimmed, services) ?? matchService(intent.service, services))
+        ? (matchServiceFromText(trimmed, services) ??
+           validateLlmServiceMatch(intent.service, trimmed, services) ??
+           resolveServiceFromHistory(memory.get(threadId), services))
         : undefined;
 
       const routeLabel = service

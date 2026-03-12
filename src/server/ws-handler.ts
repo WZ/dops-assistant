@@ -6,6 +6,7 @@ import type { Database } from "./db.js";
 import type { ChatAgent } from "../agent/core.js";
 import type { InvestigationAgent } from "../agent/investigation.js";
 import type { IntentRouter } from "../agent/intent.js";
+import { resolveServiceFromHistory } from "../agent/intent.js";
 import type { ConversationMemory } from "../memory/conversation.js";
 import type { ServiceConfig } from "../config/schema.js";
 import type { ClientMessage, ServerMessage, PhaseStats, ChartSeries } from "../shared/ws-types.js";
@@ -115,7 +116,7 @@ export interface WsDeps {
   router: IntentRouter;
   memory: ConversationMemory;
   services: ServiceConfig[];
-  matchService: (query: string | undefined, services: ServiceConfig[]) => ServiceConfig | undefined;
+  validateLlmServiceMatch: (llmService: string | undefined, userMessage: string, services: ServiceConfig[]) => ServiceConfig | undefined;
   matchServiceFromText: (text: string, services: ServiceConfig[]) => ServiceConfig | undefined;
 }
 
@@ -221,7 +222,19 @@ async function handleDeepInvestigate(
 
   const systemContext = contextParts.join("\n");
   const memoryKey = `deep_${msg.investigationId}`;
-  const history = memory.get(memoryKey);
+  let history = memory.get(memoryKey);
+
+  // Hydrate from DB if in-memory history is empty (e.g. after page refresh)
+  if (history.length === 0) {
+    const dbMessages = db.listMessages(50, msg.investigationId);
+    const followUps = dbMessages.filter(m =>
+      !m.content.startsWith("Starting investigation") && !m.content.startsWith("**Root Cause:**")
+    );
+    for (const m of followUps) {
+      memory.append(memoryKey, { role: m.role as "user" | "assistant", content: m.content });
+    }
+    history = memory.get(memoryKey);
+  }
 
   // On first message, prepend system context
   const fullHistory = history.length === 0
@@ -237,6 +250,8 @@ async function handleDeepInvestigate(
     });
     memory.append(memoryKey, { role: "user", content: msg.message });
     memory.append(memoryKey, { role: "assistant", content: result.response });
+    db.createMessage({ id: `msg_${ulid()}`, role: "user", content: msg.message, investigationId: msg.investigationId });
+    db.createMessage({ id: `msg_${ulid()}`, role: "assistant", content: result.response, investigationId: msg.investigationId });
     send({ type: "deep_investigate:response", investigationId: msg.investigationId, content: result.response });
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : "Unknown error";
@@ -250,6 +265,12 @@ export async function handleClientMessage(
   deps: WsDeps,
   threadId: string,
 ): Promise<void> {
+  if (msg.type === "new_session") {
+    deps.memory.clear(threadId);
+    send({ type: "session_cleared" });
+    return;
+  }
+
   if (msg.type === "deep_investigate") {
     await handleDeepInvestigate(msg, send, deps, threadId);
     return;
@@ -262,12 +283,21 @@ export async function handleClientMessage(
 
   db.createMessage({ id: `msg_${ulid()}`, role: "user", content: msg.message });
 
+  // Context switch detection: compare service in current message vs conversation history
+  const mentionedService = deps.matchServiceFromText(msg.message, services);
+  const contextService = resolveServiceFromHistory(memory.get(threadId), services);
+  if (mentionedService && contextService && mentionedService.name !== contextService.name) {
+    send({ type: "context_switch", previousService: contextService.name, newService: mentionedService.name });
+  }
+
   const intent = await router.route(msg.message, serviceNames);
 
   if (intent.intent === "investigation") {
     const service =
-      (intent.service ? deps.matchService(intent.service, services) : undefined) ??
-      deps.matchServiceFromText(msg.message, services);
+      deps.matchServiceFromText(msg.message, services) ??
+      deps.validateLlmServiceMatch(intent.service, msg.message, services) ??
+      resolveServiceFromHistory(memory.get(threadId), services) ??
+      resolveServiceFromHistory(db.listRecentMessages(10), services);
 
     if (!service) {
       send({ type: "chat", role: "assistant", content: "I couldn't identify which service to investigate. Could you specify the service name?" });
@@ -276,6 +306,7 @@ export async function handleClientMessage(
 
     const invId = `inv_${ulid()}`;
     db.createInvestigation({ id: invId, service: service.name, query: msg.message, status: "running" });
+    memory.append(threadId, { role: "user", content: msg.message });
     send({ type: "investigation:started", id: invId, service: service.name });
     send({ type: "chat", role: "assistant", content: `Starting investigation of **${service.name}**...` });
 
@@ -355,6 +386,7 @@ export async function handleClientMessage(
       send({ type: "investigation:complete", id: invId, report });
 
       const summary = `**Root Cause:** ${report.rootCause}\n**Confidence:** ${report.confidence}\n**Trigger:** ${report.trigger}`;
+      memory.append(threadId, { role: "assistant", content: `Investigation of ${service.name}: ${summary}` });
       send({ type: "chat", role: "assistant", content: summary, investigationId: invId, report });
       db.createMessage({ id: `msg_${ulid()}`, role: "assistant", content: summary, investigationId: invId });
     } catch (err) {
