@@ -203,6 +203,47 @@ describe("LlmClient – timeout and retry", () => {
   });
 });
 
+describe("LlmClient – chatStream", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("yields reasoning and content deltas then done for text response", async () => {
+    const mockCreate = await getMockCreate();
+
+    async function* fakeStream() {
+      yield { type: "response.created", response: { id: "r1", status: "in_progress", usage: null } };
+      yield { type: "response.reasoning_text.delta", delta: "Let me", output_index: 0, content_index: 0 };
+      yield { type: "response.reasoning_text.delta", delta: " think", output_index: 0, content_index: 0 };
+      yield { type: "response.output_text.delta", delta: "Hello", output_index: 1, content_index: 0 };
+      yield { type: "response.output_text.delta", delta: " world", output_index: 1, content_index: 0 };
+      yield {
+        type: "response.completed",
+        response: {
+          id: "r1", status: "completed",
+          usage: { input_tokens: 10, output_tokens: 5 },
+        },
+      };
+    }
+
+    mockCreate.mockReturnValue(fakeStream());
+
+    const client = new LlmClient(config, defaultTimeouts, defaultRetry);
+    const events: unknown[] = [];
+    for await (const event of client.chatStream([{ role: "user", content: "Hi" }], [])) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "reasoning", content: "Let me" },
+      { type: "reasoning", content: " think" },
+      { type: "content", content: "Hello" },
+      { type: "content", content: " world" },
+      { type: "done", usage: { inputTokens: 10, outputTokens: 5 } },
+    ]);
+  });
+});
+
 describe("convertToResponsesInput", () => {
   it("extracts system messages as instructions", () => {
     const messages: Message[] = [
