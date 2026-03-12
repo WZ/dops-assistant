@@ -1,7 +1,8 @@
 // Client to Server
 export type ClientMessage =
   | { type: "chat"; message: string }
-  | { type: "deep_investigate"; investigationId: string; message: string };
+  | { type: "deep_investigate"; investigationId: string; message: string }
+  | { type: "new_session" };
 
 // Phase stats emitted on phase completion
 export type PhaseStats = {
@@ -35,5 +36,7 @@ export type ServerMessage =
   | { type: "investigation:failed"; id: string; error: string }
   | { type: "deep_investigate:response"; investigationId: string; content: string }
   | { type: "deep_investigate:tool_call"; investigationId: string; tool: string; args: Record<string, unknown>; status: "calling" | "success" | "error" }
+  | { type: "session_cleared" }
+  | { type: "context_switch"; previousService: string; newService: string }
   | { type: "services:health"; data: unknown[] }
   | { type: "error"; message: string };

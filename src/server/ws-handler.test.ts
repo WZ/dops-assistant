@@ -14,6 +14,8 @@ function mockDeps(): WsDeps {
       createEvent: vi.fn(),
       getInvestigation: vi.fn(),
       getPhases: vi.fn(() => []),
+      listRecentMessages: vi.fn(() => []),
+      listMessages: vi.fn(() => []),
     },
     agent: {
       chat: vi.fn().mockResolvedValue({ response: "Hello!", history: [], images: [] }),
@@ -35,9 +37,10 @@ function mockDeps(): WsDeps {
     memory: {
       get: vi.fn().mockReturnValue([]),
       append: vi.fn(),
+      clear: vi.fn(),
     },
     services: [{ name: "payments-api", metrics: [], logLabels: {} }],
-    matchService: vi.fn(),
+    validateLlmServiceMatch: vi.fn(),
     matchServiceFromText: vi.fn(),
   } as unknown as WsDeps;
 }
@@ -59,7 +62,7 @@ describe("handleClientMessage", () => {
   it("routes an investigation and emits lifecycle events", async () => {
     const deps = mockDeps();
     (deps.router.route as ReturnType<typeof vi.fn>).mockResolvedValue({ intent: "investigation", service: "payments-api" });
-    (deps.matchService as ReturnType<typeof vi.fn>).mockReturnValue({ name: "payments-api", metrics: [], logLabels: {} });
+    (deps.validateLlmServiceMatch as ReturnType<typeof vi.fn>).mockReturnValue({ name: "payments-api", metrics: [], logLabels: {} });
     (deps.matchServiceFromText as ReturnType<typeof vi.fn>).mockReturnValue({ name: "payments-api", metrics: [], logLabels: {} });
 
     const messages: unknown[] = [];
@@ -70,12 +73,15 @@ describe("handleClientMessage", () => {
     expect(messages.some((m: any) => m.type === "investigation:started")).toBe(true);
     expect(messages.some((m: any) => m.type === "investigation:complete")).toBe(true);
     expect(deps.db.createInvestigation).toHaveBeenCalled();
+    // Issue 1 fix: investigation should write to thread memory for context switch detection
+    expect(deps.memory.append).toHaveBeenCalledWith("thread_1", expect.objectContaining({ role: "user" }));
+    expect(deps.memory.append).toHaveBeenCalledWith("thread_1", expect.objectContaining({ role: "assistant" }));
   });
 
   it("asks user to specify service when none matched", async () => {
     const deps = mockDeps();
     (deps.router.route as ReturnType<typeof vi.fn>).mockResolvedValue({ intent: "investigation", service: undefined });
-    (deps.matchService as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
+    (deps.validateLlmServiceMatch as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
     (deps.matchServiceFromText as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
 
     const messages: unknown[] = [];
@@ -133,13 +139,15 @@ describe("handleClientMessage — enriched events", () => {
         getPhases: vi.fn(() => []),
         createPhase: vi.fn(),
         updatePhase: vi.fn(),
+        listMessages: vi.fn(() => []),
+        listRecentMessages: vi.fn(() => []),
       },
       agent: {},
       investigationAgent: mockInvestigationAgent,
       router: { route: vi.fn(async () => ({ intent: "investigation", service: "test-service" })) },
       memory: { get: vi.fn(() => []), append: vi.fn() },
       services: [{ name: "test-service", metrics: [], logLabels: {} }],
-      matchService: vi.fn((_q: string | undefined, services: any[]) => services[0]),
+      validateLlmServiceMatch: vi.fn((_q: string | undefined, _msg: string, services: any[]) => services[0]),
       matchServiceFromText: vi.fn(() => undefined),
     };
 
@@ -198,6 +206,8 @@ describe("handleClientMessage — enriched events", () => {
         getPhases: vi.fn(() => []),
         createPhase: vi.fn(),
         updatePhase: vi.fn(),
+        listMessages: vi.fn(() => []),
+        listRecentMessages: vi.fn(() => []),
       },
       agent: {
         chat: vi.fn(async () => ({ response: "Here is my analysis..." })),
@@ -206,7 +216,7 @@ describe("handleClientMessage — enriched events", () => {
       router: { route: vi.fn() },
       memory: { get: vi.fn(() => []), append: vi.fn() },
       services: [{ name: "test-service", metrics: [], logLabels: {} }],
-      matchService: vi.fn(),
+      validateLlmServiceMatch: vi.fn(),
       matchServiceFromText: vi.fn(),
     };
 
@@ -238,13 +248,15 @@ describe("handleClientMessage — enriched events", () => {
         updateInvestigation: vi.fn(),
         createPhase: vi.fn(),
         updatePhase: vi.fn(),
+        listMessages: vi.fn(() => []),
+        listRecentMessages: vi.fn(() => []),
       },
       agent: {},
       investigationAgent: {},
       router: { route: vi.fn() },
       memory: { get: vi.fn(() => []), append: vi.fn() },
       services: [],
-      matchService: vi.fn(),
+      validateLlmServiceMatch: vi.fn(),
       matchServiceFromText: vi.fn(),
     };
 
@@ -259,5 +271,79 @@ describe("handleClientMessage — enriched events", () => {
     expect(responses.length).toBe(1);
     const response = responses[0] as Extract<ServerMessage, { type: "deep_investigate:response" }>;
     expect(response.content).toContain("not found");
+  });
+});
+
+describe("handleClientMessage — new_session", () => {
+  it("clears memory and sends session_cleared", async () => {
+    const deps = mockDeps();
+    const messages: ServerMessage[] = [];
+    const send = (msg: ServerMessage) => messages.push(msg);
+
+    await handleClientMessage({ type: "new_session" }, send, deps, "thread_1");
+
+    expect(deps.memory.clear).toHaveBeenCalledWith("thread_1");
+    expect(messages).toEqual([{ type: "session_cleared" }]);
+  });
+});
+
+describe("handleClientMessage — context_switch", () => {
+  it("sends context_switch when user switches from one service to another", async () => {
+    const deps = mockDeps();
+    deps.services = [
+      { name: "ingestion-server", metrics: [], logLabels: {} },
+      { name: "kudu-tserver", metrics: [], logLabels: {} },
+    ];
+    // matchServiceFromText detects "kudu" in the current message
+    (deps.matchServiceFromText as ReturnType<typeof vi.fn>).mockReturnValue({ name: "kudu-tserver", metrics: [], logLabels: {} });
+    // memory has prior conversation about ingestion-server
+    (deps.memory.get as ReturnType<typeof vi.fn>).mockReturnValue([
+      { role: "user", content: "how is the ingestion-server?" },
+      { role: "assistant", content: "The ingestion-server log rate is 5k/s." },
+    ]);
+
+    const messages: ServerMessage[] = [];
+    const send = (msg: ServerMessage) => messages.push(msg);
+
+    await handleClientMessage({ type: "chat", message: "how's the kudu workload rate" }, send, deps, "thread_1");
+
+    const switchMsg = messages.find((m) => m.type === "context_switch");
+    expect(switchMsg).toBeDefined();
+    if (switchMsg && switchMsg.type === "context_switch") {
+      expect(switchMsg.previousService).toBe("ingestion-server");
+      expect(switchMsg.newService).toBe("kudu-tserver");
+    }
+  });
+
+  it("does not send context_switch when no prior service context", async () => {
+    const deps = mockDeps();
+    // matchServiceFromText detects a service in the current message
+    (deps.matchServiceFromText as ReturnType<typeof vi.fn>).mockReturnValue({ name: "payments-api", metrics: [], logLabels: {} });
+    // empty memory — no prior context
+    (deps.memory.get as ReturnType<typeof vi.fn>).mockReturnValue([]);
+
+    const messages: ServerMessage[] = [];
+    const send = (msg: ServerMessage) => messages.push(msg);
+
+    await handleClientMessage({ type: "chat", message: "check payments-api" }, send, deps, "thread_1");
+
+    const switchMsg = messages.find((m) => m.type === "context_switch");
+    expect(switchMsg).toBeUndefined();
+  });
+
+  it("does not send context_switch when same service mentioned", async () => {
+    const deps = mockDeps();
+    (deps.matchServiceFromText as ReturnType<typeof vi.fn>).mockReturnValue({ name: "payments-api", metrics: [], logLabels: {} });
+    (deps.memory.get as ReturnType<typeof vi.fn>).mockReturnValue([
+      { role: "assistant", content: "payments-api is healthy." },
+    ]);
+
+    const messages: ServerMessage[] = [];
+    const send = (msg: ServerMessage) => messages.push(msg);
+
+    await handleClientMessage({ type: "chat", message: "payments-api errors?" }, send, deps, "thread_1");
+
+    const switchMsg = messages.find((m) => m.type === "context_switch");
+    expect(switchMsg).toBeUndefined();
   });
 });

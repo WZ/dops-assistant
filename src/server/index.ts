@@ -16,7 +16,7 @@ import { createMultiMcpClient } from "../mcp/factory.js";
 import { LlmClient } from "../llm/openai.js";
 import { ChatAgent } from "../agent/core.js";
 import { InvestigationAgent } from "../agent/investigation.js";
-import { IntentRouter, matchService, matchServiceFromText } from "../agent/intent.js";
+import { IntentRouter, matchServiceFromText, validateLlmServiceMatch } from "../agent/intent.js";
 import { ConversationMemory } from "../memory/conversation.js";
 import { loadConfig } from "../config/loader.js";
 
@@ -47,7 +47,7 @@ async function main() {
 
   setupWebSocket(server, {
     db, agent, investigationAgent, router, memory,
-    services: config.services, matchService, matchServiceFromText,
+    services: config.services, validateLlmServiceMatch, matchServiceFromText,
   });
 
   const staticDir = path.resolve(__dirname, "../../dist/web");

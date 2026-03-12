@@ -58,6 +58,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
   const [deepLoading, setDeepLoading] = useState(false);
   const [chatLoading, setChatLoading] = useState(false);
   const [activeTool, setActiveTool] = useState<string | null>(null);
+  const [contextSwitch, setContextSwitch] = useState<{ previousService: string; newService: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const processedCount = useRef(0);
   const historyLoaded = useRef(false);
@@ -104,10 +105,22 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
       .catch(() => {});
   }, []);
 
-  // Reset deep messages when investigation changes
+  // Load deep investigation follow-up messages from DB when investigation changes
   useEffect(() => {
     setDeepMessages([]);
     setDeepLoading(false);
+    if (!activeInvestigationId) return;
+    fetch(`/api/messages?investigationId=${activeInvestigationId}`)
+      .then((r) => r.ok ? r.json() : [])
+      .then((msgs: Array<{ role: string; content: string }>) => {
+        const followUps = msgs.filter((m) =>
+          !m.content.startsWith("Starting investigation") && !m.content.startsWith("**Root Cause:**")
+        );
+        if (followUps.length > 0) {
+          setDeepMessages(followUps.map((m) => ({ role: m.role as ChatMessage["role"], content: m.content })));
+        }
+      })
+      .catch(() => {});
   }, [activeInvestigationId]);
 
   // Process WebSocket messages
@@ -140,6 +153,15 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
       if (msg.type === "deep_investigate:response" && msg.investigationId === activeInvestigationId) {
         setDeepMessages((prev) => [...prev, { role: "assistant", content: msg.content }]);
         setDeepLoading(false);
+      }
+      if (msg.type === "session_cleared") {
+        setChatMessages([]);
+        setChatLoading(false);
+        setActiveTool(null);
+        setContextSwitch(null);
+      }
+      if (msg.type === "context_switch") {
+        setContextSwitch({ previousService: msg.previousService, newService: msg.newService });
       }
     }
   }, [wsMessages, onInvestigationStarted, activeInvestigationId]);
@@ -190,6 +212,17 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
             </>
           )}
         </div>
+        {!isDeepMode && chatMessages.length > 0 && (
+          <button
+            onClick={() => { send({ type: "new_session" }); }}
+            className="flex items-center gap-1 px-2 py-1 text-[10px] font-mono rounded border border-border/30 text-muted-foreground/50 hover:text-foreground/70 hover:border-border/50 hover:bg-secondary/30 transition-colors"
+          >
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 5v14M5 12h14"/>
+            </svg>
+            New chat
+          </button>
+        )}
       </div>
 
       {/* Deep mode banner */}
@@ -197,6 +230,29 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
         <div className="px-4 py-2 bg-accent/4 border-b border-accent/12 text-[10px] font-mono text-accent/60 flex items-center gap-2">
           <div className="w-1 h-1 rounded-full bg-accent/50" />
           Ask follow-up questions — has full MCP access for live queries
+        </div>
+      )}
+
+      {/* Context switch banner */}
+      {contextSwitch && !isDeepMode && (
+        <div className="px-4 py-2 bg-accent/6 border-b border-accent/15 text-[11px] font-mono text-accent/70 flex items-center justify-between animate-fade-in">
+          <span>
+            New topic: <strong>{contextSwitch.newService}</strong> (was: {contextSwitch.previousService})
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => { send({ type: "new_session" }); setContextSwitch(null); }}
+              className="px-2 py-0.5 rounded border border-accent/25 text-accent/80 hover:bg-accent/10 transition-colors"
+            >
+              Start fresh
+            </button>
+            <button
+              onClick={() => setContextSwitch(null)}
+              className="px-2 py-0.5 rounded border border-border/25 text-muted-foreground/50 hover:bg-secondary/30 transition-colors"
+            >
+              Dismiss
+            </button>
+          </div>
         </div>
       )}
 
