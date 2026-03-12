@@ -11,6 +11,8 @@ export type ChatRequest = {
   correlationId?: string;
   onToolCall?: (name: string, args: Record<string, unknown>, result?: string) => void;
   onTokenUsage?: (usage: TokenUsage) => void;
+  onStreamStart?: () => void;
+  onStreamDelta?: (delta: { type: "reasoning" | "content"; content: string }) => void;
 };
 
 export type ImageAttachment = {
