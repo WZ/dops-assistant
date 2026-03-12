@@ -48,6 +48,11 @@ export type LlmResponse =
   | { type: "text"; content: string; usage?: TokenUsage }
   | { type: "tool_calls"; calls: ToolCall[]; usage?: TokenUsage };
 
+export type LlmStreamEvent =
+  | { type: "reasoning"; content: string }
+  | { type: "content"; content: string }
+  | { type: "tool_calls"; calls: ToolCall[] }
+  | { type: "done"; usage?: TokenUsage };
 
 // -- Conversion helpers for Responses API --
 
@@ -341,5 +346,154 @@ export class LlmClient {
     }
 
     return { type: "text", content: textContent, usage };
+  }
+
+  async *chatStream(
+    messages: Message[],
+    tools: OpenAITool[],
+    opts?: { responseFormat?: ResponseFormat; maxOutputTokens?: number; timeoutMs?: number },
+  ): AsyncGenerator<LlmStreamEvent> {
+    const { instructions, input } = convertToResponsesInput(messages);
+
+    const timeoutMs = opts?.timeoutMs ?? this.timeouts.llmCallMs;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    const requestParams = {
+      model: this.config.model,
+      max_output_tokens: opts?.maxOutputTokens ?? this.config.maxTokens,
+      ...(instructions ? { instructions } : {}),
+      input,
+      ...(tools.length > 0
+        ? { tools: convertTools(tools), tool_choice: "auto" as const }
+        : {}),
+      ...(opts?.responseFormat
+        ? { text: convertResponseFormat(opts.responseFormat) }
+        : {}),
+      stream: true as const,
+    };
+
+    logger.debug({
+      component: "llm",
+      model: requestParams.model,
+      inputItems: input.length,
+      toolCount: tools.length,
+      streaming: true,
+    }, "Sending streaming Responses API request");
+
+    let stream: AsyncIterable<unknown>;
+    try {
+      stream = await this.openai.responses.create(
+        requestParams as any,
+        { signal: controller.signal },
+      ) as unknown as AsyncIterable<unknown>;
+    } catch (err) {
+      clearTimeout(timer);
+      llmCallsTotal.inc({ status: "error" });
+      throw err;
+    }
+
+    const pendingToolCalls = new Map<string, { callId: string; name: string; args: string }>();
+    let usage: TokenUsage | undefined;
+
+    try {
+      for await (const raw of stream) {
+        const event = raw as { type: string; delta?: unknown; item?: any; response?: any; item_id?: string; arguments?: string };
+
+        switch (event.type) {
+          case "response.reasoning_text.delta":
+          case "response.reasoning.delta": {
+            const text = String(event.delta ?? "");
+            if (text) yield { type: "reasoning", content: text };
+            break;
+          }
+
+          case "response.output_text.delta": {
+            const text = String(event.delta ?? "");
+            if (text) {
+              yield { type: "content", content: text };
+            }
+            break;
+          }
+
+          case "response.output_item.added": {
+            const item = event.item;
+            if (item?.type === "function_call" && item.id && item.call_id && item.name) {
+              pendingToolCalls.set(item.id, { callId: item.call_id, name: item.name, args: "" });
+            }
+            break;
+          }
+
+          case "response.function_call_arguments.delta": {
+            const itemId = event.item_id;
+            const pending = itemId ? pendingToolCalls.get(itemId) : undefined;
+            if (pending && typeof event.delta === "string") {
+              pending.args += event.delta;
+            }
+            break;
+          }
+
+          case "response.function_call_arguments.done": {
+            const itemId = event.item_id;
+            const pending = itemId ? pendingToolCalls.get(itemId) : undefined;
+            if (pending && typeof event.arguments === "string") {
+              pending.args = event.arguments;
+            }
+            break;
+          }
+
+          case "response.completed": {
+            const resp = event.response;
+            if (resp?.usage) {
+              usage = { inputTokens: resp.usage.input_tokens, outputTokens: resp.usage.output_tokens };
+              llmTokensUsedTotal.inc({ type: "prompt" }, resp.usage.input_tokens);
+              llmTokensUsedTotal.inc({ type: "completion" }, resp.usage.output_tokens);
+            }
+            llmCallsTotal.inc({ status: "success" });
+            break;
+          }
+
+          case "response.incomplete": {
+            const resp = event.response;
+            if (resp?.usage) {
+              usage = { inputTokens: resp.usage.input_tokens, outputTokens: resp.usage.output_tokens };
+            }
+            logger.warn({ outputTokens: resp?.usage?.output_tokens }, "Streaming response truncated (incomplete)");
+            llmCallsTotal.inc({ status: "success" });
+            break;
+          }
+
+          case "response.failed": {
+            llmCallsTotal.inc({ status: "error" });
+            throw new Error("LLM streaming response failed");
+          }
+        }
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (pendingToolCalls.size > 0) {
+      if (tools.length > 0) {
+        const calls: ToolCall[] = [];
+        for (const tc of pendingToolCalls.values()) {
+          let args: Record<string, unknown>;
+          try {
+            args = JSON.parse(tc.args) as Record<string, unknown>;
+          } catch {
+            throw new Error(`Failed to parse tool arguments for "${tc.name}": ${tc.args}`);
+          }
+          calls.push({ id: tc.callId, name: tc.name, args });
+        }
+        yield { type: "tool_calls", calls };
+      } else {
+        logger.warn(
+          { hallucinated: [...pendingToolCalls.values()].map((tc) => tc.name) },
+          "Ignoring hallucinated function calls in stream (no tools were provided)",
+        );
+      }
+    }
+
+    yield { type: "done", usage };
   }
 }
