@@ -12,12 +12,23 @@ dist/
 # Local dev config (contains secrets)
 dev/
 
-# Binaries
-bin/
-
 # Logs
 *.log
 logs/
 
 # Design/plan docs (internal)
 docs/plans/
+
+# Claude Code
+.claude/
+
+# Local binaries/scripts
+bin/
+
+# SQLite
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Benchmarks (local)
+benchmark/
