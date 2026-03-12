@@ -12,6 +12,9 @@ dist/
 # Local dev config (contains secrets)
 dev/
 
+# Binaries
+bin/
+
 # Logs
 *.log
 logs/
