@@ -69,7 +69,7 @@ async function main(): Promise<void> {
   const llm = new LlmClient(config.llm, config.timeouts, config.retry);
   const agent = new ChatAgent(llm, mcp, { maxIterations: config.agent.maxIterations });
   const memory = new ConversationMemory(config.agent.conversationMemory);
-  const investigationAgent = new InvestigationAgent(llm, mcp, { maxIterations: config.agent.maxIterations });
+  const investigationAgent = new InvestigationAgent(llm, mcp, { maxIterations: config.agent.maxIterations, projectRoot: process.cwd() });
   const router = new IntentRouter(llm);
 
   const { waitUntilExit } = render(

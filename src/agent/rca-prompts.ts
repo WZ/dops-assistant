@@ -104,6 +104,7 @@ Be efficient — make at most 3 tool calls per round. Respond ONLY with valid JS
 export const INVESTIGATION_PLAN_PROMPT = `Based on the detected anomaly, create a focused investigation plan.
 Determine what specific metrics, logs, and infrastructure checks will be most relevant.
 Consider: What are the most likely root causes? What evidence would confirm or rule out each?
+If recent incidents are provided, consider whether the current anomaly is a recurrence or shares a root cause with a previous incident.
 
 Respond ONLY with valid JSON matching the required schema.`;
 
