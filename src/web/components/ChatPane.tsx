@@ -59,6 +59,16 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
   const [chatLoading, setChatLoading] = useState(false);
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [contextSwitch, setContextSwitch] = useState<{ previousService: string; newService: string } | null>(null);
+  const [streamingMessage, setStreamingMessage] = useState<{
+    content: string;
+    reasoning: string;
+    showReasoning: boolean;
+  } | null>(null);
+
+  // Ref-based accumulator for high-frequency delta batching
+  const streamRef = useRef<{ content: string; reasoning: string }>({ content: "", reasoning: "" });
+  const rafRef = useRef<number | null>(null);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const processedCount = useRef(0);
   const historyLoaded = useRef(false);
@@ -142,6 +152,46 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
           setActiveTool(null);
         }
       }
+      if (msg.type === "chat:stream_start") {
+        streamRef.current = { content: "", reasoning: "" };
+        setStreamingMessage({ content: "", reasoning: "", showReasoning: false });
+        setChatLoading(false);
+        setActiveTool(null);
+      }
+      if (msg.type === "chat:stream_delta") {
+        if (msg.reasoning) {
+          streamRef.current.reasoning += msg.content;
+        } else {
+          streamRef.current.content += msg.content;
+        }
+        // Batch re-renders via requestAnimationFrame
+        if (rafRef.current === null) {
+          rafRef.current = requestAnimationFrame(() => {
+            rafRef.current = null;
+            setStreamingMessage((prev) =>
+              prev ? { ...prev, content: streamRef.current.content, reasoning: streamRef.current.reasoning } : null
+            );
+          });
+        }
+      }
+      if (msg.type === "chat:stream_end") {
+        if (rafRef.current !== null) {
+          cancelAnimationFrame(rafRef.current);
+          rafRef.current = null;
+        }
+        const finalMsg: ChatMessage = {
+          role: "assistant",
+          content: msg.content,
+          ...(msg.chartData ? { chartData: msg.chartData } : {}),
+        };
+        if (isDeepMode) {
+          setDeepMessages((prev) => [...prev, finalMsg]);
+        } else {
+          setChatMessages((prev) => [...prev, finalMsg]);
+        }
+        setStreamingMessage(null);
+        setDeepLoading(false);
+      }
       if (msg.type === "chat:tool_call") {
         setActiveTool(msg.status === "calling" ? msg.tool : null);
       }
@@ -167,8 +217,20 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
   }, [wsMessages, onInvestigationStarted, activeInvestigationId]);
 
   useEffect(() => {
+    if (status === "disconnected" && streamingMessage) {
+      const interrupted = streamRef.current.content || "(response interrupted)";
+      if (isDeepMode) {
+        setDeepMessages((prev) => [...prev, { role: "assistant", content: interrupted }]);
+      } else {
+        setChatMessages((prev) => [...prev, { role: "assistant", content: interrupted }]);
+      }
+      setStreamingMessage(null);
+    }
+  }, [status]);
+
+  useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [chatMessages, deepMessages, chatLoading]);
+  }, [chatMessages, deepMessages, chatLoading, streamingMessage]);
 
   const handleSubmit = (text?: string) => {
     const trimmed = (text ?? input).trim();
@@ -359,7 +421,49 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
               )}
             </div>
           ))}
-          {isLoading && (
+          {streamingMessage && (
+            <div className="flex justify-start animate-fade-in">
+              <div className="max-w-[85%] space-y-2">
+                {/* Reasoning indicator */}
+                {streamingMessage.reasoning && (
+                  <div>
+                    <button
+                      onClick={() => setStreamingMessage((prev) => prev ? { ...prev, showReasoning: !prev.showReasoning } : null)}
+                      className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground/40 hover:text-muted-foreground/60 transition-colors mb-1"
+                    >
+                      <svg
+                        width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                        className={`transition-transform ${streamingMessage.showReasoning ? "rotate-90" : ""}`}
+                      >
+                        <path d="M9 18l6-6-6-6"/>
+                      </svg>
+                      {streamingMessage.content ? "Thought" : "Thinking..."}
+                    </button>
+                    {streamingMessage.showReasoning && (
+                      <div className="px-3 py-2 rounded-lg bg-secondary/25 border border-border/20 text-[11px] font-mono text-muted-foreground/40 leading-relaxed max-h-[200px] overflow-y-auto whitespace-pre-wrap">
+                        {streamingMessage.reasoning}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {/* Content — only show if we have content */}
+                {streamingMessage.content ? (
+                  <div className="px-3.5 py-2.5 rounded-xl rounded-bl-sm bg-secondary/50 border border-border/40 text-sm font-body">
+                    {renderMarkdown(streamingMessage.content)}
+                  </div>
+                ) : streamingMessage.reasoning ? (
+                  /* Still in reasoning phase — show pulsing indicator */
+                  <div className="px-3.5 py-2 rounded-xl rounded-bl-sm bg-secondary/50 border border-border/40">
+                    <div className="flex items-center gap-1.5">
+                      <div className={`w-1.5 h-1.5 rounded-full animate-status-pulse ${isDeepMode ? "bg-accent" : "bg-primary"}`} />
+                      <span className="text-[11px] font-mono text-muted-foreground/50">thinking...</span>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          )}
+          {isLoading && !streamingMessage && (
             <div className="flex justify-start animate-fade-in">
               <div className="px-3.5 py-2 rounded-xl rounded-bl-sm bg-secondary/50 border border-border/40">
                 <div className="flex items-center gap-1.5">
