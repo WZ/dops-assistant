@@ -55,8 +55,8 @@ describe("handleClientMessage", () => {
 
     expect(deps.router.route).toHaveBeenCalledWith("what dashboards?", ["payments-api"]);
     expect(deps.agent.chat).toHaveBeenCalled();
-    const chatMsg = messages.find((m: any) => m.type === "chat" && m.role === "assistant");
-    expect(chatMsg).toBeDefined();
+    const streamEnd = messages.find((m: any) => m.type === "chat:stream_end");
+    expect(streamEnd).toBeDefined();
   });
 
   it("routes an investigation and emits lifecycle events", async () => {
@@ -227,11 +227,9 @@ describe("handleClientMessage — enriched events", () => {
       "test_thread",
     );
 
-    const responses = sent.filter((m) => m.type === "deep_investigate:response");
+    const responses = sent.filter((m) => m.type === "chat:stream_end");
     expect(responses.length).toBe(1);
-    const response = responses[0] as Extract<ServerMessage, { type: "deep_investigate:response" }>;
-    expect(response.investigationId).toBe("inv_test");
-    expect(response.content).toBe("Here is my analysis...");
+    expect((responses[0] as any).content).toBe("Here is my analysis...");
   });
 
   it("should return error for non-existent investigation in deep_investigate", async () => {
@@ -267,10 +265,9 @@ describe("handleClientMessage — enriched events", () => {
       "test_thread",
     );
 
-    const responses = sent.filter((m) => m.type === "deep_investigate:response");
+    const responses = sent.filter((m) => m.type === "chat:stream_end");
     expect(responses.length).toBe(1);
-    const response = responses[0] as Extract<ServerMessage, { type: "deep_investigate:response" }>;
-    expect(response.content).toContain("not found");
+    expect((responses[0] as any).content).toContain("not found");
   });
 });
 
@@ -345,5 +342,50 @@ describe("handleClientMessage — context_switch", () => {
 
     const switchMsg = messages.find((m) => m.type === "context_switch");
     expect(switchMsg).toBeUndefined();
+  });
+});
+
+describe("handleClientMessage — streaming", () => {
+  it("sends stream_start, stream_delta, and stream_end for chat", async () => {
+    const sent: ServerMessage[] = [];
+    const send = (m: ServerMessage) => sent.push(m);
+
+    const deps = mockDeps();
+    (deps.agent.chat as ReturnType<typeof vi.fn>).mockImplementation(async (task: any) => {
+      task.onStreamStart?.();
+      task.onStreamDelta?.({ type: "reasoning", content: "thinking" });
+      task.onStreamDelta?.({ type: "content", content: "Hello" });
+      task.onStreamDelta?.({ type: "content", content: " there" });
+      return { response: "Hello there", updatedHistory: [], images: [] };
+    });
+
+    await handleClientMessage({ type: "chat", message: "hi" }, send, deps, "thread_1");
+
+    const streamStart = sent.filter((m) => m.type === "chat:stream_start");
+    expect(streamStart).toHaveLength(1);
+
+    const deltas = sent.filter((m) => m.type === "chat:stream_delta");
+    expect(deltas).toHaveLength(3);
+    expect(deltas[0]).toEqual({ type: "chat:stream_delta", content: "thinking", reasoning: true });
+    expect(deltas[1]).toEqual({ type: "chat:stream_delta", content: "Hello" });
+    expect(deltas[2]).toEqual({ type: "chat:stream_delta", content: " there" });
+
+    const streamEnd = sent.filter((m) => m.type === "chat:stream_end");
+    expect(streamEnd).toHaveLength(1);
+    expect((streamEnd[0] as any).content).toBe("Hello there");
+  });
+
+  it("sends stream_end with error content when agent throws", async () => {
+    const sent: ServerMessage[] = [];
+    const send = (m: ServerMessage) => sent.push(m);
+
+    const deps = mockDeps();
+    (deps.agent.chat as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("LLM timeout"));
+
+    await handleClientMessage({ type: "chat", message: "hi" }, send, deps, "thread_1");
+
+    const streamEnd = sent.filter((m) => m.type === "chat:stream_end");
+    expect(streamEnd).toHaveLength(1);
+    expect((streamEnd[0] as any).content).toContain("Error:");
   });
 });

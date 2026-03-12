@@ -160,7 +160,7 @@ async function handleDeepInvestigate(
 
   const investigation = db.getInvestigation(msg.investigationId);
   if (!investigation) {
-    send({ type: "deep_investigate:response", investigationId: msg.investigationId, content: "Investigation not found." });
+    send({ type: "chat:stream_end", content: "Investigation not found." });
     return;
   }
 
@@ -247,15 +247,25 @@ async function handleDeepInvestigate(
       message: msg.message,
       history: fullHistory,
       serviceContext: deps.services,
+      onStreamStart: () => {
+        send({ type: "chat:stream_start" });
+      },
+      onStreamDelta: (delta) => {
+        send({
+          type: "chat:stream_delta",
+          content: delta.content,
+          ...(delta.type === "reasoning" ? { reasoning: true } : {}),
+        });
+      },
     });
     memory.append(memoryKey, { role: "user", content: msg.message });
     memory.append(memoryKey, { role: "assistant", content: result.response });
     db.createMessage({ id: `msg_${ulid()}`, role: "user", content: msg.message, investigationId: msg.investigationId });
     db.createMessage({ id: `msg_${ulid()}`, role: "assistant", content: result.response, investigationId: msg.investigationId });
-    send({ type: "deep_investigate:response", investigationId: msg.investigationId, content: result.response });
+    send({ type: "chat:stream_end", content: result.response || "No response generated." });
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : "Unknown error";
-    send({ type: "deep_investigate:response", investigationId: msg.investigationId, content: `Error: ${errorMsg}` });
+    send({ type: "chat:stream_end", content: `Error: ${errorMsg}` });
   }
 }
 
@@ -398,8 +408,8 @@ export async function handleClientMessage(
     }
   } else {
     const history = memory.get(threadId);
+    const chartData: ChartSeries[] = [];
     try {
-      const chartData: ChartSeries[] = [];
       const result = await agent.chat({
         mode: "conversational",
         message: msg.message,
@@ -415,14 +425,29 @@ export async function handleClientMessage(
             }
           }
         },
+        onStreamStart: () => {
+          send({ type: "chat:stream_start" });
+        },
+        onStreamDelta: (delta) => {
+          send({
+            type: "chat:stream_delta",
+            content: delta.content,
+            ...(delta.type === "reasoning" ? { reasoning: true } : {}),
+          });
+        },
       });
       memory.append(threadId, { role: "user", content: msg.message });
       memory.append(threadId, { role: "assistant", content: result.response });
-      send({ type: "chat", role: "assistant", content: result.response, chartData: chartData.length > 0 ? chartData : undefined });
-      db.createMessage({ id: `msg_${ulid()}`, role: "assistant", content: result.response });
+      const content = result.response || "No response generated.";
+      send({
+        type: "chat:stream_end",
+        content,
+        ...(chartData.length > 0 ? { chartData } : {}),
+      });
+      db.createMessage({ id: `msg_${ulid()}`, role: "assistant", content });
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "Unknown error";
-      send({ type: "chat", role: "assistant", content: `Error: ${errorMsg}` });
+      send({ type: "chat:stream_end", content: `Error: ${errorMsg}` });
     }
   }
 }
