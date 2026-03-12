@@ -39,4 +39,7 @@ export type ServerMessage =
   | { type: "session_cleared" }
   | { type: "context_switch"; previousService: string; newService: string }
   | { type: "services:health"; data: unknown[] }
+  | { type: "chat:stream_start" }
+  | { type: "chat:stream_delta"; content: string; reasoning?: boolean }
+  | { type: "chat:stream_end"; content: string; chartData?: ChartSeries[] }
   | { type: "error"; message: string };
