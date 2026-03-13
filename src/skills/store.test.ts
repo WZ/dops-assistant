@@ -180,6 +180,17 @@ Steps here`,
       expect(skill!.title).toBe("Updated");
       expect(skill!.body).toBe("updated body");
     });
+
+    it("rejects explicit ids that attempt path traversal", async () => {
+      await expect(store.save("../../tmp/pwn", {
+        title: "Bad Skill",
+        services: [],
+        alerts: [],
+        tags: [],
+      }, "body")).rejects.toThrow("Invalid skill id");
+
+      expect(store.getAll()).toHaveLength(0);
+    });
   });
 
   describe("delete", () => {

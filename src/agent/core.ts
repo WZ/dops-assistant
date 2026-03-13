@@ -46,7 +46,12 @@ export class ChatAgent {
       correlationId: task.correlationId,
     });
     const tools = this.mcp.getTools();
-    const systemPrompt = buildSystemPrompt(task.mode, task.serviceContext, task.skillContext);
+    const systemPrompt = buildSystemPrompt(
+      task.mode,
+      task.serviceContext,
+      task.skillContext,
+      task.supportsInlineCharts ?? false,
+    );
     const responseFormat =
       task.mode === "proactive"
         ? ANOMALY_ASSESSMENT_RESPONSE_FORMAT
