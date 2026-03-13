@@ -697,6 +697,23 @@ describe("extractTimeRange (fallback)", () => {
     expect(range.from).toMatch(/^\d{4}-02-01T00:00:00Z$/);
     expect(range.to).toMatch(/^\d{4}-02-01T23:59:59Z$/);
   });
+
+  it("does NOT match 'last 3 deploys' as days", () => {
+    const range = agent.extractTimeRange("", "check the last 3 deploys");
+    expect(range).toEqual({ from: "now-8h", to: "now" });
+  });
+
+  it("resolves 'December 25' to a date not in the future", () => {
+    const range = agent.extractTimeRange("", "outage on December 25");
+    const fromDate = new Date(range.from);
+    expect(fromDate.getTime()).not.toBeNaN();
+    expect(fromDate <= new Date()).toBe(true);
+  });
+
+  it("falls back to default for invalid date 'February 30'", () => {
+    const range = agent.extractTimeRange("", "incident on February 30");
+    expect(range).toEqual({ from: "now-8h", to: "now" });
+  });
 });
 
 describe("repairTruncatedJson", () => {

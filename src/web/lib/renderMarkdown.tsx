@@ -11,7 +11,7 @@ function normalizeInlineCode(text: string): string {
 /** Ensure block-level elements (headings, table rows) start on their own line */
 function normalizeBlocks(text: string): string {
   // Ensure markdown headings start on their own line
-  let result = text.replace(/([^\n])(#{1,4}\s+)/g, "$1\n$2");
+  let result = text.replace(/([^\n/&])(#{1,4}\s+)/g, "$1\n$2");
   // Ensure pipe-table rows (3+ cells) start on their own line
   result = result.replace(/([^\n|])\s*(\|(?:[^|\n]+\|){2,})/g, "$1\n$2");
   // Ensure pipe-separator rows start on their own line

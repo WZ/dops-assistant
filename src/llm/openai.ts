@@ -400,7 +400,7 @@ export class LlmClient {
       while (true) {
         let timer: ReturnType<typeof setTimeout> | undefined;
         const idlePromise = new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error("LLM stream idle timeout")), idleMs);
+          timer = setTimeout(() => reject(new TimeoutError("LLM stream", idleMs)), idleMs);
         });
         let result: IteratorResult<unknown>;
         try {
@@ -473,7 +473,7 @@ export class LlmClient {
               usage = { inputTokens: resp.usage.input_tokens, outputTokens: resp.usage.output_tokens };
             }
             logger.warn({ outputTokens: resp?.usage?.output_tokens }, "Streaming response truncated (incomplete)");
-            llmCallsTotal.inc({ status: "success" });
+            llmCallsTotal.inc({ status: "incomplete" });
             break;
           }
 

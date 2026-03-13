@@ -1055,8 +1055,13 @@ export class InvestigationAgent {
       if (month !== undefined && day >= 1 && day <= 31) {
         const year = new Date().getFullYear();
         const d = new Date(year, month, day);
-        const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-        return { from: `${iso}T00:00:00Z`, to: `${iso}T23:59:59Z` };
+        if (d.getMonth() !== month) {
+          // Invalid date (e.g., Feb 30) — fall through to relative patterns
+        } else {
+          if (d > new Date()) d.setFullYear(year - 1);
+          const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+          return { from: `${iso}T00:00:00Z`, to: `${iso}T23:59:59Z` };
+        }
       }
     }
 
@@ -1065,8 +1070,8 @@ export class InvestigationAgent {
     if (/yesterday/i.test(text)) return { from: "now-1d", to: "now" };
     if (/last\s+(month|30\s*d)/i.test(text)) return { from: "now-30d", to: "now" };
     if (/last\s+(24|twenty.?four)\s*h/i.test(text)) return { from: "now-24h", to: "now" };
-    if (/last\s+(\d+)\s*d/i.test(text)) {
-      const days = text.match(/last\s+(\d+)\s*d/i)![1];
+    if (/last\s+(\d+)\s*d(?:ays?)?(?:\s|$)/i.test(text)) {
+      const days = text.match(/last\s+(\d+)\s*d(?:ays?)?(?:\s|$)/i)![1];
       return { from: `now-${days}d`, to: "now" };
     }
 

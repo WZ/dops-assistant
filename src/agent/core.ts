@@ -222,19 +222,8 @@ export class ChatAgent {
           }
         }
 
-        if (contentText) {
-          const cleaned = contentText.replace(
-            /!\[[^\]]*\]\(data:image\/[^;]+;base64,[^)]+\)/g,
-            "",
-          ).trim();
-          messages.push({ role: "assistant", content: cleaned });
-          agentRunsTotal.inc({ status: "success" });
-          agentIterations.observe(iterations);
-          return {
-            response: cleaned,
-            updatedHistory: messages.filter((m) => m.role !== "system"),
-            images: collectedImages,
-          };
+        if (contentText && toolCalls) {
+          log.warn({ contentLength: contentText.length, toolCallCount: toolCalls.length }, "LLM returned both content and tool_calls in same response; prioritizing tool calls");
         }
 
         if (toolCalls) {
@@ -285,6 +274,19 @@ export class ChatAgent {
               tool_call_id: call.id,
             });
           }
+        } else if (contentText) {
+          const cleaned = contentText.replace(
+            /!\[[^\]]*\]\(data:image\/[^;]+;base64,[^)]+\)/g,
+            "",
+          ).trim();
+          messages.push({ role: "assistant", content: cleaned });
+          agentRunsTotal.inc({ status: "success" });
+          agentIterations.observe(iterations);
+          return {
+            response: cleaned,
+            updatedHistory: messages.filter((m) => m.role !== "system"),
+            images: collectedImages,
+          };
         }
       }
 
