@@ -355,9 +355,8 @@ export class LlmClient {
   ): AsyncGenerator<LlmStreamEvent> {
     const { instructions, input } = convertToResponsesInput(messages);
 
-    const timeoutMs = opts?.timeoutMs ?? this.timeouts.llmCallMs;
+    const idleMs = opts?.timeoutMs ?? this.timeouts.llmCallMs;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     const requestParams = {
       model: this.config.model,
@@ -388,7 +387,6 @@ export class LlmClient {
         { signal: controller.signal },
       ) as unknown as AsyncIterable<unknown>;
     } catch (err) {
-      clearTimeout(timer);
       llmCallsTotal.inc({ status: "error" });
       throw err;
     }
@@ -396,9 +394,25 @@ export class LlmClient {
     const pendingToolCalls = new Map<string, { callId: string; name: string; args: string }>();
     let usage: TokenUsage | undefined;
 
+    const iter = stream[Symbol.asyncIterator]();
     try {
-      for await (const raw of stream) {
-        const event = raw as { type: string; delta?: unknown; item?: any; response?: any; item_id?: string; arguments?: string };
+      // Use Promise.race for idle timeout — AbortController alone may not interrupt an open SSE stream
+      while (true) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const idlePromise = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("LLM stream idle timeout")), idleMs);
+        });
+        let result: IteratorResult<unknown>;
+        try {
+          result = await Promise.race([iter.next(), idlePromise]);
+        } catch (err) {
+          controller.abort();
+          throw err;
+        } finally {
+          clearTimeout(timer);
+        }
+        if (result.done) break;
+        const event = result.value as { type: string; delta?: unknown; item?: any; response?: any; item_id?: string; arguments?: string };
 
         switch (event.type) {
           case "response.reasoning_text.delta":
@@ -470,7 +484,9 @@ export class LlmClient {
         }
       }
     } finally {
-      clearTimeout(timer);
+      // Best-effort cleanup — don't await since SDK stream may be stuck on response body
+      controller.abort();
+      iter.return?.().catch(() => {});
     }
 
     if (pendingToolCalls.size > 0) {
