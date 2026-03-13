@@ -85,6 +85,7 @@ const baseRcaReport = JSON.stringify({
   dashboardLinks: [],
   recommendedActions: ["Scale connection pool"],
   confidence: "high",
+  confidenceScore: 0.85,
 });
 
 const baseReflectionResponse = JSON.stringify({
@@ -92,6 +93,7 @@ const baseReflectionResponse = JSON.stringify({
   revisedRootCause: "DB connection pool exhausted",
   revisedTrigger: "Traffic spike saturated connection pool",
   revisedConfidence: "high",
+  revisedConfidenceScore: 0.85,
   revisedSummary: "High error rate caused by DB connection pool exhaustion",
   issues: [],
 });
@@ -244,12 +246,14 @@ describe("InvestigationAgent", () => {
       dashboardLinks: [],
       recommendedActions: ["Monitor"],
       confidence: "high", // overconfident
+      confidenceScore: 0.9,
     });
     const correctionReflection = JSON.stringify({
       validationNotes: "Root cause is vague, confidence is overestimated given only 1 evidence type",
       revisedRootCause: "Likely intermittent network issue based on error rate spike",
       revisedTrigger: "Brief network disruption",
       revisedConfidence: "low",
+      revisedConfidenceScore: 0.2,
       revisedSummary: "Intermittent error rate increase, cause uncertain",
       issues: ["Root cause too vague", "Confidence overestimated with only metric evidence"],
     });
@@ -332,6 +336,7 @@ describe("InvestigationAgent", () => {
       dashboardLinks: [],
       recommendedActions: ["Investigate Kafka"],
       confidence: "low",
+      confidenceScore: 0.3,
     });
     const conclusiveReport = JSON.stringify({
       severity: "medium",
@@ -345,6 +350,7 @@ describe("InvestigationAgent", () => {
       dashboardLinks: [],
       recommendedActions: ["Add retry backoff"],
       confidence: "medium",
+      confidenceScore: 0.6,
     });
 
     // LLM calls: plan, metrics, logs, infra, synthesis(non-conclusive), synthesis(retry), reflection
@@ -545,6 +551,7 @@ describe("InvestigationAgent – degradation", () => {
           dashboardLinks: [],
           recommendedActions: ["Scale connection pool"],
           confidence: "medium",
+          confidenceScore: 0.5,
         }) })
         .mockResolvedValueOnce({ type: "text", content: baseReflectionResponse }),  // reflection
     } as unknown as LlmClient;

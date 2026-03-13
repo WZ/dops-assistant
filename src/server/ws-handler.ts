@@ -10,6 +10,7 @@ import { resolveServiceFromHistory } from "../agent/intent.js";
 import type { ConversationMemory } from "../memory/conversation.js";
 import type { ServiceConfig } from "../config/schema.js";
 import type { ClientMessage, ServerMessage, PhaseStats, ChartSeries } from "../shared/ws-types.js";
+import type { SkillStore } from "../skills/store.js";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
 
@@ -116,6 +117,7 @@ export interface WsDeps {
   router: IntentRouter;
   memory: ConversationMemory;
   services: ServiceConfig[];
+  skillStore?: SkillStore;
   validateLlmServiceMatch: (llmService: string | undefined, userMessage: string, services: ServiceConfig[]) => ServiceConfig | undefined;
   matchServiceFromText: (text: string, services: ServiceConfig[]) => ServiceConfig | undefined;
 }
@@ -327,6 +329,16 @@ export async function handleClientMessage(
     send({ type: "investigation:started", id: invId, service: service.name, query: msg.message });
     send({ type: "chat", role: "assistant", content: `Starting investigation of **${service.name}**...` });
 
+    // Search for matching skills
+    let skillContext: string | undefined;
+    if (deps.skillStore) {
+      const matchedSkills = deps.skillStore.search({ service: service.name, query: msg.message });
+      if (matchedSkills.length > 0) {
+        skillContext = deps.skillStore.formatForPrompt(matchedSkills);
+        logger.debug({ skillCount: matchedSkills.length, skills: matchedSkills.map(s => s.id) }, "Injecting skills into investigation");
+      }
+    }
+
     try {
       const runningPhases = new Set<string>();
       const phaseStats = new Map<string, { toolCalls: number; iterations: number; startMs: number }>();
@@ -386,6 +398,7 @@ export async function handleClientMessage(
           if (stats) stats.iterations = Math.max(stats.iterations, iteration + 1);
           emit({ type: "investigation:iteration", phase: frontendPhase, iteration, maxIterations, description });
         },
+        skillContext,
       );
 
       // Complete remaining phases with stats
@@ -416,12 +429,23 @@ export async function handleClientMessage(
   } else {
     const history = memory.get(threadId);
     const chartData: ChartSeries[] = [];
+
+    // Search for matching skills in conversational mode
+    let chatSkillContext: string | undefined;
+    if (deps.skillStore) {
+      const matched = deps.skillStore.search({ query: msg.message });
+      if (matched.length > 0) {
+        chatSkillContext = deps.skillStore.formatForPrompt(matched);
+      }
+    }
+
     try {
       const result = await agent.chat({
         mode: "conversational",
         message: msg.message,
         history,
         serviceContext: services,
+        skillContext: chatSkillContext,
         onToolCall: (name, args, rawResult) => {
           if (rawResult === undefined) {
             send({ type: "chat:tool_call", tool: name, status: "calling" });
@@ -446,10 +470,13 @@ export async function handleClientMessage(
       memory.append(threadId, { role: "user", content: msg.message });
       memory.append(threadId, { role: "assistant", content: result.response });
       const content = result.response || "No response generated.";
+      // Extract skill names from chatSkillContext for UI badges
+      const usedSkillNames = chatSkillContext?.match(/### Skill: (.+)/g)?.map(m => m.replace("### Skill: ", ""));
       send({
         type: "chat:stream_end",
         content,
         ...(chartData.length > 0 ? { chartData } : {}),
+        ...(usedSkillNames?.length ? { skillsUsed: usedSkillNames } : {}),
       });
       db.createMessage({
         id: `msg_${ulid()}`, role: "assistant", content,

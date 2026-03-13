@@ -7,6 +7,7 @@ export type ChatRequest = {
   mode: AgentMode;
   message: string;
   serviceContext?: ServiceConfig[];
+  skillContext?: string;
   history?: Message[];
   correlationId?: string;
   onToolCall?: (name: string, args: Record<string, unknown>, result?: string) => void;

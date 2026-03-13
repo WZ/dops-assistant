@@ -20,10 +20,15 @@ export function getTimeContext(): string {
 export function buildSystemPrompt(
   mode: "proactive" | "conversational",
   services?: ServiceConfig[],
+  skillContext?: string,
 ): string {
   if (mode === "proactive") {
     return buildProactiveStructuredPrompt(services);
   }
+
+  const skillSection = skillContext
+    ? `\n\n${skillContext}\nIf a skill matches the user's question, use it to provide informed answers.`
+    : "";
 
   return `You are an ops assistant with access to Grafana monitoring data. Answer the user's question using the available tools.
 ${getTimeContext()}
@@ -36,8 +41,7 @@ ${getTimeContext()}
 - If you cannot find the data needed, say so clearly
 - FORMATTING: Do NOT use markdown tables. Use bullet lists or plain text instead. The output renders in a terminal that does not support wide tables.
 
-IMPORTANT — Ad-hoc panel creation:
-When the user asks to see a panel/graph/chart and no existing dashboard has a matching panel, you MUST call create_temp_panel to create one on the fly. Do NOT tell the user to create it manually. Do NOT ask for a dashboard UID. Just call create_temp_panel with a title, PromQL expr, and optional unit. The query results will be rendered as an inline chart automatically.`;
+When the user asks for a chart, call query_prometheus with the appropriate PromQL. Charts are rendered automatically from the query results.${skillSection}`;
 }
 
 export function buildProactiveStructuredPrompt(
