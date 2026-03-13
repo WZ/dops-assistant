@@ -249,6 +249,7 @@ async function handleDeepInvestigate(
       message: msg.message,
       history: fullHistory,
       serviceContext: deps.services,
+      supportsInlineCharts: true,
       onToolCall: (name, _args, rawResult) => {
         if (rawResult === undefined) {
           send({ type: "chat:tool_call", tool: name, status: "calling" });
@@ -429,11 +430,18 @@ export async function handleClientMessage(
   } else {
     const history = memory.get(threadId);
     const chartData: ChartSeries[] = [];
+    const chatService =
+      mentionedService ??
+      contextService ??
+      resolveServiceFromHistory(db.listRecentMessages(10), services);
 
     // Search for matching skills in conversational mode
     let chatSkillContext: string | undefined;
     if (deps.skillStore) {
-      const matched = deps.skillStore.search({ query: msg.message });
+      const matched = deps.skillStore.search({
+        service: chatService?.name,
+        query: msg.message,
+      });
       if (matched.length > 0) {
         chatSkillContext = deps.skillStore.formatForPrompt(matched);
       }
@@ -446,6 +454,7 @@ export async function handleClientMessage(
         history,
         serviceContext: services,
         skillContext: chatSkillContext,
+        supportsInlineCharts: true,
         onToolCall: (name, args, rawResult) => {
           if (rawResult === undefined) {
             send({ type: "chat:tool_call", tool: name, status: "calling" });

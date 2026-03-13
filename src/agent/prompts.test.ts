@@ -5,6 +5,21 @@ import {
   ANOMALY_ASSESSMENT_RESPONSE_FORMAT,
 } from "./prompts.js";
 
+describe("buildSystemPrompt", () => {
+  it("includes inline chart guidance only for inline-chart surfaces", () => {
+    const prompt = buildSystemPrompt("conversational", [], undefined, true);
+    expect(prompt).toContain("rendered as an inline chart automatically");
+    expect(prompt).toContain("Charts are rendered automatically from the query results.");
+  });
+
+  it("avoids claiming inline chart rendering for CLI-style surfaces", () => {
+    const prompt = buildSystemPrompt("conversational", [], undefined, false);
+    expect(prompt).not.toContain("rendered as an inline chart automatically");
+    expect(prompt).toContain("prefer image-producing Grafana tools");
+    expect(prompt).toContain("do not promise automatic inline rendering");
+  });
+});
+
 describe("buildProactiveStructuredPrompt", () => {
   it("includes service name and metrics", () => {
     const prompt = buildProactiveStructuredPrompt([
