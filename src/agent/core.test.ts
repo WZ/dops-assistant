@@ -400,6 +400,22 @@ describe("ChatAgent", () => {
   });
 });
 
+describe("ChatAgent – transient error recovery", () => {
+  it("returns a Connection error response on premature close instead of throwing", async () => {
+    const llm = {
+      chatStream: vi.fn(async function* (): AsyncGenerator<LlmStreamEvent> {
+        throw new Error("premature close");
+      }),
+      chat: vi.fn(),
+    } as unknown as LlmClient;
+
+    const core = new ChatAgent(llm, mockMcp, { maxIterations: 10 });
+    const result = await core.chat({ mode: "conversational", message: "Hi" });
+
+    expect(result.response).toContain("Connection error");
+  });
+});
+
 describe("ChatAgent – streaming", () => {
   it("calls onStreamStart and onStreamDelta for text response", async () => {
     const llm = makeMockLlm([
