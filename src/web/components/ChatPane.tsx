@@ -122,6 +122,12 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
   useEffect(() => {
     setDeepMessages([]);
     setDeepLoading(false);
+    setStreamingMessage(null);
+    streamRef.current = { content: "", reasoning: "" };
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
     if (!activeInvestigationId) return;
     fetch(`/api/messages?investigationId=${activeInvestigationId}`)
       .then((r) => r.ok ? r.json() : [])
@@ -138,7 +144,12 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
 
   // Process WebSocket messages
   useEffect(() => {
-    const newMessages = wsMessages.slice(processedCount.current);
+    // Guard: if messages were trimmed/reset, ensure we don't miss the latest
+    let start = processedCount.current;
+    if (start > wsMessages.length) {
+      start = Math.max(0, wsMessages.length - 1);
+    }
+    const newMessages = wsMessages.slice(start);
     processedCount.current = wsMessages.length;
 
     for (const msg of newMessages) {
