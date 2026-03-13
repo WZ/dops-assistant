@@ -143,7 +143,8 @@ export function registerRoutes(app: Express, db: Database, services: ServiceConf
         const skill = await skillStore.save(id, { title, services: svcs ?? [], alerts: alerts ?? [], tags: tags ?? [] }, body ?? "");
         res.json(skill);
       } catch (err) {
-        res.status(500).json({ error: err instanceof Error ? err.message : "Failed to update skill" });
+        const message = err instanceof Error ? err.message : "Failed to update skill";
+        res.status(message === "Invalid skill id" ? 400 : 500).json({ error: message });
       }
     });
 
