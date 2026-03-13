@@ -83,7 +83,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
     historyLoaded.current = true;
     fetch("/api/messages?limit=50")
       .then((r) => r.ok ? r.json() : [])
-      .then(async (msgs: Array<{ role: string; content: string; investigation_id?: string | null }>) => {
+      .then(async (msgs: Array<{ role: string; content: string; investigation_id?: string | null; chart_data?: string | null }>) => {
         if (msgs.length === 0) return;
 
         // Find messages that have an investigation_id — these are RCA summaries
@@ -108,6 +108,9 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
           if (m.investigation_id && reports.has(m.investigation_id)) {
             msg.investigationId = m.investigation_id;
             msg.report = reports.get(m.investigation_id);
+          }
+          if (m.chart_data) {
+            try { msg.chartData = JSON.parse(m.chart_data); } catch { /* ignore */ }
           }
           return msg;
         }));
@@ -150,6 +153,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
         if (msg.role === "assistant") {
           setChatLoading(false);
           setActiveTool(null);
+          setStreamingMessage(null);
         }
       }
       if (msg.type === "chat:stream_start") {
@@ -190,7 +194,9 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
           setChatMessages((prev) => [...prev, finalMsg]);
         }
         setStreamingMessage(null);
+        setChatLoading(false);
         setDeepLoading(false);
+        setActiveTool(null);
       }
       if (msg.type === "chat:tool_call") {
         setActiveTool(msg.status === "calling" ? msg.tool : null);
@@ -199,6 +205,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
         onInvestigationStarted(msg.id);
         setChatLoading(false);
         setActiveTool(null);
+        setStreamingMessage(null);
       }
       if (msg.type === "deep_investigate:response" && msg.investigationId === activeInvestigationId) {
         setDeepMessages((prev) => [...prev, { role: "assistant", content: msg.content }]);
@@ -228,9 +235,18 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
     }
   }, [status]);
 
+  // Scroll on new messages or loading state changes — NOT on every streaming delta
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [chatMessages, deepMessages, chatLoading, streamingMessage]);
+  }, [chatMessages, deepMessages, chatLoading]);
+
+  // Scroll once when streaming starts (not on every token)
+  const isStreaming = !!streamingMessage;
+  useEffect(() => {
+    if (isStreaming) {
+      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    }
+  }, [isStreaming]);
 
   const handleSubmit = (text?: string) => {
     const trimmed = (text ?? input).trim();
@@ -429,7 +445,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                   <div>
                     <button
                       onClick={() => setStreamingMessage((prev) => prev ? { ...prev, showReasoning: !prev.showReasoning } : null)}
-                      className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground/40 hover:text-muted-foreground/60 transition-colors mb-1"
+                      className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground/60 hover:text-muted-foreground/80 transition-colors mb-1"
                     >
                       <svg
                         width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
@@ -440,7 +456,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                       {streamingMessage.content ? "Thought" : "Thinking..."}
                     </button>
                     {streamingMessage.showReasoning && (
-                      <div className="px-3 py-2 rounded-lg bg-secondary/25 border border-border/20 text-[11px] font-mono text-muted-foreground/40 leading-relaxed max-h-[200px] overflow-y-auto whitespace-pre-wrap">
+                      <div className="px-3 py-2 rounded-lg bg-secondary/25 border border-border/20 text-[11px] font-mono text-muted-foreground/60 leading-relaxed max-h-[200px] overflow-y-auto whitespace-pre-wrap">
                         {streamingMessage.reasoning}
                       </div>
                     )}
@@ -456,7 +472,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                   <div className="px-3.5 py-2 rounded-xl rounded-bl-sm bg-secondary/50 border border-border/40">
                     <div className="flex items-center gap-1.5">
                       <div className={`w-1.5 h-1.5 rounded-full animate-status-pulse ${isDeepMode ? "bg-accent" : "bg-primary"}`} />
-                      <span className="text-[11px] font-mono text-muted-foreground/50">thinking...</span>
+                      <span className="text-[11px] font-mono text-muted-foreground/70">thinking...</span>
                     </div>
                   </div>
                 ) : null}
