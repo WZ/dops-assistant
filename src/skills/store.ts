@@ -39,6 +39,23 @@ function filenameToId(filename: string): string {
   return basename(filename, extname(filename)).toLowerCase().replace(/[^a-z0-9-]/g, "-");
 }
 
+/** Validate and normalize explicit skill ids before deriving on-disk paths. */
+function normalizeSkillId(id: string): string {
+  const trimmed = id.trim().toLowerCase();
+  if (!trimmed) {
+    throw new Error("Invalid skill id");
+  }
+  if (trimmed.includes("/") || trimmed.includes("\\") || trimmed.includes("..")) {
+    throw new Error("Invalid skill id");
+  }
+
+  const normalized = filenameToId(trimmed);
+  if (normalized !== trimmed) {
+    throw new Error("Invalid skill id");
+  }
+  return normalized;
+}
+
 /** Tokenize a string into lowercase words (≥3 chars). */
 function tokenize(text: string): string[] {
   return text
@@ -160,7 +177,9 @@ export class SkillStore {
     frontmatter: { title: string; services: string[]; alerts: string[]; tags: string[] },
     body: string,
   ): Promise<Skill> {
-    const skillId = id ?? filenameToId(frontmatter.title || "untitled");
+    const skillId = id
+      ? normalizeSkillId(id)
+      : (filenameToId(frontmatter.title || "untitled") || "untitled");
     const filename = `${skillId}.md`;
     const filePath = join(this.dir, filename);
 
