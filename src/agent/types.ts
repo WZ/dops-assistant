@@ -8,6 +8,7 @@ export type ChatRequest = {
   message: string;
   serviceContext?: ServiceConfig[];
   skillContext?: string;
+  supportsInlineCharts?: boolean;
   history?: Message[];
   correlationId?: string;
   onToolCall?: (name: string, args: Record<string, unknown>, result?: string) => void;

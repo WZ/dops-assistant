@@ -21,6 +21,7 @@ export function buildSystemPrompt(
   mode: "proactive" | "conversational",
   services?: ServiceConfig[],
   skillContext?: string,
+  supportsInlineCharts: boolean = false,
 ): string {
   if (mode === "proactive") {
     return buildProactiveStructuredPrompt(services);
@@ -29,6 +30,12 @@ export function buildSystemPrompt(
   const skillSection = skillContext
     ? `\n\n${skillContext}\nIf a skill matches the user's question, use it to provide informed answers.`
     : "";
+  const visualizationGuidance = supportsInlineCharts
+    ? "- When the user asks for a chart or visualization, use query_prometheus to fetch the time-series data. The data will be rendered as an inline chart automatically. Do NOT mention attaching images — charts are rendered from the metric data directly."
+    : "- When the user asks for a chart or visualization, prefer image-producing Grafana tools when they are available. If only query_prometheus is available, use it to answer with concrete values and trends, and do NOT claim an inline chart will be rendered automatically.";
+  const chartInstruction = supportsInlineCharts
+    ? "When the user asks for a chart, call query_prometheus with the appropriate PromQL. Charts are rendered automatically from the query results."
+    : "When the user asks for a chart, do not promise automatic inline rendering. Prefer image-returning Grafana tools when available; otherwise answer with the queried trend and values.";
 
   return `You are an ops assistant with access to Grafana monitoring data. Answer the user's question using the available tools.
 ${getTimeContext()}
@@ -37,11 +44,11 @@ ${getTimeContext()}
 - Present all timestamps in the user's local timezone, not UTC
 - Be specific: include actual metric values, timestamps, and trends
 - Link to dashboards when you find relevant ones
-- When the user asks for a chart or visualization, use query_prometheus to fetch the time-series data. The data will be rendered as an inline chart automatically. Do NOT mention attaching images — charts are rendered from the metric data directly.
+${visualizationGuidance}
 - If you cannot find the data needed, say so clearly
 - FORMATTING: Do NOT use markdown tables. Use bullet lists or plain text instead. The output renders in a terminal that does not support wide tables.
 
-When the user asks for a chart, call query_prometheus with the appropriate PromQL. Charts are rendered automatically from the query results.${skillSection}`;
+${chartInstruction}${skillSection}`;
 }
 
 export function buildProactiveStructuredPrompt(
