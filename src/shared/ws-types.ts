@@ -27,16 +27,18 @@ export type ChartSeries = {
 export type ServerMessage =
   | { type: "chat"; role: "user" | "assistant" | "system"; content: string; investigationId?: string; report?: unknown; chartData?: ChartSeries[] }
   | { type: "chat:tool_call"; tool: string; status: "calling" | "complete" }
-  | { type: "investigation:started"; id: string; service: string }
+  | { type: "investigation:started"; id: string; service: string; query: string }
   | { type: "investigation:phase"; phase: string; status: "running" | "complete" | "failed"; data?: unknown; stats?: PhaseStats }
   | { type: "investigation:progress"; phase: string; step: string }
   | { type: "investigation:tool_call"; phase: string; tool: string; args: Record<string, unknown>; status: "calling" | "success" | "error"; result?: string; durationMs?: number }
   | { type: "investigation:iteration"; phase: string; iteration: number; maxIterations: number; description: string }
   | { type: "investigation:complete"; id: string; report: unknown }
   | { type: "investigation:failed"; id: string; error: string }
-  | { type: "deep_investigate:response"; investigationId: string; content: string }
   | { type: "deep_investigate:tool_call"; investigationId: string; tool: string; args: Record<string, unknown>; status: "calling" | "success" | "error" }
   | { type: "session_cleared" }
   | { type: "context_switch"; previousService: string; newService: string }
   | { type: "services:health"; data: unknown[] }
+  | { type: "chat:stream_start" }
+  | { type: "chat:stream_delta"; content: string; reasoning?: boolean }
+  | { type: "chat:stream_end"; content: string; chartData?: ChartSeries[] }
   | { type: "error"; message: string };

@@ -1037,13 +1037,46 @@ export class InvestigationAgent {
    */
   extractTimeRange(anomalySummary: string, userMessage?: string): { from: string; to: string } {
     // Lightweight fallback for when LLM extraction fails or is skipped.
-    // Only handles ISO dates — all other formats are handled by extractTimeRangeViaLlm.
-    const text = `${anomalySummary} ${userMessage ?? ""}`.replace(/[\u2010-\u2015\u2212]/g, "-");
+    const text = `${anomalySummary} ${userMessage ?? ""}`.toLowerCase().replace(/[\u2010-\u2015\u2212]/g, "-");
+
+    // 1. Exact ISO date (e.g. "2026-03-04")
     const dateMatch = text.match(/(\d{4}-\d{2}-\d{2})/);
     if (dateMatch) {
       return { from: `${dateMatch[1]}T00:00:00Z`, to: `${dateMatch[1]}T23:59:59Z` };
     }
-    return { from: "now-6h", to: "now" };
+
+    // 2. Named month + day (e.g. "March 4", "Jan 15") — resolve to current year
+    const MONTHS: Record<string, number> = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+    const monthDayMatch = text.match(/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})\b/i);
+    if (monthDayMatch) {
+      const monthKey = monthDayMatch[1].slice(0, 3).toLowerCase();
+      const month = MONTHS[monthKey];
+      const day = parseInt(monthDayMatch[2], 10);
+      if (month !== undefined && day >= 1 && day <= 31) {
+        const year = new Date().getFullYear();
+        const d = new Date(year, month, day);
+        if (d.getMonth() !== month) {
+          // Invalid date (e.g., Feb 30) — fall through to relative patterns
+        } else {
+          if (d > new Date()) d.setFullYear(year - 1);
+          const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+          return { from: `${iso}T00:00:00Z`, to: `${iso}T23:59:59Z` };
+        }
+      }
+    }
+
+    // 3. Common relative expressions
+    if (/last\s+(week|7\s*d)/i.test(text)) return { from: "now-7d", to: "now" };
+    if (/yesterday/i.test(text)) return { from: "now-1d", to: "now" };
+    if (/last\s+(month|30\s*d)/i.test(text)) return { from: "now-30d", to: "now" };
+    if (/last\s+(24|twenty.?four)\s*h/i.test(text)) return { from: "now-24h", to: "now" };
+    if (/last\s+(\d+)\s*d(?:ays?)?(?:\s|$)/i.test(text)) {
+      const days = text.match(/last\s+(\d+)\s*d(?:ays?)?(?:\s|$)/i)![1];
+      return { from: `now-${days}d`, to: "now" };
+    }
+
+    // 4. Default fallback
+    return { from: "now-8h", to: "now" };
   }
 
   /**
@@ -1061,7 +1094,7 @@ export class InvestigationAgent {
         [
           {
             role: "system",
-            content: `Extract the investigation time window from the user message. Current time: ${now}\nRespond ONLY with JSON: {"from":"<ISO8601>","to":"<ISO8601>"}\nFor a specific day, use T00:00:00Z to T23:59:59Z. For relative references ("yesterday", "this Thursday"), compute the actual date. If no time reference, use the last 6 hours.`,
+            content: `Extract the investigation time window from the user message. Current time: ${now}\nRespond ONLY with JSON: {"from":"<ISO8601>","to":"<ISO8601>"}\nFor a specific day, use T00:00:00Z to T23:59:59Z. For relative references ("yesterday", "this Thursday", "last week"), compute the actual date. If no time reference, default to the last 8 hours.`,
           },
           { role: "user", content: userMessage },
         ],
@@ -1070,12 +1103,21 @@ export class InvestigationAgent {
       );
       if (response.usage) onTokenUsage?.(response.usage);
       if (response.type === "text") {
-        const parsed = JSON.parse(response.content) as { from: string; to: string };
-        if (parsed.from && parsed.to) return parsed;
+        // Strip markdown code fences if present (e.g. ```json ... ```)
+        const cleaned = response.content.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
+        const parsed = JSON.parse(cleaned) as { from: string; to: string };
+        if (parsed.from && parsed.to) {
+          logger.info({ from: parsed.from, to: parsed.to, userMessage }, "LLM extracted time range");
+          return parsed;
+        }
+        logger.warn({ content: response.content, userMessage }, "LLM time range response missing from/to");
+      } else {
+        logger.warn({ responseType: response.type, userMessage }, "LLM time range returned non-text response (hallucinated tool call?)");
       }
     } catch (err) {
-      logger.debug({ err }, "LLM time range extraction failed, using static fallback");
+      logger.warn({ err, userMessage }, "LLM time range extraction failed, using static fallback");
     }
+    logger.warn({ fallback, userMessage }, "Using static time range fallback");
     return fallback;
   }
 
