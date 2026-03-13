@@ -197,19 +197,19 @@ export class ChatAgent {
 
     const collectedImages: ImageAttachment[] = [];
     let iterations = 0;
+    let agentStreamStarted = false;
     try {
       for (let i = 0; i < this.maxIterations; i++) {
         iterations = i + 1;
 
         let contentText = "";
         let toolCalls: ToolCall[] | null = null;
-        let streamStarted = false;
 
         for await (const event of this.llm.chatStream(messages, tools, { responseFormat })) {
           if (event.type === "reasoning" || event.type === "content") {
-            if (!streamStarted) {
+            if (!agentStreamStarted) {
               task.onStreamStart?.();
-              streamStarted = true;
+              agentStreamStarted = true;
             }
             task.onStreamDelta?.(event);
             if (event.type === "content") {
