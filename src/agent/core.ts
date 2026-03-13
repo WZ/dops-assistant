@@ -303,6 +303,18 @@ export class ChatAgent {
       agentRunsTotal.inc({ status });
       agentIterations.observe(iterations);
       log.error({ err, iterations }, "Agent run failed");
+
+      // Return a user-friendly message for transport/network errors instead of crashing
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const isTransient = /premature close|ECONNRESET|ETIMEDOUT|ECONNREFUSED|socket hang up|abort/i.test(errMsg);
+      if (isTransient) {
+        const response = `Connection error during processing. Please try again.`;
+        return {
+          response,
+          updatedHistory: messages.filter((m) => m.role !== "system"),
+          images: collectedImages,
+        };
+      }
       throw err;
     }
   }
