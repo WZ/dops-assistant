@@ -247,6 +247,13 @@ async function handleDeepInvestigate(
       message: msg.message,
       history: fullHistory,
       serviceContext: deps.services,
+      onToolCall: (name, _args, rawResult) => {
+        if (rawResult === undefined) {
+          send({ type: "chat:tool_call", tool: name, status: "calling" });
+        } else {
+          send({ type: "chat:tool_call", tool: name, status: "complete" });
+        }
+      },
       onStreamStart: () => {
         send({ type: "chat:stream_start" });
       },
