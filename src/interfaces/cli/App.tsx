@@ -325,6 +325,7 @@ export function App({ agent, memory, services, router, investigationAgent, toolC
           message: trimmed,
           history,
           correlationId,
+          supportsInlineCharts: false,
           onToolCall: (name: string, args: Record<string, unknown>) => {
             const summary = JSON.stringify(args).slice(0, 80);
             const tokens = pendingTokens;

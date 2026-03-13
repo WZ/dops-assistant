@@ -7,11 +7,13 @@ import {
 import { ChatPane } from "./components/ChatPane";
 import { Dashboard } from "./components/Dashboard";
 import { InvestigationPane } from "./components/InvestigationPane";
+import { SkillsPage } from "./components/SkillsPage";
 import { useWebSocket } from "./hooks/useWebSocket";
 
 export type LeftPaneView =
   | { type: "dashboard" }
-  | { type: "investigation"; id: string };
+  | { type: "investigation"; id: string }
+  | { type: "skills" };
 
 function useTheme() {
   const [dark, setDark] = useState(() => localStorage.getItem("theme") === "dark");
@@ -47,6 +49,21 @@ export function App() {
               assistant
             </span>
           </div>
+          {/* Nav items */}
+          <nav className="flex items-center gap-1 ml-4">
+            <button
+              onClick={() => setLeftPane({ type: "dashboard" })}
+              className={`px-2.5 py-1 text-[10px] font-mono rounded transition-colors ${leftPane.type === "dashboard" ? "text-primary bg-primary/8" : "text-muted-foreground/50 hover:text-foreground/70 hover:bg-secondary/30"}`}
+            >
+              Dashboard
+            </button>
+            <button
+              onClick={() => setLeftPane({ type: "skills" })}
+              className={`px-2.5 py-1 text-[10px] font-mono rounded transition-colors ${leftPane.type === "skills" ? "text-primary bg-primary/8" : "text-muted-foreground/50 hover:text-foreground/70 hover:bg-secondary/30"}`}
+            >
+              Skills
+            </button>
+          </nav>
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-secondary/30">
@@ -78,7 +95,7 @@ export function App() {
         <ResizablePanelGroup orientation="horizontal">
           <ResizablePanel defaultSize={60} minSize={30}>
             <div className="h-full bg-grid relative">
-              <div key={leftPane.type === "investigation" ? `inv-${leftPane.id}` : "dashboard"} className="h-full animate-fade-in">
+              <div key={leftPane.type === "investigation" ? `inv-${leftPane.id}` : leftPane.type} className="h-full animate-fade-in">
                 {leftPane.type === "dashboard" ? (
                   <Dashboard
                     onInvestigationClick={(id) =>
@@ -88,11 +105,14 @@ export function App() {
                       ws.send({ type: "chat", message: `investigate ${serviceName}` });
                     }}
                   />
+                ) : leftPane.type === "skills" ? (
+                  <SkillsPage />
                 ) : (
                   <InvestigationPane
                     investigationId={leftPane.id}
                     wsMessages={ws.messages}
                     onBack={() => setLeftPane({ type: "dashboard" })}
+                    onNavigateSkills={() => setLeftPane({ type: "skills" })}
                   />
                 )}
               </div>

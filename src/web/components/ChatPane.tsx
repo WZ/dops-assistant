@@ -10,9 +10,11 @@ interface RcaReportSummary {
   rootCause: string;
   trigger: string;
   confidence: string;
+  confidenceScore?: number;
   severity: string;
   summary: string;
   service?: string;
+  skillsUsed?: string[];
 }
 
 interface ChatMessage {
@@ -21,6 +23,7 @@ interface ChatMessage {
   investigationId?: string;
   report?: RcaReportSummary;
   chartData?: ChartSeries[];
+  skillsUsed?: string[];
 }
 
 interface ChatPaneProps {
@@ -198,6 +201,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
           role: "assistant",
           content: msg.content,
           ...(msg.chartData ? { chartData: msg.chartData } : {}),
+          ...(msg.skillsUsed ? { skillsUsed: msg.skillsUsed } : {}),
         };
         if (isDeepMode) {
           setDeepMessages((prev) => [...prev, finalMsg]);
@@ -403,7 +407,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                           <Badge variant={msg.report.severity === "critical" ? "destructive" : "secondary"} className="text-[8px] uppercase tracking-wider">
                             {msg.report.severity}
                           </Badge>
-                          <span className="text-[8px] font-mono text-muted-foreground/50">{msg.report.confidence}</span>
+                          <span className="text-[8px] font-mono text-muted-foreground/50">{msg.report.confidence}{msg.report.confidenceScore != null ? ` (${msg.report.confidenceScore.toFixed(2)})` : ""}</span>
                         </div>
                       </div>
                       {msg.report.summary && (
@@ -431,6 +435,18 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                 </button>
               ) : (
                 <div className="max-w-[85%] space-y-2">
+                  {msg.skillsUsed && msg.skillsUsed.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mb-1">
+                      {msg.skillsUsed.map((s, si) => (
+                        <span key={si} className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[9px] font-mono rounded bg-primary/8 text-primary/60 border border-primary/12">
+                          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>
+                          </svg>
+                          {s}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   <div className="px-3.5 py-2.5 rounded-xl rounded-bl-sm bg-secondary/50 border border-border/40 text-sm font-body">
                     {renderMarkdown(msg.content)}
                   </div>

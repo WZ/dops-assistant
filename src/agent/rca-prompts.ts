@@ -3,7 +3,7 @@ import type { ServiceConfig } from "../config/schema.js";
 
 // ── Phase prompt builders ────────────────────────────────────────────────────
 
-export function buildMetricDeepDivePrompt(service: ServiceConfig, anomalyContext: string, planFocus?: string[], metricsProviderFragment?: string): string {
+export function buildMetricDeepDivePrompt(service: ServiceConfig, anomalyContext: string, planFocus?: string[], metricsProviderFragment?: string, skillContext?: string): string {
   const metricList = service.metrics
     .map((m) => `- ${m.description}: \`${m.query}\``)
     .join("\n");
@@ -37,10 +37,10 @@ ${metricsInstructions}
 
 For each observation, provide the EXACT metric queried, current value, baseline value, and timestamp.
 Keep observations concise — max 8 observations. Summary should be 1-3 sentences.
-Be efficient — make at most 3 tool calls per round. Respond ONLY with valid JSON matching the required schema.`;
+Be efficient — make at most 3 tool calls per round. Respond ONLY with valid JSON matching the required schema.${skillContext ? `\n\n${skillContext}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.` : ""}`;
 }
 
-export function buildLogCorrelationPrompt(service: ServiceConfig, anomalyContext: string, planFocus?: string[], logProviderFragment?: string): string {
+export function buildLogCorrelationPrompt(service: ServiceConfig, anomalyContext: string, planFocus?: string[], logProviderFragment?: string, skillContext?: string): string {
   const logLabels = JSON.stringify(service.logLabels);
 
   const focusSection = planFocus?.length
@@ -72,10 +72,10 @@ ${logInstructions}
 
 For each observation, provide the error pattern, occurrence count, first/last seen timestamps, a brief sample, AND an array of actual log line samples (sampleLines, max 8 lines each).
 Keep observations concise — max 8 observations. Summary should be 1-3 sentences.
-Be efficient — make at most 3 tool calls per round. Respond ONLY with valid JSON matching the required schema.`;
+Be efficient — make at most 3 tool calls per round. Respond ONLY with valid JSON matching the required schema.${skillContext ? `\n\n${skillContext}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.` : ""}`;
 }
 
-export function buildInfraHealthPrompt(service: ServiceConfig, anomalyContext: string, planFocus?: string[], infraProviderFragment?: string): string {
+export function buildInfraHealthPrompt(service: ServiceConfig, anomalyContext: string, planFocus?: string[], infraProviderFragment?: string, skillContext?: string): string {
   const focusSection = planFocus?.length
     ? `\nPLANNED FOCUS AREAS:\n${planFocus.map((f) => `- ${f}`).join("\n")}`
     : "";
@@ -96,17 +96,25 @@ ${infraInstructions}
 
 For each observation, provide the resource name, status, details, and timestamp.
 Keep observations concise — max 8 observations. Summary should be 1-3 sentences.
-Be efficient — make at most 3 tool calls per round. Respond ONLY with valid JSON matching the required schema.`;
+Be efficient — make at most 3 tool calls per round. Respond ONLY with valid JSON matching the required schema.${skillContext ? `\n\n${skillContext}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.` : ""}`;
 }
 
 // ── Planning & Reflection prompts ────────────────────────────────────────────
 
-export const INVESTIGATION_PLAN_PROMPT = `Based on the detected anomaly, create a focused investigation plan.
+export function buildInvestigationPlanPrompt(skillContext?: string): string {
+  const skillSection = skillContext
+    ? `\n\n${skillContext}\nUse these runbooks to inform your hypothesis planning. Prioritize investigation steps mentioned in matched skills.`
+    : "";
+  return `Based on the detected anomaly, create a focused investigation plan.
 Determine what specific metrics, logs, and infrastructure checks will be most relevant.
 Consider: What are the most likely root causes? What evidence would confirm or rule out each?
-If recent incidents are provided, consider whether the current anomaly is a recurrence or shares a root cause with a previous incident.
+If recent incidents are provided, consider whether the current anomaly is a recurrence or shares a root cause with a previous incident.${skillSection}
 
 Respond ONLY with valid JSON matching the required schema.`;
+}
+
+/** @deprecated Use buildInvestigationPlanPrompt() instead */
+export const INVESTIGATION_PLAN_PROMPT = buildInvestigationPlanPrompt();
 
 export const RCA_REFLECTION_PROMPT = `You are reviewing an RCA report for quality and accuracy.
 
@@ -342,10 +350,11 @@ export const RCA_REFLECTION_SCHEMA: ResponseFormat = {
         revisedTrigger: { type: "string" },
         revisedSeverity: { type: "string", enum: ["low", "medium", "high", "critical"] },
         revisedConfidence: { type: "string", enum: ["low", "medium", "high"] },
+        revisedConfidenceScore: { type: "number", description: "Revised numeric confidence score from 0.0 to 1.0" },
         revisedSummary: { type: "string" },
         issues: { type: "array", items: { type: "string" } },
       },
-      required: ["validationNotes", "revisedRootCause", "revisedTrigger", "revisedSeverity", "revisedConfidence", "revisedSummary", "issues"],
+      required: ["validationNotes", "revisedRootCause", "revisedTrigger", "revisedSeverity", "revisedConfidence", "revisedConfidenceScore", "revisedSummary", "issues"],
       additionalProperties: false,
     },
   },
@@ -397,8 +406,9 @@ export const RCA_REPORT_SCHEMA: ResponseFormat = {
         dashboardLinks: { type: "array", items: { type: "string" } },
         recommendedActions: { type: "array", items: { type: "string" } },
         confidence: { type: "string", enum: ["low", "medium", "high"] },
+        confidenceScore: { type: "number", description: "Numeric confidence score from 0.0 to 1.0. Derive categorical confidence: 0-0.4 → low, 0.4-0.7 → medium, 0.7-1.0 → high" },
       },
-      required: ["severity", "summary", "impact", "trigger", "rootCause", "contributingFactors", "timeline", "evidence", "dashboardLinks", "recommendedActions", "confidence"],
+      required: ["severity", "summary", "impact", "trigger", "rootCause", "contributingFactors", "timeline", "evidence", "dashboardLinks", "recommendedActions", "confidence", "confidenceScore"],
       additionalProperties: false,
     },
   },

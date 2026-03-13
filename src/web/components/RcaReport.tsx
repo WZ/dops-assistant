@@ -8,6 +8,7 @@ interface RcaReportData {
   rootCause: string;
   trigger: string;
   confidence: string;
+  confidenceScore?: number;
   severity: string;
   summary: string;
   impact: { duration: string; description: string };
@@ -15,6 +16,7 @@ interface RcaReportData {
   timeline: { time: string; event: string }[];
   recommendedActions: string[];
   dashboardLinks: string[];
+  skillsUsed?: string[];
 }
 
 /** Strip leading number prefixes from action text.
@@ -84,7 +86,7 @@ export function RcaReport({ report }: { report: RcaReportData }) {
               {report.severity}
             </Badge>
             <span className="text-[9px] font-mono text-muted-foreground">
-              {report.confidence} confidence
+              {report.confidence}{report.confidenceScore != null ? ` (${report.confidenceScore.toFixed(2)})` : ""} confidence
             </span>
           </div>
         </div>
@@ -160,6 +162,25 @@ export function RcaReport({ report }: { report: RcaReportData }) {
               ))}
             </div>
           </CollapsibleSection>
+        )}
+
+        {/* Skills Used */}
+        {report.skillsUsed && report.skillsUsed.length > 0 && (
+          <div className="pt-3 border-t border-border/20">
+            <h4 className="text-[10px] font-display font-semibold uppercase tracking-[0.12em] text-muted-foreground mb-2">
+              Skills Used
+            </h4>
+            <div className="flex flex-wrap gap-1.5">
+              {report.skillsUsed.map((skill, i) => (
+                <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-mono rounded-full bg-primary/8 text-primary/70 border border-primary/15">
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>
+                  </svg>
+                  {skill}
+                </span>
+              ))}
+            </div>
+          </div>
         )}
 
         {/* Grafana Links */}
