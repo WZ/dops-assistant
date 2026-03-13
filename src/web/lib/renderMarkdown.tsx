@@ -31,8 +31,8 @@ export function renderMarkdown(md: string): ReactNode {
     const hm = line.match(/^(#{1,4})\s+(.+)/);
     if (hm) {
       const cls = hm[1].length <= 2
-        ? "text-xs font-display font-bold uppercase tracking-[0.08em] text-foreground/80 mt-3 mb-1.5"
-        : "text-xs font-display font-semibold text-foreground/70 mt-2.5 mb-1";
+        ? "text-xs font-display font-bold uppercase tracking-[0.08em] text-foreground/90 mt-3 mb-1.5"
+        : "text-xs font-display font-semibold text-foreground/80 mt-2.5 mb-1";
       nodes.push(<div key={k++} className={cls}>{renderInline(hm[2])}</div>);
       i++; continue;
     }
@@ -47,7 +47,7 @@ export function renderMarkdown(md: string): ReactNode {
       }
       i++; // skip closing ```
       nodes.push(
-        <pre key={k++} className="my-2 px-3 py-2 rounded-md bg-secondary/40 border border-border/30 overflow-x-auto text-[11px] font-mono text-foreground/80 leading-relaxed">
+        <pre key={k++} className="my-2 px-3 py-2 rounded-md bg-secondary/40 border border-border/30 overflow-x-auto text-[11px] font-mono text-foreground/90 leading-relaxed">
           <code>{codeLines.join("\n")}</code>
         </pre>
       );
@@ -70,7 +70,7 @@ export function renderMarkdown(md: string): ReactNode {
             <thead>
               <tr className="bg-secondary/30">
                 {header.map((h, ci) => (
-                  <th key={ci} className="px-2.5 py-1.5 text-left font-semibold text-foreground/70 border-b border-border/30 whitespace-nowrap">
+                  <th key={ci} className="px-2.5 py-1.5 text-left font-semibold text-foreground/85 border-b border-border/30 whitespace-nowrap">
                     {renderInline(h)}
                   </th>
                 ))}
@@ -80,7 +80,7 @@ export function renderMarkdown(md: string): ReactNode {
               {body.map((row, ri) => (
                 <tr key={ri} className={ri % 2 === 0 ? "" : "bg-secondary/15"}>
                   {row.map((cell, ci) => (
-                    <td key={ci} className="px-2.5 py-1.5 text-foreground/75 border-b border-border/20">
+                    <td key={ci} className="px-2.5 py-1.5 text-foreground/90 border-b border-border/20">
                       {renderInline(cell)}
                     </td>
                   ))}
@@ -103,7 +103,7 @@ export function renderMarkdown(md: string): ReactNode {
       nodes.push(
         <ul key={k++} className="my-1.5 space-y-1 ml-1">
           {items.map((item, ii) => (
-            <li key={ii} className="flex items-start gap-2 text-foreground/75">
+            <li key={ii} className="flex items-start gap-2 text-foreground/90">
               <span className="text-accent mt-0.5 shrink-0">&bull;</span>
               <span className="leading-relaxed">{renderInline(item)}</span>
             </li>
@@ -123,7 +123,7 @@ export function renderMarkdown(md: string): ReactNode {
       nodes.push(
         <ol key={k++} className="my-1.5 space-y-1 ml-1">
           {items.map((item, ii) => (
-            <li key={ii} className="flex items-start gap-2 text-foreground/75">
+            <li key={ii} className="flex items-start gap-2 text-foreground/90">
               <span className="text-[10px] font-mono text-primary/70 shrink-0 mt-px">{ii + 1}.</span>
               <span className="leading-relaxed">{renderInline(item)}</span>
             </li>
@@ -134,7 +134,7 @@ export function renderMarkdown(md: string): ReactNode {
     }
 
     // Paragraph (default)
-    nodes.push(<p key={k++} className="text-foreground/75 leading-relaxed my-1">{renderInline(line)}</p>);
+    nodes.push(<p key={k++} className="text-foreground/90 leading-relaxed my-1">{renderInline(line)}</p>);
     i++;
   }
 
