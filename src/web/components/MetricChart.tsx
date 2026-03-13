@@ -4,7 +4,7 @@ export interface TimeSeriesData {
   metric: string;
   instance?: string;
   query?: string; // PromQL expression from tool call args
-  values: [string, number][]; // [ISO timestamp, value]
+  values: [string, number][]; // [timestamp (epoch seconds or ISO), value]
   min?: number;
   max?: number;
   avg?: number;
@@ -18,9 +18,19 @@ function formatValue(v: number): string {
   return v.toFixed(2);
 }
 
-function formatTime(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+function parseTimestamp(ts: string): Date {
+  // Prometheus returns Unix epoch seconds as strings; ISO strings contain non-digit chars
+  if (/^\d+(\.\d+)?$/.test(ts)) return new Date(Number(ts) * 1000);
+  return new Date(ts);
+}
+
+function formatTime(ts: string): string {
+  const d = parseTimestamp(ts);
+  const mo = d.getMonth() + 1;
+  const day = d.getDate();
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${mo}/${day} ${hh}:${mm}`;
 }
 
 /** Extract a readable metric name from the PromQL query or compacted metric key */
@@ -51,9 +61,9 @@ function resolveTitle(series: TimeSeriesData): string {
   return "metric";
 }
 
-const CHART_H = 120;
+const CHART_H = 130;
 const CHART_W = 360;
-const PAD = { top: 10, right: 12, bottom: 22, left: 48 };
+const PAD = { top: 10, right: 28, bottom: 28, left: 48 };
 
 export function MetricChart({ series }: { series: TimeSeriesData }) {
   const [hover, setHover] = useState<number | null>(null);
@@ -82,7 +92,7 @@ export function MetricChart({ series }: { series: TimeSeriesData }) {
       time: ts,
     }));
 
-    const labelCount = Math.min(5, vals.length);
+    const labelCount = Math.min(4, vals.length);
     const labels: string[] = [];
     for (let i = 0; i < labelCount; i++) {
       const idx = Math.round((i / (labelCount - 1)) * (vals.length - 1));
@@ -192,10 +202,10 @@ export function MetricChart({ series }: { series: TimeSeriesData }) {
             return (
               <text
                 key={i}
-                x={x} y={CHART_H - 3}
+                x={x} y={CHART_H - 6}
                 textAnchor="middle"
                 fill={cMuted}
-                fontSize="7"
+                fontSize="6"
                 fontFamily="var(--font-mono)"
               >
                 {label}
@@ -250,8 +260,8 @@ export function MetricChart({ series }: { series: TimeSeriesData }) {
               />
               {/* Tooltip background */}
               <rect
-                x={hoverPoint.x - 36} y={hoverPoint.y - 22}
-                width="72" height="16"
+                x={hoverPoint.x - 46} y={hoverPoint.y - 22}
+                width="92" height="16"
                 rx="4"
                 fill={cCard}
                 stroke={cBorderSolid}
