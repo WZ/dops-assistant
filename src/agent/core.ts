@@ -5,7 +5,6 @@ import {
 } from "./prompts.js";
 import type { ChatRequest, ChatResponse, ImageAttachment } from "./types.js";
 import type { LlmClient, Message, ToolCall } from "../llm/openai.js";
-import type { OpenAITool, ToolResult } from "../mcp/client.js";
 import type { MultiMcpClient } from "../mcp/multi-client.js";
 import { TimeoutError } from "../utils/timeout.js";
 import {
@@ -30,48 +29,6 @@ export function sanitizeToolResult(text: string): string {
   return cleaned;
 }
 
-const CREATE_TEMP_PANEL_TOOL: OpenAITool = {
-  type: "function",
-  function: {
-    name: "create_temp_panel",
-    description:
-      "Create a temporary Grafana dashboard with a single timeseries panel and return a screenshot. " +
-      "Use this when the user asks for a visual/panel/graph and no existing dashboard has a matching panel. " +
-      "IMPORTANT: Always set 'from' and 'to' to match the time range the user is asking about.",
-    parameters: {
-      type: "object",
-      properties: {
-        title: {
-          type: "string",
-          description: "Dashboard title, e.g. 'CPU usage for node blade-198-18-1-2'",
-        },
-        expr: {
-          type: "string",
-          description: "PromQL expression for the panel, e.g. '100 - (rate(node_cpu_seconds_total{instance=\"198.18.1.2:9100\",mode=\"idle\"}[5m]) * 100)'",
-        },
-        unit: {
-          type: "string",
-          description: "Panel unit (default: 'percent'). Common values: percent, short, bytes, s, reqps",
-        },
-        datasourceUid: {
-          type: "string",
-          description: "Prometheus datasource UID. If omitted, the agent will auto-detect it.",
-        },
-        from: {
-          type: "string",
-          description: "Start of the time range for the panel screenshot. Accepts relative (e.g. 'now-24h', 'now-7d') or RFC3339 (e.g. '2026-03-06T00:00:00Z'). Defaults to 'now-1h'.",
-        },
-        to: {
-          type: "string",
-          description: "End of the time range for the panel screenshot. Accepts relative (e.g. 'now') or RFC3339 (e.g. '2026-03-06T23:59:59Z'). Defaults to 'now'.",
-        },
-      },
-      required: ["title", "expr"],
-      additionalProperties: false,
-    },
-  },
-};
-
 export class ChatAgent {
   private llm: LlmClient;
   private mcp: MultiMcpClient;
@@ -83,107 +40,18 @@ export class ChatAgent {
     this.maxIterations = opts.maxIterations;
   }
 
-  private hasUpdateDashboard(): boolean {
-    return this.mcp.getTools().some((t) => t.function.name === "update_dashboard");
-  }
-
-  private async resolvePrometheusDatasourceUid(): Promise<string | undefined> {
-    const toolNames = this.mcp.getTools().map((t) => t.function.name);
-    if (!toolNames.includes("list_datasources")) return undefined;
-    try {
-      const result = await this.mcp.callTool("list_datasources", {});
-      const parsed = JSON.parse(result.text) as
-        | Array<{ uid: string; type: string }>
-        | { datasources?: Array<{ uid: string; type: string }> };
-      const datasources = Array.isArray(parsed) ? parsed : parsed?.datasources;
-      if (!datasources) return undefined;
-      return datasources.find((d) => d.type === "prometheus")?.uid;
-    } catch {
-      return undefined;
-    }
-  }
-
-  private async handleCreateTempPanel(args: Record<string, unknown>): Promise<ToolResult> {
-    const title = String(args["title"] ?? "Temp panel");
-    const expr = String(args["expr"] ?? "up");
-    const unit = String(args["unit"] ?? "percent");
-    let dsUid = args["datasourceUid"] ? String(args["datasourceUid"]) : undefined;
-
-    // Auto-detect Prometheus datasource UID if not provided
-    if (!dsUid) {
-      dsUid = await this.resolvePrometheusDatasourceUid();
-    }
-
-    const datasource = dsUid
-      ? { type: "prometheus", uid: dsUid }
-      : { type: "prometheus" };
-
-    const dashboardPayload = {
-      dashboard: {
-        uid: null,
-        title: `dops-temp: ${title}`,
-        panels: [
-          {
-            id: 1,
-            type: "timeseries",
-            title,
-            gridPos: { h: 12, w: 24, x: 0, y: 0 },
-            datasource,
-            targets: [
-              { datasource, expr, refId: "A" },
-            ],
-            fieldConfig: { defaults: { unit }, overrides: [] },
-          },
-        ],
-      },
-      overwrite: true,
-      message: "Auto-created by dops-assistant",
-    };
-
-    const createResult = await this.mcp.callTool("update_dashboard", dashboardPayload);
-
-    // Extract the dashboard UID from the response
-    let dashUid: string | undefined;
-    try {
-      const parsed = JSON.parse(createResult.text) as { uid?: string };
-      dashUid = parsed.uid;
-    } catch {
-      // Try to find uid in the text
-      const match = createResult.text.match(/"uid"\s*:\s*"([^"]+)"/);
-      dashUid = match?.[1];
-    }
-
-    if (!dashUid) {
-      return { text: `Dashboard created but could not extract UID. Response: ${createResult.text}`, images: [] };
-    }
-
-    const from = args["from"] ? String(args["from"]) : "now-1h";
-    const to = args["to"] ? String(args["to"]) : "now";
-    const imageResult = await this.mcp.callTool("get_panel_image", {
-      dashboardUid: dashUid,
-      panelId: 1,
-      timeRange: { from, to },
-      width: 1000,
-      height: 500,
-      theme: "dark",
-    });
-
-    return {
-      text: `Created temporary dashboard "${title}" (uid: ${dashUid}) and captured panel image.`,
-      images: imageResult.images,
-    };
-  }
-
   async chat(task: ChatRequest): Promise<ChatResponse> {
     const log = logger.child({
       component: "agent",
       correlationId: task.correlationId,
     });
-    const mcpTools = this.mcp.getTools();
-    const tools = this.hasUpdateDashboard()
-      ? [...mcpTools, CREATE_TEMP_PANEL_TOOL]
-      : mcpTools;
-    const systemPrompt = buildSystemPrompt(task.mode, task.serviceContext);
+    const tools = this.mcp.getTools();
+    const systemPrompt = buildSystemPrompt(
+      task.mode,
+      task.serviceContext,
+      task.skillContext,
+      task.supportsInlineCharts ?? false,
+    );
     const responseFormat =
       task.mode === "proactive"
         ? ANOMALY_ASSESSMENT_RESPONSE_FORMAT
@@ -240,11 +108,7 @@ export class ChatAgent {
           }
 
           const settled = await Promise.allSettled(
-            toolCalls.map((call) =>
-              call.name === "create_temp_panel"
-                ? this.handleCreateTempPanel(call.args)
-                : this.mcp.callTool(call.name, call.args),
-            ),
+            toolCalls.map((call) => this.mcp.callTool(call.name, call.args)),
           );
           for (let j = 0; j < toolCalls.length; j++) {
             const outcome = settled[j]!;

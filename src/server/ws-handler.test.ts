@@ -59,6 +59,29 @@ describe("handleClientMessage", () => {
     expect(streamEnd).toBeDefined();
   });
 
+  it("passes resolved service context into conversational skill matching", async () => {
+    const deps = mockDeps();
+    const search = vi.fn().mockReturnValue([]);
+    deps.skillStore = {
+      search,
+      formatForPrompt: vi.fn(),
+    } as any;
+    (deps.memory.get as ReturnType<typeof vi.fn>).mockReturnValue([
+      { role: "user", content: "how is payments-api doing?" },
+      { role: "assistant", content: "payments-api looks healthy" },
+    ]);
+
+    const messages: unknown[] = [];
+    const send = (msg: unknown) => messages.push(msg);
+
+    await handleClientMessage({ type: "chat", message: "show me the current health checks" }, send, deps, "thread_1");
+
+    expect(search).toHaveBeenCalledWith({
+      service: "payments-api",
+      query: "show me the current health checks",
+    });
+  });
+
   it("routes an investigation and emits lifecycle events", async () => {
     const deps = mockDeps();
     (deps.router.route as ReturnType<typeof vi.fn>).mockResolvedValue({ intent: "investigation", service: "payments-api" });

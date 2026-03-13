@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import type { Database, InvestigationRow, PhaseRow, EventRow } from "./db.js";
 import type { ServiceConfig } from "../config/schema.js";
 import type { MultiMcpClient } from "../mcp/multi-client.js";
+import type { SkillStore } from "../skills/store.js";
 
 export interface DependencyNode {
   id: string;
@@ -57,7 +58,7 @@ export function buildHandlers(db: Database, services: ServiceConfig[], mcp: Mult
   };
 }
 
-export function registerRoutes(app: Express, db: Database, services: ServiceConfig[], mcp: MultiMcpClient): void {
+export function registerRoutes(app: Express, db: Database, services: ServiceConfig[], mcp: MultiMcpClient, skillStore?: SkillStore): void {
   const handlers = buildHandlers(db, services, mcp);
 
   app.get("/api/services", (_req: Request, res: Response) => {
@@ -96,4 +97,110 @@ export function registerRoutes(app: Express, db: Database, services: ServiceConf
       res.status(500).json({ error: "Failed to fetch dependencies" });
     }
   });
+
+  // ── Skills REST API ─────────────────────────────────────────────────────
+  if (skillStore) {
+    app.get("/api/skills", (_req: Request, res: Response) => {
+      res.json(skillStore.getAll());
+    });
+
+    app.get("/api/skills/:id", (req: Request, res: Response) => {
+      const id = Array.isArray(req.params["id"]) ? req.params["id"][0]! : req.params["id"]!;
+      const skill = skillStore.getById(id);
+      if (!skill) {
+        res.status(404).json({ error: "Skill not found" });
+        return;
+      }
+      res.json(skill);
+    });
+
+    app.post("/api/skills", async (req: Request, res: Response) => {
+      try {
+        const { title, services: svcs, alerts, tags, body } = req.body as {
+          title: string; services: string[]; alerts: string[]; tags: string[]; body: string;
+        };
+        if (!title) {
+          res.status(400).json({ error: "title is required" });
+          return;
+        }
+        const skill = await skillStore.save(undefined, { title, services: svcs ?? [], alerts: alerts ?? [], tags: tags ?? [] }, body ?? "");
+        res.status(201).json(skill);
+      } catch (err) {
+        res.status(500).json({ error: err instanceof Error ? err.message : "Failed to create skill" });
+      }
+    });
+
+    app.put("/api/skills/:id", async (req: Request, res: Response) => {
+      try {
+        const id = Array.isArray(req.params["id"]) ? req.params["id"][0]! : req.params["id"]!;
+        const { title, services: svcs, alerts, tags, body } = req.body as {
+          title: string; services: string[]; alerts: string[]; tags: string[]; body: string;
+        };
+        if (!title) {
+          res.status(400).json({ error: "title is required" });
+          return;
+        }
+        const skill = await skillStore.save(id, { title, services: svcs ?? [], alerts: alerts ?? [], tags: tags ?? [] }, body ?? "");
+        res.json(skill);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to update skill";
+        res.status(message === "Invalid skill id" ? 400 : 500).json({ error: message });
+      }
+    });
+
+    app.delete("/api/skills/:id", async (req: Request, res: Response) => {
+      try {
+        const id = Array.isArray(req.params["id"]) ? req.params["id"][0]! : req.params["id"]!;
+        await skillStore.delete(id);
+        res.status(204).end();
+      } catch (err) {
+        res.status(500).json({ error: err instanceof Error ? err.message : "Failed to delete skill" });
+      }
+    });
+
+    app.post("/api/skills/generate", (req: Request, res: Response) => {
+      try {
+        const report = req.body as {
+          service?: string;
+          rootCause?: string;
+          trigger?: string;
+          summary?: string;
+          recommendedActions?: string[];
+          contributingFactors?: string[];
+        };
+
+        const title = report.service
+          ? `Investigate ${report.service} Issue`
+          : "Generated Skill";
+
+        const bodyParts: string[] = [];
+        if (report.summary) bodyParts.push(`## Summary\n${report.summary}`);
+        if (report.rootCause) bodyParts.push(`## Root Cause\n${report.rootCause}`);
+        if (report.trigger) bodyParts.push(`## Trigger\n${report.trigger}`);
+        if (report.recommendedActions?.length) {
+          bodyParts.push(`## Recommended Actions\n${report.recommendedActions.map((a, i) => `${i + 1}. ${a}`).join("\n")}`);
+        }
+        if (report.contributingFactors?.length) {
+          bodyParts.push(`## Contributing Factors\n${report.contributingFactors.map((f) => `- ${f}`).join("\n")}`);
+        }
+
+        // Extract keywords from summary for tags
+        const tags = (report.summary ?? "")
+          .toLowerCase()
+          .split(/[-_\s.,;:!?'"()]+/)
+          .filter((t) => t.length >= 4)
+          .slice(0, 8);
+
+        res.json({
+          title,
+          services: report.service ? [report.service] : [],
+          alerts: [],
+          tags: [...new Set(tags)],
+          body: bodyParts.join("\n\n"),
+        });
+      } catch (err) {
+        res.status(500).json({ error: err instanceof Error ? err.message : "Failed to generate skill" });
+      }
+    });
+  }
 }
