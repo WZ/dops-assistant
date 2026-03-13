@@ -19,6 +19,7 @@ import { InvestigationAgent } from "../agent/investigation.js";
 import { IntentRouter, matchServiceFromText, validateLlmServiceMatch } from "../agent/intent.js";
 import { ConversationMemory } from "../memory/conversation.js";
 import { loadConfig } from "../config/loader.js";
+import { SkillStore } from "../skills/store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
@@ -39,15 +40,20 @@ async function main() {
   const router = new IntentRouter(llm);
   const memory = new ConversationMemory(config.agent.conversationMemory);
 
+  // Initialize skill store
+  const skillStore = new SkillStore(config.skills);
+  await skillStore.loadAll();
+
   const app = express();
+  app.use(express.json());
   const server = createServer(app);
   const port = Number(process.env["PORT"] ?? 3000);
 
-  registerRoutes(app, db, config.services, mcp);
+  registerRoutes(app, db, config.services, mcp, skillStore);
 
   setupWebSocket(server, {
     db, agent, investigationAgent, router, memory,
-    services: config.services, validateLlmServiceMatch, matchServiceFromText,
+    services: config.services, skillStore, validateLlmServiceMatch, matchServiceFromText,
   });
 
   const staticDir = path.resolve(__dirname, "../../dist/web");

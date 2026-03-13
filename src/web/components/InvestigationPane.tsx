@@ -15,7 +15,7 @@ const DEFAULT_PHASES: PhaseState[] = [
   { name: "synthesis", label: "Synthesis", status: "pending" },
 ];
 
-export function InvestigationPane({ investigationId, wsMessages, onBack }: { investigationId: string; wsMessages: ServerMessage[]; onBack: () => void }) {
+export function InvestigationPane({ investigationId, wsMessages, onBack, onNavigateSkills }: { investigationId: string; wsMessages: ServerMessage[]; onBack: () => void; onNavigateSkills?: () => void }) {
   const [phases, setPhases] = useState<PhaseState[]>(DEFAULT_PHASES);
   const [evidence, setEvidence] = useState<Record<string, unknown>>({});
   const [report, setReport] = useState<unknown | null>(null);
@@ -296,6 +296,35 @@ export function InvestigationPane({ investigationId, wsMessages, onBack }: { inv
           {report ? (
             <section className="animate-fade-up">
               <RcaReport report={report as any} />
+              {/* Save as Skill */}
+              <div className="mt-3 flex justify-end">
+                <button
+                  onClick={async () => {
+                    try {
+                      const rpt = report as Record<string, unknown>;
+                      const res = await fetch("/api/skills/generate", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(rpt),
+                      });
+                      if (!res.ok) return;
+                      const generated = await res.json();
+                      await fetch("/api/skills", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(generated),
+                      });
+                      onNavigateSkills?.();
+                    } catch { /* ignore */ }
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-mono rounded-md border border-primary/20 text-primary/70 hover:bg-primary/8 hover:text-primary transition-colors"
+                >
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M12 18v-6"/><path d="M9 15h6"/>
+                  </svg>
+                  Save as Skill
+                </button>
+              </div>
             </section>
           ) : !isRunning ? (
             <div className="space-y-3">

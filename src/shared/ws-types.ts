@@ -40,5 +40,5 @@ export type ServerMessage =
   | { type: "services:health"; data: unknown[] }
   | { type: "chat:stream_start" }
   | { type: "chat:stream_delta"; content: string; reasoning?: boolean }
-  | { type: "chat:stream_end"; content: string; chartData?: ChartSeries[] }
+  | { type: "chat:stream_end"; content: string; chartData?: ChartSeries[]; skillsUsed?: string[] }
   | { type: "error"; message: string };

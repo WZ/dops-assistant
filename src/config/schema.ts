@@ -83,6 +83,12 @@ const ObservabilitySchema = z.object({
     .default("info"),
 });
 
+const SkillsSchema = z.object({
+  dir: z.string().default("./skills"),
+  maxPerQuery: z.number().default(3),
+  maxCharsPerSkill: z.number().default(2000),
+});
+
 const DiscoverySchema = z.object({
   autoRefresh: z.boolean().default(false),
   excludeServices: z.array(z.string()).default([]),
@@ -101,10 +107,12 @@ export const ConfigSchema = z.object({
   timeouts: TimeoutsSchema.optional().default({}),
   retry: RetrySchema.optional().default({}),
   observability: ObservabilitySchema.optional().default({}),
+  skills: SkillsSchema.optional().default({}),
   discovery: DiscoverySchema.optional().default({}),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
+export type SkillsConfig = z.infer<typeof SkillsSchema>;
 export type ServiceConfig = z.infer<typeof ServiceSchema>;
 export type McpServerConfig = z.infer<typeof McpServerSchema>;
 export type TimeoutsConfig = z.infer<typeof TimeoutsSchema>;
