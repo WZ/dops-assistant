@@ -8,6 +8,7 @@ import {
   buildMetricDeepDivePrompt,
   buildLogCorrelationPrompt,
   buildInfraHealthPrompt,
+  buildInvestigationPlanPrompt,
   RCA_SYNTHESIS_PROMPT,
   INVESTIGATION_PLAN_PROMPT,
   RCA_REFLECTION_PROMPT,
@@ -405,6 +406,7 @@ export class InvestigationAgent {
     onToolCall?: OnToolCallEnriched,
     onPhase?: (phase: string) => void,
     onIteration?: OnIteration,
+    skillContext?: string,
   ): Promise<RcaReport> {
     const log = logger.child({ component: "investigation", service: service.name, correlationId });
     const collectedImages: PanelImage[] = [];
@@ -466,6 +468,7 @@ export class InvestigationAgent {
         panelImages: collectedImages,
         recommendedActions: [],
         confidence: "high",
+        confidenceScore: 0.9,
         investigatedAt: new Date().toISOString(),
       };
     }
@@ -496,8 +499,9 @@ export class InvestigationAgent {
     ].join("\n");
 
     const PLAN_MAX_TOKENS = 2048;
+    const planPrompt = skillContext ? buildInvestigationPlanPrompt(skillContext) : INVESTIGATION_PLAN_PROMPT;
     const planResult = await this.runPhase<InvestigationPlan>(
-      INVESTIGATION_PLAN_PROMPT,
+      planPrompt,
       planMessage,
       INVESTIGATION_PLAN_SCHEMA,
       3,
@@ -563,9 +567,9 @@ export class InvestigationAgent {
     const logAdapter = this.resolveLogAdapter(datasourceHint);
 
     const logFragment = logAdapter?.getPromptFragment();
-    const metricPrompt = buildMetricDeepDivePrompt(service, anomalyContext, plan.metricFocus);
-    const logPrompt = buildLogCorrelationPrompt(service, anomalyContext, plan.logFocus, logFragment);
-    const infraPrompt = buildInfraHealthPrompt(service, anomalyContext, plan.infraFocus);
+    const metricPrompt = buildMetricDeepDivePrompt(service, anomalyContext, plan.metricFocus, undefined, skillContext);
+    const logPrompt = buildLogCorrelationPrompt(service, anomalyContext, plan.logFocus, logFragment, skillContext);
+    const infraPrompt = buildInfraHealthPrompt(service, anomalyContext, plan.infraFocus, undefined, skillContext);
 
     // Convert investigation window to RFC3339 for Loki probe queries
     const lokiProbeWindow = this.toRfc3339Window(investigationWindow);
@@ -731,7 +735,7 @@ export class InvestigationAgent {
     const SYNTHESIS_MAX_TOKENS = 16384;
     const REASONING_TIMEOUT_MS = 240_000; // 4min — synthesis/reflection are slow on large models
 
-    type SynthesisResult = Omit<RcaReport, "service" | "investigatedAt" | "panelImages">;
+    type SynthesisResult = Omit<RcaReport, "service" | "investigatedAt" | "panelImages" | "skillsUsed">;
     const defaultSynthesis: SynthesisResult = {
       severity: "medium",
       summary: anomaly.summary,
@@ -744,6 +748,7 @@ export class InvestigationAgent {
       dashboardLinks: [],
       recommendedActions: [],
       confidence: "low",
+      confidenceScore: 0.3,
     };
 
     let synthesisResult: PhaseResult<SynthesisResult>;
@@ -834,7 +839,7 @@ export class InvestigationAgent {
       );
     } catch (err) {
       log.error({ err }, "Reflection phase failed, skipping corrections");
-      reflectionResult = { parsed: { validationNotes: "", revisedRootCause: "", revisedTrigger: "", revisedSeverity: "medium", revisedConfidence: "low", revisedSummary: "", issues: [] }, images: [], toolData: [] };
+      reflectionResult = { parsed: { validationNotes: "", revisedRootCause: "", revisedTrigger: "", revisedSeverity: "medium", revisedConfidence: "low", revisedConfidenceScore: 0.3, revisedSummary: "", issues: [] }, images: [], toolData: [] };
     }
 
     // Apply corrections from reflection (guard against partial/empty responses)
@@ -855,7 +860,8 @@ export class InvestigationAgent {
       dashboardLinks: realDashboardUrls.length > 0 ? realDashboardUrls.slice(0, 5) : (synthesisResult.parsed.dashboardLinks ?? []).slice(0, 5),
       recommendedActions: (synthesisResult.parsed.recommendedActions ?? []).filter((a: string) => a.trim().length > 0).slice(0, 5),
       confidence: synthesisResult.parsed.confidence ?? "low",
-    } as Omit<RcaReport, "service" | "investigatedAt" | "panelImages">;
+      confidenceScore: typeof synthesisResult.parsed.confidenceScore === "number" ? synthesisResult.parsed.confidenceScore : 0.5,
+    } as Omit<RcaReport, "service" | "investigatedAt" | "panelImages" | "skillsUsed">;
     const reflection = reflectionResult.parsed;
     const issues = reflection.issues ?? [];
     // Always apply revisedSeverity from reflection — it validates severity/evidence consistency
@@ -867,7 +873,16 @@ export class InvestigationAgent {
       report.rootCause = reflection.revisedRootCause;
       if (reflection.revisedTrigger) report.trigger = reflection.revisedTrigger;
       report.confidence = reflection.revisedConfidence ?? report.confidence;
+      if (typeof reflection.revisedConfidenceScore === "number") {
+        report.confidenceScore = reflection.revisedConfidenceScore;
+      }
       report.summary = reflection.revisedSummary ?? report.summary;
+    }
+
+    // Derive categorical confidence from numeric score if they're inconsistent
+    const derivedConfidence = report.confidenceScore <= 0.4 ? "low" : report.confidenceScore <= 0.7 ? "medium" : "high";
+    if (report.confidence !== derivedConfidence) {
+      report.confidence = derivedConfidence;
     }
 
     // Deterministic severity check — catches LLM severity/evidence mismatches that
@@ -885,6 +900,7 @@ export class InvestigationAgent {
       service: service.name,
       investigatedAt: new Date().toISOString(),
       panelImages: collectedImages,
+      ...(skillContext ? { skillsUsed: skillContext.match(/### Skill: (.+)/g)?.map(m => m.replace("### Skill: ", "")) } : {}),
     };
 
     if (this.projectRoot) {

@@ -57,6 +57,7 @@ export type ReflectionResult = {
   revisedTrigger: string;
   revisedSeverity: "low" | "medium" | "high" | "critical";
   revisedConfidence: "low" | "medium" | "high";
+  revisedConfidenceScore: number;
   revisedSummary: string;
   issues: string[];
 };
@@ -89,7 +90,9 @@ export type RcaReport = {
   panelImages: PanelImage[];
   recommendedActions: string[];
   confidence: "low" | "medium" | "high";
+  confidenceScore: number;
   investigatedAt: string;
+  skillsUsed?: string[];
 };
 
 export type InvestigationIntent =
