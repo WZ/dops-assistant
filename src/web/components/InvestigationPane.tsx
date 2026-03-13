@@ -20,6 +20,7 @@ export function InvestigationPane({ investigationId, wsMessages, onBack }: { inv
   const [evidence, setEvidence] = useState<Record<string, unknown>>({});
   const [report, setReport] = useState<unknown | null>(null);
   const [service, setService] = useState("");
+  const [query, setQuery] = useState("");
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
   const processedCount = useRef(0);
 
@@ -28,6 +29,19 @@ export function InvestigationPane({ investigationId, wsMessages, onBack }: { inv
     (m) => (m.type === "investigation:started" && m.id === investigationId) ||
            (m.type === "investigation:complete" && m.id === investigationId),
   );
+
+  // Fetch query from REST when not available from WS (e.g. server predates query field)
+  useEffect(() => {
+    if (query) return;
+    let cancelled = false;
+    fetch(`/api/investigations/${investigationId}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data: { investigation?: { query?: string } } | null) => {
+        if (!cancelled && data?.investigation?.query) setQuery(data.investigation.query);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [investigationId, query]);
 
   // Fetch historical investigation data from REST API when not active
   useEffect(() => {
@@ -40,12 +54,13 @@ export function InvestigationPane({ investigationId, wsMessages, onBack }: { inv
         return r.json();
       })
       .then((data: {
-        investigation: { service: string; status: string; report: string | null };
+        investigation: { service: string; query: string; status: string; report: string | null };
         phases: Array<{ phase: string; status: string; findings: string | null }>;
         events?: Array<{ event_type: string; payload: string; created_at: string }>;
       }) => {
         if (cancelled) return;
         setService(data.investigation.service);
+        if (data.investigation.query) setQuery(data.investigation.query);
 
         const phaseMap = new Map(data.phases.map((p) => [p.phase, p]));
         setPhases(DEFAULT_PHASES.map((dp) => {
@@ -121,6 +136,7 @@ export function InvestigationPane({ investigationId, wsMessages, onBack }: { inv
     for (const msg of newMessages) {
       if (msg.type === "investigation:started" && msg.id === investigationId) {
         setService(msg.service);
+        setQuery(msg.query);
         setPhases([...DEFAULT_PHASES]);
         setEvidence({});
         setReport(null);
@@ -265,6 +281,11 @@ export function InvestigationPane({ investigationId, wsMessages, onBack }: { inv
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-4xl mx-auto px-5 py-6 space-y-6">
+
+          {/* Original query */}
+          {query && (
+            <p className="text-sm font-mono text-foreground/70 italic">&ldquo;{query}&rdquo;</p>
+          )}
 
           {/* Phase progress with merged activity */}
           <section>
