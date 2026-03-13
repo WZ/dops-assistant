@@ -218,10 +218,6 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
         setActiveTool(null);
         setStreamingMessage(null);
       }
-      if (msg.type === "deep_investigate:response" && msg.investigationId === activeInvestigationId) {
-        setDeepMessages((prev) => [...prev, { role: "assistant", content: msg.content }]);
-        setDeepLoading(false);
-      }
       if (msg.type === "session_cleared") {
         setChatMessages([]);
         setChatLoading(false);
@@ -244,6 +240,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
       }
       setStreamingMessage(null);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally only reacts to status changes; streamingMessage and isDeepMode are checked but should not trigger re-runs
   }, [status]);
 
   // Scroll on new messages or loading state changes — NOT on every streaming delta

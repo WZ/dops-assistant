@@ -322,6 +322,46 @@ describe("LlmClient – chatStream", () => {
     ]);
   });
 
+  it("throws TimeoutError on idle timeout", async () => {
+    const mockCreate = await getMockCreate();
+
+    async function* fakeStream() {
+      yield { type: "response.output_text.delta", delta: "Hello", output_index: 0, content_index: 0 };
+      // Second next() hangs forever
+      await new Promise(() => {});
+    }
+
+    mockCreate.mockReturnValue(fakeStream());
+
+    const shortTimeouts: TimeoutsConfig = {
+      mcpConnectMs: 30_000,
+      llmCallMs: 50,
+      toolExecutionMs: 30_000,
+      agentIterationMs: 90_000,
+    };
+    const client = new LlmClient(config, shortTimeouts, defaultRetry);
+    const events: unknown[] = [];
+    await expect(async () => {
+      for await (const event of client.chatStream([{ role: "user", content: "Hi" }], [])) {
+        events.push(event);
+      }
+    }).rejects.toThrow("LLM stream");
+
+    expect(events).toEqual([{ type: "content", content: "Hello" }]);
+  });
+
+  it("throws when responses.create() fails during initialization", async () => {
+    const mockCreate = await getMockCreate();
+    mockCreate.mockRejectedValue(new Error("API key invalid"));
+
+    const client = new LlmClient(config, defaultTimeouts, defaultRetry);
+    await expect(async () => {
+      for await (const _event of client.chatStream([{ role: "user", content: "Hi" }], [])) {
+        // should not reach here
+      }
+    }).rejects.toThrow("API key invalid");
+  });
+
   it("throws on response.failed", async () => {
     const mockCreate = await getMockCreate();
 

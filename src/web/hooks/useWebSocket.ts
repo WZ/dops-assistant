@@ -21,7 +21,14 @@ export function useWebSocket() {
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data as string) as ServerMessage;
-        setMessages((prev) => [...prev, msg]);
+        setMessages((prev) => {
+          const next = [...prev, msg];
+          if (next.length > 2000) {
+            // Keep last 1500 messages, preserving stream_end and lifecycle messages
+            return next.slice(-1500);
+          }
+          return next;
+        });
       } catch {
         /* ignore parse errors */
       }
