@@ -644,9 +644,75 @@ describe("extractTimeRange (fallback)", () => {
     expect(range).toEqual({ from: "2026-03-05T00:00:00Z", to: "2026-03-05T23:59:59Z" });
   });
 
-  it("defaults to last 6h when no ISO date found", () => {
+  it("defaults to last 8h when no date found", () => {
     const range = agent.extractTimeRange("ingestion rate anomaly", "investigate ingestion");
-    expect(range).toEqual({ from: "now-6h", to: "now" });
+    expect(range).toEqual({ from: "now-8h", to: "now" });
+  });
+
+  it("parses named month + day (e.g. 'March 4')", () => {
+    const range = agent.extractTimeRange("", "any anomaly on the ingestion log rate on March 4");
+    expect(range.from).toMatch(/^\d{4}-03-04T00:00:00Z$/);
+    expect(range.to).toMatch(/^\d{4}-03-04T23:59:59Z$/);
+  });
+
+  it("parses 'last week' as 7d window", () => {
+    const range = agent.extractTimeRange("", "any anomaly last week");
+    expect(range).toEqual({ from: "now-7d", to: "now" });
+  });
+
+  it("parses 'yesterday'", () => {
+    const range = agent.extractTimeRange("", "check ingestion logs from yesterday");
+    expect(range).toEqual({ from: "now-1d", to: "now" });
+  });
+
+  it("parses 'last 3 days'", () => {
+    const range = agent.extractTimeRange("", "any errors in the last 3 days");
+    expect(range).toEqual({ from: "now-3d", to: "now" });
+  });
+
+  it("parses 'last month'", () => {
+    const range = agent.extractTimeRange("", "show metrics from last month");
+    expect(range).toEqual({ from: "now-30d", to: "now" });
+  });
+
+  it("parses 'last 24 hours'", () => {
+    const range = agent.extractTimeRange("", "any anomaly in the last 24 hours");
+    expect(range).toEqual({ from: "now-24h", to: "now" });
+  });
+
+  it("parses 'Jan 15'", () => {
+    const range = agent.extractTimeRange("", "what happened on Jan 15");
+    expect(range.from).toMatch(/^\d{4}-01-15T00:00:00Z$/);
+    expect(range.to).toMatch(/^\d{4}-01-15T23:59:59Z$/);
+  });
+
+  it("parses 'September 22'", () => {
+    const range = agent.extractTimeRange("", "outage on September 22");
+    expect(range.from).toMatch(/^\d{4}-09-22T00:00:00Z$/);
+    expect(range.to).toMatch(/^\d{4}-09-22T23:59:59Z$/);
+  });
+
+  it("parses 'Feb 1'", () => {
+    const range = agent.extractTimeRange("", "Feb 1 error spike");
+    expect(range.from).toMatch(/^\d{4}-02-01T00:00:00Z$/);
+    expect(range.to).toMatch(/^\d{4}-02-01T23:59:59Z$/);
+  });
+
+  it("does NOT match 'last 3 deploys' as days", () => {
+    const range = agent.extractTimeRange("", "check the last 3 deploys");
+    expect(range).toEqual({ from: "now-8h", to: "now" });
+  });
+
+  it("resolves 'December 25' to a date not in the future", () => {
+    const range = agent.extractTimeRange("", "outage on December 25");
+    const fromDate = new Date(range.from);
+    expect(fromDate.getTime()).not.toBeNaN();
+    expect(fromDate <= new Date()).toBe(true);
+  });
+
+  it("falls back to default for invalid date 'February 30'", () => {
+    const range = agent.extractTimeRange("", "incident on February 30");
+    expect(range).toEqual({ from: "now-8h", to: "now" });
   });
 });
 

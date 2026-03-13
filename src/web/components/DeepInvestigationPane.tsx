@@ -32,7 +32,7 @@ export function DeepInvestigationPane({ investigationId, wsMessages, send }: Dee
     processedCount.current = wsMessages.length;
 
     for (const msg of newMessages) {
-      if (msg.type === "deep_investigate:response" && msg.investigationId === investigationId) {
+      if (msg.type === "chat:stream_end") {
         setMessages((prev) => [...prev, { role: "assistant", content: msg.content }]);
         setIsLoading(false);
       }
