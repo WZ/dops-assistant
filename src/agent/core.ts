@@ -4,7 +4,7 @@ import {
   ANOMALY_ASSESSMENT_RESPONSE_FORMAT,
 } from "./prompts.js";
 import type { ChatRequest, ChatResponse, ImageAttachment } from "./types.js";
-import type { LlmClient, Message } from "../llm/openai.js";
+import type { LlmClient, Message, ToolCall } from "../llm/openai.js";
 import type { OpenAITool, ToolResult } from "../mcp/client.js";
 import type { MultiMcpClient } from "../mcp/multi-client.js";
 import { TimeoutError } from "../utils/timeout.js";
@@ -197,18 +197,85 @@ export class ChatAgent {
 
     const collectedImages: ImageAttachment[] = [];
     let iterations = 0;
+    let agentStreamStarted = false;
     try {
       for (let i = 0; i < this.maxIterations; i++) {
         iterations = i + 1;
-        const response = await this.llm.chat(messages, tools, {
-          responseFormat,
-        });
 
-        if (response.usage) task.onTokenUsage?.(response.usage);
+        let contentText = "";
+        let toolCalls: ToolCall[] | null = null;
 
-        if (response.type === "text") {
-          // Strip any base64 image markdown the LLM may have embedded
-          const cleaned = response.content.replace(
+        for await (const event of this.llm.chatStream(messages, tools, { responseFormat })) {
+          if (event.type === "reasoning" || event.type === "content") {
+            if (!agentStreamStarted) {
+              task.onStreamStart?.();
+              agentStreamStarted = true;
+            }
+            task.onStreamDelta?.(event);
+            if (event.type === "content") {
+              contentText += event.content;
+            }
+          } else if (event.type === "tool_calls") {
+            toolCalls = event.calls;
+          } else if (event.type === "done") {
+            if (event.usage) task.onTokenUsage?.(event.usage);
+          }
+        }
+
+        if (contentText && toolCalls) {
+          log.warn({ contentLength: contentText.length, toolCallCount: toolCalls.length }, "LLM returned both content and tool_calls in same response; prioritizing tool calls");
+        }
+
+        if (toolCalls) {
+          messages.push({
+            role: "assistant",
+            content: null,
+            tool_calls: toolCalls.map((c) => ({
+              id: c.id, name: c.name, args: c.args,
+            })),
+          });
+
+          for (const call of toolCalls) {
+            task.onToolCall?.(call.name, call.args);
+          }
+
+          const settled = await Promise.allSettled(
+            toolCalls.map((call) =>
+              call.name === "create_temp_panel"
+                ? this.handleCreateTempPanel(call.args)
+                : this.mcp.callTool(call.name, call.args),
+            ),
+          );
+          for (let j = 0; j < toolCalls.length; j++) {
+            const outcome = settled[j]!;
+            const call = toolCalls[j]!;
+            let toolText: string;
+            if (outcome.status === "fulfilled") {
+              const toolResult = outcome.value;
+              task.onToolCall?.(call.name, call.args, toolResult.text);
+              toolText = sanitizeToolResult(toolResult.text);
+              for (const img of toolResult.images) {
+                const ext = img.mimeType.split("/")[1] ?? "png";
+                collectedImages.push({
+                  filename: `${call.name}-${randomUUID().slice(0, 8)}.${ext}`,
+                  mimeType: img.mimeType,
+                  data: Buffer.from(img.data, "base64"),
+                });
+              }
+              if (toolResult.images.length > 0) {
+                toolText += `\n[${toolResult.images.length} chart image(s) captured and will be sent to the user]`;
+              }
+            } else {
+              toolText = `[Transport Error] ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`;
+            }
+            messages.push({
+              role: "tool",
+              content: toolText,
+              tool_call_id: call.id,
+            });
+          }
+        } else if (contentText) {
+          const cleaned = contentText.replace(
             /!\[[^\]]*\]\(data:image\/[^;]+;base64,[^)]+\)/g,
             "",
           ).trim();
@@ -220,54 +287,6 @@ export class ChatAgent {
             updatedHistory: messages.filter((m) => m.role !== "system"),
             images: collectedImages,
           };
-        }
-
-        messages.push({
-          role: "assistant",
-          content: null,
-          tool_calls: response.calls.map((c) => ({
-            id: c.id, name: c.name, args: c.args,
-          })),
-        });
-
-        for (const call of response.calls) {
-          task.onToolCall?.(call.name, call.args);
-        }
-
-        const settled = await Promise.allSettled(
-          response.calls.map((call) =>
-            call.name === "create_temp_panel"
-              ? this.handleCreateTempPanel(call.args)
-              : this.mcp.callTool(call.name, call.args),
-          ),
-        );
-        for (let j = 0; j < response.calls.length; j++) {
-          const outcome = settled[j]!;
-          const call = response.calls[j]!;
-          let toolText: string;
-          if (outcome.status === "fulfilled") {
-            const toolResult = outcome.value;
-            task.onToolCall?.(call.name, call.args, toolResult.text);
-            toolText = sanitizeToolResult(toolResult.text);
-            for (const img of toolResult.images) {
-              const ext = img.mimeType.split("/")[1] ?? "png";
-              collectedImages.push({
-                filename: `${call.name}-${randomUUID().slice(0, 8)}.${ext}`,
-                mimeType: img.mimeType,
-                data: Buffer.from(img.data, "base64"),
-              });
-            }
-            if (toolResult.images.length > 0) {
-              toolText += `\n[${toolResult.images.length} chart image(s) captured and will be sent to the user]`;
-            }
-          } else {
-            toolText = `[Transport Error] ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`;
-          }
-          messages.push({
-            role: "tool",
-            content: toolText,
-            tool_call_id: call.id,
-          });
         }
       }
 
@@ -286,6 +305,18 @@ export class ChatAgent {
       agentRunsTotal.inc({ status });
       agentIterations.observe(iterations);
       log.error({ err, iterations }, "Agent run failed");
+
+      // Return a user-friendly message for transport/network errors instead of crashing
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const isTransient = /premature close|ECONNRESET|ETIMEDOUT|ECONNREFUSED|socket hang up|abort/i.test(errMsg);
+      if (isTransient) {
+        const response = `Connection error during processing. Please try again.`;
+        return {
+          response,
+          updatedHistory: messages.filter((m) => m.role !== "system"),
+          images: collectedImages,
+        };
+      }
       throw err;
     }
   }

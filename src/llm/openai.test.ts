@@ -203,6 +203,187 @@ describe("LlmClient – timeout and retry", () => {
   });
 });
 
+describe("LlmClient – chatStream", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("yields reasoning and content deltas then done for text response", async () => {
+    const mockCreate = await getMockCreate();
+
+    async function* fakeStream() {
+      yield { type: "response.created", response: { id: "r1", status: "in_progress", usage: null } };
+      yield { type: "response.reasoning_text.delta", delta: "Let me", output_index: 0, content_index: 0 };
+      yield { type: "response.reasoning_text.delta", delta: " think", output_index: 0, content_index: 0 };
+      yield { type: "response.output_text.delta", delta: "Hello", output_index: 1, content_index: 0 };
+      yield { type: "response.output_text.delta", delta: " world", output_index: 1, content_index: 0 };
+      yield {
+        type: "response.completed",
+        response: {
+          id: "r1", status: "completed",
+          usage: { input_tokens: 10, output_tokens: 5 },
+        },
+      };
+    }
+
+    mockCreate.mockReturnValue(fakeStream());
+
+    const client = new LlmClient(config, defaultTimeouts, defaultRetry);
+    const events: unknown[] = [];
+    for await (const event of client.chatStream([{ role: "user", content: "Hi" }], [])) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "reasoning", content: "Let me" },
+      { type: "reasoning", content: " think" },
+      { type: "content", content: "Hello" },
+      { type: "content", content: " world" },
+      { type: "done", usage: { inputTokens: 10, outputTokens: 5 } },
+    ]);
+  });
+
+  it("yields tool_calls then done when LLM requests tools", async () => {
+    const mockCreate = await getMockCreate();
+
+    async function* fakeStream() {
+      yield { type: "response.output_item.added", item: { type: "function_call", id: "item_abc", call_id: "call_1", name: "query_prometheus" }, output_index: 0 };
+      yield { type: "response.function_call_arguments.delta", item_id: "item_abc", delta: '{"quer', output_index: 0 };
+      yield { type: "response.function_call_arguments.delta", item_id: "item_abc", delta: 'y":"up"}', output_index: 0 };
+      yield { type: "response.function_call_arguments.done", item_id: "item_abc", arguments: '{"query":"up"}', output_index: 0 };
+      yield {
+        type: "response.completed",
+        response: { id: "r1", status: "completed", usage: { input_tokens: 20, output_tokens: 10 } },
+      };
+    }
+
+    mockCreate.mockReturnValue(fakeStream());
+
+    const client = new LlmClient(config, defaultTimeouts, defaultRetry);
+    const tools = [{ function: { name: "query_prometheus", description: "Query", parameters: {} } }];
+    const events: unknown[] = [];
+    for await (const event of client.chatStream([{ role: "user", content: "Check" }], tools)) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "tool_calls", calls: [{ id: "call_1", name: "query_prometheus", args: { query: "up" } }] },
+      { type: "done", usage: { inputTokens: 20, outputTokens: 10 } },
+    ]);
+  });
+
+  it("ignores hallucinated tool calls when no tools provided in stream", async () => {
+    const mockCreate = await getMockCreate();
+
+    async function* fakeStream() {
+      yield { type: "response.output_item.added", item: { type: "function_call", id: "item_fake", call_id: "fake_1", name: "hallucinated" }, output_index: 0 };
+      yield { type: "response.function_call_arguments.done", item_id: "item_fake", arguments: '{}', output_index: 0 };
+      yield {
+        type: "response.completed",
+        response: { id: "r1", status: "completed", usage: { input_tokens: 5, output_tokens: 3 } },
+      };
+    }
+
+    mockCreate.mockReturnValue(fakeStream());
+
+    const client = new LlmClient(config, defaultTimeouts, defaultRetry);
+    const events: unknown[] = [];
+    for await (const event of client.chatStream([{ role: "user", content: "Hi" }], [])) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "done", usage: { inputTokens: 5, outputTokens: 3 } },
+    ]);
+  });
+
+  it("yields done with usage on response.incomplete", async () => {
+    const mockCreate = await getMockCreate();
+
+    async function* fakeStream() {
+      yield { type: "response.output_text.delta", delta: "Partial", output_index: 0, content_index: 0 };
+      yield {
+        type: "response.incomplete",
+        response: { id: "r1", status: "incomplete", usage: { input_tokens: 10, output_tokens: 100 } },
+      };
+    }
+
+    mockCreate.mockReturnValue(fakeStream());
+
+    const client = new LlmClient(config, defaultTimeouts, defaultRetry);
+    const events: unknown[] = [];
+    for await (const event of client.chatStream([{ role: "user", content: "Hi" }], [])) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "content", content: "Partial" },
+      { type: "done", usage: { inputTokens: 10, outputTokens: 100 } },
+    ]);
+  });
+
+  it("throws TimeoutError on idle timeout", async () => {
+    const mockCreate = await getMockCreate();
+
+    async function* fakeStream() {
+      yield { type: "response.output_text.delta", delta: "Hello", output_index: 0, content_index: 0 };
+      // Second next() hangs forever
+      await new Promise(() => {});
+    }
+
+    mockCreate.mockReturnValue(fakeStream());
+
+    const shortTimeouts: TimeoutsConfig = {
+      mcpConnectMs: 30_000,
+      llmCallMs: 50,
+      toolExecutionMs: 30_000,
+      agentIterationMs: 90_000,
+    };
+    const client = new LlmClient(config, shortTimeouts, defaultRetry);
+    const events: unknown[] = [];
+    await expect(async () => {
+      for await (const event of client.chatStream([{ role: "user", content: "Hi" }], [])) {
+        events.push(event);
+      }
+    }).rejects.toThrow("LLM stream");
+
+    expect(events).toEqual([{ type: "content", content: "Hello" }]);
+  });
+
+  it("throws when responses.create() fails during initialization", async () => {
+    const mockCreate = await getMockCreate();
+    mockCreate.mockRejectedValue(new Error("API key invalid"));
+
+    const client = new LlmClient(config, defaultTimeouts, defaultRetry);
+    await expect(async () => {
+      for await (const _event of client.chatStream([{ role: "user", content: "Hi" }], [])) {
+        // should not reach here
+      }
+    }).rejects.toThrow("API key invalid");
+  });
+
+  it("throws on response.failed", async () => {
+    const mockCreate = await getMockCreate();
+
+    async function* fakeStream() {
+      yield { type: "response.output_text.delta", delta: "Start", output_index: 0, content_index: 0 };
+      yield { type: "response.failed", response: { id: "r1", status: "failed" } };
+    }
+
+    mockCreate.mockReturnValue(fakeStream());
+
+    const client = new LlmClient(config, defaultTimeouts, defaultRetry);
+    const events: unknown[] = [];
+    await expect(async () => {
+      for await (const event of client.chatStream([{ role: "user", content: "Hi" }], [])) {
+        events.push(event);
+      }
+    }).rejects.toThrow("LLM streaming response failed");
+
+    expect(events).toEqual([{ type: "content", content: "Start" }]);
+  });
+});
+
 describe("convertToResponsesInput", () => {
   it("extracts system messages as instructions", () => {
     const messages: Message[] = [

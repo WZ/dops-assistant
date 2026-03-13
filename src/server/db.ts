@@ -33,6 +33,7 @@ export interface MessageRow {
   investigation_id: string | null;
   role: string;
   content: string;
+  chart_data: string | null;
   created_at: string;
 }
 
@@ -70,8 +71,15 @@ export class Database {
         investigation_id  TEXT,
         role              TEXT NOT NULL,
         content           TEXT NOT NULL,
+        chart_data        TEXT,
         created_at        TEXT NOT NULL DEFAULT (datetime('now'))
       );
+      -- Migration: add chart_data to messages if missing
+    `);
+    try {
+      this.db.exec(`ALTER TABLE messages ADD COLUMN chart_data TEXT`);
+    } catch { /* column already exists */ }
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS investigation_events (
         id                TEXT PRIMARY KEY,
         investigation_id  TEXT NOT NULL REFERENCES investigations(id),
@@ -134,8 +142,8 @@ export class Database {
     return this.db.prepare("SELECT * FROM investigation_events WHERE investigation_id = ? ORDER BY created_at ASC, rowid ASC").all(investigationId) as EventRow[];
   }
 
-  createMessage(msg: { id: string; role: string; content: string; investigationId?: string }): void {
-    this.db.prepare("INSERT INTO messages (id, investigation_id, role, content) VALUES (?, ?, ?, ?)").run(msg.id, msg.investigationId ?? null, msg.role, msg.content);
+  createMessage(msg: { id: string; role: string; content: string; investigationId?: string; chartData?: string }): void {
+    this.db.prepare("INSERT INTO messages (id, investigation_id, role, content, chart_data) VALUES (?, ?, ?, ?, ?)").run(msg.id, msg.investigationId ?? null, msg.role, msg.content, msg.chartData ?? null);
   }
 
   listRecentMessages(limit: number): MessageRow[] {
