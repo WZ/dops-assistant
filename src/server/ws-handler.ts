@@ -317,7 +317,7 @@ export async function handleClientMessage(
     const invId = `inv_${ulid()}`;
     db.createInvestigation({ id: invId, service: service.name, query: msg.message, status: "running" });
     memory.append(threadId, { role: "user", content: msg.message });
-    send({ type: "investigation:started", id: invId, service: service.name });
+    send({ type: "investigation:started", id: invId, service: service.name, query: msg.message });
     send({ type: "chat", role: "assistant", content: `Starting investigation of **${service.name}**...` });
 
     try {
@@ -444,7 +444,10 @@ export async function handleClientMessage(
         content,
         ...(chartData.length > 0 ? { chartData } : {}),
       });
-      db.createMessage({ id: `msg_${ulid()}`, role: "assistant", content });
+      db.createMessage({
+        id: `msg_${ulid()}`, role: "assistant", content,
+        ...(chartData.length > 0 ? { chartData: JSON.stringify(chartData) } : {}),
+      });
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "Unknown error";
       send({ type: "chat:stream_end", content: `Error: ${errorMsg}` });
