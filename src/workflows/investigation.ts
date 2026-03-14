@@ -160,6 +160,9 @@ const PostSynthesisOutputSchema = z.object({
   investigatedAt: z.string(),
 });
 
+// ── Debug logger ─────────────────────────────────────────────────────────────
+const debug = (...args: unknown[]) => console.error("[INVESTIGATION DEBUG]", ...args);
+
 // ── Step factory helpers ──────────────────────────────────────────────────────
 
 /**
@@ -172,6 +175,7 @@ function buildPrefetchStep(config: WorkflowConfig) {
     inputSchema: WorkflowInputSchema,
     outputSchema: PrefetchOutputSchema,
     execute: async ({ inputData }) => {
+      debug("PREFETCH step entered, keys:", Object.keys(inputData));
       config.onPhase?.("Detecting anomalies");
       config.onIteration?.("planning", 0, 6, "Pre-fetching datasource context");
 
@@ -203,6 +207,7 @@ function buildAnomalyStep(config: WorkflowConfig) {
     inputSchema: PrefetchOutputSchema,
     outputSchema: AnomalyOutputSchema,
     execute: async ({ inputData }) => {
+      debug("ANOMALY step entered, keys:", Object.keys(inputData));
       config.onPhase?.("Detecting anomalies");
 
       const metricsTools = await getToolsByRole(config.providers, "metrics").catch(() => ({}));
@@ -224,6 +229,7 @@ function buildAnomalyStep(config: WorkflowConfig) {
       ].filter(Boolean).join("\n");
 
       let agentResult: { text: string } = { text: "" };
+      const anomalyToolData: string[] = [];
       let anomalyIterationCount = 0;
       try {
         agentResult = await agent.generate(prompt, {
@@ -233,21 +239,42 @@ function buildAnomalyStep(config: WorkflowConfig) {
             if (step.toolResults?.length) {
               for (const tr of step.toolResults) {
                 const resultStr = typeof tr.result === "string" ? tr.result : JSON.stringify(tr.result);
+                const truncated = resultStr.length > 2000 ? resultStr.slice(0, 2000) + "..." : resultStr;
+                anomalyToolData.push(`Tool: ${tr.toolName}\nResult: ${truncated}`);
                 config.onToolCall?.(tr.toolName, tr.args ?? {}, resultStr, undefined);
               }
             }
+            if (step.text) anomalyToolData.push(`Model: ${step.text}`);
           },
         });
       } catch {
         // Fall through to default
       }
 
-      // Extract anomaly context from agent text response
+      // If agent text is empty, do fresh-prompt extraction from captured tool results
+      let textToParse = agentResult.text;
+      if (!textToParse?.trim() && anomalyToolData.length > 0) {
+        debug("ANOMALY: empty text, extracting from", anomalyToolData.length, "captured tool results");
+        const { Agent: ExtractAgent } = await import("@mastra/core/agent");
+        const extractor = new ExtractAgent({
+          name: "anomaly-extractor",
+          id: "anomaly-extractor",
+          instructions: 'Extract structured data from investigation results. Return ONLY valid JSON: {"isAnomaly": boolean, "severity": "low"|"medium"|"high"|"critical", "summary": "string", "affectedServices": ["string"]}',
+          model: config.model as any,
+        });
+        try {
+          const extraction = await extractor.generate(anomalyToolData.join("\n\n"));
+          textToParse = extraction.text ?? "";
+        } catch { /* keep empty */ }
+      }
+      debug("ANOMALY text to parse (first 500):", textToParse?.slice(0, 500));
+
       let isAnomaly = true;
       let severity: "low" | "medium" | "high" | "critical" = "medium";
       let summary = inputData.userMessage;
 
-      const anomalyParsed = safeJsonParse(agentResult.text);
+      const anomalyParsed = safeJsonParse(textToParse);
+      debug("ANOMALY parsed:", anomalyParsed ? "OK" : "FAILED");
       if (anomalyParsed) {
         isAnomaly = anomalyParsed.isAnomaly ?? true;
         severity = anomalyParsed.severity ?? "medium";
@@ -285,6 +312,7 @@ function buildPlanningStep(config: WorkflowConfig) {
     inputSchema: AnomalyOutputSchema,
     outputSchema: PlanningOutputSchema,
     execute: async ({ inputData }) => {
+      debug("PLANNING step entered, keys:", Object.keys(inputData));
       // Fetch recent incidents for context
       let historyContext = "";
       if (config.projectRoot && inputData.serviceName) {
@@ -350,6 +378,7 @@ export function buildMetricsStep(config: WorkflowConfig) {
     inputSchema: PlanningOutputSchema,
     outputSchema: EvidenceOutputSchema,
     execute: async ({ inputData }) => {
+      debug("METRICS step entered, keys:", Object.keys(inputData));
       config.onPhase?.("Analyzing metrics");
       config.onIteration?.("metrics", 2, 6, "Analyzing metrics");
 
@@ -375,6 +404,7 @@ export function buildMetricsStep(config: WorkflowConfig) {
       ].filter(Boolean).join("\n");
 
       let agentResult: { text: string } = { text: "" };
+      const metricsToolData: string[] = [];
       let metricsIterationCount = 0;
       try {
         agentResult = await agent.generate(prompt, {
@@ -384,16 +414,36 @@ export function buildMetricsStep(config: WorkflowConfig) {
             if (step.toolResults?.length) {
               for (const tr of step.toolResults) {
                 const resultStr = typeof tr.result === "string" ? tr.result : JSON.stringify(tr.result);
+                const truncated = resultStr.length > 2000 ? resultStr.slice(0, 2000) + "..." : resultStr;
+                metricsToolData.push(`Tool: ${tr.toolName}\nResult: ${truncated}`);
                 config.onToolCall?.(tr.toolName, tr.args ?? {}, resultStr, undefined);
               }
             }
+            if (step.text) metricsToolData.push(`Model: ${step.text}`);
           },
         });
       } catch {
         // Fall through
       }
 
-      const metricsParsed = safeJsonParse(agentResult.text);
+      let metricsText = agentResult.text;
+      if (!metricsText?.trim() && metricsToolData.length > 0) {
+        debug("METRICS: empty text, extracting from", metricsToolData.length, "captured tool results");
+        const { Agent: ExtractAgent } = await import("@mastra/core/agent");
+        const extractor = new ExtractAgent({
+          name: "metrics-extractor",
+          id: "metrics-extractor",
+          instructions: 'Extract structured data from investigation results. Return ONLY valid JSON: {"summary": "string", "observations": [{"metric": "string", "currentValue": "string", "baselineValue": "string", "severity": "string"}]}',
+          model: config.model as any,
+        });
+        try {
+          const extraction = await extractor.generate(metricsToolData.join("\n\n"));
+          metricsText = extraction.text ?? "";
+        } catch { /* keep empty */ }
+      }
+      debug("METRICS text to parse (first 500):", metricsText?.slice(0, 500));
+      const metricsParsed = safeJsonParse(metricsText);
+      debug("METRICS parsed:", metricsParsed ? "OK" : "FAILED");
       if (metricsParsed) {
         return {
           summary: metricsParsed.summary ?? "Metrics analysis unavailable",
@@ -417,6 +467,7 @@ export function buildLogsStep(config: WorkflowConfig) {
     inputSchema: PlanningOutputSchema,
     outputSchema: EvidenceOutputSchema,
     execute: async ({ inputData }) => {
+      debug("LOGS step entered, keys:", Object.keys(inputData));
       config.onPhase?.("Analyzing logs");
       config.onIteration?.("logs", 3, 6, "Analyzing logs");
 
@@ -447,6 +498,7 @@ export function buildLogsStep(config: WorkflowConfig) {
       ].filter(Boolean).join("\n");
 
       let agentResult: { text: string } = { text: "" };
+      const logsToolData: string[] = [];
       let logsIterationCount = 0;
       try {
         agentResult = await agent.generate(prompt, {
@@ -456,16 +508,36 @@ export function buildLogsStep(config: WorkflowConfig) {
             if (step.toolResults?.length) {
               for (const tr of step.toolResults) {
                 const resultStr = typeof tr.result === "string" ? tr.result : JSON.stringify(tr.result);
+                const truncated = resultStr.length > 2000 ? resultStr.slice(0, 2000) + "..." : resultStr;
+                logsToolData.push(`Tool: ${tr.toolName}\nResult: ${truncated}`);
                 config.onToolCall?.(tr.toolName, tr.args ?? {}, resultStr, undefined);
               }
             }
+            if (step.text) logsToolData.push(`Model: ${step.text}`);
           },
         });
       } catch {
         // Fall through
       }
 
-      const logsParsed = safeJsonParse(agentResult.text);
+      let logsText = agentResult.text;
+      if (!logsText?.trim() && logsToolData.length > 0) {
+        debug("LOGS: empty text, extracting from", logsToolData.length, "captured tool results");
+        const { Agent: ExtractAgent } = await import("@mastra/core/agent");
+        const extractor = new ExtractAgent({
+          name: "logs-extractor",
+          id: "logs-extractor",
+          instructions: 'Extract structured data from investigation results. Return ONLY valid JSON: {"summary": "string", "observations": [{"pattern": "string", "count": "number", "firstSeen": "string", "lastSeen": "string"}]}',
+          model: config.model as any,
+        });
+        try {
+          const extraction = await extractor.generate(logsToolData.join("\n\n"));
+          logsText = extraction.text ?? "";
+        } catch { /* keep empty */ }
+      }
+      debug("LOGS text to parse (first 500):", logsText?.slice(0, 500));
+      const logsParsed = safeJsonParse(logsText);
+      debug("LOGS parsed:", logsParsed ? "OK" : "FAILED");
       if (logsParsed) {
         return {
           summary: logsParsed.summary ?? "Log analysis unavailable",
@@ -488,6 +560,7 @@ export function buildInfraStep(config: WorkflowConfig) {
     inputSchema: PlanningOutputSchema,
     outputSchema: EvidenceOutputSchema,
     execute: async ({ inputData }) => {
+      debug("INFRA step entered, keys:", Object.keys(inputData));
       config.onPhase?.("Checking infrastructure");
       config.onIteration?.("infra", 4, 6, "Checking infrastructure");
 
@@ -513,6 +586,7 @@ export function buildInfraStep(config: WorkflowConfig) {
       ].filter(Boolean).join("\n");
 
       let agentResult: { text: string } = { text: "" };
+      const infraToolData: string[] = [];
       let infraIterationCount = 0;
       try {
         agentResult = await agent.generate(prompt, {
@@ -522,16 +596,34 @@ export function buildInfraStep(config: WorkflowConfig) {
             if (step.toolResults?.length) {
               for (const tr of step.toolResults) {
                 const resultStr = typeof tr.result === "string" ? tr.result : JSON.stringify(tr.result);
+                const truncated = resultStr.length > 2000 ? resultStr.slice(0, 2000) + "..." : resultStr;
+                infraToolData.push(`Tool: ${tr.toolName}\nResult: ${truncated}`);
                 config.onToolCall?.(tr.toolName, tr.args ?? {}, resultStr, undefined);
               }
             }
+            if (step.text) infraToolData.push(`Model: ${step.text}`);
           },
         });
       } catch {
         // Fall through
       }
 
-      const infraParsed = safeJsonParse(agentResult.text);
+      let infraText = agentResult.text;
+      if (!infraText?.trim() && infraToolData.length > 0) {
+        debug("INFRA: empty text, extracting from", infraToolData.length, "captured tool results");
+        const { Agent: ExtractAgent } = await import("@mastra/core/agent");
+        const extractor = new ExtractAgent({
+          name: "infra-extractor",
+          id: "infra-extractor",
+          instructions: 'Extract structured data from investigation results. Return ONLY valid JSON: {"summary": "string", "observations": [{"resource": "string", "status": "string", "detail": "string"}]}',
+          model: config.model as any,
+        });
+        try {
+          const extraction = await extractor.generate(infraToolData.join("\n\n"));
+          infraText = extraction.text ?? "";
+        } catch { /* keep empty */ }
+      }
+      const infraParsed = safeJsonParse(infraText);
       if (infraParsed) {
         return {
           summary: infraParsed.summary ?? "Infrastructure analysis unavailable",
@@ -558,9 +650,12 @@ export function buildSynthesisStep(config: WorkflowConfig) {
     }),
     outputSchema: SynthesisOutputSchema,
     execute: async ({ inputData }) => {
+      debug("SYNTHESIS step entered, keys:", Object.keys(inputData));
+      debug("SYNTHESIS inputData:", JSON.stringify(inputData).slice(0, 500));
       const metricsFindings = inputData["metrics-evidence"];
       const logsFindings = inputData["logs-evidence"];
       const infraFindings = inputData["infra-evidence"];
+      debug("SYNTHESIS findings:", { metrics: !!metricsFindings, logs: !!logsFindings, infra: !!infraFindings });
 
       // Build timeline from structured observations
       const metricsForTimeline = {
@@ -624,7 +719,24 @@ export function buildSynthesisStep(config: WorkflowConfig) {
       let confidence: "low" | "medium" | "high" = "low";
       let confidenceScore = 0.5;
 
-      const synthesisParsed = safeJsonParse(agentResult.text);
+      let synthesisText = agentResult.text;
+      if (!synthesisText?.trim()) {
+        // Synthesis agent has no tools so agentResult.text should normally be populated.
+        // As a fallback, re-prompt with the same content using a fresh extractor agent.
+        debug("SYNTHESIS: empty text, re-prompting with extractor agent");
+        const { Agent: ExtractAgent } = await import("@mastra/core/agent");
+        const extractor = new ExtractAgent({
+          name: "synthesis-extractor",
+          id: "synthesis-extractor",
+          instructions: 'You are a root cause analysis summarizer. Given investigation evidence, produce a JSON summary. Return ONLY valid JSON: {"severity": "low"|"medium"|"high"|"critical", "summary": "string", "rootCause": "string", "trigger": "string", "confidence": "low"|"medium"|"high", "confidenceScore": number}',
+          model: config.model as any,
+        });
+        try {
+          const extraction = await extractor.generate(prompt);
+          synthesisText = extraction.text ?? "";
+        } catch { /* keep empty */ }
+      }
+      const synthesisParsed = safeJsonParse(synthesisText);
       if (synthesisParsed) {
         severity = synthesisParsed.severity ?? severity;
         summary = synthesisParsed.summary ?? summary;
