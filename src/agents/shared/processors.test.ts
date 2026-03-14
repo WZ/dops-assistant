@@ -132,6 +132,91 @@ describe("truncateToolResponse", () => {
   });
 });
 
+describe("truncateToolResponse — shape-based detection (tool-name-agnostic)", () => {
+  it("detects dashboard JSON by shape regardless of tool name", () => {
+    const input = JSON.stringify({
+      dashboard: {
+        title: "Infra Overview",
+        uid: "dash-xyz",
+        panels: [
+          { id: 10, title: "CPU", type: "timeseries", gridPos: {}, targets: [] },
+        ],
+      },
+      meta: {},
+    });
+    // Use an arbitrary tool name — shape detection should still pick it up
+    const result = JSON.parse(truncateToolResponse(input, "any_unknown_tool"));
+    expect(result.title).toBe("Infra Overview");
+    expect(result.uid).toBe("dash-xyz");
+    expect(result.panels).toHaveLength(1);
+    expect(result.panels[0]).toEqual({ id: 10, title: "CPU", type: "timeseries" });
+    expect(result.panels[0].gridPos).toBeUndefined();
+  });
+
+  it("detects time series data by shape regardless of tool name", () => {
+    const values: [number, string][] = Array.from({ length: 100 }, (_, i) => [1700000000 + i * 60, String(i * 2)]);
+    const input = JSON.stringify({
+      data: [{ metric: { __name__: "cpu_usage", job: "node" }, values }],
+    });
+    const result = JSON.parse(truncateToolResponse(input, "custom_metrics_tool"));
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0].m).toBe("cpu_usage");
+    expect(result.data[0].min).toBeDefined();
+    expect(result.data[0].max).toBeDefined();
+    expect(result.data[0].values.length).toBeLessThanOrEqual(51);
+  });
+
+  it("detects log lines by shape regardless of tool name", () => {
+    const data = [
+      { timestamp: "2026-01-01T00:00:00Z", line: "WARN high latency", labels: { level: "warn", pod: "api-1" } },
+    ];
+    const input = JSON.stringify({ data });
+    const result = JSON.parse(truncateToolResponse(input, "custom_logs_tool"));
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0].line).toBe("WARN high latency");
+    expect(result.data[0].level).toBe("warn");
+    expect(result.data[0].labels).toBeUndefined();
+  });
+
+  it("detects search results by shape regardless of tool name", () => {
+    const list = Array.from({ length: 30 }, (_, i) => ({
+      uid: `uid-${i}`,
+      title: `Board ${i}`,
+      folderTitle: "ops",
+    }));
+    const input = JSON.stringify(list); // flat array, no wrapper key
+    const result = JSON.parse(truncateToolResponse(input, "find_dashboards"));
+    expect(Array.isArray(result)).toBe(true);
+    expect(result).toHaveLength(20);
+    expect(result[0]).toEqual({ uid: "uid-0", title: "Board 0" });
+    expect(result[0].folderTitle).toBeUndefined();
+  });
+
+  it("detects wrapped search results (dashboards key)", () => {
+    const dashboards = Array.from({ length: 5 }, (_, i) => ({ uid: `u${i}`, title: `T${i}`, extra: "x" }));
+    const input = JSON.stringify({ dashboards });
+    const result = JSON.parse(truncateToolResponse(input, "some_search_tool"));
+    expect(Array.isArray(result)).toBe(true);
+    expect(result[0]).toEqual({ uid: "u0", title: "T0" });
+    expect(result[0].extra).toBeUndefined();
+  });
+
+  it("falls through to generic truncation for unrecognized shapes", () => {
+    const plain = JSON.stringify({ status: "ok", code: 200 });
+    expect(truncateToolResponse(plain, "health_check")).toBe(plain);
+  });
+
+  it("instant-query time series (value not values) compacted correctly", () => {
+    const input = JSON.stringify({
+      data: [{ metric: { __name__: "up", job: "api", instance: "host1" }, value: [1700000000, "1"] }],
+    });
+    const result = JSON.parse(truncateToolResponse(input, "instant_query_tool"));
+    expect(result.data[0].m).toBe("up");
+    expect(result.data[0].v).toBe("1");
+    expect(result.data[0].t).toBe(1700000000);
+  });
+});
+
 describe("sanitizeToolResult", () => {
   it("passes through clean text unchanged", () => {
     const text = "CPU usage is 80%";
