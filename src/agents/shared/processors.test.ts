@@ -1,0 +1,168 @@
+import { describe, it, expect } from "vitest";
+import { truncateToolResponse, repairTruncatedJson, sanitizeToolResult } from "./processors.js";
+
+describe("repairTruncatedJson", () => {
+  it("returns valid JSON unchanged", () => {
+    const valid = '{"severity":"high","summary":"Error spike"}';
+    expect(repairTruncatedJson(valid)).toBe(valid);
+  });
+
+  it("repairs truncated string value", () => {
+    const truncated = '{"severity":"high","summary":"Error spike at 14:';
+    const repaired = repairTruncatedJson(truncated);
+    const parsed = JSON.parse(repaired);
+    expect(parsed.severity).toBe("high");
+    expect(parsed.summary).toContain("Error spike");
+  });
+
+  it("repairs truncated array", () => {
+    const truncated = '{"items":["a","b","c';
+    const repaired = repairTruncatedJson(truncated);
+    const parsed = JSON.parse(repaired);
+    expect(parsed.items).toContain("a");
+    expect(parsed.items).toContain("b");
+  });
+
+  it("repairs truncated nested object", () => {
+    const truncated = '{"impact":{"duration":"25 min","description":"Error';
+    const repaired = repairTruncatedJson(truncated);
+    const parsed = JSON.parse(repaired);
+    expect(parsed.impact.duration).toBe("25 min");
+  });
+
+  it("repairs truncated mid-key", () => {
+    const truncated = '{"severity":"high","summ';
+    const repaired = repairTruncatedJson(truncated);
+    const parsed = JSON.parse(repaired);
+    expect(parsed.severity).toBe("high");
+  });
+
+  it("returns original string if unrepairable", () => {
+    const garbage = "not json at all";
+    expect(repairTruncatedJson(garbage)).toBe(garbage);
+  });
+});
+
+describe("truncateToolResponse", () => {
+  it("passes through short responses unchanged", () => {
+    const short = '{"status":"ok"}';
+    expect(truncateToolResponse(short, "some_tool")).toBe(short);
+  });
+
+  it("compacts get_dashboard_by_uid to panel list", () => {
+    const input = JSON.stringify({
+      dashboard: {
+        title: "My Dashboard",
+        uid: "abc123",
+        panels: [
+          { id: 1, title: "Panel A", type: "timeseries", gridPos: { x: 0, y: 0 }, targets: [] },
+          { id: 2, title: "Panel B", type: "graph", gridPos: { x: 0, y: 1 }, targets: [] },
+        ],
+      },
+      meta: {},
+    });
+    const result = JSON.parse(truncateToolResponse(input, "get_dashboard_by_uid"));
+    expect(result.title).toBe("My Dashboard");
+    expect(result.uid).toBe("abc123");
+    expect(result.panels).toHaveLength(2);
+    expect(result.panels[0]).toEqual({ id: 1, title: "Panel A", type: "timeseries" });
+    // Should not include gridPos, targets etc.
+    expect(result.panels[0].gridPos).toBeUndefined();
+  });
+
+  it("compacts search_dashboards to uid+title pairs capped at 20", () => {
+    const dashboards = Array.from({ length: 25 }, (_, i) => ({
+      uid: `uid${i}`,
+      title: `Dashboard ${i}`,
+      folderTitle: "Folder",
+      tags: ["tag"],
+    }));
+    const input = JSON.stringify({ dashboards });
+    const result = JSON.parse(truncateToolResponse(input, "search_dashboards"));
+    expect(Array.isArray(result)).toBe(true);
+    expect(result).toHaveLength(20);
+    expect(result[0]).toEqual({ uid: "uid0", title: "Dashboard 0" });
+    expect(result[0].folderTitle).toBeUndefined();
+  });
+
+  it("compacts query_prometheus range query to stats + sampled values", () => {
+    const values: [number, string][] = Array.from({ length: 200 }, (_, i) => [1700000000 + i * 60, String(i)]);
+    const input = JSON.stringify({
+      data: [{ metric: { __name__: "http_requests_total", job: "api" }, values }],
+    });
+    const result = JSON.parse(truncateToolResponse(input, "query_prometheus"));
+    expect(result.data).toHaveLength(1);
+    const item = result.data[0];
+    expect(item.m).toBe("http_requests_total");
+    expect(item.min).toBeDefined();
+    expect(item.max).toBeDefined();
+    expect(item.avg).toBeDefined();
+    // Sampled to ~50 points — exact count depends on step
+    expect(item.values.length).toBeLessThanOrEqual(51);
+  });
+
+  it("compacts query_loki_logs to line+timestamp+level", () => {
+    const data = [
+      { timestamp: "2026-01-01T00:00:00Z", line: "ERROR something failed", labels: { level: "error", app: "api" } },
+      { timestamp: "2026-01-01T00:00:01Z", line: "INFO ok", labels: { app: "api" } },
+    ];
+    const input = JSON.stringify({ data, totalEntries: 2 });
+    const result = JSON.parse(truncateToolResponse(input, "query_loki_logs"));
+    expect(result.data).toHaveLength(2);
+    expect(result.data[0]).toEqual({
+      line: "ERROR something failed",
+      timestamp: "2026-01-01T00:00:00Z",
+      level: "error",
+    });
+    // No app label in output
+    expect(result.data[0].labels).toBeUndefined();
+  });
+
+  it("truncates generic tools at 1500 chars", () => {
+    const long = "x".repeat(3000);
+    const result = truncateToolResponse(long, "some_unknown_tool");
+    expect(result.length).toBeLessThan(2000);
+    expect(result).toContain("[truncated,");
+  });
+
+  it("allows up to 12000 chars for query tools before truncating", () => {
+    const medium = "x".repeat(2000);
+    // Should NOT be truncated for a query tool
+    expect(truncateToolResponse(medium, "query_prometheus")).toBe(medium);
+  });
+});
+
+describe("sanitizeToolResult", () => {
+  it("passes through clean text unchanged", () => {
+    const text = "CPU usage is 80%";
+    expect(sanitizeToolResult(text)).toBe(text);
+  });
+
+  it("strips inline base64 data URIs", () => {
+    const b64 = "A".repeat(150);
+    const text = `data:image/png;base64,${b64}`;
+    const result = sanitizeToolResult(text);
+    expect(result).toContain("[base64 image removed]");
+    expect(result).not.toContain("data:image/png");
+  });
+
+  it("strips raw base64 blobs over 200 chars", () => {
+    const blob = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".repeat(4); // 256 chars
+    const text = `result: ${blob}`;
+    const result = sanitizeToolResult(text);
+    expect(result).toContain("[large blob removed]");
+  });
+
+  it("truncates oversized results at 8000 chars", () => {
+    // Use a string that won't be caught by base64 blob regex (contains spaces and special chars)
+    const long = "metric value: 123\n".repeat(600); // ~10800 chars with non-base64 chars
+    const result = sanitizeToolResult(long);
+    expect(result.length).toBeLessThan(8100);
+    expect(result).toContain("...[truncated]");
+  });
+
+  it("does not strip base64-like strings under 200 chars", () => {
+    const short = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijk"; // < 200 chars
+    expect(sanitizeToolResult(short)).toBe(short);
+  });
+});
