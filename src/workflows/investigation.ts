@@ -18,6 +18,7 @@ import { getToolsByRole } from "../mcp/provider.js";
 import { executePrefetch } from "./prefetch.js";
 import { buildTimeline, validateSeverity } from "./helpers.js";
 import { getRecentIncidents, saveIncident, formatIncidentHistory } from "../history/store.js";
+import { safeJsonParse } from "../agents/shared/processors.js";
 import { createAnomalyDetectorAgent } from "../agents/anomaly-detector.js";
 import { createPlannerAgent } from "../agents/planner.js";
 import { createMetricsAgent } from "../agents/metrics.js";
@@ -246,13 +247,11 @@ function buildAnomalyStep(config: WorkflowConfig) {
       let severity: "low" | "medium" | "high" | "critical" = "medium";
       let summary = inputData.userMessage;
 
-      try {
-        const parsed = JSON.parse(agentResult.text);
-        isAnomaly = parsed.isAnomaly ?? true;
-        severity = parsed.severity ?? "medium";
-        summary = parsed.summary ?? inputData.userMessage;
-      } catch {
-        // Keep defaults
+      const anomalyParsed = safeJsonParse(agentResult.text);
+      if (anomalyParsed) {
+        isAnomaly = anomalyParsed.isAnomaly ?? true;
+        severity = anomalyParsed.severity ?? "medium";
+        summary = anomalyParsed.summary ?? inputData.userMessage;
       }
 
       const prefetchContext = {
@@ -321,14 +320,12 @@ function buildPlanningStep(config: WorkflowConfig) {
       let logFocus: string[] = [];
       let infraFocus: string[] = [];
 
-      try {
-        const parsed = JSON.parse(agentResult.text);
-        hypotheses = parsed.hypotheses ?? [];
-        metricFocus = parsed.metricFocus ?? [];
-        logFocus = parsed.logFocus ?? [];
-        infraFocus = parsed.infraFocus ?? [];
-      } catch {
-        // Keep defaults
+      const plannerParsed = safeJsonParse(agentResult.text);
+      if (plannerParsed) {
+        hypotheses = plannerParsed.hypotheses ?? [];
+        metricFocus = plannerParsed.metricFocus ?? [];
+        logFocus = plannerParsed.logFocus ?? [];
+        infraFocus = plannerParsed.infraFocus ?? [];
       }
 
       return {
@@ -396,16 +393,15 @@ export function buildMetricsStep(config: WorkflowConfig) {
         // Fall through
       }
 
-      try {
-        const parsed = JSON.parse(agentResult.text);
+      const metricsParsed = safeJsonParse(agentResult.text);
+      if (metricsParsed) {
         return {
-          summary: parsed.summary ?? "Metrics analysis unavailable",
-          observations: parsed.observations ?? [],
-          anomalyWindow: parsed.anomalyWindow,
+          summary: metricsParsed.summary ?? "Metrics analysis unavailable",
+          observations: metricsParsed.observations ?? [],
+          anomalyWindow: metricsParsed.anomalyWindow,
         };
-      } catch {
-        return { summary: "Metrics analysis unavailable", observations: [] };
       }
+      return { summary: "Metrics analysis unavailable", observations: [] };
     },
   });
 }
@@ -469,15 +465,14 @@ export function buildLogsStep(config: WorkflowConfig) {
         // Fall through
       }
 
-      try {
-        const parsed = JSON.parse(agentResult.text);
+      const logsParsed = safeJsonParse(agentResult.text);
+      if (logsParsed) {
         return {
-          summary: parsed.summary ?? "Log analysis unavailable",
-          observations: parsed.observations ?? [],
+          summary: logsParsed.summary ?? "Log analysis unavailable",
+          observations: logsParsed.observations ?? [],
         };
-      } catch {
-        return { summary: "Log analysis unavailable", observations: [] };
       }
+      return { summary: "Log analysis unavailable", observations: [] };
     },
   });
 }
@@ -536,15 +531,14 @@ export function buildInfraStep(config: WorkflowConfig) {
         // Fall through
       }
 
-      try {
-        const parsed = JSON.parse(agentResult.text);
+      const infraParsed = safeJsonParse(agentResult.text);
+      if (infraParsed) {
         return {
-          summary: parsed.summary ?? "Infrastructure analysis unavailable",
-          observations: parsed.observations ?? [],
+          summary: infraParsed.summary ?? "Infrastructure analysis unavailable",
+          observations: infraParsed.observations ?? [],
         };
-      } catch {
-        return { summary: "Infrastructure analysis unavailable", observations: [] };
       }
+      return { summary: "Infrastructure analysis unavailable", observations: [] };
     },
   });
 }
@@ -630,16 +624,14 @@ export function buildSynthesisStep(config: WorkflowConfig) {
       let confidence: "low" | "medium" | "high" = "low";
       let confidenceScore = 0.5;
 
-      try {
-        const parsed = JSON.parse(agentResult.text);
-        severity = parsed.severity ?? severity;
-        summary = parsed.summary ?? summary;
-        rootCause = parsed.rootCause ?? rootCause;
-        trigger = parsed.trigger ?? trigger;
-        confidence = parsed.confidence ?? confidence;
-        confidenceScore = parsed.confidenceScore ?? confidenceScore;
-      } catch {
-        // Keep defaults
+      const synthesisParsed = safeJsonParse(agentResult.text);
+      if (synthesisParsed) {
+        severity = synthesisParsed.severity ?? severity;
+        summary = synthesisParsed.summary ?? summary;
+        rootCause = synthesisParsed.rootCause ?? rootCause;
+        trigger = synthesisParsed.trigger ?? trigger;
+        confidence = synthesisParsed.confidence ?? confidence;
+        confidenceScore = synthesisParsed.confidenceScore ?? confidenceScore;
       }
 
       // Deterministic severity validation
