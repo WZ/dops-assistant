@@ -6,104 +6,199 @@ const MAX_TOOL_RESPONSE_CHARS = 1500;
 const MAX_QUERY_TOOL_RESPONSE_CHARS = 12000;
 const MAX_TOOL_RESULT_CHARS = 8000;
 
+// ── Response shape detectors ──────────────────────────────────────────────────
+
+/** Detect Prometheus-style time series: array of objects with `metric` + `values`/`value` fields */
+function isTimeSeriesData(parsed: unknown): parsed is {
+  data: Array<{ metric: Record<string, string>; value?: [number, string]; values?: Array<[number, string]> }>;
+  hints?: unknown;
+} {
+  if (!parsed || typeof parsed !== "object") return false;
+  const obj = parsed as Record<string, unknown>;
+  const data = obj["data"];
+  if (!Array.isArray(data) || data.length === 0) return false;
+  const first = data[0] as Record<string, unknown>;
+  return (
+    typeof first === "object" &&
+    first !== null &&
+    "metric" in first &&
+    typeof first["metric"] === "object" &&
+    ("value" in first || "values" in first)
+  );
+}
+
+/** Detect Loki-style log lines: array with `timestamp`/`line` fields (possibly wrapped in `data`) */
+function isLogLineData(parsed: unknown): parsed is {
+  data: Array<{ timestamp?: string; line?: string; labels?: Record<string, string> }>;
+} {
+  if (!parsed || typeof parsed !== "object") return false;
+  const obj = parsed as Record<string, unknown>;
+  const data = obj["data"];
+  if (!Array.isArray(data) || data.length === 0) return false;
+  const first = data[0] as Record<string, unknown>;
+  return (
+    typeof first === "object" &&
+    first !== null &&
+    ("line" in first || "timestamp" in first) &&
+    !("metric" in first)
+  );
+}
+
+/** Detect dashboard JSON: object with `panels` array (possibly nested under `dashboard`) */
+function isDashboardJson(parsed: unknown): parsed is {
+  dashboard?: { title?: string; uid?: string; panels?: Array<{ id: number; title: string; type: string }> };
+  title?: string;
+  uid?: string;
+  panels?: Array<{ id: number; title: string; type: string }>;
+  meta?: { slug?: string };
+} {
+  if (!parsed || typeof parsed !== "object") return false;
+  const obj = parsed as Record<string, unknown>;
+  const panels = (obj["dashboard"] as Record<string, unknown> | undefined)?.["panels"] ?? obj["panels"];
+  return Array.isArray(panels);
+}
+
+/** Detect search results: array of objects with `uid` and `title` fields */
+function isSearchResultList(parsed: unknown): boolean {
+  let list: unknown[] | undefined;
+  if (Array.isArray(parsed)) {
+    list = parsed;
+  } else if (parsed && typeof parsed === "object") {
+    const obj = parsed as Record<string, unknown>;
+    const nested = obj["dashboards"] ?? obj["results"];
+    if (Array.isArray(nested)) list = nested;
+  }
+  if (!list || list.length === 0) return false;
+  const first = list[0] as Record<string, unknown> | undefined;
+  return (
+    typeof first === "object" &&
+    first !== null &&
+    "uid" in first &&
+    "title" in first
+  );
+}
+
+// ── Compaction helpers ────────────────────────────────────────────────────────
+
+function compactTimeSeries(parsed: {
+  data: Array<{ metric: Record<string, string>; value?: [number, string]; values?: Array<[number, string]> }>;
+  hints?: unknown;
+}): string {
+  const compact = parsed.data.slice(0, 30).map((r) => {
+    const { __name__, job, instance, ...rest } = r.metric;
+    const key = __name__ || Object.values(rest).filter(Boolean).join("/") || "";
+    if (r.value) {
+      return { m: key, instance, v: r.value[1], t: r.value[0] };
+    }
+    if (r.values) {
+      // Range query: preserve sampled data points so the LLM can see the shape.
+      // Downsample to ~50 points max to fit in context while keeping trend visible.
+      const vals = r.values;
+      const step = Math.max(1, Math.floor(vals.length / 50));
+      const sampled = vals.filter((_, i) => i % step === 0 || i === vals.length - 1);
+      let min = Infinity, max = -Infinity, sum = 0;
+      for (const [, v] of vals) {
+        const n = parseFloat(v);
+        if (n < min) min = n;
+        if (n > max) max = n;
+        sum += n;
+      }
+      return {
+        m: key, instance,
+        min: min.toFixed(0),
+        max: max.toFixed(0),
+        avg: (sum / vals.length).toFixed(0),
+        points: vals.length,
+        // Include actual [timestamp, value] pairs so LLM sees level changes
+        values: sampled.map(([ts, v]) => [new Date(ts * 1000).toISOString(), parseFloat(v).toFixed(0)]),
+      };
+    }
+    return { m: key, raw: r };
+  });
+  return JSON.stringify({ data: compact, hints: parsed.hints });
+}
+
+function compactLogLines(parsed: {
+  data: Array<{ timestamp?: string; line?: string; labels?: Record<string, string> }>;
+}): string {
+  const compact = parsed.data
+    .map((entry) => {
+      const line = (entry.line ?? "").trim().slice(0, 300);
+      if (!line) return null;
+      const level = entry.labels?.["level"] ?? entry.labels?.["severity"] ?? entry.labels?.["loglevel"];
+      return {
+        line,
+        ...(entry.timestamp ? { timestamp: entry.timestamp } : {}),
+        ...(level ? { level } : {}),
+      };
+    })
+    .filter((e): e is { line: string; timestamp?: string; level?: string } => e !== null);
+  return JSON.stringify({ data: compact, totalEntries: parsed.data.length });
+}
+
+function compactDashboard(parsed: {
+  dashboard?: { title?: string; uid?: string; panels?: Array<{ id: number; title: string; type: string }> };
+  title?: string;
+  uid?: string;
+  panels?: Array<{ id: number; title: string; type: string }>;
+  meta?: { slug?: string };
+}): string {
+  const panels = (parsed.dashboard?.panels ?? parsed.panels ?? []) as Array<{
+    id: number; title: string; type: string;
+  }>;
+  return JSON.stringify({
+    title: parsed.dashboard?.title ?? parsed.title,
+    uid: parsed.dashboard?.uid ?? parsed.meta?.slug,
+    panels: panels.map((p) => ({ id: p.id, title: p.title, type: p.type })),
+  });
+}
+
+function compactSearchResults(parsed: unknown): string {
+  let list: Array<{ uid: string; title: string }>;
+  if (Array.isArray(parsed)) {
+    list = parsed;
+  } else {
+    const obj = parsed as Record<string, unknown>;
+    list = (obj["dashboards"] ?? obj["results"] ?? []) as Array<{ uid: string; title: string }>;
+  }
+  return JSON.stringify(list.slice(0, 20).map((d) => ({ uid: d.uid, title: d.title })));
+}
+
+// ── Main export ───────────────────────────────────────────────────────────────
+
 /**
  * Truncate oversized tool responses to prevent context bloat.
- * Applies tool-specific extraction for known verbose tools before
- * falling back to generic character-limit truncation.
+ *
+ * Uses a two-tier strategy:
+ *   1. Response-shape detection — identify the data format from the payload itself
+ *      and apply the appropriate compaction (time series, log lines, dashboard JSON,
+ *      search results).  This is tool-name-agnostic.
+ *   2. Generic fallback — character-limit truncation, with a higher limit for
+ *      query-class tools whose data is the core evidence.
  */
 export function truncateToolResponse(text: string, toolName: string): string {
-  // Tool-specific extraction — return only what the LLM needs
-  if (toolName === "get_dashboard_by_uid") {
-    try {
-      const data = JSON.parse(text);
-      const panels = (data.dashboard?.panels ?? data.panels ?? []) as Array<{
-        id: number; title: string; type: string;
-      }>;
-      return JSON.stringify({
-        title: data.dashboard?.title ?? data.title,
-        uid: data.dashboard?.uid ?? data.meta?.slug,
-        panels: panels.map((p) => ({ id: p.id, title: p.title, type: p.type })),
-      });
-    } catch { /* fall through */ }
-  }
+  try {
+    const parsed: unknown = JSON.parse(text);
 
-  if (toolName === "search_dashboards") {
-    try {
-      const parsed = JSON.parse(text);
-      const list = Array.isArray(parsed) ? parsed : parsed?.dashboards ?? [];
-      // Only uid + title, cap at 20 dashboards
-      return JSON.stringify(
-        (list as Array<{ uid: string; title: string }>).slice(0, 20).map((d) => ({ uid: d.uid, title: d.title })),
-      );
-    } catch { /* fall through */ }
-  }
+    // Shape detection — order matters: more specific shapes first
+    if (isDashboardJson(parsed)) {
+      return compactDashboard(parsed);
+    }
 
-  // Compact Prometheus responses: extract metric name + value pairs, drop verbose labels
-  if (toolName === "query_prometheus") {
-    try {
-      const parsed = JSON.parse(text);
-      const results = parsed?.data ?? [];
-      if (Array.isArray(results) && results.length > 0) {
-        const compact = results.slice(0, 30).map((r: { metric: Record<string, string>; value?: [number, string]; values?: Array<[number, string]> }) => {
-          const { __name__, job, instance, ...rest } = r.metric;
-          const key = __name__ || Object.values(rest).filter(Boolean).join("/") || "";
-          if (r.value) {
-            return { m: key, instance, v: r.value[1], t: r.value[0] };
-          }
-          if (r.values) {
-            // Range query: preserve sampled data points so the LLM can see the shape.
-            // Downsample to ~50 points max to fit in context while keeping trend visible.
-            const vals = r.values;
-            const step = Math.max(1, Math.floor(vals.length / 50));
-            const sampled = vals.filter((_, i) => i % step === 0 || i === vals.length - 1);
-            let min = Infinity, max = -Infinity, sum = 0;
-            for (const [, v] of vals) {
-              const n = parseFloat(v);
-              if (n < min) min = n;
-              if (n > max) max = n;
-              sum += n;
-            }
-            return {
-              m: key, instance,
-              min: min.toFixed(0),
-              max: max.toFixed(0),
-              avg: (sum / vals.length).toFixed(0),
-              points: vals.length,
-              // Include actual [timestamp, value] pairs so LLM sees level changes
-              values: sampled.map(([ts, v]) => [new Date(ts * 1000).toISOString(), parseFloat(v).toFixed(0)]),
-            };
-          }
-          return { m: key, raw: r };
-        });
-        const compactJson = JSON.stringify({ data: compact, hints: parsed.hints });
-        if (compactJson.length < text.length) return compactJson;
-      }
-    } catch { /* fall through */ }
-  }
+    if (isTimeSeriesData(parsed)) {
+      const compactJson = compactTimeSeries(parsed);
+      if (compactJson.length < text.length) return compactJson;
+    }
 
-  // Compact Loki log responses: drop verbose labels, keep timestamp + line + level
-  if (toolName === "query_loki_logs") {
-    try {
-      const parsed = JSON.parse(text);
-      const data = parsed?.data ?? [];
-      if (Array.isArray(data) && data.length > 0) {
-        const compact = data
-          .map((entry: { timestamp?: string; line?: string; labels?: Record<string, string> }) => {
-            const line = (entry.line ?? "").trim().slice(0, 300);
-            if (!line) return null;
-            const level = entry.labels?.level ?? entry.labels?.severity ?? entry.labels?.loglevel;
-            return {
-              line,
-              ...(entry.timestamp ? { timestamp: entry.timestamp } : {}),
-              ...(level ? { level } : {}),
-            };
-          })
-          .filter((e): e is { line: string; timestamp?: string; level?: string } => e !== null);
-        const compactJson = JSON.stringify({ data: compact, totalEntries: data.length });
-        if (compactJson.length < text.length) return compactJson;
-      }
-    } catch { /* fall through */ }
-  }
+    if (isLogLineData(parsed)) {
+      const compactJson = compactLogLines(parsed);
+      if (compactJson.length < text.length) return compactJson;
+    }
+
+    if (isSearchResultList(parsed)) {
+      return compactSearchResults(parsed);
+    }
+  } catch { /* fall through to generic truncation */ }
 
   // Query tools get a higher truncation limit — their data is the core evidence
   const queryTools = new Set(["query_prometheus", "query_loki_logs", "get_dashboard_panel_queries"]);
