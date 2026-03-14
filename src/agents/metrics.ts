@@ -14,7 +14,10 @@ export function createMetricsAgent(config: MetricsAgentConfig) {
   return new Agent({
     id: "metrics",
     name: "metrics",
-    instructions: `You are a metrics analysis specialist. Query Prometheus/metrics tools to deep-dive into metric anomalies. Identify correlations, trends, and anomalous patterns.`,
+    instructions: `You are a metrics analysis specialist. Query Prometheus/metrics tools to deep-dive into metric anomalies. Identify correlations, trends, and anomalous patterns.
+
+You MUST end your response with a JSON object matching this exact schema (no trailing text after the JSON):
+{"summary": "string", "observations": [{"metric": "string", "currentValue": "string", "baselineValue": "string", "timestamp": "string", "severity": "string"}], "anomalyWindow": "string"}`,
     model: config.model as any,
     tools: config.tools ?? {},
     defaultOptions: {

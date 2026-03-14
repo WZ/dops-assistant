@@ -14,7 +14,10 @@ export function createInfraAgent(config: InfraAgentConfig) {
   return new Agent({
     id: "infra",
     name: "infra",
-    instructions: `You are an infrastructure health specialist. Check infrastructure metrics for resource exhaustion, scaling issues, network problems, and deployment changes.`,
+    instructions: `You are an infrastructure health specialist. Check infrastructure metrics for resource exhaustion, scaling issues, network problems, and deployment changes.
+
+You MUST end your response with a JSON object matching this exact schema (no trailing text after the JSON):
+{"summary": "string", "observations": [{"resource": "string", "status": "string", "detail": "string", "timestamp": "string"}]}`,
     model: config.model as any,
     tools: config.tools ?? {},
     defaultOptions: {
