@@ -1,3 +1,5 @@
+// DEPRECATED: Use Mastra equivalents. Will be removed when USE_MASTRA migration is complete.
+// TODO: npm uninstall openai (after this file is removed)
 import OpenAI from "openai";
 import pino from "pino";
 import type { OpenAITool } from "../mcp/client.js";

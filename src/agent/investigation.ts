@@ -1,3 +1,4 @@
+// DEPRECATED: Use Mastra equivalents. Will be removed when USE_MASTRA migration is complete.
 import type { LlmClient, Message, ResponseFormat, TokenUsage } from "../llm/openai.js";
 import type { MultiMcpClient } from "../mcp/multi-client.js";
 import type { ServiceConfig } from "../config/schema.js";
