@@ -1,5 +1,4 @@
 import type { LlmClient, Message, ResponseFormat, TokenUsage } from "../llm/openai.js";
-import type { PanelImage } from "../mcp/client.js";
 import type { MultiMcpClient } from "../mcp/multi-client.js";
 import type { ServiceConfig } from "../config/schema.js";
 import type { AnomalyAssessment } from "./types.js";
@@ -156,7 +155,6 @@ function truncateToolResponse(text: string, toolName: string): string {
 
 export type PhaseResult<T> = {
   parsed: T;
-  images: PanelImage[];
   toolData: string[];  // Raw tool response texts from the phase
 };
 
@@ -409,7 +407,6 @@ export class InvestigationAgent {
     skillContext?: string,
   ): Promise<RcaReport> {
     const log = logger.child({ component: "investigation", service: service.name, correlationId });
-    const collectedImages: PanelImage[] = [];
 
     // Pre-fetch datasource UIDs so phases don't waste iterations on list_datasources
     const datasourceHint = await this.getDatasourceHint();
@@ -448,8 +445,6 @@ export class InvestigationAgent {
         "planning",
       );
       anomaly = result.parsed;
-      collectedImages.push(...result.images);
-      log.debug({ phaseImages: result.images.length }, "Phase 1 images");
     }
 
     if (!anomaly.isAnomaly) {
@@ -465,7 +460,6 @@ export class InvestigationAgent {
         timeline: [],
         evidence: { metrics: [], logs: [], infra: [] },
         dashboardLinks: [],
-        panelImages: collectedImages,
         recommendedActions: [],
         confidence: "high",
         confidenceScore: 0.9,
@@ -535,9 +529,9 @@ export class InvestigationAgent {
       onIteration?.("planning", 0, 1, `Focus: ${focusItems.join(", ")}`);
     }
 
-    // Phases 2/3/4 + panel capture in parallel
+    // Phases 2/3/4 in parallel
     onPhase?.("Analyzing metrics, logs & infrastructure");
-    log.debug("Running phases 2/3/4 + panel capture in parallel");
+    log.debug("Running phases 2/3/4 in parallel");
     const timeCtx = getTimeContext();
     const anomalyContext = `${anomaly.summary} (severity: ${anomaly.severity})`;
 
@@ -601,11 +595,10 @@ export class InvestigationAgent {
     // skip discovery and go straight to querying. 6 iterations = 4 productive + 2 wind-down.
     const EVIDENCE_ITERATIONS = 6;
 
-    const [metricResult, logResult, infraResult, panelCaptureResult] = await Promise.allSettled([
+    const [metricResult, logResult, infraResult] = await Promise.allSettled([
       this.runPhase<MetricFindings>(metricPrompt, metricMessageFull, METRIC_FINDINGS_SCHEMA, EVIDENCE_ITERATIONS, onTokenUsage, onToolCall, true, EVIDENCE_MAX_TOKENS, EVIDENCE_TIMEOUT_MS, onIteration, "metrics"),
       this.runPhase<LogFindings>(logPrompt, logMessageFull, LOG_FINDINGS_SCHEMA, EVIDENCE_ITERATIONS, onTokenUsage, onToolCall, true, EVIDENCE_MAX_TOKENS, EVIDENCE_TIMEOUT_MS, onIteration, "logs"),
       this.runPhase<InfraFindings>(infraPrompt, infraMessageFull, INFRA_FINDINGS_SCHEMA, EVIDENCE_ITERATIONS, onTokenUsage, onToolCall, true, EVIDENCE_MAX_TOKENS, EVIDENCE_TIMEOUT_MS, onIteration, "infra"),
-      this.capturePanelImages(service.name, anomaly.summary, userMessage, onToolCall),
     ]);
 
     const defaultMetric: MetricFindings = { observations: [], anomalyWindow: "unknown", summary: "unavailable" };
@@ -622,30 +615,9 @@ export class InvestigationAgent {
       ? { ...defaultInfra, ...infraResult.value.parsed, observations: Array.isArray(infraResult.value.parsed.observations) ? infraResult.value.parsed.observations : [] }
       : defaultInfra;
 
-    // Collect images from fulfilled phases
-    if (metricResult.status === "fulfilled") {
-      collectedImages.push(...metricResult.value.images);
-      log.debug({ metricImages: metricResult.value.images.length }, "Metric phase images");
-    }
-    if (logResult.status === "fulfilled") {
-      collectedImages.push(...logResult.value.images);
-      log.debug({ logImages: logResult.value.images.length }, "Log phase images");
-    }
-    if (infraResult.status === "fulfilled") {
-      collectedImages.push(...infraResult.value.images);
-      log.debug({ infraImages: infraResult.value.images.length }, "Infra phase images");
-    }
-
-    // Deterministic panel images (guaranteed capture)
-    if (panelCaptureResult.status === "fulfilled") {
-      collectedImages.push(...panelCaptureResult.value);
-      log.debug({ panelCaptureImages: panelCaptureResult.value.length }, "Deterministic panel capture images");
-    }
-
     if (metricResult.status === "rejected") log.warn({ err: metricResult.reason }, "Metric phase failed");
     if (logResult.status === "rejected") log.warn({ err: logResult.reason }, "Log phase failed");
     if (infraResult.status === "rejected") log.warn({ err: infraResult.reason }, "Infra phase failed");
-    if (panelCaptureResult.status === "rejected") log.warn({ err: panelCaptureResult.reason }, "Panel capture failed");
 
     // Build timeline before synthesis
     onPhase?.("Building event timeline");
@@ -735,7 +707,7 @@ export class InvestigationAgent {
     const SYNTHESIS_MAX_TOKENS = 16384;
     const REASONING_TIMEOUT_MS = 240_000; // 4min — synthesis/reflection are slow on large models
 
-    type SynthesisResult = Omit<RcaReport, "service" | "investigatedAt" | "panelImages" | "skillsUsed">;
+    type SynthesisResult = Omit<RcaReport, "service" | "investigatedAt" | "skillsUsed">;
     const defaultSynthesis: SynthesisResult = {
       severity: "medium",
       summary: anomaly.summary,
@@ -766,10 +738,9 @@ export class InvestigationAgent {
         onIteration,
         "synthesis",
       );
-      collectedImages.push(...synthesisResult.images);
     } catch (err) {
       log.error({ err }, "Synthesis phase failed, using default report");
-      synthesisResult = { parsed: defaultSynthesis, images: [], toolData: [] };
+      synthesisResult = { parsed: defaultSynthesis, toolData: [] };
     }
 
     // Root cause quality gate: retry synthesis if non-conclusive and evidence exists
@@ -795,7 +766,6 @@ export class InvestigationAgent {
         if (!nonConclusivePattern.test(retryResult.parsed.rootCause ?? "")) {
           log.info({ rootCause: retryResult.parsed.rootCause?.slice(0, 80) }, "Synthesis retry produced conclusive root cause");
           synthesisResult = retryResult;
-          collectedImages.push(...retryResult.images);
         }
       } catch (err) {
         log.warn({ err }, "Synthesis retry failed, keeping original");
@@ -839,7 +809,7 @@ export class InvestigationAgent {
       );
     } catch (err) {
       log.error({ err }, "Reflection phase failed, skipping corrections");
-      reflectionResult = { parsed: { validationNotes: "", revisedRootCause: "", revisedTrigger: "", revisedSeverity: "medium", revisedConfidence: "low", revisedConfidenceScore: 0.3, revisedSummary: "", issues: [] }, images: [], toolData: [] };
+      reflectionResult = { parsed: { validationNotes: "", revisedRootCause: "", revisedTrigger: "", revisedSeverity: "medium", revisedConfidence: "low", revisedConfidenceScore: 0.3, revisedSummary: "", issues: [] }, toolData: [] };
     }
 
     // Apply corrections from reflection (guard against partial/empty responses)
@@ -861,7 +831,7 @@ export class InvestigationAgent {
       recommendedActions: (synthesisResult.parsed.recommendedActions ?? []).filter((a: string) => a.trim().length > 0).slice(0, 5),
       confidence: synthesisResult.parsed.confidence ?? "low",
       confidenceScore: typeof synthesisResult.parsed.confidenceScore === "number" ? synthesisResult.parsed.confidenceScore : 0.5,
-    } as Omit<RcaReport, "service" | "investigatedAt" | "panelImages" | "skillsUsed">;
+    } as Omit<RcaReport, "service" | "investigatedAt" | "skillsUsed">;
     const reflection = reflectionResult.parsed;
     const issues = reflection.issues ?? [];
     // Always apply revisedSeverity from reflection — it validates severity/evidence consistency
@@ -893,13 +863,12 @@ export class InvestigationAgent {
       report.severity = correctedSeverity;
     }
 
-    log.info({ totalPanelImages: collectedImages.length }, "Investigation complete");
+    log.info("Investigation complete");
 
     const finalReport: RcaReport = {
       ...report,
       service: service.name,
       investigatedAt: new Date().toISOString(),
-      panelImages: collectedImages,
       ...(skillContext ? { skillsUsed: skillContext.match(/### Skill: (.+)/g)?.map(m => m.replace("### Skill: ", "")) } : {}),
     };
 
@@ -918,134 +887,6 @@ export class InvestigationAgent {
     return finalReport;
   }
 
-  /**
-   * Deterministic panel image capture — always runs, independent of LLM behavior.
-   * Searches dashboards, finds ones relevant to the service and user query,
-   * and captures up to 3 panel images with a time range derived from the anomaly context.
-   */
-  private async capturePanelImages(
-    serviceName: string,
-    anomalySummary: string,
-    userMessage?: string,
-    onToolCall?: (name: string, args: Record<string, unknown>) => void,
-  ): Promise<PanelImage[]> {
-    const log = logger.child({ component: "panel-capture", service: serviceName });
-    log.info("Starting deterministic panel capture");
-    const images: PanelImage[] = [];
-    const maxImages = 3;
-
-    const toolNames = this.mcp.getTools().map((t) => t.function.name);
-    log.info({ availableTools: toolNames }, "Available tools for panel capture");
-    if (!toolNames.includes("get_panel_image") || !toolNames.includes("search_dashboards")) {
-      log.warn("Panel image tools not available, skipping capture");
-      return images;
-    }
-
-    // Derive time range from anomaly context
-    const timeRange = this.extractTimeRange(anomalySummary, userMessage);
-    log.info({ timeRange }, "Derived time range for panel images");
-
-    // Extract dashboard/panel hints from user message
-    const { dashboardHint, panelHint } = extractDashboardPanelHints(userMessage, anomalySummary);
-    log.debug({ dashboardHint, panelHint }, "Extracted dashboard/panel hints from query");
-
-    // Build scoring tokens: service name tokens + query-derived tokens + keyword tokens
-    const serviceTokens = serviceName.toLowerCase().split(/[-_\s]+/);
-    const dashboardHintTokens = dashboardHint ? dashboardHint.toLowerCase().split(/[-_\s]+/).filter((t) => t.length > 1) : [];
-    const panelHintTokens = panelHint ? panelHint.toLowerCase().split(/[-_\s]+/).filter((t) => t.length > 1) : [];
-    // Extract keywords from user query for broader matching (e.g. "ingestion log rate drop" → ["ingestion", "log", "rate", "drop"])
-    const queryKeywords = extractQueryKeywords(userMessage, anomalySummary);
-
-    // Step 1: list all dashboards
-    onToolCall?.("search_dashboards", { query: "" });
-    const searchResult = await this.mcp.callTool("search_dashboards", { query: "" });
-
-    let dashboards: Array<{ uid: string; title: string }>;
-    try {
-      const parsed = JSON.parse(searchResult.text);
-      dashboards = Array.isArray(parsed)
-        ? parsed
-        : Array.isArray(parsed?.dashboards) ? parsed.dashboards : [];
-    } catch {
-      log.warn("Failed to parse dashboard list");
-      return images;
-    }
-
-    // Filter out temporary dashboards created by the agent itself
-    dashboards = dashboards.filter((d) => !d.title.startsWith("dops-temp:"));
-
-    if (dashboards.length === 0) return images;
-
-    // Step 2: sort dashboards by relevance
-    dashboards.sort((a, b) => {
-      const aTitle = a.title.toLowerCase();
-      const bTitle = b.title.toLowerCase();
-      const aServiceScore = serviceTokens.filter((t) => aTitle.includes(t)).length;
-      const bServiceScore = serviceTokens.filter((t) => bTitle.includes(t)).length;
-      const aHintScore = dashboardHintTokens.filter((t) => aTitle.includes(t)).length * 3;
-      const bHintScore = dashboardHintTokens.filter((t) => bTitle.includes(t)).length * 3;
-      const aKeywordScore = queryKeywords.filter((t) => aTitle.includes(t)).length * 2;
-      const bKeywordScore = queryKeywords.filter((t) => bTitle.includes(t)).length * 2;
-      return (bServiceScore + bHintScore + bKeywordScore) - (aServiceScore + aHintScore + aKeywordScore);
-    });
-
-    log.debug({ dashboardCount: dashboards.length, topDashboards: dashboards.slice(0, 3).map((d) => d.title) }, "Dashboards ranked by relevance");
-
-    // Step 3: get panels from top dashboards
-    for (const db of dashboards.slice(0, 3)) {
-      if (images.length >= maxImages) break;
-
-      onToolCall?.("get_dashboard_by_uid", { uid: db.uid });
-      const detailResult = await this.mcp.callTool("get_dashboard_by_uid", { uid: db.uid });
-
-      let panels: Array<{ id: number; title: string; type: string }>;
-      try {
-        const data = JSON.parse(detailResult.text);
-        panels = (data.dashboard?.panels ?? data.panels ?? []) as Array<{
-          id: number; title: string; type: string;
-        }>;
-      } catch {
-        continue;
-      }
-
-      // Filter to visual metric panels
-      const graphTypes = new Set(["timeseries", "graph", "gauge", "stat", "bargauge", "heatmap"]);
-      const metricPanels = panels.filter((p) => graphTypes.has(p.type));
-
-      // Rank panels: panel hint tokens weighted 3x, query keywords 2x, service tokens 1x
-      metricPanels.sort((a, b) => {
-        const aTitle = a.title.toLowerCase();
-        const bTitle = b.title.toLowerCase();
-        const aHintScore = panelHintTokens.filter((t) => aTitle.includes(t)).length * 3;
-        const bHintScore = panelHintTokens.filter((t) => bTitle.includes(t)).length * 3;
-        const aKeywordScore = queryKeywords.filter((t) => aTitle.includes(t)).length * 2;
-        const bKeywordScore = queryKeywords.filter((t) => bTitle.includes(t)).length * 2;
-        const aServiceScore = serviceTokens.filter((t) => aTitle.includes(t)).length;
-        const bServiceScore = serviceTokens.filter((t) => bTitle.includes(t)).length;
-        return (bHintScore + bKeywordScore + bServiceScore) - (aHintScore + aKeywordScore + aServiceScore);
-      });
-
-      // Step 4: capture images with the correct time range
-      for (const panel of metricPanels.slice(0, maxImages - images.length)) {
-        try {
-          const args: Record<string, unknown> = {
-            dashboardUid: db.uid,
-            panelId: panel.id,
-            timeRange,
-          };
-          onToolCall?.("get_panel_image", args);
-          const imgResult = await this.mcp.callTool("get_panel_image", args);
-          images.push(...imgResult.images);
-          log.debug({ panel: panel.title, dashboard: db.title }, "Captured panel image");
-        } catch (err) {
-          log.warn({ panel: panel.title, err }, "Failed to capture panel image");
-        }
-      }
-    }
-
-    log.info({ capturedImages: images.length }, "Panel image capture complete");
-    return images;
-  }
 
   /**
    * Extract a Grafana-compatible time range from the anomaly description.
@@ -1415,7 +1256,6 @@ export class InvestigationAgent {
       { role: "system", content: systemPrompt },
       { role: "user", content: userMessage },
     ];
-    const phaseImages: PanelImage[] = [];
     const phaseToolData: string[] = [];
 
     const midpoint = Math.floor(maxIterations * 0.6);
@@ -1451,15 +1291,15 @@ export class InvestigationAgent {
       if (response.usage) onTokenUsage?.(response.usage);
 
       if (response.type === "text") {
-        logger.debug({ phaseImages: phaseImages.length, iteration: i }, "Phase complete");
+        logger.debug({ iteration: i }, "Phase complete");
         try {
-          return { parsed: JSON.parse(response.content) as T, images: phaseImages, toolData: phaseToolData };
+          return { parsed: JSON.parse(response.content) as T, toolData: phaseToolData };
         } catch (parseErr) {
           const repaired = repairTruncatedJson(response.content);
           if (repaired !== response.content) {
             try {
               logger.info({ originalLen: response.content.length, repairedLen: repaired.length }, "Recovered truncated JSON via repair");
-              return { parsed: JSON.parse(repaired) as T, images: phaseImages, toolData: phaseToolData };
+              return { parsed: JSON.parse(repaired) as T, toolData: phaseToolData };
             } catch { /* fall through to fresh retry */ }
           }
           logger.warn(
@@ -1487,12 +1327,12 @@ export class InvestigationAgent {
             if (retryResponse.usage) onTokenUsage?.(retryResponse.usage);
             if (retryResponse.type === "text") {
               try {
-                return { parsed: JSON.parse(retryResponse.content) as T, images: phaseImages, toolData: phaseToolData };
+                return { parsed: JSON.parse(retryResponse.content) as T, toolData: phaseToolData };
               } catch {
                 const repaired = repairTruncatedJson(retryResponse.content);
                 if (repaired !== retryResponse.content) {
                   try {
-                    return { parsed: JSON.parse(repaired) as T, images: phaseImages, toolData: phaseToolData };
+                    return { parsed: JSON.parse(repaired) as T, toolData: phaseToolData };
                   } catch { /* fall through */ }
                 }
               }
@@ -1502,7 +1342,7 @@ export class InvestigationAgent {
           }
           // If retry also failed, return empty findings instead of crashing the pipeline
           logger.error("JSON parse retry exhausted, returning empty findings");
-          return { parsed: JSON.parse("{}") as T, images: phaseImages, toolData: phaseToolData };
+          return { parsed: JSON.parse("{}") as T, toolData: phaseToolData };
         }
       }
 
@@ -1541,7 +1381,7 @@ export class InvestigationAgent {
       const settled = await Promise.allSettled(
         calls.map((call) => {
           onToolCall?.(call.name, call.args);
-          logger.debug({ toolName: call.name, isImageTool: call.name === "get_panel_image" }, "Tool call");
+          logger.debug({ toolName: call.name }, "Tool call");
           const start = Date.now();
           return this.mcp.callTool(call.name, call.args).then(result => {
             return { result, durationMs: Date.now() - start };
@@ -1567,10 +1407,6 @@ export class InvestigationAgent {
             tool_call_id: call.id,
           });
           phaseToolData.push(text);
-          if (outcome.value.result.images.length > 0) {
-            phaseImages.push(...outcome.value.result.images);
-            logger.debug({ tool: call.name, newImages: outcome.value.result.images.length, totalPhaseImages: phaseImages.length }, "Images collected from tool call");
-          }
         } else {
           messages.push({
             role: "tool",
@@ -1616,14 +1452,14 @@ export class InvestigationAgent {
     if (retryResponse.usage) onTokenUsage?.(retryResponse.usage);
 
     if (retryResponse.type === "text") {
-      logger.info({ phaseImages: phaseImages.length }, "Phase completed via fresh summarization prompt");
+      logger.info("Phase completed via fresh summarization prompt");
       try {
-        return { parsed: JSON.parse(retryResponse.content) as T, images: phaseImages, toolData: phaseToolData };
+        return { parsed: JSON.parse(retryResponse.content) as T, toolData: phaseToolData };
       } catch {
         const repaired = repairTruncatedJson(retryResponse.content);
         if (repaired !== retryResponse.content) {
           try {
-            return { parsed: JSON.parse(repaired) as T, images: phaseImages, toolData: phaseToolData };
+            return { parsed: JSON.parse(repaired) as T, toolData: phaseToolData };
           } catch (err) {
             logger.error({ err, contentLen: retryResponse.content.length, contentPreview: retryResponse.content.slice(0, 200) }, "Fresh prompt also failed to produce valid JSON");
           }
@@ -1635,6 +1471,6 @@ export class InvestigationAgent {
 
     // If fresh prompt also failed, return empty findings instead of crashing
     logger.error("All extraction attempts failed, returning empty findings");
-    return { parsed: JSON.parse("{}") as T, images: phaseImages, toolData: phaseToolData };
+    return { parsed: JSON.parse("{}") as T, toolData: phaseToolData };
   }
 }
