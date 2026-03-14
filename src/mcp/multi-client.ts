@@ -17,13 +17,6 @@ interface ToolOwner {
 }
 
 /**
- * Tools to exclude from the merged tool list.
- * get_panel_image requires the grafana-image-renderer plugin which is not
- * available on all backends. Charts are rendered client-side from query_prometheus data instead.
- */
-const DISABLED_TOOLS = new Set(["get_panel_image"]);
-
-/**
  * Wraps N McpClient instances, merges their tool lists, routes callTool()
  * to the correct owner, and provides role-based queries.
  */
@@ -48,7 +41,6 @@ export class MultiMcpClient {
     for (const provider of this.providers) {
       for (const tool of provider.client.getTools()) {
         const name = tool.function.name;
-        if (DISABLED_TOOLS.has(name)) continue;
         const existing = toolsByName.get(name) ?? [];
         existing.push({ provider, tool });
         toolsByName.set(name, existing);
