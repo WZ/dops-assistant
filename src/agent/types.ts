@@ -1,3 +1,4 @@
+// DEPRECATED: Use Mastra equivalents. Will be removed when USE_MASTRA migration is complete.
 import type { Message, TokenUsage } from "../llm/openai.js";
 import type { ServiceConfig } from "../config/schema.js";
 
