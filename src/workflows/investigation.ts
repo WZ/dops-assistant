@@ -287,8 +287,9 @@ function buildPlanningStep(config: WorkflowConfig) {
 
 /**
  * Build a metrics evidence step.
+ * Exported for testing.
  */
-function buildMetricsStep(config: WorkflowConfig) {
+export function buildMetricsStep(config: WorkflowConfig) {
   return createStep({
     id: "metrics-evidence",
     description: "Deep-dive into metrics to identify anomalous patterns",
@@ -338,8 +339,9 @@ function buildMetricsStep(config: WorkflowConfig) {
 
 /**
  * Build a logs evidence step.
+ * Exported for testing.
  */
-function buildLogsStep(config: WorkflowConfig) {
+export function buildLogsStep(config: WorkflowConfig) {
   return createStep({
     id: "logs-evidence",
     description: "Correlate log patterns with the incident timeline",
@@ -393,8 +395,9 @@ function buildLogsStep(config: WorkflowConfig) {
 
 /**
  * Build an infra evidence step.
+ * Exported for testing.
  */
-function buildInfraStep(config: WorkflowConfig) {
+export function buildInfraStep(config: WorkflowConfig) {
   return createStep({
     id: "infra-evidence",
     description: "Check infrastructure health for resource issues and deployment changes",
@@ -443,8 +446,9 @@ function buildInfraStep(config: WorkflowConfig) {
 
 /**
  * Build a synthesis step that combines evidence and runs quality validation.
+ * Exported for testing.
  */
-function buildSynthesisStep(config: WorkflowConfig) {
+export function buildSynthesisStep(config: WorkflowConfig) {
   return createStep({
     id: "synthesis",
     description: "Synthesize root cause from all evidence phases",
