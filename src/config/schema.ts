@@ -51,8 +51,14 @@ const ConversationMemorySchema = z.object({
   ttlMinutes: z.number().default(60),
 });
 
+const MemorySchema = z.object({
+  storage: z.enum(["memory", "libsql"]).default("memory"),
+  dbPath: z.string().default(".dops/memory.db"),
+});
+
 const AgentSchema = z.object({
   maxIterations: z.number().default(20),
+  // @deprecated: use top-level `memory` config instead; will be removed in a future version
   conversationMemory: ConversationMemorySchema.optional().default({}),
   investigationTriggerPhrases: z.array(z.string()).optional().default([
     "investigate",
@@ -109,6 +115,7 @@ export const ConfigSchema = z.object({
   observability: ObservabilitySchema.optional().default({}),
   skills: SkillsSchema.optional().default({}),
   discovery: DiscoverySchema.optional().default({}),
+  memory: MemorySchema.optional().default({}),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
