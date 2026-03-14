@@ -234,17 +234,25 @@ function buildAnomalyStep(config: WorkflowConfig) {
       try {
         agentResult = await agent.generate(prompt, {
           onStepFinish: (step: any) => {
-            anomalyIterationCount++;
-            config.onIteration?.("anomaly", anomalyIterationCount, 10, `Step ${anomalyIterationCount}`);
-            if (step.toolResults?.length) {
-              for (const tr of step.toolResults) {
-                const resultStr = typeof tr.result === "string" ? tr.result : JSON.stringify(tr.result);
-                const truncated = resultStr.length > 2000 ? resultStr.slice(0, 2000) + "..." : resultStr;
-                anomalyToolData.push(`Tool: ${tr.toolName}\nResult: ${truncated}`);
-                config.onToolCall?.(tr.toolName, tr.args ?? {}, resultStr, undefined);
+            try {
+              debug("ANOMALY onStepFinish, toolResults sample:", JSON.stringify(step.toolResults?.[0] ?? {}).slice(0, 300));
+              anomalyIterationCount++;
+              config.onIteration?.("anomaly", anomalyIterationCount, 10, `Step ${anomalyIterationCount}`);
+              if (step.toolResults?.length) {
+                for (const tr of step.toolResults) {
+                  const toolName = tr.toolName ?? tr.name ?? tr.tool ?? "unknown";
+                  const toolArgs = tr.args ?? tr.input ?? {};
+                  const rawResult = tr.result ?? tr.output ?? tr.content ?? "";
+                  const resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
+                  const truncated = resultStr.length > 2000 ? resultStr.slice(0, 2000) + "..." : resultStr;
+                  anomalyToolData.push(`Tool: ${toolName}\nResult: ${truncated}`);
+                  config.onToolCall?.(toolName, toolArgs, resultStr, undefined);
+                }
               }
+              if (step.text) anomalyToolData.push(`Model: ${step.text}`);
+            } catch (err) {
+              debug("ANOMALY onStepFinish error:", err);
             }
-            if (step.text) anomalyToolData.push(`Model: ${step.text}`);
           },
         });
       } catch {
@@ -409,17 +417,24 @@ export function buildMetricsStep(config: WorkflowConfig) {
       try {
         agentResult = await agent.generate(prompt, {
           onStepFinish: (step: any) => {
-            metricsIterationCount++;
-            config.onIteration?.("metrics", metricsIterationCount, 10, `Step ${metricsIterationCount}`);
-            if (step.toolResults?.length) {
-              for (const tr of step.toolResults) {
-                const resultStr = typeof tr.result === "string" ? tr.result : JSON.stringify(tr.result);
-                const truncated = resultStr.length > 2000 ? resultStr.slice(0, 2000) + "..." : resultStr;
-                metricsToolData.push(`Tool: ${tr.toolName}\nResult: ${truncated}`);
-                config.onToolCall?.(tr.toolName, tr.args ?? {}, resultStr, undefined);
+            try {
+              metricsIterationCount++;
+              config.onIteration?.("metrics", metricsIterationCount, 10, `Step ${metricsIterationCount}`);
+              if (step.toolResults?.length) {
+                for (const tr of step.toolResults) {
+                  const toolName = tr.toolName ?? tr.name ?? tr.tool ?? "unknown";
+                  const toolArgs = tr.args ?? tr.input ?? {};
+                  const rawResult = tr.result ?? tr.output ?? tr.content ?? "";
+                  const resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
+                  const truncated = resultStr.length > 2000 ? resultStr.slice(0, 2000) + "..." : resultStr;
+                  metricsToolData.push(`Tool: ${toolName}\nResult: ${truncated}`);
+                  config.onToolCall?.(toolName, toolArgs, resultStr, undefined);
+                }
               }
+              if (step.text) metricsToolData.push(`Model: ${step.text}`);
+            } catch (err) {
+              debug("METRICS onStepFinish error:", err);
             }
-            if (step.text) metricsToolData.push(`Model: ${step.text}`);
           },
         });
       } catch {
@@ -503,17 +518,24 @@ export function buildLogsStep(config: WorkflowConfig) {
       try {
         agentResult = await agent.generate(prompt, {
           onStepFinish: (step: any) => {
-            logsIterationCount++;
-            config.onIteration?.("logs", logsIterationCount, 10, `Step ${logsIterationCount}`);
-            if (step.toolResults?.length) {
-              for (const tr of step.toolResults) {
-                const resultStr = typeof tr.result === "string" ? tr.result : JSON.stringify(tr.result);
-                const truncated = resultStr.length > 2000 ? resultStr.slice(0, 2000) + "..." : resultStr;
-                logsToolData.push(`Tool: ${tr.toolName}\nResult: ${truncated}`);
-                config.onToolCall?.(tr.toolName, tr.args ?? {}, resultStr, undefined);
+            try {
+              logsIterationCount++;
+              config.onIteration?.("logs", logsIterationCount, 10, `Step ${logsIterationCount}`);
+              if (step.toolResults?.length) {
+                for (const tr of step.toolResults) {
+                  const toolName = tr.toolName ?? tr.name ?? tr.tool ?? "unknown";
+                  const toolArgs = tr.args ?? tr.input ?? {};
+                  const rawResult = tr.result ?? tr.output ?? tr.content ?? "";
+                  const resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
+                  const truncated = resultStr.length > 2000 ? resultStr.slice(0, 2000) + "..." : resultStr;
+                  logsToolData.push(`Tool: ${toolName}\nResult: ${truncated}`);
+                  config.onToolCall?.(toolName, toolArgs, resultStr, undefined);
+                }
               }
+              if (step.text) logsToolData.push(`Model: ${step.text}`);
+            } catch (err) {
+              debug("LOGS onStepFinish error:", err);
             }
-            if (step.text) logsToolData.push(`Model: ${step.text}`);
           },
         });
       } catch {
@@ -591,17 +613,24 @@ export function buildInfraStep(config: WorkflowConfig) {
       try {
         agentResult = await agent.generate(prompt, {
           onStepFinish: (step: any) => {
-            infraIterationCount++;
-            config.onIteration?.("infra", infraIterationCount, 10, `Step ${infraIterationCount}`);
-            if (step.toolResults?.length) {
-              for (const tr of step.toolResults) {
-                const resultStr = typeof tr.result === "string" ? tr.result : JSON.stringify(tr.result);
-                const truncated = resultStr.length > 2000 ? resultStr.slice(0, 2000) + "..." : resultStr;
-                infraToolData.push(`Tool: ${tr.toolName}\nResult: ${truncated}`);
-                config.onToolCall?.(tr.toolName, tr.args ?? {}, resultStr, undefined);
+            try {
+              infraIterationCount++;
+              config.onIteration?.("infra", infraIterationCount, 10, `Step ${infraIterationCount}`);
+              if (step.toolResults?.length) {
+                for (const tr of step.toolResults) {
+                  const toolName = tr.toolName ?? tr.name ?? tr.tool ?? "unknown";
+                  const toolArgs = tr.args ?? tr.input ?? {};
+                  const rawResult = tr.result ?? tr.output ?? tr.content ?? "";
+                  const resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
+                  const truncated = resultStr.length > 2000 ? resultStr.slice(0, 2000) + "..." : resultStr;
+                  infraToolData.push(`Tool: ${toolName}\nResult: ${truncated}`);
+                  config.onToolCall?.(toolName, toolArgs, resultStr, undefined);
+                }
               }
+              if (step.text) infraToolData.push(`Model: ${step.text}`);
+            } catch (err) {
+              debug("INFRA onStepFinish error:", err);
             }
-            if (step.text) infraToolData.push(`Model: ${step.text}`);
           },
         });
       } catch {
