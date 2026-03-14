@@ -97,7 +97,6 @@ describe("formatRcaText", () => {
     ],
     evidence: { metrics: ["error_rate=15%"], logs: ["connection timeout"], infra: [] },
     dashboardLinks: [],
-    panelImages: [],
     recommendedActions: ["Scale connection pool", "Add circuit breaker"],
     confidence: "high",
     investigatedAt: "3/3/2026, 8:52:13 AM",
