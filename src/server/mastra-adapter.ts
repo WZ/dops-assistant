@@ -121,6 +121,7 @@ export class MastraInvestigationAdapter {
     onIteration?: OnIteration,
     _skillContext?: string,
   ): Promise<RcaReport> {
+    console.error("[MASTRA-ADAPTER] investigate() called for service:", service.name, "message:", userMessage);
     const workflowConfig: WorkflowConfig = {
       ...this.workflowConfig,
       // Put the target service first so the post-synthesis step can reference it
@@ -218,6 +219,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
     providers,
     services: config.services,
     projectRoot: process.cwd(),
+    useQuirkHandling: true, // Enable wind-down: disables tools on last 2 iterations to force text output
   };
 
   const investigationAgent = new MastraInvestigationAdapter(workflowConfig);
