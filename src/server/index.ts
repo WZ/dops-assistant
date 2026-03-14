@@ -20,6 +20,9 @@ import { IntentRouter, matchServiceFromText, validateLlmServiceMatch } from "../
 import { ConversationMemory } from "../memory/conversation.js";
 import { loadConfig } from "../config/loader.js";
 import { SkillStore } from "../skills/store.js";
+// USE_MASTRA=true: Mastra-based agents (parallel path — does not affect existing behaviour)
+import { createMastraAdapters } from "./mastra-adapter.js";
+import { createMcpProvider } from "../mcp/provider.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
@@ -35,10 +38,27 @@ async function main() {
   logger.info("MCP connected (%d tools)", mcp.getTools().length);
 
   const llm = new LlmClient(config.llm, config.timeouts, config.retry);
-  const agent = new ChatAgent(llm, mcp, { maxIterations: config.agent.maxIterations });
-  const investigationAgent = new InvestigationAgent(llm, mcp, { maxIterations: config.agent.maxIterations });
   const router = new IntentRouter(llm);
   const memory = new ConversationMemory(config.agent.conversationMemory);
+
+  // ── Agent selection: USE_MASTRA=true enables the Mastra-based path ──────────
+  // The Mastra adapters are duck-typed to match ChatAgent / InvestigationAgent
+  // interfaces (they expose the same `chat()` and `investigate()` methods).
+  // We cast to the concrete types so the rest of the server code is unchanged.
+  let agent: ChatAgent;
+  let investigationAgent: InvestigationAgent;
+
+  if (process.env["USE_MASTRA"] === "true") {
+    logger.info("USE_MASTRA=true — using Mastra agents");
+    const providers = config.providers.map(createMcpProvider);
+    const mastraAdapters = await createMastraAdapters({ config, providers });
+    // Duck-type cast: adapters satisfy the interface the ws-handler calls
+    agent = mastraAdapters.chatAgent as unknown as ChatAgent;
+    investigationAgent = mastraAdapters.investigationAgent as unknown as InvestigationAgent;
+  } else {
+    agent = new ChatAgent(llm, mcp, { maxIterations: config.agent.maxIterations });
+    investigationAgent = new InvestigationAgent(llm, mcp, { maxIterations: config.agent.maxIterations });
+  }
 
   // Initialize skill store
   const skillStore = new SkillStore(config.skills);
