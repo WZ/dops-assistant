@@ -29,46 +29,6 @@ export type ToolResult = {
 };
 
 /**
- * Normalise a single from/to value for Grafana's get_panel_image.
- *
- * Grafana render API accepts:
- *   - Relative strings: "now", "now-6h", "now-1d/d"
- *   - Epoch milliseconds as a NUMBER
- *
- * The Grafana MCP server does parseInt() on string values, so ISO dates like
- * "2026-03-02T22:00:00Z" become parseInt("2026") = 2026 ms = 1970-01-01.
- * This function converts ISO dates to epoch ms numbers to prevent that.
- */
-/**
- * Normalise a single from/to value for Grafana's get_panel_image.
- *
- * The Grafana MCP Go server expects timeRange.from/to as STRINGS.
- * Accepted formats:
- *   - Relative strings: "now", "now-6h", "now-1d/d"
- *   - Epoch milliseconds as a STRING: "1772524800000"
- *
- * ISO dates like "2026-03-02T00:00:00" must be converted to epoch ms strings
- * because the Grafana MCP server's parseInt() would parse "2026" as 2026 ms.
- */
-export function normalizeGrafanaTime(v: unknown): string | null {
-  if (typeof v === "string" && v.startsWith("now")) return v;
-
-  if (typeof v === "string" && /^\d{4}-/.test(v)) {
-    const ms = new Date(v).getTime();
-    return Number.isNaN(ms) ? null : String(ms);
-  }
-
-  if (typeof v === "number" && v > 0) {
-    const ms = v < 1e11 ? v * 1000 : v; // epoch seconds → ms
-    return String(ms);
-  }
-
-  if (typeof v === "string") return v;
-
-  return null;
-}
-
-/**
  * Coerce tool arguments to match the expected types from the tool's JSON schema.
  * LLMs (especially non-OpenAI models) often pass numbers as strings, e.g.
  * stepSeconds: "3600" instead of stepSeconds: 3600. The MCP server rejects these.
@@ -100,21 +60,6 @@ export function coerceArgsToSchema(
     }
   }
   return coerced;
-}
-
-function normalizeImageTimeRange(args: Record<string, unknown>): Record<string, unknown> {
-  const raw = args.timeRange;
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return { ...args, timeRange: { from: "now-6h", to: "now" } };
-  }
-  const tr = raw as { from?: unknown; to?: unknown };
-  return {
-    ...args,
-    timeRange: {
-      from: normalizeGrafanaTime(tr.from) ?? "now-6h",
-      to: normalizeGrafanaTime(tr.to) ?? "now",
-    },
-  };
 }
 
 export class McpClient {
@@ -201,7 +146,7 @@ export class McpClient {
 
     log.debug({ args: coerced }, "Calling tool");
 
-    const finalArgs = name === "get_panel_image" ? normalizeImageTimeRange(coerced) : coerced;
+    const finalArgs = coerced;
     const end = toolDurationSeconds.startTimer({ tool: name });
     try {
       const result = await withTimeout(

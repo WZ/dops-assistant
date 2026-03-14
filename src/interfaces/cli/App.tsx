@@ -15,7 +15,6 @@ import type { ConversationMemory } from "../../memory/conversation.js";
 import type { ServiceConfig } from "../../config/schema.js";
 import type { RcaReport } from "../../agent/rca-types.js";
 import type { ImageAttachment } from "../../agent/types.js";
-import type { PanelImage } from "../../mcp/client.js";
 import type { TokenUsage } from "../../llm/openai.js";
 
 type ChatMessage = {
@@ -154,15 +153,6 @@ export function formatRcaText(report: RcaReport): string {
   }
 
   return lines.join("\n");
-}
-
-/** Convert raw PanelImage (base64) to ImageAttachment (Buffer) for file saving */
-export function panelImagesToAttachments(images: PanelImage[]): ImageAttachment[] {
-  return images.map((img, i) => ({
-    filename: `panel-${i}.${img.mimeType.split("/")[1] ?? "png"}`,
-    mimeType: img.mimeType,
-    data: Buffer.from(img.data, "base64"),
-  }));
 }
 
 export function saveAndOpenImages(images: ImageAttachment[]): string[] {
@@ -308,12 +298,6 @@ export function App({ agent, memory, services, router, investigationAgent, toolC
           });
         if (abort.signal.aborted) throw new DOMException("Aborted", "AbortError");
         addMessage({ id: randomUUID(), role: "rca", content: formatRcaText(report) });
-        if (report.panelImages.length > 0) {
-          const paths = saveAndOpenImages(panelImagesToAttachments(report.panelImages));
-          for (const p of paths) {
-            addMessage({ id: randomUUID(), role: "image", content: `📎 Panel image: ${p} (opened)` });
-          }
-        }
       } else {
         // Conversational agent — handles questions, unmatched services, and general infra queries
         setThinkingLabel("Thinking");
