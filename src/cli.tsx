@@ -67,10 +67,29 @@ async function main(): Promise<void> {
   console.log("");
 
   const llm = new LlmClient(config.llm, config.timeouts, config.retry);
-  const agent = new ChatAgent(llm, mcp, { maxIterations: config.agent.maxIterations });
   const memory = new ConversationMemory(config.agent.conversationMemory);
-  const investigationAgent = new InvestigationAgent(llm, mcp, { maxIterations: config.agent.maxIterations, projectRoot: process.cwd() });
   const router = new IntentRouter(llm);
+
+  // ── Agent selection: USE_MASTRA=true enables the Mastra-based path ──────────
+  // The Mastra adapters are duck-typed to match ChatAgent / InvestigationAgent
+  // interfaces (they expose the same `chat()` and `investigate()` methods).
+  // We cast to the concrete types so the App component props are unchanged.
+  let agent: InstanceType<typeof ChatAgent>;
+  let investigationAgent: InstanceType<typeof InvestigationAgent>;
+
+  if (process.env["USE_MASTRA"] === "true") {
+    console.log("  USE_MASTRA=true — using Mastra agents");
+    const { createMcpProvider } = await import("./mcp/provider.js");
+    const { createMastraAdapters } = await import("./server/mastra-adapter.js");
+    const providers = config.providers.map(createMcpProvider);
+    const mastraAdapters = await createMastraAdapters({ config, providers });
+    // Duck-type cast: adapters satisfy the interface the App calls
+    agent = mastraAdapters.chatAgent as unknown as InstanceType<typeof ChatAgent>;
+    investigationAgent = mastraAdapters.investigationAgent as unknown as InstanceType<typeof InvestigationAgent>;
+  } else {
+    agent = new ChatAgent(llm, mcp, { maxIterations: config.agent.maxIterations });
+    investigationAgent = new InvestigationAgent(llm, mcp, { maxIterations: config.agent.maxIterations, projectRoot: process.cwd() });
+  }
 
   const { waitUntilExit } = render(
     <App
