@@ -1,5 +1,3 @@
-import type { PanelImage } from "../mcp/client.js";
-
 // ── Structured observation types ─────────────────────────────────────────────
 
 export type MetricObservation = {
@@ -87,7 +85,6 @@ export type RcaReport = {
     infra: string[];
   };
   dashboardLinks: string[];
-  panelImages: PanelImage[];
   recommendedActions: string[];
   confidence: "low" | "medium" | "high";
   confidenceScore: number;

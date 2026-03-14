@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, realpathSync } from "fs";
 import { dirname, resolve } from "path";
 import { parse } from "yaml";
 import { ConfigSchema, type Config, type ServiceConfig } from "./schema.js";
@@ -41,7 +41,8 @@ function resolveEnvVars(obj: unknown): unknown {
  * Resolves the services.yaml path relative to the config file directory.
  */
 export function getServicesFilePath(configPath: string): string {
-  return resolve(dirname(configPath), "services.yaml");
+  const realPath = realpathSync(configPath);
+  return resolve(dirname(realPath), "services.yaml");
 }
 
 /**

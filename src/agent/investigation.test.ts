@@ -9,7 +9,6 @@ const mockTools = [
   { type: "function" as const, function: { name: "query_prometheus", description: "", parameters: {} } },
   { type: "function" as const, function: { name: "search_dashboards", description: "", parameters: {} } },
   { type: "function" as const, function: { name: "get_dashboard_by_uid", description: "", parameters: {} } },
-  { type: "function" as const, function: { name: "get_panel_image", description: "", parameters: {} } },
 ];
 
 const fakeDashboards = JSON.stringify({ dashboards: [{ uid: "abc123", title: "Service Monitor" }] });
@@ -29,7 +28,6 @@ const mockMcp = {
   callTool: vi.fn().mockImplementation((name: string) => {
     if (name === "search_dashboards") return Promise.resolve({ text: fakeDashboards, images: [] });
     if (name === "get_dashboard_by_uid") return Promise.resolve({ text: fakeDashboardDetail, images: [] });
-    if (name === "get_panel_image") return Promise.resolve({ text: "", images: [{ data: "iVBOR...", mimeType: "image/png" }] });
     return Promise.resolve({ text: "metric data", images: [] });
   }),
   isConnected: vi.fn().mockReturnValue(true),
@@ -167,21 +165,6 @@ describe("InvestigationAgent", () => {
     expect((llm.chat as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
   });
 
-  it("always captures panel images via deterministic capture", async () => {
-    const llm = makeMockLlm([basePlanResponse, baseMetricFindings, baseLogFindings, baseInfraFindings, baseRcaReport, baseReflectionResponse]);
-    const agent = new InvestigationAgent(llm, mockMcp, { maxIterations: 5 });
-
-    const report = await agent.investigate(service, anomaly, "corr-003");
-
-    // Deterministic capture should produce images (2 panels in mock dashboard)
-    expect(report.panelImages.length).toBeGreaterThanOrEqual(2);
-    expect(report.panelImages[0]!.mimeType).toBe("image/png");
-    // Verify get_panel_image was called
-    const panelCalls = (mockMcp.callTool as ReturnType<typeof vi.fn>).mock.calls
-      .filter(([name]: [string]) => name === "get_panel_image");
-    expect(panelCalls.length).toBeGreaterThanOrEqual(2);
-  });
-
   it("passes plan focus areas to all phase prompts", async () => {
     const llm = makeMockLlm([basePlanResponse, baseMetricFindings, baseLogFindings, baseInfraFindings, baseRcaReport, baseReflectionResponse]);
     const agent = new InvestigationAgent(llm, mockMcp, { maxIterations: 5 });
@@ -267,60 +250,6 @@ describe("InvestigationAgent", () => {
     expect(report.rootCause).toBe("Likely intermittent network issue based on error rate spike");
     expect(report.confidence).toBe("low");
     expect(report.summary).toBe("Intermittent error rate increase, cause uncertain");
-  });
-
-  it("ranks dashboards using user query hints over service tokens", async () => {
-    const dashboardList = JSON.stringify([
-      { uid: "ds1", title: "Data Server Monitor" },
-      { uid: "ing1", title: "Ingestion Monitor" },
-    ]);
-    const ingestionDashboard = JSON.stringify({
-      dashboard: {
-        title: "Ingestion Monitor", uid: "ing1",
-        panels: [
-          { id: 10, title: "Ingestion Log Rate", type: "timeseries" },
-          { id: 11, title: "Throughput", type: "graph" },
-        ],
-      },
-    });
-    const dataServerDashboard = JSON.stringify({
-      dashboard: {
-        title: "Data Server Monitor", uid: "ds1",
-        panels: [
-          { id: 1, title: "Data Server QPS", type: "timeseries" },
-        ],
-      },
-    });
-    const customMcp = {
-      getTools: vi.fn().mockReturnValue(mockTools),
-      callTool: vi.fn().mockImplementation((name: string, args: Record<string, unknown>) => {
-        if (name === "search_dashboards") return Promise.resolve({ text: dashboardList, images: [] });
-        if (name === "get_dashboard_by_uid" && args.uid === "ing1") return Promise.resolve({ text: ingestionDashboard, images: [] });
-        if (name === "get_dashboard_by_uid" && args.uid === "ds1") return Promise.resolve({ text: dataServerDashboard, images: [] });
-        if (name === "get_panel_image") return Promise.resolve({ text: "", images: [{ data: "img", mimeType: "image/png" }] });
-        if (name === "list_datasources") return Promise.resolve({ text: "[]", images: [] });
-        return Promise.resolve({ text: "{}", images: [] });
-      }),
-      getProvidersByRole: vi.fn().mockReturnValue([]),
-      getToolsByRole: vi.fn().mockReturnValue([]),
-      hasRole: vi.fn().mockImplementation((role: string) => role === "dashboards" || role === "metrics" || role === "logs"),
-    } as unknown as MultiMcpClient;
-
-    const llm = makeMockLlm([basePlanResponse, baseMetricFindings, baseLogFindings, baseInfraFindings, baseRcaReport, baseReflectionResponse]);
-    const agent = new InvestigationAgent(llm, customMcp, { maxIterations: 5 });
-
-    const report = await agent.investigate(
-      { name: "ingestion-server", metrics: [{ query: "rate(logs[5m])", description: "log rate" }], logLabels: { app: "ingestion-server" } },
-      anomaly, "corr-hints",
-      undefined,
-      "(Ingestion Log Rate in Ingestion monitor). find it and investigate",
-    );
-
-    // The first get_panel_image call should target the Ingestion Monitor dashboard (uid: ing1)
-    const panelCalls = (customMcp.callTool as ReturnType<typeof vi.fn>).mock.calls
-      .filter(([name]: [string]) => name === "get_panel_image");
-    expect(panelCalls.length).toBeGreaterThanOrEqual(1);
-    expect(panelCalls[0]![1].dashboardUid).toBe("ing1");
   });
 
   it("retries synthesis when root cause is non-conclusive and evidence exists", async () => {

@@ -27,7 +27,7 @@ function mockDeps(): WsDeps {
         impact: { duration: "", description: "" },
         contributingFactors: [], timeline: [],
         evidence: { metrics: [], logs: [], infra: [] },
-        dashboardLinks: [], panelImages: [],
+        dashboardLinks: [],
         recommendedActions: [], investigatedAt: new Date().toISOString(),
       }),
     },
