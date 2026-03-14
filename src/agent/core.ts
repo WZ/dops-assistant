@@ -1,3 +1,4 @@
+// DEPRECATED: Use Mastra equivalents. Will be removed when USE_MASTRA migration is complete.
 import { randomUUID } from "node:crypto";
 import {
   buildSystemPrompt,

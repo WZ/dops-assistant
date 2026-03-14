@@ -1,3 +1,4 @@
+// DEPRECATED: Use Mastra equivalents. Will be removed when USE_MASTRA migration is complete.
 import type { McpClient, OpenAITool, ToolResult } from "./client.js";
 import type { ProviderRole } from "../config/schema.js";
 
