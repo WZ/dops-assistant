@@ -125,13 +125,13 @@ export class MastraInvestigationAdapter {
       ...this.workflowConfig,
       // Put the target service first so the post-synthesis step can reference it
       services: [service, ...this.workflowConfig.services.filter(s => s.name !== service.name)],
+      // Wire progress callbacks through to the workflow steps
+      onPhase,
+      onIteration,
+      onToolCall: _onToolCall,
     };
 
     const workflow = createInvestigationWorkflow(workflowConfig);
-
-    // Emit approximate progress phases so the frontend progress bar keeps moving
-    onPhase?.("Detecting anomalies");
-    onIteration?.("planning", 0, 6, "Pre-fetching datasource context");
 
     let output: {
       severity: "low" | "medium" | "high" | "critical";
@@ -144,32 +144,18 @@ export class MastraInvestigationAdapter {
       investigatedAt: string;
     } | undefined;
 
-    try {
-      onPhase?.("Planning investigation");
-      onIteration?.("planning", 1, 6, "Building investigation plan");
+    // createRun() returns a Promise<Run>, then we call .start() on the Run
+    const run = await workflow.createRun();
 
-      // createRun() returns a Promise<Run>, then we call .start() on the Run
-      const run = await workflow.createRun();
+    const runResult = await run.start({
+      inputData: {
+        userMessage: userMessage ?? `Investigate ${service.name}`,
+        serviceName: service.name,
+      },
+    });
 
-      onPhase?.("Analyzing metrics, logs & infrastructure");
-      onIteration?.("metrics", 2, 6, "Analyzing metrics, logs, and infrastructure");
-
-      const runResult = await run.start({
-        inputData: {
-          userMessage: userMessage ?? `Investigate ${service.name}`,
-          serviceName: service.name,
-        },
-      });
-
-      onPhase?.("Synthesizing root cause");
-      onIteration?.("synthesis", 5, 6, "Synthesizing root cause");
-
-      if (runResult.status === "success") {
-        output = runResult.result as typeof output;
-      }
-    } catch (err) {
-      onPhase?.("Synthesizing root cause");
-      throw err;
+    if (runResult.status === "success") {
+      output = runResult.result as typeof output;
     }
 
     // Map the workflow output to the RcaReport shape the server/CLI expect

@@ -34,6 +34,42 @@ export interface WorkflowConfig {
   useQuirkHandling?: boolean;
   /** Project root path for incident history storage */
   projectRoot?: string;
+  /** Progress callbacks for streaming to UI */
+  onPhase?: (phase: string) => void;
+  onIteration?: (phase: string, iteration: number, maxIterations: number, label: string) => void;
+  onToolCall?: (name: string, args: Record<string, unknown>, result?: string, duration?: number, error?: string) => void;
+}
+
+// ── Tool wrapping helper ──────────────────────────────────────────────────────
+
+/**
+ * Wrap each tool's execute function to emit onToolCall before/after invocation.
+ * If no onToolCall callback is provided, tools are returned unchanged.
+ */
+function wrapToolsWithCallbacks(
+  tools: Record<string, any>,
+  onToolCall?: WorkflowConfig["onToolCall"],
+): Record<string, any> {
+  if (!onToolCall) return tools;
+  const wrapped: Record<string, any> = {};
+  for (const [name, tool] of Object.entries(tools)) {
+    wrapped[name] = {
+      ...tool,
+      execute: async (...args: any[]) => {
+        const start = Date.now();
+        try {
+          const result = await tool.execute(...args);
+          const resultStr = typeof result === "string" ? result : JSON.stringify(result);
+          onToolCall(name, args[0] ?? {}, resultStr, Date.now() - start);
+          return result;
+        } catch (err) {
+          onToolCall(name, args[0] ?? {}, undefined, Date.now() - start, String(err));
+          throw err;
+        }
+      },
+    };
+  }
+  return wrapped;
 }
 
 // ── Zod schemas for step I/O ──────────────────────────────────────────────────
@@ -135,6 +171,9 @@ function buildPrefetchStep(config: WorkflowConfig) {
     inputSchema: WorkflowInputSchema,
     outputSchema: PrefetchOutputSchema,
     execute: async ({ inputData }) => {
+      config.onPhase?.("Detecting anomalies");
+      config.onIteration?.("planning", 0, 6, "Pre-fetching datasource context");
+
       const prefetchContext = await executePrefetch(
         config.providers,
         config.services,
@@ -163,9 +202,12 @@ function buildAnomalyStep(config: WorkflowConfig) {
     inputSchema: PrefetchOutputSchema,
     outputSchema: AnomalyOutputSchema,
     execute: async ({ inputData }) => {
+      config.onPhase?.("Detecting anomalies");
+
       const metricsTools = await getToolsByRole(config.providers, "metrics").catch(() => ({}));
       const dashboardTools = await getToolsByRole(config.providers, "dashboards").catch(() => ({}));
-      const tools = { ...metricsTools, ...dashboardTools };
+      const rawTools = { ...metricsTools, ...dashboardTools };
+      const tools = wrapToolsWithCallbacks(rawTools, config.onToolCall);
 
       const agent = createAnomalyDetectorAgent({
         model: config.model,
@@ -181,8 +223,20 @@ function buildAnomalyStep(config: WorkflowConfig) {
       ].filter(Boolean).join("\n");
 
       let agentResult: { text: string } = { text: "" };
+      let anomalyIterationCount = 0;
       try {
-        agentResult = await agent.generate(prompt);
+        agentResult = await agent.generate(prompt, {
+          onStepFinish: (step: any) => {
+            anomalyIterationCount++;
+            config.onIteration?.("anomaly", anomalyIterationCount, 10, `Step ${anomalyIterationCount}`);
+            if (step.toolResults?.length) {
+              for (const tr of step.toolResults) {
+                const resultStr = typeof tr.result === "string" ? tr.result : JSON.stringify(tr.result);
+                config.onToolCall?.(tr.toolName, tr.args ?? {}, resultStr, undefined);
+              }
+            }
+          },
+        });
       } catch {
         // Fall through to default
       }
@@ -243,6 +297,9 @@ function buildPlanningStep(config: WorkflowConfig) {
         }
       }
 
+      config.onPhase?.("Planning investigation");
+      config.onIteration?.("planning", 1, 6, "Building investigation plan");
+
       const agent = createPlannerAgent({ model: config.model });
 
       const prompt = [
@@ -296,12 +353,16 @@ export function buildMetricsStep(config: WorkflowConfig) {
     inputSchema: PlanningOutputSchema,
     outputSchema: EvidenceOutputSchema,
     execute: async ({ inputData }) => {
-      const tools = await getToolsByRole(config.providers, "metrics").catch(() => ({}));
-      const dashboardTools = await getToolsByRole(config.providers, "dashboards").catch(() => ({}));
+      config.onPhase?.("Analyzing metrics");
+      config.onIteration?.("metrics", 2, 6, "Analyzing metrics");
+
+      const rawMetricsTools = await getToolsByRole(config.providers, "metrics").catch(() => ({}));
+      const rawDashboardTools = await getToolsByRole(config.providers, "dashboards").catch(() => ({}));
+      const metricsTools = wrapToolsWithCallbacks({ ...rawMetricsTools, ...rawDashboardTools }, config.onToolCall);
 
       const agent = createMetricsAgent({
         model: config.model,
-        tools: { ...tools, ...dashboardTools },
+        tools: metricsTools,
         useQuirkHandling: config.useQuirkHandling,
       });
 
@@ -317,8 +378,20 @@ export function buildMetricsStep(config: WorkflowConfig) {
       ].filter(Boolean).join("\n");
 
       let agentResult: { text: string } = { text: "" };
+      let metricsIterationCount = 0;
       try {
-        agentResult = await agent.generate(prompt);
+        agentResult = await agent.generate(prompt, {
+          onStepFinish: (step: any) => {
+            metricsIterationCount++;
+            config.onIteration?.("metrics", metricsIterationCount, 10, `Step ${metricsIterationCount}`);
+            if (step.toolResults?.length) {
+              for (const tr of step.toolResults) {
+                const resultStr = typeof tr.result === "string" ? tr.result : JSON.stringify(tr.result);
+                config.onToolCall?.(tr.toolName, tr.args ?? {}, resultStr, undefined);
+              }
+            }
+          },
+        });
       } catch {
         // Fall through
       }
@@ -348,11 +421,15 @@ export function buildLogsStep(config: WorkflowConfig) {
     inputSchema: PlanningOutputSchema,
     outputSchema: EvidenceOutputSchema,
     execute: async ({ inputData }) => {
-      const tools = await getToolsByRole(config.providers, "logs").catch(() => ({}));
+      config.onPhase?.("Analyzing logs");
+      config.onIteration?.("logs", 3, 6, "Analyzing logs");
+
+      const rawLogsTools = await getToolsByRole(config.providers, "logs").catch(() => ({}));
+      const logsTools = wrapToolsWithCallbacks(rawLogsTools, config.onToolCall);
 
       const agent = createLogsAgent({
         model: config.model,
-        tools,
+        tools: logsTools,
         useQuirkHandling: config.useQuirkHandling,
       });
 
@@ -374,8 +451,20 @@ export function buildLogsStep(config: WorkflowConfig) {
       ].filter(Boolean).join("\n");
 
       let agentResult: { text: string } = { text: "" };
+      let logsIterationCount = 0;
       try {
-        agentResult = await agent.generate(prompt);
+        agentResult = await agent.generate(prompt, {
+          onStepFinish: (step: any) => {
+            logsIterationCount++;
+            config.onIteration?.("logs", logsIterationCount, 10, `Step ${logsIterationCount}`);
+            if (step.toolResults?.length) {
+              for (const tr of step.toolResults) {
+                const resultStr = typeof tr.result === "string" ? tr.result : JSON.stringify(tr.result);
+                config.onToolCall?.(tr.toolName, tr.args ?? {}, resultStr, undefined);
+              }
+            }
+          },
+        });
       } catch {
         // Fall through
       }
@@ -404,12 +493,16 @@ export function buildInfraStep(config: WorkflowConfig) {
     inputSchema: PlanningOutputSchema,
     outputSchema: EvidenceOutputSchema,
     execute: async ({ inputData }) => {
-      const metricsTools = await getToolsByRole(config.providers, "metrics").catch(() => ({}));
-      const dashboardTools = await getToolsByRole(config.providers, "dashboards").catch(() => ({}));
+      config.onPhase?.("Checking infrastructure");
+      config.onIteration?.("infra", 4, 6, "Checking infrastructure");
+
+      const rawInfraMetricsTools = await getToolsByRole(config.providers, "metrics").catch(() => ({}));
+      const rawInfraDashboardTools = await getToolsByRole(config.providers, "dashboards").catch(() => ({}));
+      const infraTools = wrapToolsWithCallbacks({ ...rawInfraMetricsTools, ...rawInfraDashboardTools }, config.onToolCall);
 
       const agent = createInfraAgent({
         model: config.model,
-        tools: { ...metricsTools, ...dashboardTools },
+        tools: infraTools,
         useQuirkHandling: config.useQuirkHandling,
       });
 
@@ -425,8 +518,20 @@ export function buildInfraStep(config: WorkflowConfig) {
       ].filter(Boolean).join("\n");
 
       let agentResult: { text: string } = { text: "" };
+      let infraIterationCount = 0;
       try {
-        agentResult = await agent.generate(prompt);
+        agentResult = await agent.generate(prompt, {
+          onStepFinish: (step: any) => {
+            infraIterationCount++;
+            config.onIteration?.("infra", infraIterationCount, 10, `Step ${infraIterationCount}`);
+            if (step.toolResults?.length) {
+              for (const tr of step.toolResults) {
+                const resultStr = typeof tr.result === "string" ? tr.result : JSON.stringify(tr.result);
+                config.onToolCall?.(tr.toolName, tr.args ?? {}, resultStr, undefined);
+              }
+            }
+          },
+        });
       } catch {
         // Fall through
       }
@@ -497,6 +602,9 @@ export function buildSynthesisStep(config: WorkflowConfig) {
       };
 
       const timeline = buildTimeline(metricsForTimeline, logsForTimeline, infraForTimeline);
+
+      config.onPhase?.("Synthesizing root cause");
+      config.onIteration?.("synthesis", 5, 6, "Synthesizing root cause");
 
       const agent = createSynthesisAgent({ model: config.model });
 

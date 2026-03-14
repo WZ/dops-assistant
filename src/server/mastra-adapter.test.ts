@@ -155,11 +155,10 @@ describe("MastraInvestigationAdapter", () => {
     expect(report.rootCause).toBe("Leaked database connections after deploy v2.3.1");
     expect(report.confidence).toBe("high");
     expect(report.confidenceScore).toBe(0.85);
-    expect(onPhase).toHaveBeenCalled();
-    expect(onIteration).toHaveBeenCalled();
   });
 
-  it("emits phase progress callbacks", async () => {
+  it("passes progress callbacks through to the workflow config", async () => {
+    const { createInvestigationWorkflow } = await import("../workflows/investigation.js");
     const config: WorkflowConfig = {
       model: {} as any,
       providers: [],
@@ -168,8 +167,9 @@ describe("MastraInvestigationAdapter", () => {
     };
 
     const adapter = new MastraInvestigationAdapter(config);
-    const phases: string[] = [];
-    const onPhase = (p: string) => phases.push(p);
+    const onPhase = vi.fn();
+    const onIteration = vi.fn();
+    const onToolCall = vi.fn();
 
     await adapter.investigate(
       { name: "api-gateway", metrics: [], logLabels: {} },
@@ -177,14 +177,19 @@ describe("MastraInvestigationAdapter", () => {
       undefined,
       undefined,
       "investigate",
-      undefined,
+      onToolCall,
       onPhase,
+      onIteration,
     );
 
-    expect(phases).toContain("Detecting anomalies");
-    expect(phases).toContain("Planning investigation");
-    expect(phases).toContain("Analyzing metrics, logs & infrastructure");
-    expect(phases).toContain("Synthesizing root cause");
+    // Verify the workflow was created with the callbacks wired into the config
+    expect(vi.mocked(createInvestigationWorkflow)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        onPhase,
+        onIteration,
+        onToolCall,
+      }),
+    );
   });
 
   it("returns default report when workflow fails", async () => {
