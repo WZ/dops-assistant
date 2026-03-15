@@ -9,7 +9,7 @@ import {
   MastraInvestigationAdapter,
   createMastraAdapters,
 } from "./mastra-adapter.js";
-import type { ChatRequest } from "../agent/types.js";
+import type { ChatRequest } from "../types/agent-types.js";
 import type { WorkflowConfig } from "../workflows/investigation.js";
 
 // Mock the Mastra agent generate() method

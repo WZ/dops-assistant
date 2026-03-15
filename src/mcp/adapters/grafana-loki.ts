@@ -1,6 +1,11 @@
 import type { ServiceConfig } from "../../config/schema.js";
-import type { McpClient } from "../client.js";
 import type { LogProviderAdapter, TimeWindow } from "./types.js";
+
+/** Minimal MCP client interface needed by this adapter. */
+interface McpClient {
+  getTools(): { function: { name: string } }[];
+  callTool(name: string, args: Record<string, unknown>): Promise<{ text: string }>;
+}
 import pino from "pino";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
