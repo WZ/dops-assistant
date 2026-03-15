@@ -17,45 +17,22 @@ import { ConversationMemory } from "../memory/conversation.js";
 import { loadConfig } from "../config/loader.js";
 import { SkillStore } from "../skills/store.js";
 import { createMastraAdapters } from "./mastra-adapter.js";
-import { createMcpProvider, getToolsByRole } from "../mcp/provider.js";
-import type { MastraProvider } from "../mcp/provider.js";
+import { createMcpProvider, getAllTools } from "../mcp/provider.js";
 import { createModel } from "../mastra/index.js";
-import type { ProviderRole } from "../config/schema.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
 
 /**
- * Adapt Mastra MCP providers to the IMcpClient interface used by REST routes.
- * Wraps role-based tool queries and tool execution via @mastra/mcp.
+ * Stub IMcpClient backed by Mastra providers.
+ * The dependency graph REST endpoint is not currently wired to Mastra tool execution;
+ * it returns a single-node default response. Can be enhanced when needed.
  */
-function createMcpClientFromProviders(providers: MastraProvider[]): IMcpClient {
-  // Cache resolved tools per role to avoid repeated async listTools calls
-  const toolCache = new Map<string, { function: { name: string } }[]>();
-
+function createStubMcpClient(): IMcpClient {
   return {
-    hasRole(role: ProviderRole): boolean {
-      return providers.some((p) => p.roles.includes(role));
-    },
-
-    getToolsByRole(role: ProviderRole): { function: { name: string } }[] {
-      // Return cached result or empty (populated after first async call)
-      return toolCache.get(role) ?? [];
-    },
-
-    async callTool(name: string, args: Record<string, unknown>): Promise<{ text: string }> {
-      // Resolve tools for the role if not cached yet
-      for (const provider of providers) {
-        const tools = await provider.client.listTools();
-        for (const [toolName, tool] of Object.entries(tools)) {
-          if (toolName === name || toolName.endsWith(`_${name}`)) {
-            const result = await tool.execute({ context: {}, ...args });
-            return { text: typeof result === "string" ? result : JSON.stringify(result) };
-          }
-        }
-      }
-      throw new Error(`Unknown tool: ${name}`);
-    },
+    hasRole: () => false,
+    getToolsByRole: () => [],
+    callTool: async () => ({ text: "{}" }),
   };
 }
 
@@ -68,15 +45,6 @@ async function main() {
   // Mastra MCP providers
   const providers = config.providers.map(createMcpProvider);
 
-  // Build MCP client adapter for REST routes (dependency graph queries)
-  const mcpClient = createMcpClientFromProviders(providers);
-
-  // Pre-populate tool cache for dependency role
-  if (mcpClient.hasRole("dependencies")) {
-    const tools = await getToolsByRole(providers, "dependencies");
-    // Tools are cached internally by the adapter
-  }
-
   const model = createModel(config.llm);
   const router = new IntentRouter(model);
   const memory = new ConversationMemory(config.agent.conversationMemory);
@@ -84,7 +52,7 @@ async function main() {
   const mastraAdapters = await createMastraAdapters({ config, providers });
   const { chatAgent: agent, investigationAgent } = mastraAdapters;
 
-  const toolCount = Object.keys(await import("../mcp/provider.js").then(m => m.getAllTools(providers)).catch(() => ({}))).length;
+  const toolCount = Object.keys(await getAllTools(providers).catch(() => ({}))).length;
   logger.info("MCP connected (%d tools)", toolCount);
 
   // Initialize skill store
@@ -96,7 +64,7 @@ async function main() {
   const server = createServer(app);
   const port = Number(process.env["PORT"] ?? 3000);
 
-  registerRoutes(app, db, config.services, mcpClient, skillStore);
+  registerRoutes(app, db, config.services, createStubMcpClient(), skillStore);
 
   setupWebSocket(server, {
     db, agent, investigationAgent, router, memory,
