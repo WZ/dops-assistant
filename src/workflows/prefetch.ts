@@ -40,7 +40,27 @@ import type { PrefetchedContext } from "../types/workflow-state.js";
 import type { Tool } from "@mastra/core/tools";
 
 /**
+ * Find a tool by unprefixed name. MCP providers prefix tool names
+ * (e.g. "grafana_list_datasources" for "list_datasources").
+ * Falls back to exact match, then suffix match.
+ */
+function findTool(tools: Record<string, Tool>, toolName: string): Tool | undefined {
+  if (tools[toolName]) return tools[toolName];
+  // Suffix match: "list_datasources" matches "grafana_list_datasources"
+  const entry = Object.entries(tools).find(([key]) => key.endsWith(`_${toolName}`) || key.endsWith(toolName));
+  return entry?.[1];
+}
+
+/**
+ * Check if a tool exists by unprefixed name (handles MCP provider prefixing).
+ */
+function hasTool(tools: Record<string, Tool>, toolName: string): boolean {
+  return findTool(tools, toolName) !== undefined;
+}
+
+/**
  * Call a Mastra Tool by name using the provider's MCPClient.
+ * Handles MCP provider name prefixing (e.g. "grafana_list_datasources").
  * Returns the raw result as a string, or null on failure.
  */
 async function callProviderTool(
@@ -48,13 +68,22 @@ async function callProviderTool(
   toolName: string,
   args: Record<string, unknown>,
 ): Promise<string | null> {
-  const tool = tools[toolName];
+  const tool = findTool(tools, toolName);
   if (!tool?.execute) return null;
 
   try {
     const result = await tool.execute(args as any, {} as any);
     if (result === null || result === undefined) return null;
-    return typeof result === "string" ? result : JSON.stringify(result);
+    // Unwrap MCP content structure: {content: [{type: "text", text: "..."}]}
+    let unwrapped = result;
+    if (typeof result === "object" && !Array.isArray(result)) {
+      const content = (result as any).content;
+      if (Array.isArray(content) && content.length > 0 && content[0]?.type === "text") {
+        unwrapped = content[0].text;
+      }
+    }
+    const str = typeof unwrapped === "string" ? unwrapped : JSON.stringify(unwrapped);
+    return str;
   } catch {
     return null;
   }
@@ -75,6 +104,7 @@ export async function executePrefetch(
   opts?: {
     userMessage?: string;
     anomalySummary?: string;
+    serviceName?: string;
   },
 ): Promise<PrefetchedContext> {
   const emptyContext: PrefetchedContext = {
@@ -108,6 +138,7 @@ export async function executePrefetch(
     opts?.userMessage,
     opts?.anomalySummary,
     datasourceHints,
+    opts?.serviceName,
   );
 
   // ── 3. Log adapter: label hints + working selectors ──────────────────────
@@ -116,7 +147,9 @@ export async function executePrefetch(
     providers,
     services,
     datasourceHints,
+    opts?.serviceName,
   );
+
 
   return {
     datasourceHints,
@@ -143,7 +176,7 @@ async function fetchDatasourceHints(
   );
 
   for (const { tools } of eligible) {
-    if (!("list_datasources" in tools)) continue;
+    if (!hasTool(tools, "list_datasources")) continue;
 
     const raw = await callProviderTool(tools, "list_datasources", {});
     if (!raw) continue;
@@ -182,6 +215,7 @@ async function fetchDashboardContext(
   userMessage?: string,
   anomalySummary?: string,
   datasourceHints?: string,
+  serviceName?: string,
 ): Promise<{ dashboardContext: string; panelQueryHints: string }> {
   const empty = { dashboardContext: "", panelQueryHints: "" };
 
@@ -194,7 +228,7 @@ async function fetchDashboardContext(
   if (dashboardMaps.length === 0) return empty;
 
   for (const { tools } of dashboardMaps) {
-    if (!("search_dashboards" in tools)) continue;
+    if (!hasTool(tools, "search_dashboards")) continue;
 
     const searchRaw = await callProviderTool(tools, "search_dashboards", { query: "" });
     if (!searchRaw) continue;
@@ -219,22 +253,26 @@ async function fetchDashboardContext(
     const dashLines = allDashboards.map((d) => `- "${d.title}" (uid: ${d.uid})`);
     const dashboardContext = `Available dashboards (already fetched, do NOT call search_dashboards):\n${dashLines.join("\n")}`;
 
-    if (!("get_dashboard_panel_queries" in tools)) {
+    if (!hasTool(tools, "get_dashboard_panel_queries")) {
       return { dashboardContext, panelQueryHints: "" };
     }
 
-    // Score dashboards by relevance
+    // Score dashboards by relevance — include service name tokens for better targeting
     const queryKeywords = extractQueryKeywords(userMessage, anomalySummary);
     const { dashboardHint } = extractDashboardPanelHints(userMessage, anomalySummary);
     const hintTokens = dashboardHint
       ? dashboardHint.toLowerCase().split(/[-_\s]+/).filter((t) => t.length > 1)
       : [];
+    const serviceTokens = serviceName
+      ? serviceName.toLowerCase().split(/[-_\s]+/).filter((t) => t.length > 1)
+      : [];
 
     const scored = allDashboards.map((d) => {
       const title = d.title.toLowerCase();
       const hintScore = hintTokens.filter((t) => title.includes(t)).length * 3;
+      const serviceScore = serviceTokens.filter((t) => title.includes(t)).length * 3;
       const keywordScore = queryKeywords.filter((t) => title.includes(t)).length * 2;
-      return { ...d, score: hintScore + keywordScore };
+      return { ...d, score: hintScore + serviceScore + keywordScore };
     });
     scored.sort((a, b) => b.score - a.score);
 
@@ -265,9 +303,19 @@ async function fetchDashboardContext(
           },
         }));
 
+        // Filter panel queries by service name relevance when available
+        let filtered = enriched;
+        if (serviceTokens.length > 0) {
+          const serviceMatched = enriched.filter((q) =>
+            serviceTokens.some((t) => q.title.toLowerCase().includes(t) || q.query.toLowerCase().includes(t)),
+          );
+          // Only apply filter if it keeps at least some results
+          if (serviceMatched.length > 0) filtered = serviceMatched;
+        }
+
         // Deduplicate by query text
         const seen = new Set<string>();
-        const deduped = enriched.filter((q) => {
+        const deduped = filtered.filter((q) => {
           if (seen.has(q.query)) return false;
           seen.add(q.query);
           return true;
@@ -303,6 +351,7 @@ async function fetchLogContext(
   providers: MastraProvider[],
   services: ServiceConfig[],
   datasourceHints: string,
+  targetServiceName?: string,
 ): Promise<{ logLabelHints: string; workingLogSelectors: string[] }> {
   const empty = { logLabelHints: "", workingLogSelectors: [] as string[] };
 
@@ -313,7 +362,7 @@ async function fetchLogContext(
   if (logMaps.length === 0) return empty;
 
   // Find a provider with Loki tools
-  const lokiMap = logMaps.find(({ tools }) => "query_loki_logs" in tools);
+  const lokiMap = logMaps.find(({ tools }) => hasTool(tools, "query_loki_logs"));
   if (!lokiMap) return empty;
 
   const { tools } = lokiMap;
@@ -325,7 +374,7 @@ async function fetchLogContext(
 
   // Fetch label hints
   let logLabelHints = "";
-  if ("list_loki_label_names" in tools) {
+  if (hasTool(tools, "list_loki_label_names")) {
     const labelsRaw = await callProviderTool(tools, "list_loki_label_names", {
       datasourceUid: lokiUid,
     });
@@ -342,9 +391,13 @@ async function fetchLogContext(
     }
   }
 
-  // Probe working selectors for each service
+  // Probe working selectors — limit to the target service if specified,
+  // otherwise probe the first 5 services to avoid excessive API calls
+  const targetServices = targetServiceName
+    ? services.filter((s) => s.name === targetServiceName)
+    : services.slice(0, 5);
   const workingLogSelectors: string[] = [];
-  for (const service of services) {
+  for (const service of targetServices) {
     try {
       const selector = await probeWorkingLogSelector(tools, lokiUid, service);
       if (selector) workingLogSelectors.push(selector);
