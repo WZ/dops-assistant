@@ -57,6 +57,9 @@ export function buildPlanningStep(config: WorkflowConfig) {
         inputData.serviceName ? `Service: ${inputData.serviceName}` : "",
         serviceMetricsHint,
         serviceLogLabelsHint,
+        inputData.skillContext
+          ? `${inputData.skillContext}\nUse these runbooks to inform your hypothesis planning. Prioritize investigation steps mentioned in matched skills.`
+          : "",
         historyContext ? `\nRecent incidents:\n${historyContext}` : "",
       ].filter(Boolean).join("\n");
 
