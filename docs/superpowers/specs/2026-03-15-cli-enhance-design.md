@@ -23,7 +23,8 @@ dops interactive              # Legacy REPL mode (preserved)
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--timeout <ms>` | Max execution time | `120000` |
-| `--verbose` | Include raw tool call details in output | `false` |
+| `--verbose` | Include full tool call args and results in output | `false` |
+| `--config <path>` | Path to config file | `config.yaml` (also accepts `CONFIG_PATH` env var) |
 
 ### Exit Codes
 
@@ -35,49 +36,62 @@ dops interactive              # Legacy REPL mode (preserved)
 
 ## JSON Output Schemas
 
-All output is JSON to stdout. Logs (pino) go to stderr.
+All output is JSON to stdout. Logs (pino) go to stderr. All field names use **camelCase** to match the TypeScript types directly — `RcaReport`, agent interfaces, etc. are passed through as-is with no case conversion.
 
 ### `dops investigate <service>`
+
+Service name is matched **exactly (case-insensitive)** against `config.services[].name`. No LLM-based fuzzy matching — deterministic resolution for benchmark reliability.
 
 ```json
 {
   "command": "investigate",
   "service": "api-gateway",
   "status": "success | error",
-  "duration_ms": 14230,
+  "durationMs": 14230,
   "tokens": { "input": 12000, "output": 3400, "total": 15400 },
-  "tool_calls": [
-    { "name": "search_dashboards", "args_summary": "query=api-gateway", "duration_ms": 340 }
+  "toolCalls": [
+    { "name": "search_dashboards", "argsSummary": "query=api-gateway", "durationMs": 340 }
   ],
   "result": {
+    "service": "api-gateway",
     "severity": "high",
-    "confidence": 0.85,
+    "confidence": "high",
+    "confidenceScore": 0.85,
     "summary": "...",
-    "root_cause": "...",
+    "trigger": "...",
+    "rootCause": "...",
+    "impact": { "duration": "30m", "description": "..." },
+    "contributingFactors": ["..."],
+    "timeline": [{ "time": "14:30", "event": "CPU spike detected" }],
     "evidence": {
-      "metrics": [],
-      "logs": [],
-      "infrastructure": []
+      "metrics": ["..."],
+      "logs": ["..."],
+      "infra": ["..."]
     },
-    "contributing_factors": [],
-    "timeline": [],
-    "recommendations": [],
-    "dashboard_links": []
+    "dashboardLinks": ["..."],
+    "recommendedActions": ["..."],
+    "investigatedAt": "2026-03-15T14:35:00Z"
   },
   "error": null
 }
 ```
 
+The `result` field is the `RcaReport` type from `src/types/rca-types.ts` serialized directly.
+
 ### `dops chat "<message>"`
+
+Single-turn only. No conversation history is maintained between invocations. The agent receives only the provided message.
 
 ```json
 {
   "command": "chat",
   "message": "What alerts fired in the last hour?",
   "status": "success | error",
-  "duration_ms": 3200,
+  "durationMs": 3200,
   "tokens": { "input": 800, "output": 600, "total": 1400 },
-  "tool_calls": [],
+  "toolCalls": [
+    { "name": "list_alerts", "argsSummary": "state=firing", "durationMs": 520 }
+  ],
   "result": {
     "response": "..."
   },
@@ -85,24 +99,28 @@ All output is JSON to stdout. Logs (pino) go to stderr.
 }
 ```
 
+The `toolCalls` array is populated when the chat agent uses MCP tools during its response.
+
 ### `dops mcp-check`
 
 ```json
 {
   "command": "mcp-check",
   "status": "success | error",
-  "duration_ms": 1200,
+  "durationMs": 1200,
   "providers": [
     {
       "name": "grafana-mcp",
       "status": "connected | error",
-      "tools_count": 12,
+      "toolsCount": 12,
       "tools": ["search_dashboards", "get_datasource_by_uid"],
       "error": null
     }
   ]
 }
 ```
+
+The `tools` list is always emitted (not gated by `--verbose`). It reports available tool names, not tool call traces.
 
 ### `dops e2e <scenario-file>`
 
@@ -111,11 +129,12 @@ All output is JSON to stdout. Logs (pino) go to stderr.
   "command": "e2e",
   "scenario": "alert-resolution.json",
   "status": "pass | fail",
-  "duration_ms": 18400,
+  "durationMs": 18400,
   "steps": [
     {
       "name": "investigate api-gateway",
       "status": "pass | fail",
+      "durationMs": 14230,
       "assertions": [
         { "field": "result.severity", "expected": "high", "actual": "high", "pass": true }
       ]
@@ -138,8 +157,16 @@ Input to `dops e2e`:
       "assert": {
         "status": "success",
         "result.severity": { "in": ["medium", "high", "critical"] },
-        "result.confidence": { "gte": 0.5 },
+        "result.confidenceScore": { "gte": 0.5 },
         "result.evidence.metrics": { "not_empty": true }
+      }
+    },
+    {
+      "command": "chat",
+      "args": { "message": "What alerts are firing for api-gateway?" },
+      "assert": {
+        "status": "success",
+        "result.response": { "contains": "alert" }
       }
     }
   ]
@@ -156,6 +183,21 @@ Input to `dops e2e`:
 | `lte` | Less than or equal | `{ "lte": 100 }` |
 | `not_empty` | Array/string is non-empty | `{ "not_empty": true }` |
 | `contains` | String contains substring | `{ "contains": "timeout" }` |
+
+#### Step Isolation
+
+Steps share the MCP connection and Mastra agent instances (initialized once per `e2e` run). Conversation state is **not** shared — each step is independent. If an MCP connectivity error occurs mid-scenario, remaining steps are **skipped** (not attempted) and their status is set to `"error"` with the connectivity error message. The overall status is `"fail"`.
+
+## `--verbose` Flag Behavior
+
+| Field | Default (no flag) | `--verbose` |
+|-------|-------------------|-------------|
+| `toolCalls[].name` | Included | Included |
+| `toolCalls[].argsSummary` | First 80 chars of args | Full args JSON |
+| `toolCalls[].durationMs` | Included | Included |
+| `toolCalls[].result` | Omitted | Full result (can be large) |
+| `toolCalls[].error` | Omitted | Included if present |
+| `toolCalls[].phase` | Omitted | Included (investigation phase name) |
 
 ## Architecture
 
@@ -182,11 +224,20 @@ src/cli/
 
 3. **Timeout wrapper.** Each command runs inside `Promise.race` with a configurable timeout. On timeout: `{ "status": "error", "error": "timeout" }`, exit 1.
 
-4. **Clean process exit.** After JSON is printed, `process.exit(0|1|2)` explicitly. No dangling MCP connections or event loops.
+4. **Clean process exit.** After JSON is printed, `process.exit(0|1|2)` explicitly. MCP stdio child processes are killed when the Node.js process exits. This is acceptable for a single-shot tool. If graceful shutdown is needed later, add `client.disconnect()` calls before exit.
 
 5. **Lightweight arg parsing.** Parse `process.argv` directly — the command set is small and fixed. No heavy CLI framework dependency.
 
 6. **`interactive` subcommand.** Preserves the existing Ink REPL as-is for backward compatibility.
+
+### Pino Logger Initialization
+
+Each command module must **dynamically import** all agent/provider modules after `LOG_LEVEL` has been set, using the same pattern as the current `src/cli/index.tsx`:
+
+- Non-interactive commands: set `LOG_LEVEL=info` and configure pino destination to stderr (`fd: 2`)
+- `interactive` subcommand: set `LOG_LEVEL=silent` (pino stdout would corrupt Ink rendering)
+
+This ordering matters because ESM hoists static imports. The current CLI solves this with dynamic `import()` calls after setting `LOG_LEVEL` (see `src/cli/index.tsx` lines 5-17). All new command modules follow the same pattern.
 
 ## Error Handling
 
@@ -196,5 +247,6 @@ src/cli/
 | MCP connection failure | Error captured in JSON output, timeout ensures exit |
 | Unknown service name | `{ "status": "error", "error": "unknown service: foo" }`, exit 1 |
 | Invalid scenario file | Exit 2 with usage error in JSON |
-| Partial e2e failure | Results for all steps included, overall `"status": "fail"` |
+| Partial e2e failure (assertion) | Results for all steps included, overall `"status": "fail"` |
+| e2e MCP connectivity failure | Remaining steps skipped, overall `"status": "fail"` |
 | No signal handling needed | Calling agent can kill the process directly |
