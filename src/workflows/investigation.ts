@@ -18,7 +18,7 @@ import { getToolsByRole } from "../mcp/provider.js";
 import { executePrefetch } from "./prefetch.js";
 import { buildTimeline, validateSeverity, extractTimeRange, suggestStepSeconds, toRfc3339Window } from "./helpers.js";
 import { getRecentIncidents, saveIncident, formatIncidentHistory } from "../history/store.js";
-import { getTimeContext } from "../agent/prompts.js";
+import { getTimeContext } from "../agents/shared/time-context.js";
 import { safeJsonParse } from "../agents/shared/processors.js";
 import { createAnomalyDetectorAgent } from "../agents/anomaly-detector.js";
 import { createPlannerAgent } from "../agents/planner.js";

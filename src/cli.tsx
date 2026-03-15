@@ -32,7 +32,7 @@ async function main(): Promise<void> {
     import("react"),
     import("ink"),
     import("./config/loader.js"),
-    import("./agent/intent.js"),
+    import("./agents/intent.js"),
     import("./memory/conversation.js"),
     import("./interfaces/cli/App.js"),
     import("./mcp/provider.js"),
