@@ -8,14 +8,13 @@ import { writeFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ChatAgent } from "../../agent/core.js";
+import type { IChatAgent, IInvestigationAgent } from "../../types/agent-interfaces.js";
 import { matchServiceFromText, validateLlmServiceMatch, resolveServiceFromHistory, type IntentRouter } from "../../agent/intent.js";
-import type { InvestigationAgent } from "../../agent/investigation.js";
 import type { ConversationMemory } from "../../memory/conversation.js";
 import type { ServiceConfig } from "../../config/schema.js";
-import type { RcaReport } from "../../agent/rca-types.js";
-import type { ImageAttachment } from "../../agent/types.js";
-import type { TokenUsage } from "../../llm/openai.js";
+import type { RcaReport } from "../../types/rca-types.js";
+import type { ImageAttachment } from "../../types/agent-types.js";
+import type { TokenUsage } from "../../types/llm-types.js";
 
 type ChatMessage = {
   id: string;
@@ -30,11 +29,11 @@ type ToolCallEntry = {
 };
 
 type AppProps = {
-  agent: ChatAgent;
+  agent: IChatAgent;
   memory: ConversationMemory;
   services: ServiceConfig[];
   router: IntentRouter;
-  investigationAgent: InvestigationAgent;
+  investigationAgent: IInvestigationAgent;
   toolCount: number;
 };
 

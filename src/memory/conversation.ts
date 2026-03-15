@@ -1,4 +1,4 @@
-import type { Message } from "../llm/openai.js";
+import type { Message } from "../types/llm-types.js";
 
 type ThreadEntry = {
   messages: Message[];
