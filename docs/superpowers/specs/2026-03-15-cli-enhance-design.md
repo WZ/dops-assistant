@@ -199,6 +199,8 @@ Steps share the MCP connection and Mastra agent instances (initialized once per 
 | `toolCalls[].error` | Omitted | Included if present |
 | `toolCalls[].phase` | Omitted | Included (investigation phase name) |
 
+Tool `durationMs` is measured by the command layer by timestamping each `tool-call` event and pairing it with the subsequent `tool-result` event. If a pair cannot be matched, `durationMs` is omitted.
+
 ## Architecture
 
 ### File Structure
