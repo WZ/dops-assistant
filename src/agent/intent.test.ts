@@ -1,15 +1,30 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { IntentRouter, matchService, matchServiceFromText, messageMatchesAnyService, validateLlmServiceMatch, resolveServiceFromHistory } from "./intent.js";
-import type { LlmClient } from "../llm/openai.js";
 import type { ServiceConfig } from "../config/schema.js";
 
-function makeLlm(response: string): LlmClient {
-  return {
-    chat: vi.fn().mockResolvedValue({ type: "text", content: response }),
-  } as unknown as LlmClient;
+// Mock the ai module's generateText function
+vi.mock("ai", () => ({
+  generateText: vi.fn(),
+}));
+import { generateText } from "ai";
+const mockGenerateText = vi.mocked(generateText);
+
+function mockLlmResponse(response: string): void {
+  mockGenerateText.mockResolvedValue({ text: response } as any);
 }
 
+function mockLlmError(error: Error): void {
+  mockGenerateText.mockRejectedValue(error);
+}
+
+// Dummy model (never actually called in fast-path tests; generateText is mocked for LLM tests)
+const dummyModel = {} as any;
+
 const svc = (name: string): ServiceConfig => ({ name, metrics: [], logLabels: {} });
+
+beforeEach(() => {
+  mockGenerateText.mockReset();
+});
 
 describe("matchService", () => {
   const services = [svc("ingestion-server"), svc("payments-api"), svc("kudu-tserver")];
@@ -19,12 +34,10 @@ describe("matchService", () => {
   });
 
   it("matches unicode non-breaking hyphen as regular hyphen", () => {
-    // U+2011 non-breaking hyphen
     expect(matchService("ingestion\u2011server", services)?.name).toBe("ingestion-server");
   });
 
   it("matches en-dash as hyphen", () => {
-    // U+2013 en-dash
     expect(matchService("ingestion\u2013server", services)?.name).toBe("ingestion-server");
   });
 
@@ -45,7 +58,6 @@ describe("matchService", () => {
   });
 
   it("prefers shorter service name when multiple contain the query", () => {
-    // Without aliases, substring match prefers shortest name containing query
     const svcs = [svc("kudu-tserver-extended"), svc("kudu-tserver"), svc("kudu-master")];
     expect(matchService("kudu", svcs)?.name).toBe("kudu-master");
   });
@@ -83,7 +95,6 @@ describe("matchServiceFromText", () => {
   });
 
   it("prefers stronger token match over weaker one", () => {
-    // "ingestion" (9 chars) is an exact token match for ingestion-server, not loki
     expect(matchServiceFromText("the ingestion log rate dropped to zero", services)?.name).toBe("ingestion-server");
   });
 
@@ -96,7 +107,6 @@ describe("matchServiceFromText", () => {
   });
 
   it("does not match on short generic words", () => {
-    // "log" (3 chars) should not cause a match on "loki" since loki tokens are ["loki"] and no overlap with ["log"]
     expect(matchServiceFromText("check the log files please", services)?.name).not.toBe("loki");
   });
 
@@ -127,7 +137,6 @@ describe("matchServiceFromText", () => {
 
   it("prefers shorter service when token scores tie", () => {
     const svcs = [svc("stream-kafka-cluster-cruise-control"), svc("ch-clickhouse")];
-    // "clickhouse" token matches ch-clickhouse via alias
     expect(matchServiceFromText("check clickhouse cluster health", svcs)?.name).toBe("ch-clickhouse");
   });
 
@@ -192,7 +201,6 @@ describe("validateLlmServiceMatch", () => {
   const services = [svc("data-catalog-server-headless"), svc("data-server"), svc("kudu-tserver"), svc("ingestion-server")];
 
   it("rejects LLM pick when no tokens overlap with user message", () => {
-    // LLM hallucinated "data-catalog-server-headless" for a query about kudu
     expect(validateLlmServiceMatch("data-catalog-server-headless", "how's the kudu workload today? show me a chart", services)).toBeUndefined();
   });
 
@@ -201,7 +209,6 @@ describe("validateLlmServiceMatch", () => {
   });
 
   it("accepts LLM pick when LLM query appears in user message", () => {
-    // LLM extracts "ingestion" which appears in the message
     expect(validateLlmServiceMatch("ingestion", "ingestion rate is dropping", services)?.name).toBe("ingestion-server");
   });
 
@@ -214,12 +221,10 @@ describe("validateLlmServiceMatch", () => {
   });
 
   it("accepts when partial token overlap exists (substring match >= 5 chars)", () => {
-    // "catalog" (7 chars) vs "catalog" in message
     expect(validateLlmServiceMatch("data-catalog-server-headless", "check the data catalog", services)?.name).toBe("data-catalog-server-headless");
   });
 
   it("rejects when overlap is only generic infra tokens", () => {
-    // LLM picks "metrics-server" for a message about generic "metrics" — "metrics" is generic
     const svcs = [svc("metrics-server"), svc("ingestion-server")];
     expect(validateLlmServiceMatch("metrics-server", "show me the metrics", svcs)).toBeUndefined();
   });
@@ -275,87 +280,75 @@ describe("resolveServiceFromHistory", () => {
 });
 
 describe("IntentRouter", () => {
-  // --- Keyword fast-path tests (bypasses LLM) ---
-
   // --- Display-request fast-path tests ---
 
   it("display fast-path: 'show me' routes to question without calling LLM", async () => {
-    const llm = makeLlm(JSON.stringify({ intent: "investigation", service: "kafka" }));
-    const router = new IntentRouter(llm);
+    const router = new IntentRouter(dummyModel);
     const result = await router.route("show me Kafka Batches Received Rate in ingestion monitor");
     expect(result.intent).toBe("question");
-    expect(llm.chat).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
   it("display fast-path: 'show the' routes to question", async () => {
-    const llm = makeLlm(JSON.stringify({ intent: "investigation", service: "" }));
-    const router = new IntentRouter(llm);
+    const router = new IntentRouter(dummyModel);
     const result = await router.route("show the grafana dashboards for memory usage");
     expect(result.intent).toBe("question");
-    expect(llm.chat).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
   it("display fast-path: 'display' routes to question", async () => {
-    const llm = makeLlm(JSON.stringify({ intent: "investigation", service: "" }));
-    const router = new IntentRouter(llm);
+    const router = new IntentRouter(dummyModel);
     const result = await router.route("display CPU usage chart");
     expect(result.intent).toBe("question");
-    expect(llm.chat).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
   it("display fast-path: does NOT fire when symptom words present", async () => {
-    const llm = makeLlm(JSON.stringify({ intent: "investigation", service: "kafka" }));
-    const router = new IntentRouter(llm);
+    mockLlmResponse(JSON.stringify({ intent: "investigation", service: "kafka" }));
+    const router = new IntentRouter(dummyModel);
     const result = await router.route("show me the errors on kafka");
     expect(result.intent).toBe("investigation");
-    // LLM should be called since symptom word blocks the display fast-path
   });
 
   // --- Informational-request fast-path tests ---
 
   it("informational fast-path: 'tell me about X health' routes to question", async () => {
-    const llm = makeLlm(JSON.stringify({ intent: "investigation", service: "ingestion-server" }));
-    const router = new IntentRouter(llm);
+    const router = new IntentRouter(dummyModel);
     const result = await router.route("tell me about ingestion-server health");
     expect(result.intent).toBe("question");
-    expect(llm.chat).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
   it("informational fast-path: 'how is X' routes to question", async () => {
-    const llm = makeLlm(JSON.stringify({ intent: "investigation", service: "payments-api" }));
-    const router = new IntentRouter(llm);
+    const router = new IntentRouter(dummyModel);
     const result = await router.route("how is the payments-api doing?");
     expect(result.intent).toBe("question");
-    expect(llm.chat).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
   it("informational fast-path: 'how's' routes to question", async () => {
-    const llm = makeLlm(JSON.stringify({ intent: "investigation", service: "ingestion-server" }));
-    const router = new IntentRouter(llm);
+    const router = new IntentRouter(dummyModel);
     const result = await router.route("how's the ingestion-server?");
     expect(result.intent).toBe("question");
-    expect(llm.chat).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
   it("informational fast-path: 'what about X' routes to question", async () => {
-    const llm = makeLlm(JSON.stringify({ intent: "investigation", service: "" }));
-    const router = new IntentRouter(llm);
+    const router = new IntentRouter(dummyModel);
     const result = await router.route("what about the kudu workload rate?");
     expect(result.intent).toBe("question");
-    expect(llm.chat).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
   it("informational fast-path: does NOT fire when symptom words present", async () => {
-    const llm = makeLlm(JSON.stringify({ intent: "investigation", service: "ingestion-server" }));
-    const router = new IntentRouter(llm);
+    mockLlmResponse(JSON.stringify({ intent: "investigation", service: "ingestion-server" }));
+    const router = new IntentRouter(dummyModel);
     const result = await router.route("tell me about the ingestion-server errors", ["ingestion-server"]);
-    // "errors" is a symptom word, so informational fast-path should NOT fire
     expect(result.intent).toBe("investigation");
   });
 
   it("informational fast-path: 'how is X' with 'down' falls through to symptom check", async () => {
-    const llm = makeLlm(JSON.stringify({ intent: "investigation", service: "payments-api" }));
-    const router = new IntentRouter(llm);
+    const router = new IntentRouter(dummyModel);
     const result = await router.route("how is payments-api? it seems down", ["payments-api"]);
     expect(result.intent).toBe("investigation");
   });
@@ -363,116 +356,106 @@ describe("IntentRouter", () => {
   // --- Keyword fast-path tests (bypasses LLM) ---
 
   it("fast-path: 'investigate' routes to investigation without calling LLM", async () => {
-    const llm = makeLlm(JSON.stringify({ intent: "question", service: "" }));
-    const router = new IntentRouter(llm);
+    const router = new IntentRouter(dummyModel);
     const result = await router.route("investigate payments-api");
     expect(result.intent).toBe("investigation");
-    expect(llm.chat).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
   it("fast-path: 'diagnose' routes to investigation", async () => {
-    const llm = makeLlm(JSON.stringify({ intent: "question", service: "" }));
-    const router = new IntentRouter(llm);
+    const router = new IntentRouter(dummyModel);
     const result = await router.route("diagnose the ingestion rate drop");
     expect(result.intent).toBe("investigation");
-    expect(llm.chat).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
   it("fast-path: 'rca' routes to investigation", async () => {
-    const llm = makeLlm(JSON.stringify({ intent: "question", service: "" }));
-    const router = new IntentRouter(llm);
+    const router = new IntentRouter(dummyModel);
     const result = await router.route("run rca on payments-api");
     expect(result.intent).toBe("investigation");
-    expect(llm.chat).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
   it("fast-path: 'troubleshoot' routes to investigation", async () => {
-    const llm = makeLlm(JSON.stringify({ intent: "question", service: "" }));
-    const router = new IntentRouter(llm);
+    const router = new IntentRouter(dummyModel);
     const result = await router.route("troubleshoot the connection errors");
     expect(result.intent).toBe("investigation");
-    expect(llm.chat).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
   it("fast-path: 'root cause' routes to investigation", async () => {
-    const llm = makeLlm(JSON.stringify({ intent: "question", service: "" }));
-    const router = new IntentRouter(llm);
+    const router = new IntentRouter(dummyModel);
     const result = await router.route("find the root cause of the outage");
     expect(result.intent).toBe("investigation");
-    expect(llm.chat).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
   it("fast-path: 'postmortem' routes to investigation", async () => {
-    const llm = makeLlm(JSON.stringify({ intent: "question", service: "" }));
-    const router = new IntentRouter(llm);
+    const router = new IntentRouter(dummyModel);
     const result = await router.route("run a postmortem on yesterday's incident");
     expect(result.intent).toBe("investigation");
-    expect(llm.chat).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
   // --- Symptom + service fast-path tests ---
 
   it("symptom fast-path: 'dropped' + service token routes to investigation", async () => {
-    const llm = makeLlm(JSON.stringify({ intent: "question", service: "" }));
-    const router = new IntentRouter(llm);
+    const router = new IntentRouter(dummyModel);
     const result = await router.route("ingestion rate dropped yesterday", ["ingestion-server", "payments-api"]);
     expect(result.intent).toBe("investigation");
-    expect(llm.chat).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
   it("symptom fast-path: 'slow' + service token routes to investigation", async () => {
-    const llm = makeLlm(JSON.stringify({ intent: "question", service: "" }));
-    const router = new IntentRouter(llm);
+    const router = new IntentRouter(dummyModel);
     const result = await router.route("payments-api is slow", ["ingestion-server", "payments-api"]);
     expect(result.intent).toBe("investigation");
-    expect(llm.chat).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
   it("symptom fast-path: 'errors' + alias routes to investigation", async () => {
-    const llm = makeLlm(JSON.stringify({ intent: "question", service: "" }));
-    const router = new IntentRouter(llm);
+    const router = new IntentRouter(dummyModel);
     const result = await router.route("kafka errors are spiking", ["some-other-service"]);
     expect(result.intent).toBe("investigation");
-    expect(llm.chat).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
   it("symptom fast-path: 'check' + alias routes to investigation", async () => {
-    const llm = makeLlm(JSON.stringify({ intent: "question", service: "" }));
-    const router = new IntentRouter(llm);
+    const router = new IntentRouter(dummyModel);
     const result = await router.route("check ClickHouse cluster health", ["ch-clickhouse", "ingestion-server"]);
     expect(result.intent).toBe("investigation");
-    expect(llm.chat).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
   it("symptom fast-path: 'check' does NOT fire without service mention", async () => {
-    const llm = makeLlm(JSON.stringify({ intent: "question", service: "" }));
-    const router = new IntentRouter(llm);
+    mockLlmResponse(JSON.stringify({ intent: "question", service: "" }));
+    const router = new IntentRouter(dummyModel);
     const result = await router.route("check what dashboards we have available", ["ingestion-server"]);
     expect(result.intent).toBe("question");
-    expect(llm.chat).toHaveBeenCalled();
+    expect(mockGenerateText).toHaveBeenCalled();
   });
 
   it("symptom fast-path: does NOT fire without service mention", async () => {
-    const llm = makeLlm(JSON.stringify({ intent: "question", service: "" }));
-    const router = new IntentRouter(llm);
+    mockLlmResponse(JSON.stringify({ intent: "question", service: "" }));
+    const router = new IntentRouter(dummyModel);
     const result = await router.route("what is the error rate?", ["ingestion-server"]);
     expect(result.intent).toBe("question");
-    expect(llm.chat).toHaveBeenCalled();
+    expect(mockGenerateText).toHaveBeenCalled();
   });
 
   it("symptom fast-path: does NOT fire without serviceNames", async () => {
-    const llm = makeLlm(JSON.stringify({ intent: "question", service: "" }));
-    const router = new IntentRouter(llm);
+    mockLlmResponse(JSON.stringify({ intent: "question", service: "" }));
+    const router = new IntentRouter(dummyModel);
     const result = await router.route("ingestion rate dropped yesterday");
     expect(result.intent).toBe("question");
-    expect(llm.chat).toHaveBeenCalled();
+    expect(mockGenerateText).toHaveBeenCalled();
   });
 
   // --- LLM classification tests (no fast-path keywords) ---
 
   it("classifies investigation intent via LLM when no keyword match", async () => {
-    const llm = makeLlm(JSON.stringify({ intent: "investigation", service: "payments-api" }));
-    const router = new IntentRouter(llm);
+    mockLlmResponse(JSON.stringify({ intent: "investigation", service: "payments-api" }));
+    const router = new IntentRouter(dummyModel);
     const result = await router.route("payments-api errors are spiking");
     expect(result.intent).toBe("investigation");
     if (result.intent === "investigation") {
@@ -480,36 +463,33 @@ describe("IntentRouter", () => {
     }
   });
 
-  it("passes service names to the system prompt", async () => {
-    const llm = makeLlm(JSON.stringify({ intent: "investigation", service: "ingestion-server" }));
-    const router = new IntentRouter(llm);
-    // Use a message without any fast-path keywords so the LLM is actually called
+  it("passes service names context to generateText", async () => {
+    mockLlmResponse(JSON.stringify({ intent: "investigation", service: "ingestion-server" }));
+    const router = new IntentRouter(dummyModel);
     await router.route("ingestion-server seems unusual today", ["ingestion-server", "payments-api"]);
-    const systemPrompt = (llm.chat as ReturnType<typeof vi.fn>).mock.calls[0]![0][0].content as string;
-    expect(systemPrompt).toContain("ingestion-server");
-    expect(systemPrompt).toContain("payments-api");
-    expect(systemPrompt).toContain("known services");
+    const callArgs = mockGenerateText.mock.calls[0]![0] as any;
+    expect(callArgs.system).toContain("ingestion-server");
+    expect(callArgs.system).toContain("payments-api");
+    expect(callArgs.system).toContain("known services");
   });
 
   it("classifies question intent", async () => {
-    const llm = makeLlm(JSON.stringify({ intent: "question", service: "" }));
-    const router = new IntentRouter(llm);
+    mockLlmResponse(JSON.stringify({ intent: "question", service: "" }));
+    const router = new IntentRouter(dummyModel);
     const result = await router.route("what is the error rate?");
     expect(result.intent).toBe("question");
   });
 
   it("falls back to question on parse error", async () => {
-    const llm = makeLlm("not valid json");
-    const router = new IntentRouter(llm);
+    mockLlmResponse("not valid json");
+    const router = new IntentRouter(dummyModel);
     const result = await router.route("how does this system work?");
     expect(result.intent).toBe("question");
   });
 
   it("falls back to question on LLM error", async () => {
-    const llm = {
-      chat: vi.fn().mockRejectedValue(new Error("LLM timeout")),
-    } as unknown as LlmClient;
-    const router = new IntentRouter(llm);
+    mockLlmError(new Error("LLM timeout"));
+    const router = new IntentRouter(dummyModel);
     const result = await router.route("show me the current dashboards");
     expect(result.intent).toBe("question");
   });

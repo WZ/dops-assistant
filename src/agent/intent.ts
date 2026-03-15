@@ -1,7 +1,7 @@
-import type { LlmClient } from "../llm/openai.js";
+import { generateText, type LanguageModelV1 } from "ai";
 import type { ServiceConfig } from "../config/schema.js";
-import type { InvestigationIntent } from "./rca-types.js";
-import { buildIntentClassifierPrompt, INTENT_RESPONSE_FORMAT } from "./rca-prompts.js";
+import type { InvestigationIntent } from "../types/rca-types.js";
+import { buildIntentClassifierPrompt } from "./rca-prompts.js";
 import pino from "pino";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
@@ -266,10 +266,10 @@ export function resolveServiceFromHistory(
 }
 
 export class IntentRouter {
-  private readonly llm: LlmClient;
+  private readonly model: LanguageModelV1;
 
-  constructor(llm: LlmClient) {
-    this.llm = llm;
+  constructor(model: LanguageModelV1) {
+    this.model = model;
   }
 
   async route(message: string, serviceNames?: string[]): Promise<InvestigationIntent> {
@@ -301,18 +301,13 @@ export class IntentRouter {
     }
 
     try {
-      const response = await this.llm.chat(
-        [
-          { role: "system", content: buildIntentClassifierPrompt(serviceNames) },
-          { role: "user", content: message },
-        ],
-        [], // no tools needed for classification
-        { responseFormat: INTENT_RESPONSE_FORMAT },
-      );
+      const { text } = await generateText({
+        model: this.model,
+        system: buildIntentClassifierPrompt(serviceNames),
+        prompt: message,
+      });
 
-      if (response.type !== "text") return { intent: "question" };
-
-      const parsed = JSON.parse(response.content) as { intent: string; service: string };
+      const parsed = JSON.parse(text) as { intent: string; service: string };
       const result: InvestigationIntent = parsed.intent === "investigation"
         ? { intent: "investigation", service: parsed.service || undefined }
         : { intent: "question" };
