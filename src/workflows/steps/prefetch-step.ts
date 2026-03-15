@@ -39,6 +39,7 @@ export function buildPrefetchStep(config: WorkflowConfig) {
         userMessage: inputData.userMessage,
         alertName: inputData.alertName,
         serviceName: inputData.serviceName,
+        skillContext: inputData.skillContext,
       };
     },
   });
