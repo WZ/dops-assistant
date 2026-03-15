@@ -332,7 +332,7 @@ describe("synthesis step degradation and defaults", () => {
     expect((result as any).severity).toBe("medium");
   });
 
-  it("synthesis step reflects all three evidence summaries in the evidenceSummary field", async () => {
+  it("synthesis step produces a valid report from evidence", async () => {
     const { createSynthesisAgent } = await import("../agents/synthesis.js");
     vi.mocked(createSynthesisAgent).mockReturnValue({
       generate: vi.fn().mockResolvedValue({
@@ -350,9 +350,9 @@ describe("synthesis step degradation and defaults", () => {
     const step = buildSynthesisStep({ model: fakeModel, providers: [], services: [] });
     const result = await step.execute(makeStepCtx(evidenceInputData)) as any;
 
-    expect(result.evidenceSummary.metrics.summary).toBe("CPU spike detected");
-    expect(result.evidenceSummary.logs.summary).toBe("OOM errors found in logs");
-    expect(result.evidenceSummary.infra.summary).toBe("No infra issues");
+    expect(result.severity).toBe("medium");
+    expect(result.rootCause).toBe("Database overload");
+    expect(result.trigger).toBe("Batch job");
   });
 
   it("synthesis retry scenario: low-quality response (non-JSON) followed by retry still produces a report", async () => {
