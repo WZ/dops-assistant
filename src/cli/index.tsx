@@ -1,96 +1,167 @@
-import { config as loadDotenv } from "dotenv";
-import { resolve } from "node:path";
+// src/cli/index.tsx
+import { resolve, basename } from "node:path";
+import { parseArgs } from "./parse-args.js";
+import type { ScenarioFile } from "./commands/e2e.js";
 
-// Capture user's explicit LOG_LEVEL before dotenv can override it
-const userLogLevel = process.env["LOG_LEVEL"];
+const parsed = parseArgs(process.argv.slice(2));
+const isInteractive = parsed.command === "interactive";
 
-const envPath = process.env["DOTENV_PATH"] ?? resolve(process.cwd(), "dev/.env");
-loadDotenv({ path: envPath });
-
-// Silence pino loggers — their stdout output corrupts Ink's terminal rendering.
-// Only allow verbose logging if the user explicitly set LOG_LEVEL on the command line.
-process.env["LOG_LEVEL"] = userLogLevel ?? "silent";
-
-// IMPORTANT: All modules that create pino loggers at module-load time must be
-// dynamically imported AFTER LOG_LEVEL is set. ESM hoists static imports above
-// all module-level code, so static imports would capture the wrong LOG_LEVEL.
-
-const configPath = process.env["CONFIG_PATH"] ?? "dev/config.yaml";
-
-async function main(): Promise<void> {
-  const [
-    { default: React },
-    { render },
-    { loadConfig },
-    { IntentRouter },
-    { ConversationMemory },
-    { App },
-    { createMcpProvider },
-    { createMastraAdapters },
-    { createModel },
-  ] = await Promise.all([
-    import("react"),
-    import("ink"),
-    import("../config/loader.js"),
-    import("../agents/intent.js"),
-    import("../memory/conversation.js"),
-    import("./App.js"),
-    import("../mcp/provider.js"),
-    import("../server/agents.js"),
-    import("../mastra/index.js"),
-  ]);
-
-  const config = loadConfig(configPath);
-
-  const R = "\x1b[31m";   // red (Fortinet brand)
-  const B = "\x1b[1m";    // bold
-  const DM = "\x1b[2m";   // dim
-  const X = "\x1b[0m";    // reset
-
-  console.log(`
-  ${R}███${X} ${R}███${X} ${R}███${X}
-
-  ${R}███${X}     ${R}███${X}        ${B}dops-assistant${X} ${DM}v0.1.0${X}
-
-  ${R}███${X} ${R}███${X} ${R}███${X}   Agentic DevOps Assistant for RCA
-
-  `);
-  console.log("  Connecting to MCP providers...");
-
-  const providers = config.providers.map(createMcpProvider);
-  // Count tools by resolving all provider tool lists
-  const { getAllTools } = await import("../mcp/provider.js");
-  const allTools = await getAllTools(providers).catch(() => ({}));
-  const toolCount = Object.keys(allTools).length;
-  console.log(`  Connected to MCP providers (${toolCount} tools available)`);
-  console.log("");
-
-  const model = createModel(config.llm);
-  const memory = new ConversationMemory(config.agent.conversationMemory);
-  const router = new IntentRouter(model);
-
-  const mastraAdapters = await createMastraAdapters({ config, providers });
-  const { chatAgent: agent, investigationAgent } = mastraAdapters;
-
-  const { waitUntilExit } = render(
-    <App
-      agent={agent}
-      memory={memory}
-      services={config.services}
-      router={router}
-      investigationAgent={investigationAgent}
-      toolCount={toolCount}
-    />,
-  );
-
-  await waitUntilExit();
-
-  memory.destroy();
-  console.log("\n  Goodbye!");
-  process.exit(0);
+// Set LOG_LEVEL BEFORE any dynamic imports (pino reads it at module load).
+// Keep silent for all modes — pino defaults to stdout which would corrupt
+// JSON output. The JSON output itself provides all diagnostic information.
+const explicitLogLevel = process.env.LOG_LEVEL;
+if (!explicitLogLevel) {
+  process.env.LOG_LEVEL = "silent";
 }
 
-main().catch((err) => {
-  console.error("Fatal error:", err);
-  process.exit(1);
-});
+// Dynamic imports — must come after LOG_LEVEL is set
+const { config: dotenv } = await import("dotenv");
+const dotenvPath = process.env.DOTENV_PATH ?? resolve(process.cwd(), "dev/.env");
+dotenv({ path: dotenvPath });
+
+const { loadConfig } = await import("../config/loader.js");
+const { createMcpProvider } = await import("../mcp/provider.js");
+const { writeOutput } = await import("./output.js");
+
+const config = loadConfig(parsed.flags.config);
+
+const providers = config.providers.map(createMcpProvider);
+
+// ── Dispatch ──────────────────────────────────────────────────────────────────
+
+async function dispatch(): Promise<void> {
+  if (isInteractive) {
+    const { runInteractive } = await import("./commands/interactive.js");
+    return runInteractive(config, providers);
+  }
+
+  if (parsed.command === "mcp-check") {
+    const { runMcpCheck } = await import("./commands/mcp-check.js");
+    const result = await runMcpCheck(providers);
+    const exitCode = result.status === "success" ? 0 : 1;
+    return writeOutput(result, exitCode);
+  }
+
+  if (parsed.command === "investigate") {
+    const serviceName = parsed.args[0];
+    if (!serviceName) {
+      return writeOutput(
+        { command: "investigate", status: "error", error: "usage: dops investigate <service>" },
+        2,
+      );
+    }
+
+    const { createMastraAdapters } = await import("../server/agents.js");
+    const { runInvestigate, resolveService } = await import("./commands/investigate.js");
+
+    const service = resolveService(serviceName, config.services);
+    if (!service) {
+      return writeOutput(
+        { command: "investigate", service: serviceName, status: "error", error: `unknown service: ${serviceName}` },
+        1,
+      );
+    }
+
+    const { investigationAgent } = await createMastraAdapters({
+      config,
+      providers,
+      noHistory: !parsed.flags.history,
+    });
+    const result = await runInvestigate(investigationAgent, service, {
+      verbose: parsed.flags.verbose,
+      history: parsed.flags.history,
+      userMessage: `investigate ${serviceName}`,
+    });
+    const exitCode = result.status === "success" ? 0 : 1;
+    return writeOutput(result, exitCode);
+  }
+
+  if (parsed.command === "chat") {
+    const message = parsed.args[0];
+    if (!message) {
+      return writeOutput(
+        { command: "chat", status: "error", error: "usage: dops chat \"<message>\"" },
+        2,
+      );
+    }
+
+    const { createMastraAdapters } = await import("../server/agents.js");
+    const { runChat } = await import("./commands/chat.js");
+
+    const { chatAgent } = await createMastraAdapters({
+      config,
+      providers,
+      noHistory: !parsed.flags.history,
+    });
+    const result = await runChat(chatAgent, message, { verbose: parsed.flags.verbose });
+    const exitCode = result.status === "success" ? 0 : 1;
+    return writeOutput(result, exitCode);
+  }
+
+  if (parsed.command === "e2e") {
+    const scenarioPath = parsed.args[0];
+    if (!scenarioPath) {
+      return writeOutput(
+        { command: "e2e", status: "error", error: "usage: dops e2e <scenario-file>" },
+        2,
+      );
+    }
+
+    const { readFile } = await import("node:fs/promises");
+    const { createMastraAdapters } = await import("../server/agents.js");
+    const { runE2e } = await import("./commands/e2e.js");
+
+    let scenario: ScenarioFile;
+    try {
+      const raw = await readFile(resolve(scenarioPath), "utf-8");
+      scenario = JSON.parse(raw);
+    } catch (err) {
+      return writeOutput(
+        { command: "e2e", status: "error", error: `invalid scenario file: ${err instanceof Error ? err.message : err}` },
+        2,
+      );
+    }
+
+    const { chatAgent, investigationAgent } = await createMastraAdapters({
+      config,
+      providers,
+      noHistory: !parsed.flags.history,
+    });
+    const result = await runE2e(
+      scenario,
+      { chatAgent, investigationAgent },
+      config.services,
+      { verbose: parsed.flags.verbose, history: parsed.flags.history },
+      basename(scenarioPath),
+    );
+    const exitCode = result.status === "pass" ? 0 : 1;
+    return writeOutput(result, exitCode);
+  }
+
+  // Unknown command
+  return writeOutput(
+    { command: parsed.command, status: "error", error: `unknown command: ${parsed.command}. Available: investigate, chat, mcp-check, e2e, interactive` },
+    2,
+  );
+}
+
+// ── Timeout wrapper ───────────────────────────────────────────────────────────
+
+const timeout = parsed.flags.timeout;
+const timeoutPromise = new Promise<never>((_, reject) =>
+  setTimeout(() => reject(new Error("timeout")), timeout),
+);
+
+try {
+  await Promise.race([dispatch(), timeoutPromise]);
+} catch (err) {
+  if (!isInteractive) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    await writeOutput(
+      { command: parsed.command, status: "error", error: errorMsg },
+      1,
+    );
+  } else {
+    throw err;
+  }
+}
