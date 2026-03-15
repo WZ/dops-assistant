@@ -1,10 +1,47 @@
 import { generateText, type LanguageModel } from "ai";
 import type { ServiceConfig } from "../config/schema.js";
 import type { InvestigationIntent } from "../types/rca-types.js";
-import { buildIntentClassifierPrompt } from "./rca-prompts.js";
 import pino from "pino";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
+
+// ── Intent classifier prompt ────────────────────────────────────────────────
+
+function buildIntentClassifierPrompt(serviceNames?: string[]): string {
+  const serviceList = serviceNames?.length
+    ? `\nFor reference, known services include: ${serviceNames.join(", ")}\nIf the user mentions a service or component, extract the key identifying term (e.g. "ingestion log rate drop" → "ingestion", "kudu tserver is slow" → "kudu-tserver"). Prefer using a known service name if it clearly matches, but you may also extract the user's own wording.`
+    : "";
+
+  return `You are classifying a user message as either an "investigation" request or a "question".
+
+CLASSIFY AS "investigation" when the user:
+- Reports a problem, symptom, or error (slow, down, failing, errors, spike, drop, timeout, OOM, crash)
+- Asks to investigate, diagnose, troubleshoot, or check a service/component
+- Describes an anomaly or unexpected behavior
+- Asks to check health, performance, or status of a specific service
+- Uses words like: investigate, check, diagnose, troubleshoot, look into, what's wrong, why is
+
+CLASSIFY AS "question" when the user:
+- Asks for information without implying a problem ("what dashboards do we have?", "list services")
+- Asks how something works ("how does ingestion work?")
+- Asks for general status without concern ("show me the current metrics")
+
+EXAMPLES:
+- "data-server queries are running slow" → investigation, service: "data-server"
+- "check ClickHouse cluster health" → investigation, service: "clickhouse"
+- "data-server is throwing ClickHouse connection errors" → investigation, service: "data-server"
+- "something seems off with the system, investigate" → investigation, service: ""
+- "are there any issues with the Kafka cluster?" → investigation, service: "kafka"
+- "check CPU usage across all nodes" → investigation, service: ""
+- "what dashboards do we have available?" → question, service: ""
+- "how does the ingestion pipeline work?" → question, service: ""
+
+When in doubt, classify as "investigation" — it is better to investigate and find nothing than to miss a real issue.
+${serviceList}
+Extract the service name if mentioned. Respond with JSON: {"intent": "investigation"|"question", "service": "<name or empty>"}`;
+}
+
+// ── Fast-path regex patterns ────────────────────────────────────────────────
 
 /**
  * Strong investigation keywords — if any of these appear in the user message,
@@ -34,61 +71,21 @@ const INFORMATIONAL_REQUEST_RE = /\b(tell\s+me\s+about|how\s+is|how's|how\s+are|
  */
 const SYMPTOM_RE = /\b(down|slow|failing|failed|crash(?:ing|loop(?:ing)?)?|oom(?:killed)?|spik(?:e|ed|ing)|drop(?:ped|ping)?|timeout(?:s|ed|ing)?|timed?\s*out|degraded|degradation|error(?:s|ed)?|latency|unresponsive|unhealthy|flapping|outage|incident|issue[s]?|problem[s]?|broken|overloaded|check|5[0-9]{2})\b/i;
 
-/**
- * Check if the message mentions any known service (by matching significant tokens
- * from service names or aliases against message tokens). Used as a guard for
- * symptom-based routing to avoid false positives on generic messages.
- */
-export function messageMatchesAnyService(message: string, serviceNames: string[]): boolean {
-  const msgLower = normalizeHyphens(message).toLowerCase();
-
-  // Check if any full service name appears as substring (catches explicit mentions like "faz-web-server")
-  for (const name of serviceNames) {
-    if (msgLower.includes(normalizeHyphens(name).toLowerCase())) return true;
-  }
-
-  // Token overlap (filters generic infra tokens to prevent "the server is slow" from matching)
-  const msgTokens = msgLower.split(/[-_\s.,;:!?'"()]+/).filter((t) => t.length >= 4 && !GENERIC_INFRA_TOKENS.has(t));
-
-  for (const name of serviceNames) {
-    const nameTokens = normalizeHyphens(name).toLowerCase().split(/[-_\s]+/).filter((t) => t.length >= 4);
-    if (nameTokens.some((nt) => msgTokens.includes(nt))) return true;
-  }
-
-  // Also check well-known aliases (kafka, redis, postgres, etc.)
-  for (const alias of Object.keys(SERVICE_ALIASES)) {
-    if (alias.length >= 4 && msgTokens.includes(alias)) return true;
-  }
-
-  return false;
-}
+// ── Service matching ────────────────────────────────────────────────────────
 
 /**
  * Normalize unicode look-alike hyphens (non-breaking, en-dash, etc.) to ASCII hyphen.
- * LLMs sometimes return visually identical but technically different characters.
  */
 function normalizeHyphens(s: string): string {
-  // U+2011 non-breaking hyphen, U+2013 en-dash, U+2014 em-dash, U+2010 hyphen, U+2212 minus
   return s.replace(/[\u2010\u2011\u2012\u2013\u2014\u2212]/g, "-");
 }
 
-/**
- * Generic infrastructure tokens that should not trigger service matching on their own.
- * These appear in many service names (e.g. "server", "cluster") and are commonly used
- * in generic context ("the server is slow", "check the cluster") without referring
- * to a specific service. Filtering them from user message tokens prevents false positives.
- */
 const GENERIC_INFRA_TOKENS = new Set([
   "server", "service", "cluster", "proxy",
   "headless", "master", "worker", "node",
   "metrics", "monitor", "agent",
 ]);
 
-/**
- * Fuzzy-match a user-provided service name against the configured services list.
- * Normalizes unicode hyphens, then tries exact → case-insensitive → substring matches.
- */
-// Common aliases: LLMs return shorthand names for well-known infrastructure
 const SERVICE_ALIASES: Record<string, string[]> = {
   kafka: ["kafka-brokers", "kafka-bootstrap"],
   clickhouse: ["ch-clickhouse"],
@@ -99,19 +96,37 @@ const SERVICE_ALIASES: Record<string, string[]> = {
   ingestion: ["ingestion-server"],
 };
 
+export function messageMatchesAnyService(message: string, serviceNames: string[]): boolean {
+  const msgLower = normalizeHyphens(message).toLowerCase();
+
+  for (const name of serviceNames) {
+    if (msgLower.includes(normalizeHyphens(name).toLowerCase())) return true;
+  }
+
+  const msgTokens = msgLower.split(/[-_\s.,;:!?'"()]+/).filter((t) => t.length >= 4 && !GENERIC_INFRA_TOKENS.has(t));
+
+  for (const name of serviceNames) {
+    const nameTokens = normalizeHyphens(name).toLowerCase().split(/[-_\s]+/).filter((t) => t.length >= 4);
+    if (nameTokens.some((nt) => msgTokens.includes(nt))) return true;
+  }
+
+  for (const alias of Object.keys(SERVICE_ALIASES)) {
+    if (alias.length >= 4 && msgTokens.includes(alias)) return true;
+  }
+
+  return false;
+}
+
 export function matchService(query: string | undefined, services: ServiceConfig[]): ServiceConfig | undefined {
   if (!query) return undefined;
   const q = normalizeHyphens(query).toLowerCase();
 
-  // Exact match (normalized)
   const exact = services.find((s) => normalizeHyphens(s.name) === normalizeHyphens(query));
   if (exact) return exact;
 
-  // Case-insensitive exact
   const ciExact = services.find((s) => normalizeHyphens(s.name).toLowerCase() === q);
   if (ciExact) return ciExact;
 
-  // Alias resolution: "kafka" → "kafka-brokers", "clickhouse" → "ch-clickhouse", etc.
   const aliasTargets = SERVICE_ALIASES[q];
   if (aliasTargets) {
     for (const target of aliasTargets) {
@@ -120,21 +135,18 @@ export function matchService(query: string | undefined, services: ServiceConfig[
     }
   }
 
-  // Service name contains query — prefer shortest match (most specific)
   const containsMatches = services.filter((s) => normalizeHyphens(s.name).toLowerCase().includes(q));
   if (containsMatches.length > 0) {
     containsMatches.sort((a, b) => a.name.length - b.name.length);
     return containsMatches[0];
   }
 
-  // Query contains service name — prefer longest match (most specific)
   const reverseMatches = services.filter((s) => q.includes(normalizeHyphens(s.name).toLowerCase()));
   if (reverseMatches.length > 0) {
     reverseMatches.sort((a, b) => b.name.length - a.name.length);
     return reverseMatches[0];
   }
 
-  // Token overlap: split on delimiters, find service with best token match
   const MIN_TOKEN_LEN = 3;
   const qTokens = q.split(/[-_\s]+/).filter((t) => t.length >= MIN_TOKEN_LEN);
   let bestMatch: ServiceConfig | undefined;
@@ -152,23 +164,14 @@ export function matchService(query: string | undefined, services: ServiceConfig[
   return undefined;
 }
 
-/**
- * Match a service directly from the user's free-text message.
- * Tokenizes the message and scores each configured service by token overlap.
- * Returns the best match only if the score is strong enough (≥ 3).
- */
 export function matchServiceFromText(text: string, services: ServiceConfig[]): ServiceConfig | undefined {
   const normalized = normalizeHyphens(text).toLowerCase();
 
-  // Phase 1: Check if the full service name appears as a substring in the text.
-  // Prefer the longest matching name to avoid "data-server" matching when "data-catalog-server" is present.
   const substringMatches = services
     .filter((s) => normalized.includes(normalizeHyphens(s.name).toLowerCase()))
     .sort((a, b) => b.name.length - a.name.length);
   if (substringMatches.length > 0) return substringMatches[0];
 
-  // Phase 1.5: Alias resolution — if a message token matches a known alias, resolve it.
-  // Catches "clickhouse" → "ch-clickhouse", "kafka" → "kafka-brokers", etc.
   const tokens = normalized
     .split(/[-_\s.,;:!?'"()]+/)
     .filter((t) => t.length >= 3);
@@ -183,9 +186,6 @@ export function matchServiceFromText(text: string, services: ServiceConfig[]): S
     }
   }
 
-  // Phase 2: Token overlap scoring (for partial matches like "ingestion" → "ingestion-server")
-  // Filter generic infra tokens from message to prevent false positives (e.g. "cluster" matching kafka-cluster).
-  // Tiebreaker: prefer shorter service name (more specific match).
   const msgTokens = tokens.filter((t) => !GENERIC_INFRA_TOKENS.has(t));
 
   let bestMatch: ServiceConfig | undefined;
@@ -209,12 +209,6 @@ export function matchServiceFromText(text: string, services: ServiceConfig[]): S
   return bestMatch && bestScore >= 3 ? bestMatch : undefined;
 }
 
-/**
- * Validate that an LLM-extracted service name is grounded in the user's message.
- * Resolves the LLM's pick via matchService, then checks that the resolved service
- * shares at least one significant token with the original message.
- * This prevents the LLM from hallucinating a service that the user never mentioned.
- */
 export function validateLlmServiceMatch(
   llmService: string | undefined,
   userMessage: string,
@@ -223,8 +217,6 @@ export function validateLlmServiceMatch(
   const resolved = matchService(llmService, services);
   if (!resolved) return undefined;
 
-  // Check: does the resolved service name share any significant token with the message?
-  // Filter generic infra tokens to prevent "the server is slow" from matching any *-server service.
   const msgTokens = normalizeHyphens(userMessage).toLowerCase()
     .split(/[-_\s.,;:!?'"()]+/)
     .filter((t) => t.length >= 3 && !GENERIC_INFRA_TOKENS.has(t));
@@ -239,7 +231,6 @@ export function validateLlmServiceMatch(
     )
   );
 
-  // Also check if the LLM's raw query (before resolution) appears in the message
   const llmNorm = normalizeHyphens(llmService ?? "").toLowerCase();
   const msgNorm = normalizeHyphens(userMessage).toLowerCase();
   const llmInMessage = llmNorm.length >= 3 && msgNorm.includes(llmNorm);
@@ -247,11 +238,6 @@ export function validateLlmServiceMatch(
   return (hasOverlap || llmInMessage) ? resolved : undefined;
 }
 
-/**
- * Resolve a service by scanning conversation history backwards.
- * Most recent mention wins — useful when the user says "investigate the rate drop"
- * without naming a service, but prior messages discussed a specific service.
- */
 export function resolveServiceFromHistory(
   history: Array<{ role: string; content: string | null }>,
   services: ServiceConfig[],
@@ -265,6 +251,8 @@ export function resolveServiceFromHistory(
   return undefined;
 }
 
+// ── IntentRouter ────────────────────────────────────────────────────────────
+
 export class IntentRouter {
   private readonly model: LanguageModel;
 
@@ -273,28 +261,21 @@ export class IntentRouter {
   }
 
   async route(message: string, serviceNames?: string[]): Promise<InvestigationIntent> {
-    // Fast-path 0a: display/visualization requests route to conversation agent.
-    // "show me X" without symptom words = user wants to SEE data, not investigate.
     if (DISPLAY_REQUEST_RE.test(message) && !SYMPTOM_RE.test(message)) {
       logger.debug({ message }, "Router: display-request fast-path → question");
       return { intent: "question" };
     }
 
-    // Fast-path 0b: informational requests route to conversation agent.
-    // "tell me about X health" without symptom words = user wants info, not investigation.
     if (INFORMATIONAL_REQUEST_RE.test(message) && !SYMPTOM_RE.test(message)) {
       logger.debug({ message }, "Router: informational-request fast-path → question");
       return { intent: "question" };
     }
 
-    // Fast-path 1: strong investigation keywords bypass the LLM entirely.
     if (STRONG_INVESTIGATION_RE.test(message)) {
       logger.debug({ message }, "Router: keyword fast-path → investigation");
       return { intent: "investigation", service: undefined };
     }
 
-    // Fast-path 2: symptom keyword + recognizable service mention.
-    // Catches "ingestion rate dropped" or "payments-api is slow" without needing "investigate".
     if (SYMPTOM_RE.test(message) && serviceNames?.length && messageMatchesAnyService(message, serviceNames)) {
       logger.debug({ message }, "Router: symptom+service fast-path → investigation");
       return { intent: "investigation", service: undefined };
