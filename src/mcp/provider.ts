@@ -7,6 +7,7 @@ export interface MastraProvider {
   name: string;
   roles: ProviderRole[];
   client: MCPClient;
+  enabledTools?: string[];
 }
 
 /**
@@ -45,7 +46,29 @@ export function createMcpProvider(config: ProviderConfig): MastraProvider {
     name: config.name,
     roles: config.roles,
     client,
+    enabledTools: config.mcpServer.enabledTools,
   };
+}
+
+function filterToolsForProvider(provider: MastraProvider, tools: Record<string, Tool>): Record<string, Tool> {
+  if (!provider.enabledTools?.length) return tools;
+
+  const enabled = new Set(provider.enabledTools);
+  const filtered: Record<string, Tool> = {};
+  for (const [name, tool] of Object.entries(tools)) {
+    const unprefixed = name.startsWith(`${provider.name}_`)
+      ? name.slice(provider.name.length + 1)
+      : name;
+    if (enabled.has(name) || enabled.has(unprefixed)) {
+      filtered[name] = tool;
+    }
+  }
+  return filtered;
+}
+
+export async function listProviderTools(provider: MastraProvider): Promise<Record<string, Tool>> {
+  const tools = await provider.client.listTools();
+  return filterToolsForProvider(provider, tools);
 }
 
 /**
@@ -57,7 +80,7 @@ export async function getToolsByRole(
   role: ProviderRole,
 ): Promise<Record<string, Tool>> {
   const matching = providers.filter((p) => p.roles.includes(role));
-  const toolMaps = await Promise.all(matching.map((p) => p.client.listTools()));
+  const toolMaps = await Promise.all(matching.map((p) => listProviderTools(p)));
 
   const merged: Record<string, Tool> = {};
   for (const tools of toolMaps) {
@@ -70,7 +93,7 @@ export async function getToolsByRole(
  * Return all tools from all providers as a flat merged record.
  */
 export async function getAllTools(providers: MastraProvider[]): Promise<Record<string, Tool>> {
-  const toolMaps = await Promise.all(providers.map((p) => p.client.listTools()));
+  const toolMaps = await Promise.all(providers.map((p) => listProviderTools(p)));
 
   const merged: Record<string, Tool> = {};
   for (const tools of toolMaps) {
