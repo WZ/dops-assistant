@@ -8,13 +8,13 @@ import { writeFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { IChatAgent, IInvestigationAgent } from "../../types/agent-interfaces.js";
-import { matchServiceFromText, validateLlmServiceMatch, resolveServiceFromHistory, type IntentRouter } from "../../agents/intent.js";
-import type { ConversationMemory } from "../../memory/conversation.js";
-import type { ServiceConfig } from "../../config/schema.js";
-import type { RcaReport } from "../../types/rca-types.js";
-import type { ImageAttachment } from "../../types/agent-types.js";
-import type { TokenUsage } from "../../types/llm-types.js";
+import type { IChatAgent, IInvestigationAgent } from "../types/agent-interfaces.js";
+import { matchServiceFromText, validateLlmServiceMatch, resolveServiceFromHistory, type IntentRouter } from "../agents/intent.js";
+import type { ConversationMemory } from "../memory/conversation.js";
+import type { ServiceConfig } from "../config/schema.js";
+import type { RcaReport } from "../types/rca-types.js";
+import type { ImageAttachment } from "../types/agent-types.js";
+import type { TokenUsage } from "../types/llm-types.js";
 
 type ChatMessage = {
   id: string;

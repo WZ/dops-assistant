@@ -1,12 +1,10 @@
 /**
  * src/server/agents.ts
  *
- * Adapter that wraps the new Mastra agents and investigation workflow into
- * the same duck-typed interfaces that the web server (ws-handler.ts) and
- * CLI (interfaces/cli/App.tsx) already depend on.
+ * Wraps Mastra agents and investigation workflow into duck-typed interfaces
+ * that the web server (ws-handler.ts) and CLI (cli/App.tsx) depend on.
  *
- * This lets us drop in the Mastra path via USE_MASTRA=true without rewriting
- * the existing server/CLI code. The adapter satisfies the following contracts:
+ * Satisfies the following contracts:
  *
  *   ChatAgent-like:           chat(task: ChatRequest): Promise<ChatResponse>
  *   InvestigationAgent-like:  investigate(service, anomaly, id, onUsage, msg,

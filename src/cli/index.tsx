@@ -31,13 +31,13 @@ async function main(): Promise<void> {
   ] = await Promise.all([
     import("react"),
     import("ink"),
-    import("./config/loader.js"),
-    import("./agents/intent.js"),
-    import("./memory/conversation.js"),
-    import("./interfaces/cli/App.js"),
-    import("./mcp/provider.js"),
-    import("./server/agents.js"),
-    import("./mastra/index.js"),
+    import("../config/loader.js"),
+    import("../agents/intent.js"),
+    import("../memory/conversation.js"),
+    import("./App.js"),
+    import("../mcp/provider.js"),
+    import("../server/agents.js"),
+    import("../mastra/index.js"),
   ]);
 
   const config = loadConfig(configPath);
@@ -59,7 +59,7 @@ async function main(): Promise<void> {
 
   const providers = config.providers.map(createMcpProvider);
   // Count tools by resolving all provider tool lists
-  const { getAllTools } = await import("./mcp/provider.js");
+  const { getAllTools } = await import("../mcp/provider.js");
   const allTools = await getAllTools(providers).catch(() => ({}));
   const toolCount = Object.keys(allTools).length;
   console.log(`  Connected to MCP providers (${toolCount} tools available)`);
