@@ -52,38 +52,75 @@ export class MastraChatAgentAdapter {
   }
 
   async chat(task: ChatRequest): Promise<ChatResponse> {
-    // Build a single prompt string from message history
-    const promptParts: string[] = [];
+    // Build messages array for Mastra agent
+    const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [];
     for (const m of task.history ?? []) {
-      if (m.role === "system") {
-        promptParts.push(`[System] ${m.content}`);
-      } else if (m.role === "user") {
-        promptParts.push(m.content);
-      } else if (m.role === "assistant") {
-        promptParts.push(`[Assistant] ${m.content}`);
+      if (m.role === "system" || m.role === "user" || m.role === "assistant") {
+        messages.push({ role: m.role, content: m.content ?? "" });
       }
     }
-    promptParts.push(task.message);
-    const prompt = promptParts.join("\n\n");
+    messages.push({ role: "user", content: task.message });
 
-    // Signal streaming start immediately so UI shows the spinner
+    // Signal streaming start immediately so UI shows "Thinking..."
     task.onStreamStart?.();
 
     let responseText = "";
     try {
-      const result = await this.mastraAgent.generate(prompt);
-      responseText = result.text ?? "";
-      task.onStreamDelta?.({ type: "content", content: responseText });
+      const stream = await this.mastraAgent.stream(messages);
+
+      for await (const chunk of stream.fullStream) {
+        const c = chunk as any;
+        // Mastra wraps all events in { type, runId, from, payload }
+        const p = c.payload ?? c;
+
+        if (c.type === "reasoning-delta") {
+          const text = p.textDelta ?? p.delta ?? p.text ?? "";
+          if (text) task.onStreamDelta?.({ type: "reasoning", content: text });
+        } else if (c.type === "text-delta") {
+          const text = p.textDelta ?? p.delta ?? p.text ?? "";
+          if (text) {
+            responseText += text;
+            task.onStreamDelta?.({ type: "content", content: text });
+          }
+        } else if (c.type === "tool-call") {
+          const rawName = p.toolName ?? "unknown";
+          const idx = rawName.indexOf("_");
+          const toolName = idx > 0 ? rawName.slice(idx + 1) : rawName;
+          console.error(`[MASTRA_CHAT] tool-call: ${toolName} args=${JSON.stringify(p.args ?? {}).slice(0, 500)}`);
+          task.onToolCall?.(toolName, p.args ?? {});
+        } else if (c.type === "tool-result") {
+          const rawName = p.toolName ?? "unknown";
+          const idx = rawName.indexOf("_");
+          const toolName = idx > 0 ? rawName.slice(idx + 1) : rawName;
+          const result = p.result ?? "";
+          const nestedContent = result?.content?.[0]?.text;
+          const resultStr = typeof nestedContent === "string" ? nestedContent
+            : typeof result === "string" ? result
+            : JSON.stringify(result);
+          if (toolName === "query_prometheus") {
+            console.error(`[MASTRA_CHAT] tool-result: ${toolName} resultLen=${resultStr.length} first200=${resultStr.slice(0, 200)}`);
+          }
+          task.onToolCall?.(toolName, p.args ?? {}, resultStr);
+        }
+      }
     } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      responseText = `Error: ${errMsg}`;
-      task.onStreamDelta?.({ type: "content", content: responseText });
+      console.error("[MASTRA_CHAT] stream error:", err);
+      if (!responseText) {
+        try {
+          const prompt = messages.map((m) => m.role === "user" ? m.content : `[${m.role}] ${m.content}`).join("\n\n");
+          const result = await this.mastraAgent.generate(prompt);
+          responseText = result.text ?? "";
+          task.onStreamDelta?.({ type: "content", content: responseText });
+        } catch (genErr) {
+          const errMsg = genErr instanceof Error ? genErr.message : String(genErr);
+          responseText = `Error: ${errMsg}`;
+          task.onStreamDelta?.({ type: "content", content: responseText });
+        }
+      }
     }
 
     return {
       response: responseText,
-      // updatedHistory is required by the ChatResponse type but only consumed
-      // by the old ChatAgent; the server/CLI only reads `.response` and `.images`.
       updatedHistory: [],
       images: [],
     };
@@ -121,7 +158,6 @@ export class MastraInvestigationAdapter {
     onIteration?: OnIteration,
     _skillContext?: string,
   ): Promise<RcaReport> {
-    console.error("[MASTRA-ADAPTER] investigate() called for service:", service.name, "message:", userMessage);
     const workflowConfig: WorkflowConfig = {
       ...this.workflowConfig,
       // Put the target service first so the post-synthesis step can reference it
@@ -137,8 +173,14 @@ export class MastraInvestigationAdapter {
     let output: {
       severity: "low" | "medium" | "high" | "critical";
       summary: string;
+      impact: { duration: string; description: string };
       rootCause: string;
       trigger: string;
+      contributingFactors: string[];
+      timeline: Array<{ time: string; event: string }>;
+      evidence: { metrics: string[]; logs: string[]; infra: string[] };
+      dashboardLinks: string[];
+      recommendedActions: string[];
       confidence: "low" | "medium" | "high";
       confidenceScore: number;
       savedToHistory: boolean;
@@ -166,24 +208,17 @@ export class MastraInvestigationAdapter {
       service: service.name,
       severity: output?.severity ?? "medium",
       summary: output?.summary ?? "Investigation complete",
+      impact: output?.impact ?? { duration: "Unknown", description: output?.summary ?? "" },
       rootCause: output?.rootCause ?? "Unable to determine root cause",
       trigger: output?.trigger ?? "Unknown",
+      contributingFactors: output?.contributingFactors ?? [],
+      timeline: output?.timeline ?? [],
+      evidence: output?.evidence ?? { metrics: [], logs: [], infra: [] },
+      dashboardLinks: output?.dashboardLinks ?? [],
+      recommendedActions: output?.recommendedActions ?? [],
       confidence: output?.confidence ?? "low",
       confidenceScore: output?.confidenceScore ?? 0.5,
       investigatedAt,
-      impact: {
-        duration: "Unknown",
-        description: output?.summary ?? "",
-      },
-      contributingFactors: [],
-      timeline: [],
-      evidence: {
-        metrics: [],
-        logs: [],
-        infra: [],
-      },
-      dashboardLinks: [],
-      recommendedActions: [],
     };
 
     return report;
@@ -207,11 +242,15 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
   const { config, providers } = deps;
   const model = createModel(config.llm);
 
-  // Build a tool map for the chat agent (all tools from all providers)
+  // Build a tool map for the chat agent (all tools except get_panel_image which returns huge base64 blobs)
   const allTools = await getAllTools(providers).catch(() => ({}));
+  const chatTools: Record<string, any> = {};
+  for (const [name, tool] of Object.entries(allTools)) {
+    if (!name.endsWith("get_panel_image")) chatTools[name] = tool;
+  }
 
   const chatAgent = new MastraChatAgentAdapter(
-    createChatAgent({ model, tools: allTools, maxSteps: config.agent.maxIterations }),
+    createChatAgent({ model, tools: chatTools, maxSteps: config.agent.maxIterations }),
   );
 
   const workflowConfig: WorkflowConfig = {

@@ -16,8 +16,9 @@ import type { MastraProvider } from "../mcp/provider.js";
 import type { ServiceConfig } from "../config/schema.js";
 import { getToolsByRole } from "../mcp/provider.js";
 import { executePrefetch } from "./prefetch.js";
-import { buildTimeline, validateSeverity } from "./helpers.js";
+import { buildTimeline, validateSeverity, extractTimeRange, suggestStepSeconds, toRfc3339Window } from "./helpers.js";
 import { getRecentIncidents, saveIncident, formatIncidentHistory } from "../history/store.js";
+import { getTimeContext } from "../agent/prompts.js";
 import { safeJsonParse } from "../agents/shared/processors.js";
 import { createAnomalyDetectorAgent } from "../agents/anomaly-detector.js";
 import { createPlannerAgent } from "../agents/planner.js";
@@ -38,7 +39,7 @@ export interface WorkflowConfig {
   /** Progress callbacks for streaming to UI */
   onPhase?: (phase: string) => void;
   onIteration?: (phase: string, iteration: number, maxIterations: number, label: string) => void;
-  onToolCall?: (name: string, args: Record<string, unknown>, result?: string, duration?: number, error?: string) => void;
+  onToolCall?: (name: string, args: Record<string, unknown>, result?: string, duration?: number, error?: string, phase?: string) => void;
 }
 
 // ── Tool wrapping helper ──────────────────────────────────────────────────────
@@ -85,9 +86,35 @@ function coerceToolArgs(args: Record<string, unknown>, toolSchema: any): Record<
   return coerced;
 }
 
+/**
+ * Strip MCP provider prefix from tool name (e.g. "grafana_query_prometheus" → "query_prometheus").
+ * The frontend expects unprefixed tool names for chart rendering and display.
+ */
+function stripToolPrefix(name: string): string {
+  const idx = name.indexOf("_");
+  return idx > 0 ? name.slice(idx + 1) : name;
+}
+
+/**
+ * Unwrap MCP content wrapper to get raw result text.
+ * Mastra MCP tools return { content: [{ type: "text", text: "..." }] }.
+ * The frontend expects raw JSON strings for chart parsing.
+ */
+function unwrapMcpResult(result: unknown): string {
+  if (typeof result === "string") return result;
+  if (typeof result === "object" && result !== null && !Array.isArray(result)) {
+    const content = (result as any).content;
+    if (Array.isArray(content) && content.length > 0 && content[0]?.type === "text") {
+      return content[0].text;
+    }
+  }
+  return JSON.stringify(result);
+}
+
 function wrapToolsWithCallbacks(
   tools: Record<string, any>,
   onToolCall?: WorkflowConfig["onToolCall"],
+  phase?: string,
 ): Record<string, any> {
   const wrapped: Record<string, any> = {};
   for (const [name, tool] of Object.entries(tools)) {
@@ -101,17 +128,80 @@ function wrapToolsWithCallbacks(
         const start = Date.now();
         try {
           const result = await tool.execute(...execArgs);
-          const resultStr = typeof result === "string" ? result : JSON.stringify(result);
-          onToolCall?.(name, execArgs[0] ?? {}, resultStr, Date.now() - start);
+          const resultStr = unwrapMcpResult(result);
+          onToolCall?.(stripToolPrefix(name), execArgs[0] ?? {}, resultStr, Date.now() - start, undefined, phase);
           return result;
         } catch (err) {
-          onToolCall?.(name, execArgs[0] ?? {}, undefined, Date.now() - start, String(err));
+          onToolCall?.(stripToolPrefix(name), execArgs[0] ?? {}, undefined, Date.now() - start, String(err), phase);
           throw err;
         }
       },
     };
   }
   return wrapped;
+}
+
+// ── Tool selection for agents ─────────────────────────────────────────────────
+// Each agent type gets ONLY the tools it needs. Providing all 50+ Grafana tools
+// causes the LLM to skip tool use entirely or call irrelevant discovery tools.
+// Allowlists use suffixes to handle MCP provider prefixing (e.g. "grafana_query_prometheus").
+
+const ANOMALY_TOOLS = ["query_prometheus"];
+const METRICS_TOOLS = ["query_prometheus", "query_prometheus_histogram"];
+const LOGS_TOOLS = ["query_loki_logs", "query_loki_stats", "query_loki_patterns", "find_error_pattern_logs"];
+const INFRA_TOOLS = ["query_prometheus", "query_prometheus_histogram", "list_alert_rules", "get_alert_rule_by_uid"];
+
+function selectToolsBySuffix(tools: Record<string, any>, allowedSuffixes: string[]): Record<string, any> {
+  const filtered: Record<string, any> = {};
+  for (const [name, tool] of Object.entries(tools)) {
+    if (allowedSuffixes.some((suffix) => name.endsWith(suffix))) {
+      filtered[name] = tool;
+    }
+  }
+  return filtered;
+}
+
+/**
+ * Build a time window hint string for evidence agent prompts.
+ * Uses extractTimeRange from the anomaly summary to derive the investigation window.
+ */
+function buildTimeWindowHint(anomalySummary: string, userMessage?: string): string {
+  const timeContext = getTimeContext();
+  const timeRange = extractTimeRange(anomalySummary, userMessage);
+  const stepSeconds = suggestStepSeconds(timeRange);
+  const rfc3339 = toRfc3339Window(timeRange);
+
+  return [
+    timeContext,
+    `INVESTIGATION TIME WINDOW: from="${timeRange.from}" to="${timeRange.to}"`,
+    `You MUST query this full window using a RANGE query as your FIRST tool call:`,
+    `  queryType="range", startTime="${timeRange.from}", endTime="${timeRange.to}", stepSeconds=${stepSeconds}`,
+    `Do NOT only check the current instant value — past anomalies are invisible to instant queries.`,
+    `For Loki log queries, use RFC3339: startRfc3339="${rfc3339.startRfc3339}", endRfc3339="${rfc3339.endRfc3339}"`,
+  ].join("\n");
+}
+
+/**
+ * Build a service context hint for evidence agent prompts.
+ * Injects configured PromQL queries and log labels from the matching service config.
+ */
+function buildServiceContextHint(services: ServiceConfig[], serviceName?: string): { metricsHint: string; logLabelsHint: string } {
+  if (!serviceName) return { metricsHint: "", logLabelsHint: "" };
+  const service = services.find((s) => s.name === serviceName);
+  if (!service) return { metricsHint: "", logLabelsHint: "" };
+
+  let metricsHint = "";
+  if (service.metrics.length > 0) {
+    const metricList = service.metrics.map((m) => `- ${m.description}: \`${m.query}\``).join("\n");
+    metricsHint = `SERVICE METRICS TO CHECK:\n${metricList}`;
+  }
+
+  let logLabelsHint = "";
+  if (Object.keys(service.logLabels).length > 0) {
+    logLabelsHint = `SERVICE LOG LABELS: ${JSON.stringify(service.logLabels)}`;
+  }
+
+  return { metricsHint, logLabelsHint };
 }
 
 // ── Zod schemas for step I/O ──────────────────────────────────────────────────
@@ -177,32 +267,57 @@ const ParallelEvidenceSchema = z.object({
 const SynthesisOutputSchema = z.object({
   severity: z.enum(["low", "medium", "high", "critical"]).default("medium"),
   summary: z.string().default("Investigation complete"),
+  impact: z.object({
+    duration: z.string(),
+    description: z.string(),
+  }).default({ duration: "Unknown", description: "" }),
   rootCause: z.string().default("Unable to determine"),
   trigger: z.string().default("Unknown"),
+  contributingFactors: z.array(z.string()).default([]),
+  timeline: z.array(z.object({
+    time: z.string(),
+    event: z.string(),
+  })).default([]),
+  evidence: z.object({
+    metrics: z.array(z.string()),
+    logs: z.array(z.string()),
+    infra: z.array(z.string()),
+  }).default({ metrics: [], logs: [], infra: [] }),
+  dashboardLinks: z.array(z.string()).default([]),
+  recommendedActions: z.array(z.string()).default([]),
   confidence: z.enum(["low", "medium", "high"]).default("low"),
   confidenceScore: z.number().default(0.5),
-  timeline: z.string().optional(),
-  evidenceSummary: z.object({
-    metrics: EvidenceOutputSchema,
-    logs: EvidenceOutputSchema,
-    infra: EvidenceOutputSchema,
-  }).optional(),
-  planningContext: PlanningOutputSchema.optional(),
 });
 
 const PostSynthesisOutputSchema = z.object({
   severity: z.enum(["low", "medium", "high", "critical"]),
   summary: z.string(),
+  impact: z.object({
+    duration: z.string(),
+    description: z.string(),
+  }),
   rootCause: z.string(),
   trigger: z.string(),
+  contributingFactors: z.array(z.string()),
+  timeline: z.array(z.object({
+    time: z.string(),
+    event: z.string(),
+  })),
+  evidence: z.object({
+    metrics: z.array(z.string()),
+    logs: z.array(z.string()),
+    infra: z.array(z.string()),
+  }),
+  dashboardLinks: z.array(z.string()),
+  recommendedActions: z.array(z.string()),
   confidence: z.enum(["low", "medium", "high"]),
   confidenceScore: z.number(),
   savedToHistory: z.boolean(),
   investigatedAt: z.string(),
 });
 
-// ── Debug logger ─────────────────────────────────────────────────────────────
-const debug = (...args: unknown[]) => console.error("[INVESTIGATION DEBUG]", ...args);
+// ── Debug logger (no-op in production; set DOPS_DEBUG=1 to enable) ───────────
+const debug = process.env.DOPS_DEBUG ? (...args: unknown[]) => console.error("[INVESTIGATION]", ...args) : (..._args: unknown[]) => {};
 
 // ── Step factory helpers ──────────────────────────────────────────────────────
 
@@ -225,6 +340,7 @@ function buildPrefetchStep(config: WorkflowConfig) {
         config.services,
         {
           userMessage: inputData.userMessage,
+          serviceName: inputData.serviceName,
         },
       );
 
@@ -251,86 +367,92 @@ function buildAnomalyStep(config: WorkflowConfig) {
       debug("ANOMALY step entered, keys:", Object.keys(inputData));
       config.onPhase?.("Detecting anomalies");
 
-      const metricsTools = await getToolsByRole(config.providers, "metrics").catch(() => ({}));
-      const dashboardTools = await getToolsByRole(config.providers, "dashboards").catch(() => ({}));
-      const rawTools = { ...metricsTools, ...dashboardTools };
-      const tools = wrapToolsWithCallbacks(rawTools, config.onToolCall);
-
-      const agent = createAnomalyDetectorAgent({
-        model: config.model,
-        tools,
-        useQuirkHandling: config.useQuirkHandling,
-      });
-
-      const prompt = [
-        inputData.datasourceHints,
-        inputData.dashboardContext,
-        `User message: ${inputData.userMessage}`,
-        inputData.serviceName ? `Service: ${inputData.serviceName}` : "",
-      ].filter(Boolean).join("\n");
-
-      let agentResult: { text: string } = { text: "" };
-      const anomalyToolData: string[] = [];
-      let anomalyIterationCount = 0;
-      try {
-        agentResult = await agent.generate(prompt, {
-          onStepFinish: (step: any) => {
-            try {
-              debug("ANOMALY onStepFinish, toolResults sample:", JSON.stringify(step.toolResults?.[0] ?? {}).slice(0, 300));
-              anomalyIterationCount++;
-              config.onIteration?.("anomaly", anomalyIterationCount, 10, `Step ${anomalyIterationCount}`);
-              if (step.toolResults?.length) {
-                for (const tr of step.toolResults) {
-                  // Mastra wraps tool results: { payload: { toolName, args, result: { content: [{text}] } } }
-                  const payload = tr.payload ?? tr;
-                  const toolName = payload.toolName ?? payload.name ?? tr.toolName ?? "unknown";
-                  const toolArgs = payload.args ?? payload.input ?? tr.args ?? {};
-                  const nestedContent = payload.result?.content?.[0]?.text;
-                  const rawResult = nestedContent ?? payload.result ?? tr.result ?? tr.output ?? "";
-                  const resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
-                  const truncated = resultStr.length > 2000 ? resultStr.slice(0, 2000) + "..." : resultStr;
-                  anomalyToolData.push(`Tool: ${toolName}\nResult: ${truncated}`);
-                  // Tool call already emitted by wrapToolsWithCallbacks — don't double-emit
-                }
-              }
-              if (step.text) anomalyToolData.push(`Model: ${step.text}`);
-            } catch (err) {
-              debug("ANOMALY onStepFinish error:", err);
-            }
-          },
-        });
-      } catch {
-        // Fall through to default
-      }
-
-      // If agent text is empty, do fresh-prompt extraction from captured tool results
-      let textToParse = agentResult.text;
-      if (!textToParse?.trim() && anomalyToolData.length > 0) {
-        debug("ANOMALY: empty text, extracting from", anomalyToolData.length, "captured tool results");
-        const { Agent: ExtractAgent } = await import("@mastra/core/agent");
-        const extractor = new ExtractAgent({
-          name: "anomaly-extractor",
-          id: "anomaly-extractor",
-          instructions: 'Extract structured data from investigation results. Return ONLY valid JSON: {"isAnomaly": boolean, "severity": "low"|"medium"|"high"|"critical", "summary": "string", "affectedServices": ["string"]}',
-          model: config.model as any,
-        });
-        try {
-          const extraction = await extractor.generate(anomalyToolData.join("\n\n"));
-          textToParse = extraction.text ?? "";
-        } catch { /* keep empty */ }
-      }
-      debug("ANOMALY text to parse (first 500):", textToParse?.slice(0, 500));
+      // For user-reported issues, skip full anomaly detection (matches legacy behavior).
+      // The user already told us what's wrong — just extract the time range and pass through.
+      // Running the anomaly agent wastes iterations on broad unfocused queries.
+      const isUserReported = !!inputData.userMessage?.trim();
 
       let isAnomaly = true;
-      let severity: "low" | "medium" | "high" | "critical" = "medium";
+      let severity: "low" | "medium" | "high" | "critical" = "high";
       let summary = inputData.userMessage;
 
-      const anomalyParsed = safeJsonParse(textToParse);
-      debug("ANOMALY parsed:", anomalyParsed ? "OK" : "FAILED");
-      if (anomalyParsed) {
-        isAnomaly = anomalyParsed.isAnomaly ?? true;
-        severity = anomalyParsed.severity ?? "medium";
-        summary = anomalyParsed.summary ?? inputData.userMessage;
+      if (!isUserReported) {
+        // Proactive mode: run anomaly detection agent
+        const allTools = await getToolsByRole(config.providers, "metrics").catch(() => ({}));
+        const rawTools = selectToolsBySuffix(allTools, ANOMALY_TOOLS);
+        const tools = wrapToolsWithCallbacks(rawTools, config.onToolCall);
+
+        const agent = createAnomalyDetectorAgent({
+          model: config.model,
+          tools,
+          useQuirkHandling: config.useQuirkHandling,
+        });
+
+        const prompt = [
+          getTimeContext(),
+          inputData.datasourceHints,
+          inputData.dashboardContext,
+          `User message: ${inputData.userMessage}`,
+          inputData.serviceName ? `Service: ${inputData.serviceName}` : "",
+        ].filter(Boolean).join("\n");
+
+        let agentResult: { text: string } = { text: "" };
+        const anomalyToolData: string[] = [];
+        let anomalyIterationCount = 0;
+        try {
+          agentResult = await agent.generate(prompt, {
+            onStepFinish: (step: any) => {
+              try {
+                debug("ANOMALY onStepFinish, toolResults sample:", JSON.stringify(step.toolResults?.[0] ?? {}).slice(0, 300));
+                anomalyIterationCount++;
+                config.onIteration?.("anomaly", anomalyIterationCount, 10, `Step ${anomalyIterationCount}`);
+                if (step.toolResults?.length) {
+                  for (const tr of step.toolResults) {
+                    const payload = tr.payload ?? tr;
+                    const toolName = payload.toolName ?? payload.name ?? tr.toolName ?? "unknown";
+                    const nestedContent = payload.result?.content?.[0]?.text;
+                    const rawResult = nestedContent ?? payload.result ?? tr.result ?? tr.output ?? "";
+                    const resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
+                    const truncated = resultStr.length > 2000 ? resultStr.slice(0, 2000) + "..." : resultStr;
+                    anomalyToolData.push(`Tool: ${toolName}\nResult: ${truncated}`);
+                  }
+                }
+                if (step.text) anomalyToolData.push(`Model: ${step.text}`);
+              } catch (err) {
+                debug("ANOMALY onStepFinish error:", err);
+              }
+            },
+          });
+        } catch (err) {
+          debug("ANOMALY agent.generate error:", err);
+        }
+
+        let textToParse = agentResult.text;
+        if (!textToParse?.trim() && anomalyToolData.length > 0) {
+          debug("ANOMALY: empty text, extracting from", anomalyToolData.length, "captured tool results");
+          const { Agent: ExtractAgent } = await import("@mastra/core/agent");
+          const extractor = new ExtractAgent({
+            name: "anomaly-extractor",
+            id: "anomaly-extractor",
+            instructions: 'Extract structured data from investigation results. Return ONLY valid JSON: {"isAnomaly": boolean, "severity": "low"|"medium"|"high"|"critical", "summary": "string", "affectedServices": ["string"]}',
+            model: config.model as any,
+          });
+          try {
+            const extraction = await extractor.generate(anomalyToolData.join("\n\n"));
+            textToParse = extraction.text ?? "";
+          } catch { /* keep empty */ }
+        }
+        debug("ANOMALY text to parse (first 500):", textToParse?.slice(0, 500));
+
+        const anomalyParsed = safeJsonParse(textToParse);
+        debug("ANOMALY parsed:", anomalyParsed ? "OK" : "FAILED");
+        if (anomalyParsed) {
+          isAnomaly = anomalyParsed.isAnomaly ?? true;
+          severity = anomalyParsed.severity ?? "medium";
+          summary = anomalyParsed.summary ?? inputData.userMessage;
+        }
+      } else {
+        debug("ANOMALY: user-reported issue, skipping agent — extracting time range only");
       }
 
       const prefetchContext = {
@@ -381,10 +503,23 @@ function buildPlanningStep(config: WorkflowConfig) {
 
       const agent = createPlannerAgent({ model: config.model });
 
+      // Inject service config so the planner knows what metrics/logs are available
+      const service = inputData.serviceName
+        ? config.services.find((s) => s.name === inputData.serviceName)
+        : undefined;
+      const serviceMetricsHint = service?.metrics.length
+        ? `Service metrics: ${service.metrics.map((m) => `${m.description} (${m.query})`).join(", ")}`
+        : "";
+      const serviceLogLabelsHint = service?.logLabels && Object.keys(service.logLabels).length > 0
+        ? `Log labels: ${JSON.stringify(service.logLabels)}`
+        : "";
+
       const prompt = [
         `Anomaly: ${inputData.summary}`,
         `Severity: ${inputData.severity ?? "unknown"}`,
         inputData.serviceName ? `Service: ${inputData.serviceName}` : "",
+        serviceMetricsHint,
+        serviceLogLabelsHint,
         historyContext ? `\nRecent incidents:\n${historyContext}` : "",
       ].filter(Boolean).join("\n");
 
@@ -406,6 +541,20 @@ function buildPlanningStep(config: WorkflowConfig) {
         metricFocus = plannerParsed.metricFocus ?? [];
         logFocus = plannerParsed.logFocus ?? [];
         infraFocus = plannerParsed.infraFocus ?? [];
+      }
+
+      // Emit plan details so the UI can display them (matches legacy behavior)
+      if (hypotheses.length > 0) {
+        const hypothesisText = hypotheses.map((h) => `${h.hypothesis} → ${h.evidenceNeeded}`).join(" | ");
+        config.onIteration?.("planning", 0, 1, `Hypotheses: ${hypothesisText}`);
+      }
+      if (metricFocus.length > 0 || logFocus.length > 0 || infraFocus.length > 0) {
+        const focusItems = [
+          ...metricFocus.map((f) => `metric: ${f}`),
+          ...logFocus.map((f) => `log: ${f}`),
+          ...infraFocus.map((f) => `infra: ${f}`),
+        ];
+        config.onIteration?.("planning", 0, 1, `Focus: ${focusItems.join(", ")}`);
       }
 
       return {
@@ -431,12 +580,13 @@ export function buildMetricsStep(config: WorkflowConfig) {
     outputSchema: EvidenceOutputSchema,
     execute: async ({ inputData }) => {
       debug("METRICS step entered, keys:", Object.keys(inputData));
-      config.onPhase?.("Analyzing metrics");
+      config.onPhase?.("Analyzing metrics, logs & infrastructure");
       config.onIteration?.("metrics", 2, 6, "Analyzing metrics");
 
       const rawMetricsTools = await getToolsByRole(config.providers, "metrics").catch(() => ({}));
-      const rawDashboardTools = await getToolsByRole(config.providers, "dashboards").catch(() => ({}));
-      const metricsTools = wrapToolsWithCallbacks({ ...rawMetricsTools, ...rawDashboardTools }, config.onToolCall);
+      const filteredMetricsTools = selectToolsBySuffix(rawMetricsTools, METRICS_TOOLS);
+      debug("METRICS tools:", Object.keys(filteredMetricsTools));
+      const metricsTools = wrapToolsWithCallbacks(filteredMetricsTools, config.onToolCall, "metrics");
 
       const agent = createMetricsAgent({
         model: config.model,
@@ -445,10 +595,17 @@ export function buildMetricsStep(config: WorkflowConfig) {
       });
 
       const { anomalyContext } = inputData;
+      const timeWindowHint = buildTimeWindowHint(anomalyContext.summary, anomalyContext.userMessage);
+      const { metricsHint } = buildServiceContextHint(config.services, anomalyContext.serviceName);
+
+      // Pass raw user message as "Known issue" (not the detailed anomaly analysis).
+      // If we pass the analysis, the model thinks it already has the answer and skips tool calls.
       const prompt = [
         anomalyContext.prefetchContext.datasourceHints,
+        timeWindowHint,
         anomalyContext.prefetchContext.panelQueryHints,
-        `Anomaly: ${anomalyContext.summary}`,
+        metricsHint,
+        `Known issue: ${anomalyContext.userMessage}`,
         anomalyContext.serviceName ? `Service: ${anomalyContext.serviceName}` : "",
         inputData.metricFocus?.length
           ? `Focus areas: ${inputData.metricFocus.join(", ")}`
@@ -484,8 +641,8 @@ export function buildMetricsStep(config: WorkflowConfig) {
             }
           },
         });
-      } catch {
-        // Fall through
+      } catch (err) {
+        debug("METRICS agent.generate error:", err);
       }
 
       let metricsText = agentResult.text;
@@ -530,11 +687,13 @@ export function buildLogsStep(config: WorkflowConfig) {
     outputSchema: EvidenceOutputSchema,
     execute: async ({ inputData }) => {
       debug("LOGS step entered, keys:", Object.keys(inputData));
-      config.onPhase?.("Analyzing logs");
+      config.onPhase?.("Analyzing metrics, logs & infrastructure");
       config.onIteration?.("logs", 3, 6, "Analyzing logs");
 
       const rawLogsTools = await getToolsByRole(config.providers, "logs").catch(() => ({}));
-      const logsTools = wrapToolsWithCallbacks(rawLogsTools, config.onToolCall);
+      const filteredLogsTools = selectToolsBySuffix(rawLogsTools, LOGS_TOOLS);
+      debug("LOGS tools:", Object.keys(filteredLogsTools));
+      const logsTools = wrapToolsWithCallbacks(filteredLogsTools, config.onToolCall, "logs");
 
       const agent = createLogsAgent({
         model: config.model,
@@ -544,15 +703,19 @@ export function buildLogsStep(config: WorkflowConfig) {
 
       const { anomalyContext } = inputData;
       const { prefetchContext } = anomalyContext;
+      const timeWindowHint = buildTimeWindowHint(anomalyContext.summary, anomalyContext.userMessage);
+      const { logLabelsHint } = buildServiceContextHint(config.services, anomalyContext.serviceName);
       const selectorHint = prefetchContext.workingLogSelectors.length > 0
-        ? `VALIDATED LOG SELECTOR: ${prefetchContext.workingLogSelectors[0]}`
+        ? `VALIDATED LOG SELECTOR (pre-tested, returns real logs — use this as your primary selector):\n  ${prefetchContext.workingLogSelectors[0]}\nThe configured logLabels may NOT return results. Use the validated selector above as your FIRST query.`
         : "";
 
       const prompt = [
         prefetchContext.datasourceHints,
+        timeWindowHint,
         prefetchContext.logLabelHints,
+        logLabelsHint,
         selectorHint,
-        `Anomaly: ${anomalyContext.summary}`,
+        `Known issue: ${anomalyContext.userMessage}`,
         anomalyContext.serviceName ? `Service: ${anomalyContext.serviceName}` : "",
         inputData.logFocus?.length
           ? `Focus areas: ${inputData.logFocus.join(", ")}`
@@ -588,8 +751,8 @@ export function buildLogsStep(config: WorkflowConfig) {
             }
           },
         });
-      } catch {
-        // Fall through
+      } catch (err) {
+        debug("LOGS agent.generate error:", err);
       }
 
       let logsText = agentResult.text;
@@ -599,7 +762,7 @@ export function buildLogsStep(config: WorkflowConfig) {
         const extractor = new ExtractAgent({
           name: "logs-extractor",
           id: "logs-extractor",
-          instructions: 'Extract structured data from investigation results. Return ONLY valid JSON: {"summary": "string", "observations": [{"pattern": "string", "count": "number", "firstSeen": "string", "lastSeen": "string"}]}',
+          instructions: 'Extract structured data from investigation results. Return ONLY valid JSON: {"summary": "string", "observations": [{"pattern": "string", "count": "string", "firstSeen": "string", "lastSeen": "string", "sample": "string", "sampleLines": ["string"]}]}',
           model: config.model as any,
         });
         try {
@@ -633,12 +796,13 @@ export function buildInfraStep(config: WorkflowConfig) {
     outputSchema: EvidenceOutputSchema,
     execute: async ({ inputData }) => {
       debug("INFRA step entered, keys:", Object.keys(inputData));
-      config.onPhase?.("Checking infrastructure");
+      config.onPhase?.("Analyzing metrics, logs & infrastructure");
       config.onIteration?.("infra", 4, 6, "Checking infrastructure");
 
-      const rawInfraMetricsTools = await getToolsByRole(config.providers, "metrics").catch(() => ({}));
-      const rawInfraDashboardTools = await getToolsByRole(config.providers, "dashboards").catch(() => ({}));
-      const infraTools = wrapToolsWithCallbacks({ ...rawInfraMetricsTools, ...rawInfraDashboardTools }, config.onToolCall);
+      const rawInfraTools = await getToolsByRole(config.providers, "metrics").catch(() => ({}));
+      const filteredInfraTools = selectToolsBySuffix(rawInfraTools, INFRA_TOOLS);
+      debug("INFRA tools:", Object.keys(filteredInfraTools));
+      const infraTools = wrapToolsWithCallbacks(filteredInfraTools, config.onToolCall, "infra");
 
       const agent = createInfraAgent({
         model: config.model,
@@ -647,10 +811,13 @@ export function buildInfraStep(config: WorkflowConfig) {
       });
 
       const { anomalyContext } = inputData;
+      const timeWindowHint = buildTimeWindowHint(anomalyContext.summary, anomalyContext.userMessage);
+
       const prompt = [
         anomalyContext.prefetchContext.datasourceHints,
+        timeWindowHint,
         anomalyContext.prefetchContext.panelQueryHints,
-        `Anomaly: ${anomalyContext.summary}`,
+        `Known issue: ${anomalyContext.userMessage}`,
         anomalyContext.serviceName ? `Service: ${anomalyContext.serviceName}` : "",
         inputData.infraFocus?.length
           ? `Focus areas: ${inputData.infraFocus.join(", ")}`
@@ -686,8 +853,8 @@ export function buildInfraStep(config: WorkflowConfig) {
             }
           },
         });
-      } catch {
-        // Fall through
+      } catch (err) {
+        debug("INFRA agent.generate error:", err);
       }
 
       let infraText = agentResult.text;
@@ -796,8 +963,14 @@ export function buildSynthesisStep(config: WorkflowConfig) {
 
       let severity: "low" | "medium" | "high" | "critical" = "medium";
       let summary = "Investigation complete";
+      let impact = { duration: "Unknown", description: "" };
       let rootCause = "Unable to determine";
       let trigger = "Unknown";
+      let contributingFactors: string[] = [];
+      let timelineEvents: Array<{ time: string; event: string }> = [];
+      let evidence = { metrics: [] as string[], logs: [] as string[], infra: [] as string[] };
+      let dashboardLinks: string[] = [];
+      let recommendedActions: string[] = [];
       let confidence: "low" | "medium" | "high" = "low";
       let confidenceScore = 0.5;
 
@@ -810,7 +983,7 @@ export function buildSynthesisStep(config: WorkflowConfig) {
         const extractor = new ExtractAgent({
           name: "synthesis-extractor",
           id: "synthesis-extractor",
-          instructions: 'You are a root cause analysis summarizer. Given investigation evidence, produce a JSON summary. Return ONLY valid JSON: {"severity": "low"|"medium"|"high"|"critical", "summary": "string", "rootCause": "string", "trigger": "string", "confidence": "low"|"medium"|"high", "confidenceScore": number}',
+          instructions: 'You are a root cause analysis summarizer. Given investigation evidence, produce a JSON summary. Return ONLY valid JSON: {"severity": "low"|"medium"|"high"|"critical", "summary": "string", "impact": {"duration": "string", "description": "string"}, "rootCause": "string", "trigger": "string", "contributingFactors": ["string"], "timeline": [{"time": "string", "event": "string"}], "evidence": {"metrics": ["string"], "logs": ["string"], "infra": ["string"]}, "dashboardLinks": ["string"], "recommendedActions": ["string"], "confidence": "low"|"medium"|"high", "confidenceScore": number}',
           model: config.model as any,
         });
         try {
@@ -822,8 +995,14 @@ export function buildSynthesisStep(config: WorkflowConfig) {
       if (synthesisParsed) {
         severity = synthesisParsed.severity ?? severity;
         summary = synthesisParsed.summary ?? summary;
+        if (synthesisParsed.impact) impact = synthesisParsed.impact;
         rootCause = synthesisParsed.rootCause ?? rootCause;
         trigger = synthesisParsed.trigger ?? trigger;
+        contributingFactors = synthesisParsed.contributingFactors ?? contributingFactors;
+        timelineEvents = synthesisParsed.timeline ?? timelineEvents;
+        if (synthesisParsed.evidence) evidence = synthesisParsed.evidence;
+        dashboardLinks = synthesisParsed.dashboardLinks ?? dashboardLinks;
+        recommendedActions = synthesisParsed.recommendedActions ?? recommendedActions;
         confidence = synthesisParsed.confidence ?? confidence;
         confidenceScore = synthesisParsed.confidenceScore ?? confidenceScore;
       }
@@ -837,20 +1016,19 @@ export function buildSynthesisStep(config: WorkflowConfig) {
       );
       if (correctedSeverity) severity = correctedSeverity;
 
-      // TODO: Run quality eval when src/evals/investigation-quality.ts is created
-      // try {
-      //   const { runInvestigationQualityEval } = await import("../evals/investigation-quality.js");
-      //   await runInvestigationQualityEval({ ... });
-      // } catch { /* eval not yet available */ }
-
       return {
         severity,
         summary,
+        impact,
         rootCause,
         trigger,
+        contributingFactors,
+        timeline: timelineEvents,
+        evidence,
+        dashboardLinks,
+        recommendedActions,
         confidence,
         confidenceScore,
-        timeline: timeline || undefined,
       };
     },
   });
@@ -892,8 +1070,14 @@ function buildPostSynthesisStep(config: WorkflowConfig) {
       return {
         severity: inputData.severity,
         summary: inputData.summary,
+        impact: inputData.impact,
         rootCause: inputData.rootCause,
         trigger: inputData.trigger,
+        contributingFactors: inputData.contributingFactors,
+        timeline: inputData.timeline,
+        evidence: inputData.evidence,
+        dashboardLinks: inputData.dashboardLinks,
+        recommendedActions: inputData.recommendedActions,
         confidence: inputData.confidence,
         confidenceScore: inputData.confidenceScore,
         savedToHistory,
