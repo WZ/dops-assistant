@@ -132,6 +132,7 @@ export function buildAnomalyStep(config: WorkflowConfig) {
         prefetchContext,
         userMessage: inputData.userMessage,
         serviceName: inputData.serviceName,
+        skillContext: inputData.skillContext,
       };
     },
   });

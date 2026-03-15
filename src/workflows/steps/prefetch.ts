@@ -34,7 +34,7 @@ export function extractQueryKeywords(userMessage?: string, anomalySummary?: stri
 
 // ── executePrefetch ────────────────────────────────────────────────────────────
 
-import type { MastraProvider } from "../../mcp/provider.js";
+import { listProviderTools, type MastraProvider } from "../../mcp/provider.js";
 import type { ServiceConfig } from "../../config/schema.js";
 import type { PrefetchedContext } from "../../types/workflow-state.js";
 import type { Tool } from "@mastra/core/tools";
@@ -121,7 +121,7 @@ export async function executePrefetch(
   const toolMaps = await Promise.all(
     providers.map(async (p) => {
       try {
-        return { provider: p, tools: await p.client.listTools() };
+        return { provider: p, tools: await listProviderTools(p) };
       } catch {
         return { provider: p, tools: {} as Record<string, Tool> };
       }
