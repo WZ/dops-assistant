@@ -145,8 +145,8 @@ const SynthesisOutputSchema = z.object({
     metrics: EvidenceOutputSchema,
     logs: EvidenceOutputSchema,
     infra: EvidenceOutputSchema,
-  }),
-  planningContext: PlanningOutputSchema,
+  }).optional(),
+  planningContext: PlanningOutputSchema.optional(),
 });
 
 const PostSynthesisOutputSchema = z.object({
@@ -240,9 +240,12 @@ function buildAnomalyStep(config: WorkflowConfig) {
               config.onIteration?.("anomaly", anomalyIterationCount, 10, `Step ${anomalyIterationCount}`);
               if (step.toolResults?.length) {
                 for (const tr of step.toolResults) {
-                  const toolName = tr.toolName ?? tr.name ?? tr.tool ?? "unknown";
-                  const toolArgs = tr.args ?? tr.input ?? {};
-                  const rawResult = tr.result ?? tr.output ?? tr.content ?? "";
+                  // Mastra wraps tool results: { payload: { toolName, args, result: { content: [{text}] } } }
+                  const payload = tr.payload ?? tr;
+                  const toolName = payload.toolName ?? payload.name ?? tr.toolName ?? "unknown";
+                  const toolArgs = payload.args ?? payload.input ?? tr.args ?? {};
+                  const nestedContent = payload.result?.content?.[0]?.text;
+                  const rawResult = nestedContent ?? payload.result ?? tr.result ?? tr.output ?? "";
                   const resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
                   const truncated = resultStr.length > 2000 ? resultStr.slice(0, 2000) + "..." : resultStr;
                   anomalyToolData.push(`Tool: ${toolName}\nResult: ${truncated}`);
@@ -422,9 +425,12 @@ export function buildMetricsStep(config: WorkflowConfig) {
               config.onIteration?.("metrics", metricsIterationCount, 10, `Step ${metricsIterationCount}`);
               if (step.toolResults?.length) {
                 for (const tr of step.toolResults) {
-                  const toolName = tr.toolName ?? tr.name ?? tr.tool ?? "unknown";
-                  const toolArgs = tr.args ?? tr.input ?? {};
-                  const rawResult = tr.result ?? tr.output ?? tr.content ?? "";
+                  // Mastra wraps tool results: { payload: { toolName, args, result: { content: [{text}] } } }
+                  const payload = tr.payload ?? tr;
+                  const toolName = payload.toolName ?? payload.name ?? tr.toolName ?? "unknown";
+                  const toolArgs = payload.args ?? payload.input ?? tr.args ?? {};
+                  const nestedContent = payload.result?.content?.[0]?.text;
+                  const rawResult = nestedContent ?? payload.result ?? tr.result ?? tr.output ?? "";
                   const resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
                   const truncated = resultStr.length > 2000 ? resultStr.slice(0, 2000) + "..." : resultStr;
                   metricsToolData.push(`Tool: ${toolName}\nResult: ${truncated}`);
@@ -523,9 +529,12 @@ export function buildLogsStep(config: WorkflowConfig) {
               config.onIteration?.("logs", logsIterationCount, 10, `Step ${logsIterationCount}`);
               if (step.toolResults?.length) {
                 for (const tr of step.toolResults) {
-                  const toolName = tr.toolName ?? tr.name ?? tr.tool ?? "unknown";
-                  const toolArgs = tr.args ?? tr.input ?? {};
-                  const rawResult = tr.result ?? tr.output ?? tr.content ?? "";
+                  // Mastra wraps tool results: { payload: { toolName, args, result: { content: [{text}] } } }
+                  const payload = tr.payload ?? tr;
+                  const toolName = payload.toolName ?? payload.name ?? tr.toolName ?? "unknown";
+                  const toolArgs = payload.args ?? payload.input ?? tr.args ?? {};
+                  const nestedContent = payload.result?.content?.[0]?.text;
+                  const rawResult = nestedContent ?? payload.result ?? tr.result ?? tr.output ?? "";
                   const resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
                   const truncated = resultStr.length > 2000 ? resultStr.slice(0, 2000) + "..." : resultStr;
                   logsToolData.push(`Tool: ${toolName}\nResult: ${truncated}`);
@@ -618,9 +627,12 @@ export function buildInfraStep(config: WorkflowConfig) {
               config.onIteration?.("infra", infraIterationCount, 10, `Step ${infraIterationCount}`);
               if (step.toolResults?.length) {
                 for (const tr of step.toolResults) {
-                  const toolName = tr.toolName ?? tr.name ?? tr.tool ?? "unknown";
-                  const toolArgs = tr.args ?? tr.input ?? {};
-                  const rawResult = tr.result ?? tr.output ?? tr.content ?? "";
+                  // Mastra wraps tool results: { payload: { toolName, args, result: { content: [{text}] } } }
+                  const payload = tr.payload ?? tr;
+                  const toolName = payload.toolName ?? payload.name ?? tr.toolName ?? "unknown";
+                  const toolArgs = payload.args ?? payload.input ?? tr.args ?? {};
+                  const nestedContent = payload.result?.content?.[0]?.text;
+                  const rawResult = nestedContent ?? payload.result ?? tr.result ?? tr.output ?? "";
                   const resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
                   const truncated = resultStr.length > 2000 ? resultStr.slice(0, 2000) + "..." : resultStr;
                   infraToolData.push(`Tool: ${toolName}\nResult: ${truncated}`);

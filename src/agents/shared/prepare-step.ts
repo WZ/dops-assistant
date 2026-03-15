@@ -51,11 +51,14 @@ export function createQuirkPrepareStep(config: QuirkPrepareStepConfig): PrepareS
 
   return function quirkPrepareStep(args: ProcessInputStepArgs): ProcessInputStepResult | undefined {
     const step = args.stepNumber; // 0-indexed
+    console.error(`[PREPARE_STEP] step=${step} maxSteps=${maxSteps} windDown=${windDownStartStep} args keys=${Object.keys(args)}`);
 
     // Wind-down phase: disable tools so the model produces a final answer
     if (step >= windDownStartStep) {
+      console.error(`[PREPARE_STEP] WIND-DOWN step=${step}, disabling tools`);
       return {
         tools: {},
+        activeTools: [],
         toolChoice: "none" as const,
       };
     }
