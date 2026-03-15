@@ -47,24 +47,46 @@ export interface WorkflowConfig {
  * Wrap each tool's execute function to emit onToolCall before/after invocation.
  * If no onToolCall callback is provided, tools are returned unchanged.
  */
+/**
+ * Coerce tool arguments to match expected schema types.
+ * LLMs often pass strings where arrays are expected (e.g., matches: "{...}" instead of ["{...}"]).
+ */
+function coerceToolArgs(args: Record<string, unknown>, toolSchema: any): Record<string, unknown> {
+  if (!toolSchema?.properties) return args;
+  const coerced = { ...args };
+  for (const [key, value] of Object.entries(coerced)) {
+    const prop = toolSchema.properties[key];
+    if (prop?.type === "array" && typeof value === "string") {
+      coerced[key] = [value]; // Wrap string in array
+    } else if (prop?.type === "number" && typeof value === "string") {
+      const num = Number(value);
+      if (!isNaN(num)) coerced[key] = num;
+    }
+  }
+  return coerced;
+}
+
 function wrapToolsWithCallbacks(
   tools: Record<string, any>,
   onToolCall?: WorkflowConfig["onToolCall"],
 ): Record<string, any> {
-  if (!onToolCall) return tools;
   const wrapped: Record<string, any> = {};
   for (const [name, tool] of Object.entries(tools)) {
     wrapped[name] = {
       ...tool,
-      execute: async (...args: any[]) => {
+      execute: async (...execArgs: any[]) => {
+        // Coerce args to match schema (fixes LLM type mismatches)
+        if (execArgs[0] && typeof execArgs[0] === "object" && tool.inputSchema) {
+          execArgs[0] = coerceToolArgs(execArgs[0], tool.inputSchema);
+        }
         const start = Date.now();
         try {
-          const result = await tool.execute(...args);
+          const result = await tool.execute(...execArgs);
           const resultStr = typeof result === "string" ? result : JSON.stringify(result);
-          onToolCall(name, args[0] ?? {}, resultStr, Date.now() - start);
+          onToolCall?.(name, execArgs[0] ?? {}, resultStr, Date.now() - start);
           return result;
         } catch (err) {
-          onToolCall(name, args[0] ?? {}, undefined, Date.now() - start, String(err));
+          onToolCall?.(name, execArgs[0] ?? {}, undefined, Date.now() - start, String(err));
           throw err;
         }
       },
@@ -810,12 +832,6 @@ export function buildSynthesisStep(config: WorkflowConfig) {
         confidence,
         confidenceScore,
         timeline: timeline || undefined,
-        evidenceSummary: {
-          metrics: metricsFindings,
-          logs: logsFindings,
-          infra: infraFindings,
-        },
-        planningContext: {} as any, // populated from parallel context in a real wiring
       };
     },
   });
