@@ -18,7 +18,7 @@ vi.mock("@mastra/mcp", () => {
   return { MCPClient };
 });
 
-import { createMcpProvider, getToolsByRole, getAllTools } from "./provider.js";
+import { createMcpProvider, getToolsByRole, getAllTools, listProviderTools } from "./provider.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -27,15 +27,15 @@ function makeTool(description = "a tool"): Tool {
   return { description } as unknown as Tool;
 }
 
-function httpConfig(name: string, roles: ProviderRole[]): ProviderConfig {
+function httpConfig(name: string, roles: ProviderRole[], enabledTools?: string[]): ProviderConfig {
   return {
     name,
     roles,
-    mcpServer: { transport: "http", url: "http://localhost:8080/mcp" },
+    mcpServer: { transport: "http", url: "http://localhost:8080/mcp", enabledTools },
   };
 }
 
-function stdioConfig(name: string, roles: ProviderRole[]): ProviderConfig {
+function stdioConfig(name: string, roles: ProviderRole[], enabledTools?: string[]): ProviderConfig {
   return {
     name,
     roles,
@@ -44,6 +44,7 @@ function stdioConfig(name: string, roles: ProviderRole[]): ProviderConfig {
       command: "npx",
       args: ["some-mcp-server"],
       env: { API_KEY: "test" },
+      enabledTools,
     },
   };
 }
@@ -104,6 +105,51 @@ describe("createMcpProvider", () => {
     expect(serverDef.args).toEqual(["some-mcp-server"]);
     expect(serverDef.env).toEqual({ API_KEY: "test" });
   });
+
+  it("preserves enabledTools on the provider wrapper", () => {
+    const provider = createMcpProvider(httpConfig("grafana", ["metrics"], ["query_prometheus"]));
+    expect(provider.enabledTools).toEqual(["query_prometheus"]);
+  });
+});
+
+describe("listProviderTools", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    constructorCalls.length = 0;
+  });
+
+  it("filters namespaced tools to the enabledTools allow-list", async () => {
+    const provider = createMcpProvider(httpConfig("grafana", ["metrics"], ["query_prometheus"]));
+    const queryTool = makeTool("query");
+    const imageTool = makeTool("image");
+
+    (provider.client.listTools as ReturnType<typeof vi.fn>).mockResolvedValue({
+      grafana_query_prometheus: queryTool,
+      grafana_get_panel_image: imageTool,
+    });
+
+    const result = await listProviderTools(provider);
+    expect(result).toEqual({
+      grafana_query_prometheus: queryTool,
+    });
+  });
+
+  it("returns all tools when no enabledTools filter is configured", async () => {
+    const provider = createMcpProvider(httpConfig("grafana", ["metrics"]));
+    const queryTool = makeTool("query");
+    const imageTool = makeTool("image");
+
+    (provider.client.listTools as ReturnType<typeof vi.fn>).mockResolvedValue({
+      grafana_query_prometheus: queryTool,
+      grafana_get_panel_image: imageTool,
+    });
+
+    const result = await listProviderTools(provider);
+    expect(result).toEqual({
+      grafana_query_prometheus: queryTool,
+      grafana_get_panel_image: imageTool,
+    });
+  });
 });
 
 describe("getToolsByRole", () => {
@@ -156,6 +202,22 @@ describe("getToolsByRole", () => {
     expect(result).toHaveProperty("tool_a");
     expect(result).toHaveProperty("tool_b");
   });
+
+  it("respects enabledTools when merging role-matched providers", async () => {
+    const provider = createMcpProvider(httpConfig("grafana", ["metrics"], ["query_prometheus"]));
+    const queryTool = makeTool("query");
+    const imageTool = makeTool("image");
+
+    (provider.client.listTools as ReturnType<typeof vi.fn>).mockResolvedValue({
+      grafana_query_prometheus: queryTool,
+      grafana_get_panel_image: imageTool,
+    });
+
+    const result = await getToolsByRole([provider], "metrics");
+    expect(result).toEqual({
+      grafana_query_prometheus: queryTool,
+    });
+  });
 });
 
 describe("getAllTools", () => {
@@ -200,5 +262,21 @@ describe("getAllTools", () => {
 
     const result = await getAllTools([grafana]);
     expect(Object.keys(result)).toHaveLength(2);
+  });
+
+  it("filters getAllTools to enabledTools when configured", async () => {
+    const provider = createMcpProvider(httpConfig("grafana", ["metrics", "dashboards"], ["query_prometheus"]));
+    const queryTool = makeTool("tool-a");
+    const imageTool = makeTool("tool-b");
+
+    (provider.client.listTools as ReturnType<typeof vi.fn>).mockResolvedValue({
+      grafana_query_prometheus: queryTool,
+      grafana_get_panel_image: imageTool,
+    });
+
+    const result = await getAllTools([provider]);
+    expect(result).toEqual({
+      grafana_query_prometheus: queryTool,
+    });
   });
 });

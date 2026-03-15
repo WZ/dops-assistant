@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && npm run build:web",
     "start": "node dist/server/index.js",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
