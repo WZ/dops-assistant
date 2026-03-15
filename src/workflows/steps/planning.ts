@@ -8,7 +8,7 @@
 import { createStep } from "@mastra/core/workflows";
 import type { WorkflowConfig } from "../investigation.js";
 import { AnomalyOutputSchema, PlanningOutputSchema } from "../schemas.js";
-import { getRecentIncidents, formatIncidentHistory } from "../../history/store.js";
+import { getRecentIncidents, formatIncidentHistory } from "../history.js";
 import { debug } from "../tool-utils.js";
 import { safeJsonParse } from "../../agents/shared/processors.js";
 import { createPlannerAgent } from "../../agents/planner.js";

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import type { PhaseStats } from "../../shared/ws-types.js";
+import type { PhaseStats } from "../../types/ws-types.js";
 import type { TimelineEvent } from "./ActivityTimeline";
 
 export type PhaseStatus = "pending" | "running" | "complete" | "failed";

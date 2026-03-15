@@ -4,7 +4,7 @@ import { renderInline } from "../lib/renderInline";
 import { renderMarkdown } from "../lib/renderMarkdown";
 import { MetricChart, type TimeSeriesData } from "./MetricChart";
 import type { useWebSocket } from "../hooks/useWebSocket";
-import type { ChartSeries } from "../../shared/ws-types.js";
+import type { ChartSeries } from "../../types/ws-types.js";
 
 interface RcaReportSummary {
   rootCause: string;

@@ -36,7 +36,7 @@ async function main(): Promise<void> {
     import("./memory/conversation.js"),
     import("./interfaces/cli/App.js"),
     import("./mcp/provider.js"),
-    import("./server/mastra-adapter.js"),
+    import("./server/agents.js"),
     import("./mastra/index.js"),
   ]);
 

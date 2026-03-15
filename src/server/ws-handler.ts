@@ -8,7 +8,7 @@ import type { IntentRouter } from "../agents/intent.js";
 import { resolveServiceFromHistory } from "../agents/intent.js";
 import type { ConversationMemory } from "../memory/conversation.js";
 import type { ServiceConfig } from "../config/schema.js";
-import type { ClientMessage, ServerMessage, PhaseStats, ChartSeries } from "../shared/ws-types.js";
+import type { ClientMessage, ServerMessage, PhaseStats, ChartSeries } from "../types/ws-types.js";
 import type { SkillStore } from "../skills/store.js";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });

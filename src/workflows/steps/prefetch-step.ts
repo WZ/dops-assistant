@@ -8,7 +8,7 @@
 import { createStep } from "@mastra/core/workflows";
 import type { WorkflowConfig } from "../investigation.js";
 import { WorkflowInputSchema, PrefetchOutputSchema } from "../schemas.js";
-import { executePrefetch } from "../prefetch.js";
+import { executePrefetch } from "./prefetch.js";
 import { debug } from "../tool-utils.js";
 
 /**
