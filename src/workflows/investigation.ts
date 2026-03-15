@@ -51,16 +51,35 @@ export interface WorkflowConfig {
  * Coerce tool arguments to match expected schema types.
  * LLMs often pass strings where arrays are expected (e.g., matches: "{...}" instead of ["{...}"]).
  */
+/**
+ * Convert Grafana-style relative time ("now", "now-1h", "now-7d") to RFC3339.
+ */
+function resolveGrafanaTime(value: string): string {
+  const now = Date.now();
+  if (value === "now") return new Date(now).toISOString();
+  const m = value.match(/^now-(\d+)([smhdw])$/);
+  if (!m) return value; // already RFC3339 or unknown format
+  const [, amt, unit] = m;
+  const multipliers: Record<string, number> = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000, w: 604_800_000 };
+  return new Date(now - Number(amt) * (multipliers[unit!] ?? 0)).toISOString();
+}
+
 function coerceToolArgs(args: Record<string, unknown>, toolSchema: any): Record<string, unknown> {
   if (!toolSchema?.properties) return args;
   const coerced = { ...args };
   for (const [key, value] of Object.entries(coerced)) {
     const prop = toolSchema.properties[key];
     if (prop?.type === "array" && typeof value === "string") {
-      coerced[key] = [value]; // Wrap string in array
+      coerced[key] = [value];
     } else if (prop?.type === "number" && typeof value === "string") {
       const num = Number(value);
       if (!isNaN(num)) coerced[key] = num;
+    }
+    // Convert "now", "now-1h" etc. to RFC3339 for time fields
+    if (typeof value === "string" && /^now(?:-\d+[smhdw])?$/.test(value) &&
+        (key.toLowerCase().includes("time") || key.toLowerCase().includes("rfc3339") ||
+         key.toLowerCase().includes("start") || key.toLowerCase().includes("end"))) {
+      coerced[key] = resolveGrafanaTime(value);
     }
   }
   return coerced;
@@ -271,7 +290,7 @@ function buildAnomalyStep(config: WorkflowConfig) {
                   const resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
                   const truncated = resultStr.length > 2000 ? resultStr.slice(0, 2000) + "..." : resultStr;
                   anomalyToolData.push(`Tool: ${toolName}\nResult: ${truncated}`);
-                  config.onToolCall?.(toolName, toolArgs, resultStr, undefined);
+                  // Tool call already emitted by wrapToolsWithCallbacks — don't double-emit
                 }
               }
               if (step.text) anomalyToolData.push(`Model: ${step.text}`);
@@ -456,7 +475,7 @@ export function buildMetricsStep(config: WorkflowConfig) {
                   const resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
                   const truncated = resultStr.length > 2000 ? resultStr.slice(0, 2000) + "..." : resultStr;
                   metricsToolData.push(`Tool: ${toolName}\nResult: ${truncated}`);
-                  config.onToolCall?.(toolName, toolArgs, resultStr, undefined);
+                  // Tool call already emitted by wrapToolsWithCallbacks — don't double-emit
                 }
               }
               if (step.text) metricsToolData.push(`Model: ${step.text}`);
@@ -560,7 +579,7 @@ export function buildLogsStep(config: WorkflowConfig) {
                   const resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
                   const truncated = resultStr.length > 2000 ? resultStr.slice(0, 2000) + "..." : resultStr;
                   logsToolData.push(`Tool: ${toolName}\nResult: ${truncated}`);
-                  config.onToolCall?.(toolName, toolArgs, resultStr, undefined);
+                  // Tool call already emitted by wrapToolsWithCallbacks — don't double-emit
                 }
               }
               if (step.text) logsToolData.push(`Model: ${step.text}`);
@@ -658,7 +677,7 @@ export function buildInfraStep(config: WorkflowConfig) {
                   const resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
                   const truncated = resultStr.length > 2000 ? resultStr.slice(0, 2000) + "..." : resultStr;
                   infraToolData.push(`Tool: ${toolName}\nResult: ${truncated}`);
-                  config.onToolCall?.(toolName, toolArgs, resultStr, undefined);
+                  // Tool call already emitted by wrapToolsWithCallbacks — don't double-emit
                 }
               }
               if (step.text) infraToolData.push(`Model: ${step.text}`);
