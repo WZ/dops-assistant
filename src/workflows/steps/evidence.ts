@@ -1,0 +1,277 @@
+/**
+ * Shared evidence step builder for the investigation workflow.
+ *
+ * All three evidence phases (metrics, logs, infra) follow the same pattern:
+ *   1. Get tools by role → filter by suffix → wrap with callbacks
+ *   2. Create specialized agent
+ *   3. Build prompt from anomaly context
+ *   4. Run agent.generate() with onStepFinish to collect tool data
+ *   5. If agent text is empty, create fallback extractor agent
+ *   6. Parse JSON with safeJsonParse
+ *   7. Return findings or empty fallback
+ *
+ * The only differences per phase are captured in EvidenceStepConfig.
+ */
+
+import { createStep } from "@mastra/core/workflows";
+import type { WorkflowConfig } from "../investigation.js";
+import { getToolsByRole } from "../../mcp/provider.js";
+import type { ProviderRole } from "../../config/schema.js";
+import {
+  selectToolsBySuffix,
+  wrapToolsWithCallbacks,
+  buildTimeWindowHint,
+  buildServiceContextHint,
+  debug,
+  METRICS_TOOLS,
+  LOGS_TOOLS,
+  INFRA_TOOLS,
+} from "../tool-utils.js";
+import { PlanningOutputSchema, EvidenceOutputSchema } from "../schemas.js";
+import { safeJsonParse } from "../../agents/shared/processors.js";
+import { createMetricsAgent } from "../../agents/metrics.js";
+import { createLogsAgent } from "../../agents/logs.js";
+import { createInfraAgent } from "../../agents/infra.js";
+
+// ── EvidenceStepConfig ────────────────────────────────────────────────────────
+
+interface EvidenceStepConfig {
+  /** Mastra step ID, e.g. "metrics-evidence" */
+  id: string;
+  /** Human-readable phase name used in onIteration callbacks, e.g. "metrics" */
+  phaseName: string;
+  /** Iteration number emitted at the start of this step (2=metrics, 3=logs, 4=infra) */
+  iterationStart: number;
+  /** MCP provider role to fetch tools from, e.g. "metrics" or "logs" */
+  toolRole: ProviderRole;
+  /** Tool name suffixes to filter from the provider tool set */
+  toolAllowlist: string[];
+  /** Factory that creates the specialized agent for this phase */
+  createAgent: (opts: { model: any; tools: Record<string, any>; useQuirkHandling?: boolean }) => any;
+  /** Build the prompt string from the planning step's inputData */
+  buildPrompt: (inputData: any, config: WorkflowConfig) => string;
+  /** JSON schema hint for the fallback extractor agent instructions */
+  extractorSchema: string;
+  /** Summary string to use when analysis is unavailable */
+  fallbackMessage: string;
+}
+
+// ── Shared factory ────────────────────────────────────────────────────────────
+
+/**
+ * Create a Mastra evidence step from a config object.
+ * Contains all the boilerplate shared across metrics/logs/infra steps.
+ */
+function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceStepConfig) {
+  const {
+    id,
+    phaseName,
+    iterationStart,
+    toolRole,
+    toolAllowlist,
+    createAgent,
+    buildPrompt,
+    extractorSchema,
+    fallbackMessage,
+  } = stepConfig;
+
+  return createStep({
+    id,
+    description: `Evidence gathering phase: ${phaseName}`,
+    inputSchema: PlanningOutputSchema,
+    outputSchema: EvidenceOutputSchema,
+    execute: async ({ inputData }) => {
+      debug(`${phaseName.toUpperCase()} step entered, keys:`, Object.keys(inputData));
+      workflowConfig.onPhase?.("Analyzing metrics, logs & infrastructure");
+      workflowConfig.onIteration?.(phaseName, iterationStart, 6, `Analyzing ${phaseName}`);
+
+      // 1. Get tools by role → filter by suffix → wrap with callbacks
+      const rawTools = await getToolsByRole(workflowConfig.providers, toolRole).catch(() => ({}));
+      const filteredTools = selectToolsBySuffix(rawTools, toolAllowlist);
+      debug(`${phaseName.toUpperCase()} tools:`, Object.keys(filteredTools));
+      const tools = wrapToolsWithCallbacks(filteredTools, workflowConfig.onToolCall, phaseName);
+
+      // 2. Create specialized agent
+      const agent = createAgent({
+        model: workflowConfig.model,
+        tools,
+        useQuirkHandling: workflowConfig.useQuirkHandling,
+      });
+
+      // 3. Build prompt
+      const prompt = buildPrompt(inputData, workflowConfig);
+
+      // 4. Run agent.generate() with onStepFinish to collect tool data
+      let agentResult: { text: string } = { text: "" };
+      const toolData: string[] = [];
+      let iterationCount = 0;
+      try {
+        agentResult = await agent.generate(prompt, {
+          onStepFinish: (step: any) => {
+            try {
+              iterationCount++;
+              workflowConfig.onIteration?.(phaseName, iterationCount, 10, `Step ${iterationCount}`);
+              if (step.toolResults?.length) {
+                for (const tr of step.toolResults) {
+                  // Mastra wraps tool results: { payload: { toolName, args, result: { content: [{text}] } } }
+                  const payload = tr.payload ?? tr;
+                  const toolName = payload.toolName ?? payload.name ?? tr.toolName ?? "unknown";
+                  const nestedContent = payload.result?.content?.[0]?.text;
+                  const rawResult = nestedContent ?? payload.result ?? tr.result ?? tr.output ?? "";
+                  const resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
+                  const truncated = resultStr.length > 2000 ? resultStr.slice(0, 2000) + "..." : resultStr;
+                  toolData.push(`Tool: ${toolName}\nResult: ${truncated}`);
+                  // Tool call already emitted by wrapToolsWithCallbacks — don't double-emit
+                }
+              }
+              if (step.text) toolData.push(`Model: ${step.text}`);
+            } catch (err) {
+              debug(`${phaseName.toUpperCase()} onStepFinish error:`, err);
+            }
+          },
+        });
+      } catch (err) {
+        debug(`${phaseName.toUpperCase()} agent.generate error:`, err);
+      }
+
+      // 5. If agent text is empty, create fallback extractor agent
+      let agentText = agentResult.text;
+      if (!agentText?.trim() && toolData.length > 0) {
+        debug(`${phaseName.toUpperCase()}: empty text, extracting from`, toolData.length, "captured tool results");
+        const { Agent: ExtractAgent } = await import("@mastra/core/agent");
+        const extractor = new ExtractAgent({
+          name: `${phaseName}-extractor`,
+          id: `${phaseName}-extractor`,
+          instructions: `Extract structured data from investigation results. Return ONLY valid JSON: ${extractorSchema}`,
+          model: workflowConfig.model as any,
+        });
+        try {
+          const extraction = await extractor.generate(toolData.join("\n\n"));
+          agentText = extraction.text ?? "";
+        } catch { /* keep empty */ }
+      }
+
+      // 6. Parse JSON with safeJsonParse
+      debug(`${phaseName.toUpperCase()} text to parse (first 500):`, agentText?.slice(0, 500));
+      const parsed = safeJsonParse(agentText);
+      debug(`${phaseName.toUpperCase()} parsed:`, parsed ? "OK" : "FAILED");
+
+      // 7. Return findings or empty fallback
+      if (parsed) {
+        return {
+          summary: parsed.summary ?? fallbackMessage,
+          observations: parsed.observations ?? [],
+          ...(parsed.anomalyWindow !== undefined ? { anomalyWindow: parsed.anomalyWindow } : {}),
+        };
+      }
+      return { summary: fallbackMessage, observations: [] };
+    },
+  });
+}
+
+// ── Specific step builders ────────────────────────────────────────────────────
+
+/**
+ * Build a metrics evidence step.
+ * Exported for testing.
+ */
+export function buildMetricsStep(config: WorkflowConfig) {
+  return buildEvidenceStep(config, {
+    id: "metrics-evidence",
+    phaseName: "metrics",
+    iterationStart: 2,
+    toolRole: "metrics",
+    toolAllowlist: METRICS_TOOLS,
+    createAgent: createMetricsAgent,
+    buildPrompt: (inputData, workflowConfig) => {
+      const { anomalyContext } = inputData;
+      const timeWindowHint = buildTimeWindowHint(anomalyContext.summary, anomalyContext.userMessage);
+      const { metricsHint } = buildServiceContextHint(workflowConfig.services, anomalyContext.serviceName);
+
+      return [
+        anomalyContext.prefetchContext.datasourceHints,
+        timeWindowHint,
+        anomalyContext.prefetchContext.panelQueryHints,
+        metricsHint,
+        `Known issue: ${anomalyContext.userMessage}`,
+        anomalyContext.serviceName ? `Service: ${anomalyContext.serviceName}` : "",
+        inputData.metricFocus?.length
+          ? `Focus areas: ${inputData.metricFocus.join(", ")}`
+          : "",
+      ].filter(Boolean).join("\n");
+    },
+    extractorSchema: '{"summary": "string", "observations": [{"metric": "string", "currentValue": "string", "baselineValue": "string", "severity": "string"}]}',
+    fallbackMessage: "Metrics analysis unavailable",
+  });
+}
+
+/**
+ * Build a logs evidence step.
+ * Exported for testing.
+ */
+export function buildLogsStep(config: WorkflowConfig) {
+  return buildEvidenceStep(config, {
+    id: "logs-evidence",
+    phaseName: "logs",
+    iterationStart: 3,
+    toolRole: "logs",
+    toolAllowlist: LOGS_TOOLS,
+    createAgent: createLogsAgent,
+    buildPrompt: (inputData, workflowConfig) => {
+      const { anomalyContext } = inputData;
+      const { prefetchContext } = anomalyContext;
+      const timeWindowHint = buildTimeWindowHint(anomalyContext.summary, anomalyContext.userMessage);
+      const { logLabelsHint } = buildServiceContextHint(workflowConfig.services, anomalyContext.serviceName);
+      const selectorHint = prefetchContext.workingLogSelectors.length > 0
+        ? `VALIDATED LOG SELECTOR (pre-tested, returns real logs — use this as your primary selector):\n  ${prefetchContext.workingLogSelectors[0]}\nThe configured logLabels may NOT return results. Use the validated selector above as your FIRST query.`
+        : "";
+
+      return [
+        prefetchContext.datasourceHints,
+        timeWindowHint,
+        prefetchContext.logLabelHints,
+        logLabelsHint,
+        selectorHint,
+        `Known issue: ${anomalyContext.userMessage}`,
+        anomalyContext.serviceName ? `Service: ${anomalyContext.serviceName}` : "",
+        inputData.logFocus?.length
+          ? `Focus areas: ${inputData.logFocus.join(", ")}`
+          : "",
+      ].filter(Boolean).join("\n");
+    },
+    extractorSchema: '{"summary": "string", "observations": [{"pattern": "string", "count": "string", "firstSeen": "string", "lastSeen": "string", "sample": "string", "sampleLines": ["string"]}]}',
+    fallbackMessage: "Log analysis unavailable",
+  });
+}
+
+/**
+ * Build an infra evidence step.
+ * Exported for testing.
+ */
+export function buildInfraStep(config: WorkflowConfig) {
+  return buildEvidenceStep(config, {
+    id: "infra-evidence",
+    phaseName: "infra",
+    iterationStart: 4,
+    toolRole: "metrics",
+    toolAllowlist: INFRA_TOOLS,
+    createAgent: createInfraAgent,
+    buildPrompt: (inputData, workflowConfig) => {
+      const { anomalyContext } = inputData;
+      const timeWindowHint = buildTimeWindowHint(anomalyContext.summary, anomalyContext.userMessage);
+
+      return [
+        anomalyContext.prefetchContext.datasourceHints,
+        timeWindowHint,
+        anomalyContext.prefetchContext.panelQueryHints,
+        `Known issue: ${anomalyContext.userMessage}`,
+        anomalyContext.serviceName ? `Service: ${anomalyContext.serviceName}` : "",
+        inputData.infraFocus?.length
+          ? `Focus areas: ${inputData.infraFocus.join(", ")}`
+          : "",
+      ].filter(Boolean).join("\n");
+    },
+    extractorSchema: '{"summary": "string", "observations": [{"resource": "string", "status": "string", "detail": "string"}]}',
+    fallbackMessage: "Infrastructure analysis unavailable",
+  });
+}
