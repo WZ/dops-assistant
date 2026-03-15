@@ -336,4 +336,74 @@ describe("createMastraAdapters", () => {
       },
     }));
   });
+
+  const baseConfig = {
+    llm: { model: "gpt-4o", maxTokens: 4096, apiKey: "test-key" },
+    agent: { maxIterations: 10 },
+    services: [{ name: "svc", metrics: [], logLabels: {} }],
+  } as any;
+
+  it("passes projectRoot=process.cwd() when noHistory is omitted", async () => {
+    const { createInvestigationWorkflow } = await import("../workflows/investigation.js");
+    vi.mocked(createInvestigationWorkflow).mockClear();
+
+    const { investigationAgent } = await createMastraAdapters({ config: baseConfig, providers: [] });
+    await investigationAgent.investigate(
+      { name: "svc", metrics: [], logLabels: {} },
+      undefined,
+      undefined,
+      undefined,
+      "test",
+    );
+
+    expect(vi.mocked(createInvestigationWorkflow)).toHaveBeenCalledWith(
+      expect.objectContaining({ projectRoot: process.cwd() }),
+    );
+  });
+
+  it("passes projectRoot=undefined when noHistory is true", async () => {
+    const { createInvestigationWorkflow } = await import("../workflows/investigation.js");
+    vi.mocked(createInvestigationWorkflow).mockClear();
+
+    const { investigationAgent } = await createMastraAdapters({
+      config: baseConfig,
+      providers: [],
+      noHistory: true,
+    });
+
+    await investigationAgent.investigate(
+      { name: "svc", metrics: [], logLabels: {} },
+      undefined,
+      undefined,
+      undefined,
+      "test",
+    );
+
+    expect(vi.mocked(createInvestigationWorkflow)).toHaveBeenCalledWith(
+      expect.objectContaining({ projectRoot: undefined }),
+    );
+  });
+
+  it("passes projectRoot=process.cwd() when noHistory is false", async () => {
+    const { createInvestigationWorkflow } = await import("../workflows/investigation.js");
+    vi.mocked(createInvestigationWorkflow).mockClear();
+
+    const { investigationAgent } = await createMastraAdapters({
+      config: baseConfig,
+      providers: [],
+      noHistory: false,
+    });
+
+    await investigationAgent.investigate(
+      { name: "svc", metrics: [], logLabels: {} },
+      undefined,
+      undefined,
+      undefined,
+      "test",
+    );
+
+    expect(vi.mocked(createInvestigationWorkflow)).toHaveBeenCalledWith(
+      expect.objectContaining({ projectRoot: process.cwd() }),
+    );
+  });
 });
