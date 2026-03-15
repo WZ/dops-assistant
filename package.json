@@ -9,7 +9,7 @@
     "start": "node dist/server/index.js",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
-    "cli": "NODE_TLS_REJECT_UNAUTHORIZED=0 NODE_NO_WARNINGS=1 tsx src/cli.tsx",
+    "cli": "NODE_TLS_REJECT_UNAUTHORIZED=0 NODE_NO_WARNINGS=1 tsx src/cli/index.tsx",
     "investigate": "NODE_TLS_REJECT_UNAUTHORIZED=0 npx tsx dev/run-investigation.ts",
     "dev:web": "concurrently \"NODE_TLS_REJECT_UNAUTHORIZED=0 tsx watch src/server/index.ts\" \"vite --config vite.config.ts\"",
     "build:web": "vite build --config vite.config.ts",

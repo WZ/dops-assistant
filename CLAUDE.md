@@ -20,13 +20,13 @@ dops-assistant — an AI-powered DevOps assistant that integrates with Grafana v
 - **MCP**: `src/mcp/provider.ts` — role-based tool routing via `@mastra/mcp`
 - **Server adapter**: `src/server/agents.ts` — wraps Mastra agents into server/CLI interfaces
 - **Intent routing**: `src/agents/intent.ts` — classifies user messages (uses AI SDK `generateText`)
-- **CLI**: `src/cli.tsx` + `src/interfaces/cli/App.tsx` — Ink React terminal UI
+- **CLI**: `src/cli/` — Ink React terminal UI (entry: `index.tsx`, components: `App.tsx`, `Markdown.tsx`)
 - **Types**: `src/types/` — shared types (RCA report, agent interfaces, LLM types, WebSocket protocol)
 
 ## Dev Setup
 
 - **Config**: `dev/config.yaml` — symlink to `config.yaml` in project root (`ln -sf dev/config.yaml config.yaml`). The config file must exist at the project root for the server to start.
-- **Env vars**: `dev/.env` — contains `OPENAI_API_KEY` and other secrets. The web server (`src/server/index.ts`) auto-loads it via dotenv. The CLI (`src/cli.tsx`) also loads it via dotenv.
+- **Env vars**: `dev/.env` — contains `OPENAI_API_KEY` and other secrets. The web server (`src/server/index.ts`) auto-loads it via dotenv. The CLI (`src/cli/index.tsx`) also loads it via dotenv.
 - `docker-compose.dev.yml` — grafana-mcp with `-tls-skip-verify` for self-signed certs
 
 ## Commands

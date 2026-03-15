@@ -3,8 +3,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import { parseInline } from "./Markdown.js";
 import { formatRcaText, saveAndOpenImages } from "./App.js";
-import type { RcaReport } from "../../types/rca-types.js";
-import type { ImageAttachment } from "../../types/agent-types.js";
+import type { RcaReport } from "../types/rca-types.js";
+import type { ImageAttachment } from "../types/agent-types.js";
 import { writeFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 
