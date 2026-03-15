@@ -12,6 +12,15 @@
 import { createWorkflow, createStep } from "@mastra/core/workflows";
 import { z } from "zod";
 import type { LanguageModel } from "ai";
+import {
+  WorkflowInputSchema,
+  PrefetchOutputSchema,
+  AnomalyOutputSchema,
+  PlanningOutputSchema,
+  EvidenceOutputSchema,
+  SynthesisOutputSchema,
+  PostSynthesisOutputSchema,
+} from "./schemas.js";
 import type { MastraProvider } from "../mcp/provider.js";
 import type { ServiceConfig } from "../config/schema.js";
 import { getToolsByRole } from "../mcp/provider.js";
@@ -42,118 +51,6 @@ export interface WorkflowConfig {
   onIteration?: (phase: string, iteration: number, maxIterations: number, label: string) => void;
   onToolCall?: (name: string, args: Record<string, unknown>, result?: string, duration?: number, error?: string, phase?: string) => void;
 }
-
-// ── Zod schemas for step I/O ──────────────────────────────────────────────────
-
-const PrefetchedContextSchema = z.object({
-  datasourceHints: z.string(),
-  dashboardContext: z.string(),
-  panelQueryHints: z.string(),
-  logLabelHints: z.string(),
-  workingLogSelectors: z.array(z.string()),
-});
-
-const WorkflowInputSchema = z.object({
-  userMessage: z.string(),
-  alertName: z.string().optional(),
-  serviceName: z.string().optional(),
-});
-
-const PrefetchOutputSchema = PrefetchedContextSchema.extend({
-  userMessage: z.string(),
-  alertName: z.string().optional(),
-  serviceName: z.string().optional(),
-});
-
-const AnomalyOutputSchema = z.object({
-  isAnomaly: z.boolean(),
-  severity: z.enum(["low", "medium", "high", "critical"]).optional(),
-  summary: z.string(),
-  affectedServices: z.array(z.string()).optional(),
-  timeRangeFrom: z.string().optional(),
-  timeRangeTo: z.string().optional(),
-  // Pass through prefetch and input for downstream steps
-  prefetchContext: PrefetchedContextSchema,
-  userMessage: z.string(),
-  serviceName: z.string().optional(),
-});
-
-const PlanningOutputSchema = z.object({
-  hypotheses: z.array(z.object({
-    hypothesis: z.string(),
-    evidenceNeeded: z.string(),
-  })).optional(),
-  metricFocus: z.array(z.string()).optional(),
-  logFocus: z.array(z.string()).optional(),
-  infraFocus: z.array(z.string()).optional(),
-  // Pass through
-  anomalyContext: AnomalyOutputSchema,
-});
-
-const EvidenceOutputSchema = z.object({
-  summary: z.string(),
-  observations: z.array(z.unknown()).optional(),
-  // Generic evidence output from metrics/logs/infra agents
-});
-
-const ParallelEvidenceSchema = z.object({
-  metrics: EvidenceOutputSchema,
-  logs: EvidenceOutputSchema,
-  infra: EvidenceOutputSchema,
-  planningContext: PlanningOutputSchema,
-});
-
-const SynthesisOutputSchema = z.object({
-  severity: z.enum(["low", "medium", "high", "critical"]).default("medium"),
-  summary: z.string().default("Investigation complete"),
-  impact: z.object({
-    duration: z.string(),
-    description: z.string(),
-  }).default({ duration: "Unknown", description: "" }),
-  rootCause: z.string().default("Unable to determine"),
-  trigger: z.string().default("Unknown"),
-  contributingFactors: z.array(z.string()).default([]),
-  timeline: z.array(z.object({
-    time: z.string(),
-    event: z.string(),
-  })).default([]),
-  evidence: z.object({
-    metrics: z.array(z.string()),
-    logs: z.array(z.string()),
-    infra: z.array(z.string()),
-  }).default({ metrics: [], logs: [], infra: [] }),
-  dashboardLinks: z.array(z.string()).default([]),
-  recommendedActions: z.array(z.string()).default([]),
-  confidence: z.enum(["low", "medium", "high"]).default("low"),
-  confidenceScore: z.number().default(0.5),
-});
-
-const PostSynthesisOutputSchema = z.object({
-  severity: z.enum(["low", "medium", "high", "critical"]),
-  summary: z.string(),
-  impact: z.object({
-    duration: z.string(),
-    description: z.string(),
-  }),
-  rootCause: z.string(),
-  trigger: z.string(),
-  contributingFactors: z.array(z.string()),
-  timeline: z.array(z.object({
-    time: z.string(),
-    event: z.string(),
-  })),
-  evidence: z.object({
-    metrics: z.array(z.string()),
-    logs: z.array(z.string()),
-    infra: z.array(z.string()),
-  }),
-  dashboardLinks: z.array(z.string()),
-  recommendedActions: z.array(z.string()),
-  confidence: z.enum(["low", "medium", "high"]),
-  confidenceScore: z.number(),
-  savedToHistory: z.boolean(),
-  investigatedAt: z.string(),
-});
 
 // ── Step factory helpers ──────────────────────────────────────────────────────
 
