@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { buildOutput, writeOutput, type ToolCallRecord } from "./output.js";
+import { buildOutput, writeOutput } from "./output.js";
 
 describe("buildOutput", () => {
   it("builds a success envelope with all fields", () => {
