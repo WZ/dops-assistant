@@ -228,6 +228,7 @@ export class MastraInvestigationAdapter {
 export interface MastraAdapterDeps {
   config: Config;
   providers: MastraProvider[];
+  noHistory?: boolean;
 }
 
 /**
@@ -255,7 +256,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
     model,
     providers,
     services: config.services,
-    projectRoot: process.cwd(),
+    projectRoot: deps.noHistory ? undefined : process.cwd(),
     useQuirkHandling: true, // Enable wind-down: disables tools on last 2 iterations to force text output
   };
 
