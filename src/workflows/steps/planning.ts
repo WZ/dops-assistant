@@ -63,9 +63,15 @@ export function buildPlanningStep(config: WorkflowConfig) {
         historyContext ? `\nRecent incidents:\n${historyContext}` : "",
       ].filter(Boolean).join("\n");
 
-      let agentResult: { text: string } = { text: "" };
+      let agentResult: { text: string; usage?: any } = { text: "" };
       try {
         agentResult = await agent.generate(prompt);
+        if (agentResult.usage && config.onTokenUsage) {
+          config.onTokenUsage({
+            inputTokens: agentResult.usage.inputTokens ?? 0,
+            outputTokens: agentResult.usage.outputTokens ?? 0,
+          });
+        }
       } catch {
         // Fall through to defaults
       }

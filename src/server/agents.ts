@@ -186,6 +186,19 @@ export class MastraChatAgentAdapter {
           task.onToolCall?.(toolName, p.args ?? {}, resultStr);
         }
       }
+
+      // Emit token usage from the stream (available after stream is consumed)
+      if (task.onTokenUsage) {
+        try {
+          const usage = await (stream as any).totalUsage ?? await (stream as any).usage;
+          if (usage && (usage.inputTokens || usage.outputTokens)) {
+            task.onTokenUsage({
+              inputTokens: usage.inputTokens ?? 0,
+              outputTokens: usage.outputTokens ?? 0,
+            });
+          }
+        } catch { /* usage not available — ignore */ }
+      }
     } catch (err) {
       console.error("[MASTRA_CHAT] stream error:", err);
       if (!responseText) {
@@ -193,6 +206,14 @@ export class MastraChatAgentAdapter {
           const result = await mastraAgent.generate(prompt);
           responseText = result.text ?? "";
           task.onStreamDelta?.({ type: "content", content: responseText });
+          // Emit token usage from generate fallback
+          const usage = (result as any).totalUsage ?? (result as any).usage;
+          if (task.onTokenUsage && usage && (usage.inputTokens || usage.outputTokens)) {
+            task.onTokenUsage({
+              inputTokens: usage.inputTokens ?? 0,
+              outputTokens: usage.outputTokens ?? 0,
+            });
+          }
         } catch (genErr) {
           const errMsg = genErr instanceof Error ? genErr.message : String(genErr);
           responseText = `Error: ${errMsg}`;
@@ -233,7 +254,7 @@ export class MastraInvestigationAdapter {
     service: ServiceConfig,
     _initialAnomaly: unknown,
     _correlationId?: string,
-    _onTokenUsage?: (usage: TokenUsage) => void,
+    onTokenUsage?: (usage: TokenUsage) => void,
     userMessage?: string,
     _onToolCall?: OnToolCallEnriched,
     onPhase?: (phase: string) => void,
@@ -248,6 +269,7 @@ export class MastraInvestigationAdapter {
       onPhase,
       onIteration,
       onToolCall: _onToolCall,
+      onTokenUsage,
     };
 
     const workflow = createInvestigationWorkflow(workflowConfig);

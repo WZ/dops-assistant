@@ -125,6 +125,13 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
                 }
               }
               if (step.text) toolData.push(`Model: ${step.text}`);
+              // Emit token usage if available
+              if (step.usage && workflowConfig.onTokenUsage) {
+                workflowConfig.onTokenUsage({
+                  inputTokens: step.usage.inputTokens ?? 0,
+                  outputTokens: step.usage.outputTokens ?? 0,
+                });
+              }
             } catch (err) {
               debug(`${phaseName.toUpperCase()} onStepFinish error:`, err);
             }
