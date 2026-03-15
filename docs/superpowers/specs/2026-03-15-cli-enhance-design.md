@@ -25,6 +25,7 @@ dops interactive              # Legacy REPL mode (preserved)
 | `--timeout <ms>` | Max execution time | `120000` |
 | `--verbose` | Include full tool call args and results in output | `false` |
 | `--config <path>` | Path to config file | `config.yaml` (also accepts `CONFIG_PATH` env var) |
+| `--no-history` | Disable reading/writing incident history | `true` for non-interactive commands |
 
 ### Exit Codes
 
@@ -48,10 +49,11 @@ Service name is matched **exactly (case-insensitive)** against `config.services[
   "service": "api-gateway",
   "status": "success | error",
   "durationMs": 14230,
-  "tokens": { "input": 12000, "output": 3400, "total": 15400 },
+  "tokens": { "input": 12000, "output": 3400, "total": 15400 } | null,
   "toolCalls": [
     { "name": "search_dashboards", "argsSummary": "query=api-gateway", "durationMs": 340 }
   ],
+  "history": false,
   "result": {
     "service": "api-gateway",
     "severity": "high",
@@ -78,6 +80,8 @@ Service name is matched **exactly (case-insensitive)** against `config.services[
 
 The `result` field is the `RcaReport` type from `src/types/rca-types.ts` serialized directly.
 
+**Token usage:** The current adapters (`MastraChatAgentAdapter`, `MastraInvestigationAdapter`) do not wire up `onTokenUsage` callbacks. Implementation must add token tracking by hooking into the Mastra agent/workflow `onStepFinish` events or the underlying AI SDK `usage` property on generation results. If token data is unavailable, `tokens` is set to `null` (not zeros) to avoid fabricating data.
+
 ### `dops chat "<message>"`
 
 Single-turn only. No conversation history is maintained between invocations. The agent receives only the provided message.
@@ -88,7 +92,7 @@ Single-turn only. No conversation history is maintained between invocations. The
   "message": "What alerts fired in the last hour?",
   "status": "success | error",
   "durationMs": 3200,
-  "tokens": { "input": 800, "output": 600, "total": 1400 },
+  "tokens": { "input": 800, "output": 600, "total": 1400 } | null,
   "toolCalls": [
     { "name": "list_alerts", "argsSummary": "state=firing", "durationMs": 520 }
   ],
@@ -133,8 +137,9 @@ The `tools` list is always emitted (not gated by `--verbose`). It reports availa
   "steps": [
     {
       "name": "investigate api-gateway",
-      "status": "pass | fail",
+      "status": "pass | fail | skipped",
       "durationMs": 14230,
+      "error": null,
       "assertions": [
         { "field": "result.severity", "expected": "high", "actual": "high", "pass": true }
       ]
@@ -186,7 +191,23 @@ Input to `dops e2e`:
 
 #### Step Isolation
 
-Steps share the MCP connection and Mastra agent instances (initialized once per `e2e` run). Conversation state is **not** shared — each step is independent. If an MCP connectivity error occurs mid-scenario, remaining steps are **skipped** (not attempted) and their status is set to `"error"` with the connectivity error message. The overall status is `"fail"`.
+Steps share the MCP connection and Mastra agent instances (initialized once per `e2e` run). Conversation state is **not** shared — each step is independent.
+
+**Step status enum:** `"pass" | "fail" | "skipped"`. A step is `"pass"` if all assertions pass, `"fail"` if any assertion fails or the command errors, and `"skipped"` if a prior step caused a fatal error (e.g., MCP connectivity loss). Skipped steps have `error` set to a descriptive message (e.g., `"skipped: MCP connection lost in step 1"`), `durationMs: 0`, and no `assertions` array. The overall e2e status is `"fail"` if any step is not `"pass"`.
+
+## History Isolation
+
+Non-interactive commands (`investigate`, `chat`, `e2e`) run with history **disabled by default** (`--no-history` is `true`). This means:
+
+- The planning step does **not** read prior incidents (skips `history.ts` lookups)
+- The post-synthesis step does **not** write new incidents to disk
+- Results are deterministic and independent of previous runs
+
+This is critical for benchmark reliability — repeated runs produce consistent results unaffected by accumulated history. Use `--history` to opt in to reading/writing history if needed (e.g., testing the history-aware planning path itself).
+
+The `interactive` subcommand uses history normally (reads and writes).
+
+The `"history"` field in the JSON output indicates whether history was active for that run.
 
 ## `--verbose` Flag Behavior
 
@@ -226,7 +247,7 @@ src/cli/
 
 3. **Timeout wrapper.** Each command runs inside `Promise.race` with a configurable timeout. On timeout: `{ "status": "error", "error": "timeout" }`, exit 1.
 
-4. **Clean process exit.** After JSON is printed, `process.exit(0|1|2)` explicitly. MCP stdio child processes are killed when the Node.js process exits. This is acceptable for a single-shot tool. If graceful shutdown is needed later, add `client.disconnect()` calls before exit.
+4. **Graceful process exit.** After building the JSON result, write it to stdout and wait for the write to drain before exiting. Use `process.exitCode = N` combined with a `stdout.write(json, () => process.exit())` pattern to ensure the full JSON is flushed before the process terminates. This prevents truncated output when consumed by a machine reader. MCP stdio child processes are cleaned up when the Node.js process exits.
 
 5. **Lightweight arg parsing.** Parse `process.argv` directly — the command set is small and fixed. No heavy CLI framework dependency.
 
@@ -249,6 +270,6 @@ This ordering matters because ESM hoists static imports. The current CLI solves 
 | MCP connection failure | Error captured in JSON output, timeout ensures exit |
 | Unknown service name | `{ "status": "error", "error": "unknown service: foo" }`, exit 1 |
 | Invalid scenario file | Exit 2 with usage error in JSON |
-| Partial e2e failure (assertion) | Results for all steps included, overall `"status": "fail"` |
-| e2e MCP connectivity failure | Remaining steps skipped, overall `"status": "fail"` |
+| Partial e2e failure (assertion) | Failed step has `"status": "fail"`, remaining steps still run, overall `"status": "fail"` |
+| e2e MCP connectivity failure | Remaining steps have `"status": "skipped"` with error message, overall `"status": "fail"` |
 | No signal handling needed | Calling agent can kill the process directly |
