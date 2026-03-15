@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { executePrefetch } from "./prefetch.js";
+import { executePrefetch } from "./steps/prefetch.js";
 import type { MastraProvider } from "../mcp/provider.js";
 import type { ServiceConfig } from "../config/schema.js";
 

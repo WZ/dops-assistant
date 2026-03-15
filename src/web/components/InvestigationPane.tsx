@@ -5,7 +5,7 @@ import { EvidenceCards } from "./EvidenceCards";
 import { RcaReport } from "./RcaReport";
 import type { TimelineEvent } from "./ActivityTimeline";
 import type { TimeSeriesData } from "./MetricChart";
-import type { ServerMessage } from "../../shared/ws-types.js";
+import type { ServerMessage } from "../../types/ws-types.js";
 
 const DEFAULT_PHASES: PhaseState[] = [
   { name: "planning", label: "Planning", status: "pending" },

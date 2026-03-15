@@ -14,14 +14,14 @@ dops-assistant — an AI-powered DevOps assistant that integrates with Grafana v
 ## Architecture
 
 - **Chat agent**: `src/agents/chat.ts` — Mastra Agent with MCP tools for conversational queries
-- **Investigation**: `src/workflows/investigation.ts` — Mastra workflow with parallel evidence gathering
-- **Agents**: `src/agents/` — 7 specialized agents (anomaly-detector, planner, metrics, logs, infra, synthesis, chat)
+- **Investigation**: `src/workflows/investigation.ts` — orchestrates 6-phase workflow via step factories in `src/workflows/steps/`
+- **Agents**: `src/agents/` — 7 specialized agents (anomaly-detector, planner, metrics, logs, infra, synthesis, chat) + intent router
+- **Workflow steps**: `src/workflows/steps/` — prefetch, anomaly, planning, evidence (metrics/logs/infra), synthesis, post-synthesis
 - **MCP**: `src/mcp/provider.ts` — role-based tool routing via `@mastra/mcp`
-- **Stream adapter**: `src/mastra/stream-adapter.ts` — bridges Mastra streaming to the WebSocket protocol
-- **Server adapter**: `src/server/mastra-adapter.ts` — wraps Mastra agents into the server/CLI interfaces
-- **Intent routing**: `src/agent/intent.ts` — IntentRouter classifies user messages (uses AI SDK `generateText`)
+- **Server adapter**: `src/server/agents.ts` — wraps Mastra agents into server/CLI interfaces
+- **Intent routing**: `src/agents/intent.ts` — classifies user messages (uses AI SDK `generateText`)
 - **CLI**: `src/cli.tsx` + `src/interfaces/cli/App.tsx` — Ink React terminal UI
-- **Types**: `src/types/` — shared types (RCA report, agent interfaces, LLM types)
+- **Types**: `src/types/` — shared types (RCA report, agent interfaces, LLM types, WebSocket protocol)
 
 ## Dev Setup
 
@@ -52,7 +52,7 @@ dops-assistant — an AI-powered DevOps assistant that integrates with Grafana v
 
 ## Investigation Workflow Patterns
 
-- Prefetch context runs as a dedicated workflow step (`src/workflows/prefetch.ts`) before agent steps start
+- Prefetch context runs as a dedicated workflow step (`src/workflows/steps/prefetch.ts`) before agent steps start
 - Six parallel evidence agents (metrics, logs, infra, anomaly-detector, planner, synthesis) wired as Mastra agents
 - Workflow degrades gracefully: agent step failures produce empty findings rather than crashing the workflow
 - Truncation and LLM quirk handling isolated in `src/agents/shared/prepare-step.ts` and `src/workflows/helpers.ts`

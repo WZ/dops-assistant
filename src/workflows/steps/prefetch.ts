@@ -34,9 +34,9 @@ export function extractQueryKeywords(userMessage?: string, anomalySummary?: stri
 
 // ── executePrefetch ────────────────────────────────────────────────────────────
 
-import type { MastraProvider } from "../mcp/provider.js";
-import type { ServiceConfig } from "../config/schema.js";
-import type { PrefetchedContext } from "../types/workflow-state.js";
+import type { MastraProvider } from "../../mcp/provider.js";
+import type { ServiceConfig } from "../../config/schema.js";
+import type { PrefetchedContext } from "../../types/workflow-state.js";
 import type { Tool } from "@mastra/core/tools";
 
 /**
