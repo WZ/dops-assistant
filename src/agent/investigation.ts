@@ -31,6 +31,7 @@ export type OnToolCallEnriched = (
   result?: string,
   durationMs?: number,
   error?: string,
+  phase?: string,
 ) => void;
 
 export type OnIteration = (
