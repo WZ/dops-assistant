@@ -1,4 +1,4 @@
-import { generateText, type LanguageModelV1 } from "ai";
+import { generateText, type LanguageModel } from "ai";
 import type { ServiceConfig } from "../config/schema.js";
 import type { InvestigationIntent } from "../types/rca-types.js";
 import { buildIntentClassifierPrompt } from "./rca-prompts.js";
@@ -266,9 +266,9 @@ export function resolveServiceFromHistory(
 }
 
 export class IntentRouter {
-  private readonly model: LanguageModelV1;
+  private readonly model: LanguageModel;
 
-  constructor(model: LanguageModelV1) {
+  constructor(model: LanguageModel) {
     this.model = model;
   }
 
