@@ -80,11 +80,15 @@ export function createInvestigationWorkflow(workflowConfig: WorkflowConfig) {
     ],
   });
 
-  workflow
+  // The .parallel() → .then() chain produces correct shapes at runtime, but
+  // Mastra's TypeScript generics can't infer the parallel output type through
+  // the chain. The cast is safe — the synthesis step's inputSchema validates
+  // the actual data at runtime.
+  (workflow
     .then(prefetchStep)
     .then(anomalyStep)
     .then(planningStep)
-    .parallel([metricsStep, logsStep, infraStep])
+    .parallel([metricsStep, logsStep, infraStep]) as any)
     .then(synthesisStep)
     .then(postSynthesisStep)
     .commit();
