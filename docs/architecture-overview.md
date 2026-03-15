@@ -169,48 +169,6 @@ Seven Mastra agents, each with a focused system prompt and tool subset:
 
 ---
 
-## Codemap
-
-```
-src/
-├── agents/              # 7 Mastra agents + intent router
-│   ├── intent.ts        #   message classification + service matching
-│   ├── chat.ts          #   conversational agent
-│   ├── anomaly-detector.ts
-│   ├── planner.ts
-│   ├── metrics.ts
-│   ├── logs.ts
-│   ├── infra.ts
-│   ├── synthesis.ts
-│   └── shared/          #   prepare-step, processors, time-context
-├── workflows/           # investigation orchestration
-│   ├── investigation.ts #   workflow factory (~90 lines, orchestration only)
-│   ├── steps/           #   step factories (evidence, anomaly, planning, etc.)
-│   ├── schemas.ts       #   Zod step I/O schemas
-│   ├── tool-utils.ts    #   tool wrapping, coercion, filtering
-│   ├── helpers.ts       #   timeline, severity validation, time utils
-│   └── history.ts       #   incident history store
-├── server/              # web server
-│   ├── index.ts         #   Express + startup
-│   ├── agents.ts        #   Mastra → server interface adapter
-│   ├── ws-handler.ts    #   WebSocket message routing + chart extraction
-│   ├── routes.ts        #   REST API (services, investigations, skills)
-│   └── db.ts            #   SQLite (investigations, messages, events)
-├── cli/                 # terminal interface
-│   ├── index.tsx        #   entry point (dotenv, dynamic imports)
-│   ├── App.tsx          #   main Ink app (input, routing, rendering)
-│   └── Markdown.tsx     #   terminal markdown renderer
-├── web/                 # React frontend (Vite → dist/web/)
-├── mcp/                 # MCP provider setup (role-based tool routing)
-├── mastra/              # model + memory configuration
-├── config/              # YAML config loading + Zod validation
-├── memory/              # in-memory conversation store (TTL-based)
-├── skills/              # investigation skill templates (markdown runbooks)
-└── types/               # shared types (RCA report, agent interfaces, WS protocol)
-```
-
----
-
 ## Key Design Decisions
 
 **MCP-agnostic tool integration** — The system connects to any MCP-compatible server. Tool routing is role-based, not provider-specific. Adding a new monitoring backend means adding a provider config block, not changing code.
