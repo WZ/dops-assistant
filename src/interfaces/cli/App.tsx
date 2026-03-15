@@ -9,7 +9,7 @@ import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { IChatAgent, IInvestigationAgent } from "../../types/agent-interfaces.js";
-import { matchServiceFromText, validateLlmServiceMatch, resolveServiceFromHistory, type IntentRouter } from "../../agent/intent.js";
+import { matchServiceFromText, validateLlmServiceMatch, resolveServiceFromHistory, type IntentRouter } from "../../agents/intent.js";
 import type { ConversationMemory } from "../../memory/conversation.js";
 import type { ServiceConfig } from "../../config/schema.js";
 import type { RcaReport } from "../../types/rca-types.js";

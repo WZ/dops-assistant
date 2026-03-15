@@ -12,7 +12,7 @@ import pino from "pino";
 import { Database } from "./db.js";
 import { registerRoutes, type IMcpClient } from "./routes.js";
 import { setupWebSocket } from "./ws-handler.js";
-import { IntentRouter, matchServiceFromText, validateLlmServiceMatch } from "../agent/intent.js";
+import { IntentRouter, matchServiceFromText, validateLlmServiceMatch } from "../agents/intent.js";
 import { ConversationMemory } from "../memory/conversation.js";
 import { loadConfig } from "../config/loader.js";
 import { SkillStore } from "../skills/store.js";

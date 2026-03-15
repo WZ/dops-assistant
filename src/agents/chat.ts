@@ -1,6 +1,6 @@
 import { Agent } from "@mastra/core/agent";
 import type { LanguageModel } from "ai";
-import { getTimeContext } from "../agent/prompts.js";
+import { getTimeContext } from "./shared/time-context.js";
 
 interface ChatAgentConfig {
   model: LanguageModel;
