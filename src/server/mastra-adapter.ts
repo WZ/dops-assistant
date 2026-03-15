@@ -18,10 +18,10 @@
  */
 
 import type { ServiceConfig } from "../config/schema.js";
-import type { RcaReport } from "../agent/rca-types.js";
-import type { OnToolCallEnriched, OnIteration } from "../agent/investigation.js";
-import type { ChatRequest, ChatResponse } from "../agent/types.js";
-import type { TokenUsage } from "../llm/openai.js";
+import type { RcaReport } from "../types/rca-types.js";
+import type { OnToolCallEnriched, OnIteration } from "../types/agent-interfaces.js";
+import type { ChatRequest, ChatResponse } from "../types/agent-types.js";
+import type { TokenUsage } from "../types/llm-types.js";
 import { createChatAgent } from "../agents/chat.js";
 import { createInvestigationWorkflow, type WorkflowConfig } from "../workflows/investigation.js";
 import { createModel } from "../mastra/index.js";
