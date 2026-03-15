@@ -9,12 +9,13 @@ function makeProvider(
   name: string,
   roles: MastraProvider["roles"],
   toolMap: Record<string, { execute?: (...args: any[]) => any }> = {},
+  enabledTools?: string[],
 ): MastraProvider {
   const client = {
     listTools: vi.fn().mockResolvedValue(toolMap),
   } as unknown as MastraProvider["client"];
 
-  return { name, roles, client };
+  return { name, roles, client, enabledTools };
 }
 
 const noopService: ServiceConfig = {
@@ -43,6 +44,25 @@ describe("executePrefetch", () => {
     expect(result.panelQueryHints).toBe("");
     expect(result.logLabelHints).toBe("");
     expect(result.workingLogSelectors).toEqual([]);
+  });
+
+  it("respects provider enabledTools during prefetch", async () => {
+    const provider = makeProvider("grafana", ["metrics", "dashboards"], {
+      grafana_list_datasources: {
+        execute: vi.fn().mockResolvedValue([
+          { uid: "prom-hidden", name: "Prometheus", type: "prometheus" },
+        ]),
+      },
+      grafana_search_dashboards: {
+        execute: vi.fn().mockResolvedValue([
+          { uid: "dash-1", title: "Service Dashboard" },
+        ]),
+      },
+    }, ["search_dashboards"]);
+
+    const result = await executePrefetch([provider], []);
+    expect(result.datasourceHints).toBe("");
+    expect(result.dashboardContext).toContain("Service Dashboard");
   });
 
   it("returns datasource hints when list_datasources tool is available", async () => {
