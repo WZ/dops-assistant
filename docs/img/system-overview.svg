@@ -1,0 +1,153 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 680" font-family="'SF Mono', 'Cascadia Code', 'Fira Code', monospace" font-size="13">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 3.5 L 0 7" fill="#6b7280"/>
+    </marker>
+    <marker id="arrow-cyan" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 3.5 L 0 7" fill="#22d3ee"/>
+    </marker>
+    <marker id="arrow-amber" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 3.5 L 0 7" fill="#f59e0b"/>
+    </marker>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="960" height="680" rx="12" fill="#0f1117"/>
+
+  <!-- Title -->
+  <text x="480" y="36" text-anchor="middle" fill="#e5e7eb" font-size="18" font-weight="bold">System Overview</text>
+
+  <!-- ═══ Interfaces Layer ═══ -->
+  <rect x="40" y="60" width="880" height="90" rx="8" fill="#1a1d27" stroke="#2d3348" stroke-width="1"/>
+  <text x="60" y="82" fill="#6b7280" font-size="11" letter-spacing="2">INTERFACES</text>
+
+  <!-- Web UI -->
+  <rect x="120" y="95" width="180" height="42" rx="6" fill="#1e293b" stroke="#3b82f6" stroke-width="1.5"/>
+  <text x="210" y="121" text-anchor="middle" fill="#93c5fd" font-size="12" font-weight="bold">Web UI :3000</text>
+
+  <!-- CLI -->
+  <rect x="340" y="95" width="180" height="42" rx="6" fill="#1e293b" stroke="#3b82f6" stroke-width="1.5"/>
+  <text x="430" y="121" text-anchor="middle" fill="#93c5fd" font-size="12" font-weight="bold">CLI (Ink)</text>
+
+  <!-- WebSocket / direct labels -->
+  <text x="210" y="158" text-anchor="middle" fill="#4b5563" font-size="10">WebSocket</text>
+  <text x="430" y="158" text-anchor="middle" fill="#4b5563" font-size="10">direct</text>
+
+  <!-- ═══ Routing Layer ═══ -->
+  <rect x="40" y="170" width="880" height="80" rx="8" fill="#1a1d27" stroke="#2d3348" stroke-width="1"/>
+  <text x="60" y="192" fill="#6b7280" font-size="11" letter-spacing="2">ROUTING</text>
+
+  <!-- Intent Router -->
+  <rect x="180" y="200" width="240" height="42" rx="6" fill="#1e293b" stroke="#a78bfa" stroke-width="1.5"/>
+  <text x="300" y="226" text-anchor="middle" fill="#c4b5fd" font-size="12" font-weight="bold">IntentRouter</text>
+
+  <!-- Service Matcher -->
+  <rect x="460" y="200" width="200" height="42" rx="6" fill="#1e293b" stroke="#a78bfa" stroke-width="1"/>
+  <text x="560" y="226" text-anchor="middle" fill="#c4b5fd" font-size="11">Service Matcher</text>
+
+  <!-- Arrows from interfaces to router -->
+  <line x1="210" y1="137" x2="260" y2="200" stroke="#3b82f6" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="430" y1="137" x2="340" y2="200" stroke="#3b82f6" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- ═══ Agents Layer ═══ -->
+  <rect x="40" y="270" width="880" height="100" rx="8" fill="#1a1d27" stroke="#2d3348" stroke-width="1"/>
+  <text x="60" y="292" fill="#6b7280" font-size="11" letter-spacing="2">AGENTS</text>
+
+  <!-- Chat Agent -->
+  <rect x="80" y="305" width="220" height="50" rx="6" fill="#022c22" stroke="#22d3ee" stroke-width="1.5" filter="url(#glow)"/>
+  <text x="190" y="325" text-anchor="middle" fill="#22d3ee" font-size="12" font-weight="bold">ChatAgent</text>
+  <text x="190" y="343" text-anchor="middle" fill="#5eead4" font-size="10">conversational queries</text>
+
+  <!-- Investigation Workflow -->
+  <rect x="360" y="305" width="300" height="50" rx="6" fill="#2a1708" stroke="#f59e0b" stroke-width="1.5" filter="url(#glow)"/>
+  <text x="510" y="325" text-anchor="middle" fill="#f59e0b" font-size="12" font-weight="bold">InvestigationWorkflow</text>
+  <text x="510" y="343" text-anchor="middle" fill="#fbbf24" font-size="10">6-phase RCA pipeline</text>
+
+  <!-- Server Adapter -->
+  <rect x="720" y="305" width="170" height="50" rx="6" fill="#1e293b" stroke="#6b7280" stroke-width="1"/>
+  <text x="805" y="325" text-anchor="middle" fill="#9ca3af" font-size="11">ServerAdapter</text>
+  <text x="805" y="343" text-anchor="middle" fill="#6b7280" font-size="10">duck-typed bridge</text>
+
+  <!-- Router to agents arrows -->
+  <text x="155" y="265" fill="#22d3ee" font-size="10">question</text>
+  <line x1="250" y1="242" x2="190" y2="305" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrow-cyan)"/>
+
+  <text x="400" y="265" fill="#f59e0b" font-size="10">investigation</text>
+  <line x1="350" y1="242" x2="450" y2="305" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#arrow-amber)"/>
+
+  <!-- ═══ MCP Layer ═══ -->
+  <rect x="40" y="390" width="880" height="130" rx="8" fill="#1a1d27" stroke="#2d3348" stroke-width="1"/>
+  <text x="60" y="412" fill="#6b7280" font-size="11" letter-spacing="2">MCP PROVIDERS</text>
+  <text x="250" y="412" fill="#4b5563" font-size="10">(pluggable · role-based tool routing)</text>
+
+  <!-- Provider A -->
+  <rect x="70" y="425" width="250" height="80" rx="6" fill="#1e293b" stroke="#10b981" stroke-width="1.5"/>
+  <text x="195" y="448" text-anchor="middle" fill="#34d399" font-size="12" font-weight="bold">Provider A</text>
+  <text x="195" y="463" text-anchor="middle" fill="#6b7280" font-size="10">roles: metrics, logs</text>
+  <rect x="85" y="472" width="100" height="22" rx="3" fill="#0f1117" stroke="#10b981" stroke-width="0.5"/>
+  <text x="135" y="487" text-anchor="middle" fill="#6ee7b7" font-size="9">query_metrics</text>
+  <rect x="195" y="472" width="110" height="22" rx="3" fill="#0f1117" stroke="#10b981" stroke-width="0.5"/>
+  <text x="250" y="487" text-anchor="middle" fill="#6ee7b7" font-size="9">query_logs</text>
+
+  <!-- Provider B -->
+  <rect x="350" y="425" width="250" height="80" rx="6" fill="#1e293b" stroke="#10b981" stroke-width="1.5"/>
+  <text x="475" y="448" text-anchor="middle" fill="#34d399" font-size="12" font-weight="bold">Provider B</text>
+  <text x="475" y="463" text-anchor="middle" fill="#6b7280" font-size="10">roles: metrics, dependencies</text>
+  <rect x="365" y="472" width="110" height="22" rx="3" fill="#0f1117" stroke="#10b981" stroke-width="0.5"/>
+  <text x="420" y="487" text-anchor="middle" fill="#6ee7b7" font-size="9">search_dashboards</text>
+  <rect x="485" y="472" width="100" height="22" rx="3" fill="#0f1117" stroke="#10b981" stroke-width="0.5"/>
+  <text x="535" y="487" text-anchor="middle" fill="#6ee7b7" font-size="9">list_alerts</text>
+
+  <!-- Provider N -->
+  <rect x="630" y="425" width="250" height="80" rx="6" fill="#1e293b" stroke="#10b981" stroke-width="1" stroke-dasharray="6,3"/>
+  <text x="755" y="448" text-anchor="middle" fill="#34d399" font-size="12" font-weight="bold">Provider N ...</text>
+  <text x="755" y="463" text-anchor="middle" fill="#6b7280" font-size="10">roles: any configured</text>
+  <text x="755" y="487" text-anchor="middle" fill="#4b5563" font-size="10" font-style="italic">extensible via config</text>
+
+  <!-- Agents to MCP arrows -->
+  <line x1="190" y1="355" x2="195" y2="425" stroke="#22d3ee" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+  <line x1="510" y1="355" x2="350" y2="425" stroke="#f59e0b" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+  <line x1="510" y1="355" x2="475" y2="425" stroke="#f59e0b" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+
+  <!-- ═══ Infrastructure Layer ═══ -->
+  <rect x="40" y="540" width="880" height="80" rx="8" fill="#1a1d27" stroke="#2d3348" stroke-width="1"/>
+  <text x="60" y="562" fill="#6b7280" font-size="11" letter-spacing="2">INFRASTRUCTURE</text>
+
+  <!-- Monitoring backends -->
+  <rect x="100" y="575" width="140" height="32" rx="4" fill="#1e293b" stroke="#f97316" stroke-width="1"/>
+  <text x="170" y="596" text-anchor="middle" fill="#fb923c" font-size="11">Metrics Store</text>
+
+  <rect x="270" y="575" width="140" height="32" rx="4" fill="#1e293b" stroke="#f97316" stroke-width="1"/>
+  <text x="340" y="596" text-anchor="middle" fill="#fb923c" font-size="11">Log Store</text>
+
+  <rect x="440" y="575" width="140" height="32" rx="4" fill="#1e293b" stroke="#f97316" stroke-width="1"/>
+  <text x="510" y="596" text-anchor="middle" fill="#fb923c" font-size="11">Dashboards</text>
+
+  <rect x="610" y="575" width="120" height="32" rx="4" fill="#1e293b" stroke="#f97316" stroke-width="1"/>
+  <text x="670" y="596" text-anchor="middle" fill="#fb923c" font-size="11">Alerts</text>
+
+  <rect x="760" y="575" width="120" height="32" rx="4" fill="#1e293b" stroke="#f97316" stroke-width="1"/>
+  <text x="820" y="596" text-anchor="middle" fill="#fb923c" font-size="11">SQLite</text>
+
+  <!-- MCP to infra arrows -->
+  <line x1="195" y1="505" x2="170" y2="575" stroke="#10b981" stroke-width="1" marker-end="url(#arrow)"/>
+  <line x1="195" y1="505" x2="340" y2="575" stroke="#10b981" stroke-width="1" marker-end="url(#arrow)"/>
+  <line x1="475" y1="505" x2="510" y2="575" stroke="#10b981" stroke-width="1" marker-end="url(#arrow)"/>
+  <line x1="475" y1="505" x2="670" y2="575" stroke="#10b981" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <!-- Legend -->
+  <rect x="700" y="65" width="200" height="80" rx="6" fill="#13151f" stroke="#2d3348" stroke-width="1"/>
+  <circle cx="720" cy="82" r="5" fill="#22d3ee"/>
+  <text x="735" y="86" fill="#9ca3af" font-size="10">Chat path</text>
+  <circle cx="720" cy="102" r="5" fill="#f59e0b"/>
+  <text x="735" y="106" fill="#9ca3af" font-size="10">Investigation path</text>
+  <circle cx="720" cy="122" r="5" fill="#10b981"/>
+  <text x="735" y="126" fill="#9ca3af" font-size="10">MCP tool calls</text>
+
+  <!-- Footer -->
+  <text x="480" y="665" text-anchor="middle" fill="#374151" font-size="10">dops-assistant · Mastra-based DevOps RCA</text>
+</svg>

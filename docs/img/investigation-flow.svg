@@ -1,0 +1,137 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 820" font-family="'SF Mono', 'Cascadia Code', 'Fira Code', monospace" font-size="13">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 3.5 L 0 7" fill="#f59e0b"/>
+    </marker>
+    <marker id="arr-dim" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 3.5 L 0 7" fill="#6b7280"/>
+    </marker>
+    <filter id="gl">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <linearGradient id="parallel-bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2a1708"/>
+      <stop offset="100%" stop-color="#1a1d27"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="960" height="820" rx="12" fill="#0f1117"/>
+
+  <!-- Title -->
+  <text x="480" y="36" text-anchor="middle" fill="#e5e7eb" font-size="18" font-weight="bold">Investigation Workflow — 6-Phase RCA Pipeline</text>
+
+  <!-- ═══ Phase 1: Prefetch ═══ -->
+  <rect x="300" y="60" width="360" height="80" rx="8" fill="#1e293b" stroke="#6366f1" stroke-width="2" filter="url(#gl)"/>
+  <text x="330" y="82" fill="#6366f1" font-size="10" font-weight="bold">PHASE 1</text>
+  <text x="480" y="102" text-anchor="middle" fill="#a5b4fc" font-size="14" font-weight="bold">Prefetch Context</text>
+  <text x="480" y="120" text-anchor="middle" fill="#6b7280" font-size="10">datasource UIDs</text>
+  <text x="480" y="133" text-anchor="middle" fill="#6b7280" font-size="10">dashboards · log selectors</text>
+
+  <!-- Arrow 1→2 -->
+  <line x1="480" y1="140" x2="480" y2="165" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ═══ Phase 2: Anomaly Detection ═══ -->
+  <rect x="300" y="170" width="360" height="80" rx="8" fill="#1e293b" stroke="#8b5cf6" stroke-width="2" filter="url(#gl)"/>
+  <text x="330" y="192" fill="#8b5cf6" font-size="10" font-weight="bold">PHASE 2</text>
+  <text x="480" y="212" text-anchor="middle" fill="#c4b5fd" font-size="14" font-weight="bold">Anomaly Detection</text>
+  <text x="480" y="230" text-anchor="middle" fill="#6b7280" font-size="10">user-reported → passthrough</text>
+  <text x="480" y="243" text-anchor="middle" fill="#6b7280" font-size="10">proactive → agent with metric tools</text>
+
+  <!-- Arrow 2→3 -->
+  <line x1="480" y1="250" x2="480" y2="275" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ═══ Phase 3: Planning ═══ -->
+  <rect x="300" y="280" width="360" height="80" rx="8" fill="#1e293b" stroke="#ec4899" stroke-width="2" filter="url(#gl)"/>
+  <text x="330" y="302" fill="#ec4899" font-size="10" font-weight="bold">PHASE 3</text>
+  <text x="480" y="322" text-anchor="middle" fill="#f9a8d4" font-size="14" font-weight="bold">Planning</text>
+  <text x="480" y="340" text-anchor="middle" fill="#6b7280" font-size="10">fetch incident history</text>
+  <text x="480" y="353" text-anchor="middle" fill="#6b7280" font-size="10">generate hypotheses · assign focus</text>
+
+  <!-- Arrow 3→parallel -->
+  <line x1="480" y1="360" x2="480" y2="390" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ═══ Phase 4: Parallel Evidence ═══ -->
+  <rect x="50" y="395" width="860" height="200" rx="10" fill="url(#parallel-bg)" stroke="#f59e0b" stroke-width="2"/>
+
+  <!-- Parallel label -->
+  <rect x="390" y="382" width="180" height="22" rx="4" fill="#f59e0b"/>
+  <text x="480" y="398" text-anchor="middle" fill="#0f1117" font-size="11" font-weight="bold">PHASE 4 · PARALLEL</text>
+
+  <!-- Metrics Agent -->
+  <rect x="80" y="425" width="240" height="140" rx="6" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+  <text x="200" y="448" text-anchor="middle" fill="#22d3ee" font-size="12" font-weight="bold">Metrics Agent</text>
+  <line x1="100" y1="458" x2="300" y2="458" stroke="#2d3348" stroke-width="1"/>
+  <text x="100" y="478" fill="#6b7280" font-size="10">Tools:</text>
+  <text x="100" y="496" fill="#5eead4" font-size="10">· query metrics</text>
+  <text x="100" y="514" fill="#5eead4" font-size="10">· query histograms</text>
+  <text x="100" y="540" fill="#6b7280" font-size="10">Output:</text>
+  <text x="100" y="555" fill="#4b5563" font-size="10">MetricFindings</text>
+
+  <!-- Logs Agent -->
+  <rect x="360" y="425" width="240" height="140" rx="6" fill="#1e293b" stroke="#a78bfa" stroke-width="1.5"/>
+  <text x="480" y="448" text-anchor="middle" fill="#a78bfa" font-size="12" font-weight="bold">Logs Agent</text>
+  <line x1="380" y1="458" x2="580" y2="458" stroke="#2d3348" stroke-width="1"/>
+  <text x="380" y="478" fill="#6b7280" font-size="10">Tools:</text>
+  <text x="380" y="496" fill="#c4b5fd" font-size="10">· query logs</text>
+  <text x="380" y="514" fill="#c4b5fd" font-size="10">· log stats / patterns</text>
+  <text x="380" y="540" fill="#6b7280" font-size="10">Output:</text>
+  <text x="380" y="555" fill="#4b5563" font-size="10">LogFindings</text>
+
+  <!-- Infra Agent -->
+  <rect x="640" y="425" width="240" height="140" rx="6" fill="#1e293b" stroke="#f97316" stroke-width="1.5"/>
+  <text x="760" y="448" text-anchor="middle" fill="#f97316" font-size="12" font-weight="bold">Infra Agent</text>
+  <line x1="660" y1="458" x2="860" y2="458" stroke="#2d3348" stroke-width="1"/>
+  <text x="660" y="478" fill="#6b7280" font-size="10">Tools:</text>
+  <text x="660" y="496" fill="#fdba74" font-size="10">· query metrics</text>
+  <text x="660" y="514" fill="#fdba74" font-size="10">· list alert rules</text>
+  <text x="660" y="540" fill="#6b7280" font-size="10">Output:</text>
+  <text x="660" y="555" fill="#4b5563" font-size="10">InfraFindings</text>
+
+  <!-- Shared pattern note -->
+  <text x="480" y="607" text-anchor="middle" fill="#4b5563" font-size="10" font-style="italic">shared buildEvidenceStep() abstraction · graceful degradation on failure</text>
+
+  <!-- Arrow parallel→5 -->
+  <line x1="200" y1="565" x2="380" y2="630" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="480" y1="565" x2="480" y2="630" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="760" y1="565" x2="580" y2="630" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ═══ Phase 5: Synthesis ═══ -->
+  <rect x="300" y="625" width="360" height="80" rx="8" fill="#1e293b" stroke="#10b981" stroke-width="2" filter="url(#gl)"/>
+  <text x="330" y="647" fill="#10b981" font-size="10" font-weight="bold">PHASE 5</text>
+  <text x="480" y="667" text-anchor="middle" fill="#6ee7b7" font-size="14" font-weight="bold">Synthesis</text>
+  <text x="480" y="685" text-anchor="middle" fill="#6b7280" font-size="10">combine evidence · build timeline</text>
+  <text x="480" y="698" text-anchor="middle" fill="#6b7280" font-size="10">validate severity · generate RCA report</text>
+
+  <!-- Arrow 5→6 -->
+  <line x1="480" y1="705" x2="480" y2="730" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ═══ Phase 6: Post-Synthesis ═══ -->
+  <rect x="300" y="735" width="360" height="50" rx="8" fill="#1e293b" stroke="#6b7280" stroke-width="1.5"/>
+  <text x="330" y="757" fill="#6b7280" font-size="10" font-weight="bold">PHASE 6</text>
+  <text x="480" y="768" text-anchor="middle" fill="#9ca3af" font-size="12" font-weight="bold">Post-Synthesis · Save to History</text>
+
+  <!-- ═══ Side annotations ═══ -->
+
+  <!-- Left: UI Callbacks -->
+  <rect x="50" y="80" width="210" height="110" rx="6" fill="#13151f" stroke="#2d3348" stroke-width="1"/>
+  <text x="70" y="102" fill="#6b7280" font-size="10" font-weight="bold">UI Callbacks</text>
+  <text x="70" y="122" fill="#4b5563" font-size="10">onPhase(name)</text>
+  <text x="70" y="140" fill="#4b5563" font-size="10">onIteration(phase, n, max)</text>
+  <text x="70" y="158" fill="#4b5563" font-size="10">onToolCall(name, args,</text>
+  <text x="70" y="173" fill="#4b5563" font-size="10">  result, duration)</text>
+  <line x1="260" y1="130" x2="300" y2="100" stroke="#2d3348" stroke-width="1" stroke-dasharray="4,3"/>
+
+  <!-- Right: RcaReport Output -->
+  <rect x="710" y="630" width="210" height="110" rx="6" fill="#13151f" stroke="#2d3348" stroke-width="1"/>
+  <text x="730" y="652" fill="#10b981" font-size="10" font-weight="bold">RcaReport Output</text>
+  <text x="730" y="672" fill="#4b5563" font-size="10">severity · confidence</text>
+  <text x="730" y="690" fill="#4b5563" font-size="10">rootCause · trigger</text>
+  <text x="730" y="708" fill="#4b5563" font-size="10">evidence (metrics/logs/infra)</text>
+  <text x="730" y="726" fill="#4b5563" font-size="10">timeline · recommendations</text>
+  <line x1="660" y1="670" x2="710" y2="670" stroke="#6b7280" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr-dim)"/>
+
+  <!-- Footer -->
+  <text x="480" y="808" text-anchor="middle" fill="#374151" font-size="10">dops-assistant · Investigation Workflow</text>
+</svg>
