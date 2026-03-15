@@ -1,4 +1,4 @@
-import type { ResponseFormat } from "../llm/openai.js";
+import type { ResponseFormat } from "../types/llm-types.js";
 import type { DiscoveryConfig } from "../config/schema.js";
 
 export const DISCOVERY_PROMPT = `You are a service discovery agent. Your job is to discover services from Consul and generate monitoring configuration.

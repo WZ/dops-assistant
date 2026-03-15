@@ -3,8 +3,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { ulid } from "ulid";
 import pino from "pino";
 import type { Database } from "./db.js";
-import type { ChatAgent } from "../agent/core.js";
-import type { InvestigationAgent } from "../agent/investigation.js";
+import type { IChatAgent, IInvestigationAgent } from "../types/agent-interfaces.js";
 import type { IntentRouter } from "../agent/intent.js";
 import { resolveServiceFromHistory } from "../agent/intent.js";
 import type { ConversationMemory } from "../memory/conversation.js";
@@ -118,8 +117,8 @@ function extractChartSeries(rawResult: string, args: Record<string, unknown>): C
 
 export interface WsDeps {
   db: Database;
-  agent: ChatAgent;
-  investigationAgent: InvestigationAgent;
+  agent: IChatAgent;
+  investigationAgent: IInvestigationAgent;
   router: IntentRouter;
   memory: ConversationMemory;
   services: ServiceConfig[];
