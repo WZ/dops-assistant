@@ -195,6 +195,9 @@ export function buildMetricsStep(config: WorkflowConfig) {
         metricsHint,
         `Known issue: ${anomalyContext.userMessage}`,
         anomalyContext.serviceName ? `Service: ${anomalyContext.serviceName}` : "",
+        anomalyContext.skillContext
+          ? `${anomalyContext.skillContext}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
+          : "",
         inputData.metricFocus?.length
           ? `Focus areas: ${inputData.metricFocus.join(", ")}`
           : "",
@@ -234,6 +237,9 @@ export function buildLogsStep(config: WorkflowConfig) {
         selectorHint,
         `Known issue: ${anomalyContext.userMessage}`,
         anomalyContext.serviceName ? `Service: ${anomalyContext.serviceName}` : "",
+        anomalyContext.skillContext
+          ? `${anomalyContext.skillContext}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
+          : "",
         inputData.logFocus?.length
           ? `Focus areas: ${inputData.logFocus.join(", ")}`
           : "",
@@ -266,6 +272,9 @@ export function buildInfraStep(config: WorkflowConfig) {
         anomalyContext.prefetchContext.panelQueryHints,
         `Known issue: ${anomalyContext.userMessage}`,
         anomalyContext.serviceName ? `Service: ${anomalyContext.serviceName}` : "",
+        anomalyContext.skillContext
+          ? `${anomalyContext.skillContext}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
+          : "",
         inputData.infraFocus?.length
           ? `Focus areas: ${inputData.infraFocus.join(", ")}`
           : "",

@@ -14,12 +14,14 @@ export const WorkflowInputSchema = z.object({
   userMessage: z.string(),
   alertName: z.string().optional(),
   serviceName: z.string().optional(),
+  skillContext: z.string().optional(),
 });
 
 export const PrefetchOutputSchema = PrefetchedContextSchema.extend({
   userMessage: z.string(),
   alertName: z.string().optional(),
   serviceName: z.string().optional(),
+  skillContext: z.string().optional(),
 });
 
 export const AnomalyOutputSchema = z.object({
@@ -33,6 +35,7 @@ export const AnomalyOutputSchema = z.object({
   prefetchContext: PrefetchedContextSchema,
   userMessage: z.string(),
   serviceName: z.string().optional(),
+  skillContext: z.string().optional(),
 });
 
 export const PlanningOutputSchema = z.object({
