@@ -12,6 +12,15 @@ import {
 import type { ChatRequest } from "../types/agent-types.js";
 import type { WorkflowConfig } from "../workflows/investigation.js";
 
+// Mock createModel and getAllTools so createMastraAdapters doesn't need real config
+vi.mock("../mastra/index.js", () => ({
+  createModel: vi.fn(() => ({} as any)),
+}));
+
+vi.mock("../mcp/provider.js", () => ({
+  getAllTools: vi.fn().mockResolvedValue({}),
+}));
+
 // Mock the Mastra agent generate() method
 const mockGenerate = vi.fn();
 vi.mock("../agents/chat.js", () => ({
@@ -224,5 +233,82 @@ describe("MastraInvestigationAdapter", () => {
     expect(report.service).toBe("failing-svc");
     expect(report.rootCause).toBe("Unable to determine root cause");
     expect(report.confidence).toBe("low");
+  });
+});
+
+describe("createMastraAdapters", () => {
+  const baseConfig = {
+    llm: { model: "gpt-4o", provider: "openai" as const },
+    agent: { maxIterations: 10 },
+    services: [{ name: "svc", metrics: [], logLabels: {} }],
+  } as any;
+
+  it("passes projectRoot=process.cwd() when noHistory is omitted", async () => {
+    const { createInvestigationWorkflow } = await import("../workflows/investigation.js");
+    vi.mocked(createInvestigationWorkflow).mockClear();
+
+    await createMastraAdapters({ config: baseConfig, providers: [] });
+
+    // MastraInvestigationAdapter stores the workflowConfig and passes it to
+    // createInvestigationWorkflow on the first investigate() call — so we
+    // verify the stored config by calling investigate() once.
+    const { investigationAgent } = await createMastraAdapters({ config: baseConfig, providers: [] });
+    await investigationAgent.investigate(
+      { name: "svc", metrics: [], logLabels: {} },
+      undefined,
+      undefined,
+      undefined,
+      "test",
+    );
+
+    expect(vi.mocked(createInvestigationWorkflow)).toHaveBeenCalledWith(
+      expect.objectContaining({ projectRoot: process.cwd() }),
+    );
+  });
+
+  it("passes projectRoot=undefined when noHistory is true", async () => {
+    const { createInvestigationWorkflow } = await import("../workflows/investigation.js");
+    vi.mocked(createInvestigationWorkflow).mockClear();
+
+    const { investigationAgent } = await createMastraAdapters({
+      config: baseConfig,
+      providers: [],
+      noHistory: true,
+    });
+
+    await investigationAgent.investigate(
+      { name: "svc", metrics: [], logLabels: {} },
+      undefined,
+      undefined,
+      undefined,
+      "test",
+    );
+
+    expect(vi.mocked(createInvestigationWorkflow)).toHaveBeenCalledWith(
+      expect.objectContaining({ projectRoot: undefined }),
+    );
+  });
+
+  it("passes projectRoot=process.cwd() when noHistory is false", async () => {
+    const { createInvestigationWorkflow } = await import("../workflows/investigation.js");
+    vi.mocked(createInvestigationWorkflow).mockClear();
+
+    const { investigationAgent } = await createMastraAdapters({
+      config: baseConfig,
+      providers: [],
+      noHistory: false,
+    });
+
+    await investigationAgent.investigate(
+      { name: "svc", metrics: [], logLabels: {} },
+      undefined,
+      undefined,
+      undefined,
+      "test",
+    );
+
+    expect(vi.mocked(createInvestigationWorkflow)).toHaveBeenCalledWith(
+      expect.objectContaining({ projectRoot: process.cwd() }),
+    );
   });
 });
