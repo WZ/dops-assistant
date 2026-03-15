@@ -16,7 +16,7 @@ import { IntentRouter, matchServiceFromText, validateLlmServiceMatch } from "../
 import { ConversationMemory } from "../memory/conversation.js";
 import { loadConfig } from "../config/loader.js";
 import { SkillStore } from "../skills/store.js";
-import { createMastraAdapters } from "./mastra-adapter.js";
+import { createMastraAdapters } from "./agents.js";
 import { createMcpProvider, getAllTools } from "../mcp/provider.js";
 import { createModel } from "../mastra/index.js";
 

@@ -7,7 +7,7 @@
 import { createStep } from "@mastra/core/workflows";
 import type { WorkflowConfig } from "../investigation.js";
 import { SynthesisOutputSchema, PostSynthesisOutputSchema } from "../schemas.js";
-import { saveIncident } from "../../history/store.js";
+import { saveIncident } from "../history.js";
 import { debug } from "../tool-utils.js";
 
 /**

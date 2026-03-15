@@ -1,5 +1,5 @@
 /**
- * src/server/mastra-adapter.ts
+ * src/server/agents.ts
  *
  * Adapter that wraps the new Mastra agents and investigation workflow into
  * the same duck-typed interfaces that the web server (ws-handler.ts) and

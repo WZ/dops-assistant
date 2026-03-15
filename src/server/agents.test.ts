@@ -8,7 +8,7 @@ import {
   MastraChatAgentAdapter,
   MastraInvestigationAdapter,
   createMastraAdapters,
-} from "./mastra-adapter.js";
+} from "./agents.js";
 import type { ChatRequest } from "../types/agent-types.js";
 import type { WorkflowConfig } from "../workflows/investigation.js";
 
