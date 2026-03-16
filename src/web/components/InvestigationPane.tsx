@@ -26,6 +26,14 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
   const [phaseTokens, setPhaseTokens] = useState<Record<string, { inputTokens: number; outputTokens: number }>>({});
   const [totalUsage, setTotalUsage] = useState<{ inputTokens: number; outputTokens: number; durationMs: number } | null>(null);
   const processedCount = useRef(0);
+  const reportRef = useRef<HTMLDivElement>(null);
+
+  // Scroll RCA report into center view when it appears
+  useEffect(() => {
+    if (report && reportRef.current) {
+      reportRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [report]);
 
   // Determine if this investigation is active (has WS messages) or historical
   const isActive = wsMessages.some(
@@ -314,7 +322,7 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
 
           {/* Report */}
           {report ? (
-            <section className="animate-fade-up">
+            <section ref={reportRef} className="animate-fade-up">
               <RcaReport report={report as any} />
               {/* Save as Skill */}
               <div className="mt-3 flex justify-end">
