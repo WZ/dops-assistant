@@ -32,7 +32,9 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
   const toolCount = Object.keys(tools).length;
   console.error(`[DISCOVER] Starting discovery with ${toolCount} tools, maxSteps=${config.discoveryConfig.maxIterations}`);
 
-  const result = await agent.generate("Discover all monitored services using the available tools. Return the complete list as JSON.");
+  const result = await agent.generate("Discover all monitored services using the available tools. Return the complete list as JSON.", {
+    providerOptions: { "openai-compatible": { max_tokens: 16384 } },
+  } as any);
 
   console.error(`[DISCOVER] Agent returned ${result.text?.length ?? 0} chars`);
   if (result.text) {

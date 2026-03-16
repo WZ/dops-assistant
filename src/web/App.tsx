@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -51,48 +51,54 @@ export function App() {
     totalUsage: null as { inputTokens: number; outputTokens: number; durationMs: number } | null,
   });
 
+  const lastProcessedIdx = useRef(0);
   useEffect(() => {
-    const last = ws.messages[ws.messages.length - 1];
-    if (!last) return;
+    const start = lastProcessedIdx.current;
+    const msgs = ws.messages;
+    if (msgs.length <= start) return;
+    lastProcessedIdx.current = msgs.length;
 
-    if (last.type === "discover:phase") {
-      setDiscoveryState((prev) => ({ ...prev, phase: last.phase, status: last.status }));
-    } else if (last.type === "discover:iteration") {
-      setDiscoveryState((prev) => ({
-        ...prev,
-        iteration: { current: last.iteration, max: last.maxIterations, description: last.description },
-      }));
-    } else if (last.type === "discover:tool_call") {
-      setDiscoveryState((prev) => ({
-        ...prev,
-        toolCalls: [...prev.toolCalls.slice(-50), {
-          timestamp: new Date().toLocaleTimeString(),
-          tool: last.tool,
-          status: last.status,
-          args: last.args,
-        }],
-      }));
-    } else if (last.type === "discover:complete") {
-      setDiscoveryState((prev) => ({ ...prev, results: last.services, error: null }));
-      setLeftPane({ type: "services:review" });
-    } else if (last.type === "discover:phase_usage") {
-      setDiscoveryState((prev) => ({
-        ...prev,
-        phaseTokens: {
-          ...prev.phaseTokens,
-          [last.phase]: { inputTokens: last.inputTokens, outputTokens: last.outputTokens, durationMs: last.durationMs },
-        },
-      }));
-    } else if (last.type === "discover:total_usage") {
-      setDiscoveryState((prev) => ({
-        ...prev,
-        totalUsage: { inputTokens: last.inputTokens, outputTokens: last.outputTokens, durationMs: last.durationMs },
-      }));
-    } else if (last.type === "discover:pending") {
-      setDiscoveryState((prev) => ({ ...prev, results: last.services, error: null }));
-      setLeftPane({ type: "services:review" });
-    } else if (last.type === "discover:error") {
-      setDiscoveryState((prev) => ({ ...prev, error: last.message }));
+    for (let i = start; i < msgs.length; i++) {
+      const msg = msgs[i];
+      if (msg.type === "discover:phase") {
+        setDiscoveryState((prev) => ({ ...prev, phase: msg.phase, status: msg.status }));
+      } else if (msg.type === "discover:iteration") {
+        setDiscoveryState((prev) => ({
+          ...prev,
+          iteration: { current: msg.iteration, max: msg.maxIterations, description: msg.description },
+        }));
+      } else if (msg.type === "discover:tool_call") {
+        setDiscoveryState((prev) => ({
+          ...prev,
+          toolCalls: [...prev.toolCalls.slice(-50), {
+            timestamp: new Date().toLocaleTimeString(),
+            tool: msg.tool,
+            status: msg.status,
+            args: msg.args,
+          }],
+        }));
+      } else if (msg.type === "discover:complete") {
+        setDiscoveryState((prev) => ({ ...prev, results: msg.services, error: null }));
+        setLeftPane({ type: "services:review" });
+      } else if (msg.type === "discover:phase_usage") {
+        setDiscoveryState((prev) => ({
+          ...prev,
+          phaseTokens: {
+            ...prev.phaseTokens,
+            [msg.phase]: { inputTokens: msg.inputTokens, outputTokens: msg.outputTokens, durationMs: msg.durationMs },
+          },
+        }));
+      } else if (msg.type === "discover:total_usage") {
+        setDiscoveryState((prev) => ({
+          ...prev,
+          totalUsage: { inputTokens: msg.inputTokens, outputTokens: msg.outputTokens, durationMs: msg.durationMs },
+        }));
+      } else if (msg.type === "discover:pending") {
+        setDiscoveryState((prev) => ({ ...prev, results: msg.services, error: null }));
+        setLeftPane({ type: "services:review" });
+      } else if (msg.type === "discover:error") {
+        setDiscoveryState((prev) => ({ ...prev, error: msg.message }));
+      }
     }
   }, [ws.messages]);
 

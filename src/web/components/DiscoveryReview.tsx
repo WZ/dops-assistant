@@ -75,22 +75,22 @@ export function DiscoveryReview({ services: initialServices, onAccept, onReject,
 
         {/* Service table */}
         <div className="mt-3 bg-background/50 rounded overflow-hidden">
-          <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground/40 border-b border-border/30">
+          <div className="grid grid-cols-[1fr_60px_80px_50px] px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground/40 border-b border-border/30">
             <span>Service</span>
-            <span>Metrics</span>
-            <span>Log Labels</span>
-            <span>Status</span>
+            <span className="text-right">Metrics</span>
+            <span className="text-right">Log Labels</span>
+            <span className="text-right">Status</span>
           </div>
           <div className="max-h-64 overflow-y-auto">
             {services.map((s) => (
               <div
                 key={s.name}
-                className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 px-3 py-1.5 text-xs border-b border-border/10 hover:bg-accent/20"
+                className="grid grid-cols-[1fr_60px_80px_50px] px-3 py-1.5 text-xs border-b border-border/10 hover:bg-accent/20"
               >
                 <span className="font-mono font-medium truncate">{s.name}</span>
-                <span className="text-muted-foreground/60 text-center">{s.metrics?.length ?? 0}</span>
-                <span className="text-muted-foreground/60 text-center">{Object.keys(s.logLabels ?? {}).length}</span>
-                <span className={`text-center ${
+                <span className="text-muted-foreground/60 text-right">{s.metrics?.length ?? 0}</span>
+                <span className="text-muted-foreground/60 text-right">{Object.keys(s.logLabels ?? {}).length}</span>
+                <span className={`text-right ${
                   s.confidence === "verified" ? "text-green-400" :
                   s.confidence === "partial" ? "text-yellow-400" : "text-red-400"
                 }`}>
