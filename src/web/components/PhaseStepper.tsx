@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import type { PhaseStats } from "../../types/ws-types.js";
 import type { TimelineEvent } from "./ActivityTimeline";
+import { formatTokens } from "../lib/formatTokens.js";
 
 export type PhaseStatus = "pending" | "running" | "complete" | "failed";
 
@@ -19,6 +20,7 @@ interface PhaseStepperProps {
   events?: TimelineEvent[];
   evidence?: Record<string, unknown>;
   isComplete?: boolean;
+  phaseTokens?: Record<string, { inputTokens: number; outputTokens: number }>;
 }
 
 function formatDuration(ms: number): string {
@@ -147,7 +149,7 @@ const statusIcons: Record<PhaseStatus, string> = {
   pending: "\u25CB",
 };
 
-export function PhaseStepper({ phases, events = [], evidence = {}, isComplete = false }: PhaseStepperProps) {
+export function PhaseStepper({ phases, events = [], evidence = {}, isComplete = false, phaseTokens }: PhaseStepperProps) {
   const [openPhases, setOpenPhases] = useState<Set<string>>(new Set());
   const prevCompleteRef = useRef(isComplete);
 
@@ -240,6 +242,13 @@ export function PhaseStepper({ phases, events = [], evidence = {}, isComplete = 
                         <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-secondary/30 text-muted-foreground/35 border border-border/15">
                           {formatDuration(phase.stats.durationMs)}
                         </span>
+                        {phaseTokens?.[phase.name] && (
+                          <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-secondary/30 text-muted-foreground/35 border border-border/15">
+                            {formatTokens(
+                              (phaseTokens[phase.name]?.inputTokens ?? 0) + (phaseTokens[phase.name]?.outputTokens ?? 0)
+                            )} tok
+                          </span>
+                        )}
                       </div>
                     )}
                   </CollapsibleTrigger>
