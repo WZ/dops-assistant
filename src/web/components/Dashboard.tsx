@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { ServiceCard } from "./ServiceCard";
-
-interface ServiceConfig { name: string; }
+import { FirstRunBanner } from "./FirstRunBanner";
+import { ServicesSection } from "./ServicesSection";
+import type { ServiceConfig } from "../../config/schema.js";
 
 interface InvestigationSummary {
   id: string;
@@ -12,9 +13,17 @@ interface InvestigationSummary {
   created_at: string;
 }
 
-export function Dashboard({ onInvestigationClick, onInvestigateService }: { onInvestigationClick: (id: string) => void; onInvestigateService: (serviceName: string) => void }) {
+interface DashboardProps {
+  onInvestigationClick: (id: string) => void;
+  onInvestigateService: (serviceName: string) => void;
+  onManageServices: () => void;
+  onRunDiscovery: () => void;
+}
+
+export function Dashboard({ onInvestigationClick, onInvestigateService, onManageServices, onRunDiscovery }: DashboardProps) {
   const [services, setServices] = useState<ServiceConfig[]>([]);
   const [investigations, setInvestigations] = useState<InvestigationSummary[]>([]);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
 
   useEffect(() => {
     fetch("/api/services").then((r) => r.json()).then(setServices).catch(() => {});
@@ -42,6 +51,14 @@ export function Dashboard({ onInvestigationClick, onInvestigateService }: { onIn
           {services.length} service{services.length !== 1 ? "s" : ""} monitored
         </p>
       </div>
+
+      {/* First-run banner */}
+      {services.length === 0 && !bannerDismissed && (
+        <FirstRunBanner
+          onRunDiscovery={onRunDiscovery}
+          onDismiss={() => setBannerDismissed(true)}
+        />
+      )}
 
       {/* Services Grid */}
       <section className="mb-10">
@@ -123,6 +140,13 @@ export function Dashboard({ onInvestigationClick, onInvestigateService }: { onIn
           </div>
         )}
       </section>
+
+      {/* Services management section */}
+      <ServicesSection
+        services={services}
+        onManage={onManageServices}
+        onRediscover={onRunDiscovery}
+      />
     </div>
   );
 }
