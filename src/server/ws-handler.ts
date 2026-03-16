@@ -248,6 +248,9 @@ async function handleDeepInvestigate(
     ? [{ role: "system" as const, content: systemContext }]
     : history;
 
+  const chatTokens = { inputTokens: 0, outputTokens: 0 };
+  const chatStartMs = Date.now();
+
   try {
     const result = await agent.chat({
       mode: "conversational",
@@ -255,6 +258,10 @@ async function handleDeepInvestigate(
       history: fullHistory,
       serviceContext: deps.services,
       supportsInlineCharts: true,
+      onTokenUsage: (u) => {
+        chatTokens.inputTokens += u.inputTokens;
+        chatTokens.outputTokens += u.outputTokens;
+      },
       onToolCall: (name, _args, rawResult) => {
         if (rawResult === undefined) {
           send({ type: "chat:tool_call", tool: name, status: "calling" });
@@ -278,6 +285,12 @@ async function handleDeepInvestigate(
     db.createMessage({ id: `msg_${ulid()}`, role: "user", content: msg.message, investigationId: msg.investigationId });
     db.createMessage({ id: `msg_${ulid()}`, role: "assistant", content: result.response, investigationId: msg.investigationId });
     send({ type: "chat:stream_end", content: result.response || "No response generated." });
+    send({
+      type: "chat:usage",
+      inputTokens: chatTokens.inputTokens,
+      outputTokens: chatTokens.outputTokens,
+      durationMs: Date.now() - chatStartMs,
+    });
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : "Unknown error";
     send({ type: "chat:stream_end", content: `Error: ${errorMsg}` });
@@ -348,6 +361,9 @@ export async function handleClientMessage(
     try {
       const runningPhases = new Set<string>();
       const phaseStats = new Map<string, { toolCalls: number; iterations: number; startMs: number }>();
+      const totalTokens = { inputTokens: 0, outputTokens: 0 };
+      const phaseTokens = { inputTokens: 0, outputTokens: 0 };
+      const investigationStartMs = Date.now();
 
       // Helper: send event to client AND persist to DB
       const emit = (event: ServerMessage) => {
@@ -357,8 +373,15 @@ export async function handleClientMessage(
         }
       };
 
+      const onTokenUsage = (u: { inputTokens: number; outputTokens: number }) => {
+        totalTokens.inputTokens += u.inputTokens;
+        totalTokens.outputTokens += u.outputTokens;
+        phaseTokens.inputTokens += u.inputTokens;
+        phaseTokens.outputTokens += u.outputTokens;
+      };
+
       const report = await investigationAgent.investigate(
-        service, undefined, invId, undefined, msg.message,
+        service, undefined, invId, onTokenUsage, msg.message,
         // onToolCall — enriched (phase passed from workflow for parallel steps)
         (name, args, result, durationMs, error, phase) => {
           const activePhase = phase ?? (runningPhases.size > 0 ? [...runningPhases][0]! : "planning");
@@ -385,6 +408,16 @@ export async function handleClientMessage(
                 type: "investigation:phase", phase: prev, status: "complete",
                 stats: stats ? { observationCount: 0, criticalCount: 0, toolCalls: stats.toolCalls, iterations: stats.iterations, durationMs } : undefined,
               });
+              emit({
+                type: "investigation:phase_usage",
+                investigationId: invId,
+                phase: prev,
+                inputTokens: phaseTokens.inputTokens,
+                outputTokens: phaseTokens.outputTokens,
+                durationMs,
+              });
+              phaseTokens.inputTokens = 0;
+              phaseTokens.outputTokens = 0;
               runningPhases.delete(prev);
             }
           }
@@ -415,11 +448,36 @@ export async function handleClientMessage(
           type: "investigation:phase", phase: fp, status: "complete",
           stats: stats ? { observationCount: 0, criticalCount: 0, toolCalls: stats.toolCalls, iterations: stats.iterations, durationMs } : undefined,
         });
+        emit({
+          type: "investigation:phase_usage",
+          investigationId: invId,
+          phase: fp,
+          inputTokens: phaseTokens.inputTokens,
+          outputTokens: phaseTokens.outputTokens,
+          durationMs,
+        });
+        phaseTokens.inputTokens = 0;
+        phaseTokens.outputTokens = 0;
       }
       runningPhases.clear();
 
       db.updateInvestigation(invId, { status: "complete", report: JSON.stringify(report) });
       send({ type: "investigation:complete", id: invId, report });
+
+      const totalDurationMs = Date.now() - investigationStartMs;
+      emit({
+        type: "investigation:total_usage",
+        investigationId: invId,
+        inputTokens: totalTokens.inputTokens,
+        outputTokens: totalTokens.outputTokens,
+        durationMs: totalDurationMs,
+      });
+
+      db.updateInvestigation(invId, {
+        total_input_tokens: totalTokens.inputTokens,
+        total_output_tokens: totalTokens.outputTokens,
+        total_duration_ms: totalDurationMs,
+      });
 
       const summary = `**Root Cause:** ${report.rootCause}\n**Confidence:** ${report.confidence}\n**Trigger:** ${report.trigger}`;
       memory.append(threadId, { role: "assistant", content: `Investigation of ${service.name}: ${summary}` });
@@ -452,6 +510,9 @@ export async function handleClientMessage(
       }
     }
 
+    const chatTokens = { inputTokens: 0, outputTokens: 0 };
+    const chatStartMs = Date.now();
+
     try {
       const result = await agent.chat({
         mode: "conversational",
@@ -460,6 +521,10 @@ export async function handleClientMessage(
         serviceContext: services,
         skillContext: chatSkillContext,
         supportsInlineCharts: true,
+        onTokenUsage: (u) => {
+          chatTokens.inputTokens += u.inputTokens;
+          chatTokens.outputTokens += u.outputTokens;
+        },
         onToolCall: (name, args, rawResult) => {
           if (rawResult === undefined) {
             send({ type: "chat:tool_call", tool: name, status: "calling" });
@@ -491,6 +556,12 @@ export async function handleClientMessage(
         content,
         ...(chartData.length > 0 ? { chartData } : {}),
         ...(usedSkillNames?.length ? { skillsUsed: usedSkillNames } : {}),
+      });
+      send({
+        type: "chat:usage",
+        inputTokens: chatTokens.inputTokens,
+        outputTokens: chatTokens.outputTokens,
+        durationMs: Date.now() - chatStartMs,
       });
       db.createMessage({
         id: `msg_${ulid()}`, role: "assistant", content,
