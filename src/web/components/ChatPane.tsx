@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { useAutoScroll } from "../hooks/useAutoScroll.js";
 import { Badge } from "@/components/ui/badge";
 import { renderInline } from "../lib/renderInline";
 import { renderMarkdown } from "../lib/renderMarkdown";
@@ -75,7 +76,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
   const streamRef = useRef<{ content: string; reasoning: string }>({ content: "", reasoning: "" });
   const rafRef = useRef<number | null>(null);
 
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useAutoScroll([chatMessages, deepMessages, chatLoading, !!streamingMessage]);
   const processedCount = useRef(0);
   const historyLoaded = useRef(false);
 
@@ -273,18 +274,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
   // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally only reacts to status changes; streamingMessage and isDeepMode are checked but should not trigger re-runs
   }, [status]);
 
-  // Scroll on new messages or loading state changes — NOT on every streaming delta
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [chatMessages, deepMessages, chatLoading]);
-
-  // Scroll once when streaming starts (not on every token)
-  const isStreaming = !!streamingMessage;
-  useEffect(() => {
-    if (isStreaming) {
-      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-    }
-  }, [isStreaming]);
+  // Auto-scroll is handled by useAutoScroll hook on scrollRef
 
   const handleSubmit = (text?: string) => {
     const trimmed = (text ?? input).trim();

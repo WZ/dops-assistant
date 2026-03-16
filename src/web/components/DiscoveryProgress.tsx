@@ -1,4 +1,5 @@
 import { formatTokens } from "../lib/formatTokens.js";
+import { useAutoScroll } from "../hooks/useAutoScroll.js";
 
 interface ToolCallEntry {
   timestamp: string;
@@ -20,6 +21,7 @@ interface DiscoveryProgressProps {
 }
 
 export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, error, phaseTokens, totalUsage, onRetry, onBack }: DiscoveryProgressProps) {
+  const toolCallLogRef = useAutoScroll([toolCalls.length]);
   const phases = ["discovery", "validation", "review"];
   const currentIdx = phases.indexOf(phase);
 
@@ -86,7 +88,7 @@ export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, er
 
         {/* Tool call log */}
         {toolCalls.length > 0 && (
-          <div className="font-mono text-[11px] text-muted-foreground/60 max-h-40 overflow-y-auto space-y-0.5">
+          <div ref={toolCallLogRef} className="font-mono text-[11px] text-muted-foreground/60 max-h-40 overflow-y-auto space-y-0.5">
             {toolCalls.slice(-20).map((tc, i) => (
               <div key={i}>
                 <span className="text-muted-foreground/30">{tc.timestamp}</span>{" "}
