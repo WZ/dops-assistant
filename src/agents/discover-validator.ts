@@ -44,9 +44,9 @@ Return the COMPLETE list — do not omit any services. Return valid JSON.`,
     tools: config.tools ?? {},
     defaultOptions: {
       maxSteps: config.maxSteps ?? 15,
+      prepareStep: config.useQuirkHandling !== false
+        ? createQuirkPrepareStep({ maxSteps: config.maxSteps ?? 15 })
+        : undefined,
     },
-    ...(config.useQuirkHandling !== false
-      ? { prepareStep: createQuirkPrepareStep({ maxSteps: config.maxSteps ?? 15 }) }
-      : {}),
   });
 }
