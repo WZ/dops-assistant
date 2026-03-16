@@ -62,7 +62,7 @@ function ToolCallRow({ tc }: { tc: Extract<TimelineEvent, { type: "tool_call" }>
           )}
         </div>
         {expanded && tc.result && (
-          <pre className="text-[10px] font-mono text-muted-foreground/35 bg-background/30 rounded p-2 mt-1 overflow-x-auto border border-border/10 max-h-20 overflow-y-auto animate-fade-in">
+          <pre className="text-[10px] font-mono text-muted-foreground/65 bg-background/30 rounded p-2 mt-1 overflow-x-auto border border-border/10 max-h-20 overflow-y-auto animate-fade-in">
             {tc.result.slice(0, 500)}
           </pre>
         )}
@@ -100,7 +100,7 @@ function PhaseDetails({ phase, events, evidence }: { phase: PhaseState; events: 
     <div className="mt-1.5 space-y-1.5 text-[11px]">
       {/* Compact iteration counter */}
       {maxIteration > 0 && (
-        <div className="flex items-center gap-1.5 text-[9px] font-mono text-muted-foreground/35">
+        <div className="flex items-center gap-1.5 text-[9px] font-mono text-muted-foreground/65">
           <div className="h-px w-2 bg-border/30" />
           {maxIteration}/{maxOfMax} iterations
           <div className="h-px flex-1 bg-border/15" />
@@ -130,7 +130,7 @@ function PhaseDetails({ phase, events, evidence }: { phase: PhaseState; events: 
       {/* Observations from evidence */}
       {observations.length > 0 && (
         <div className="mt-1 p-2 rounded-md bg-secondary/20 border border-border/15 space-y-1">
-          <p className="text-[9px] font-display font-semibold uppercase tracking-[0.12em] text-muted-foreground/40 mb-0.5">Findings</p>
+          <p className="text-[9px] font-display font-semibold uppercase tracking-[0.12em] text-muted-foreground/70 mb-0.5">Findings</p>
           {observations.map((o, i) => (
             <p key={i} className="text-[11px] text-foreground/55 font-mono leading-relaxed">
               {typeof o === "string" ? o : JSON.stringify(o)}
@@ -199,7 +199,7 @@ export function PhaseStepper({ phases, events = [], evidence = {}, isComplete = 
                 phase.status === "complete" && "bg-success border-success text-success-foreground glow-green",
                 phase.status === "running" && "border-primary text-primary animate-glow-pulse",
                 phase.status === "failed" && "bg-destructive border-destructive text-destructive-foreground glow-red",
-                phase.status === "pending" && "border-border/60 text-muted-foreground/25",
+                phase.status === "pending" && "border-border/60 text-muted-foreground/55",
               )}>
                 {statusIcons[phase.status]}
               </div>
@@ -219,7 +219,7 @@ export function PhaseStepper({ phases, events = [], evidence = {}, isComplete = 
                 <Collapsible open={isOpen} onOpenChange={() => toggle(phase.name)}>
                   <CollapsibleTrigger className="flex items-center gap-2 group cursor-pointer w-full text-left">
                     <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor" className={cn(
-                      "transition-transform duration-200 text-muted-foreground/30 shrink-0",
+                      "transition-transform duration-200 text-muted-foreground/60 shrink-0",
                       isOpen && "rotate-90"
                     )}>
                       <path d="M8 5l8 7-8 7z"/>
@@ -235,15 +235,15 @@ export function PhaseStepper({ phases, events = [], evidence = {}, isComplete = 
                     {phase.stats && phase.status === "complete" && (
                       <div className="flex gap-1 ml-auto">
                         {phase.stats.toolCalls > 0 && (
-                          <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-secondary/30 text-muted-foreground/35 border border-border/15">
+                          <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-secondary/30 text-muted-foreground/65 border border-border/15">
                             {phase.stats.toolCalls} tools
                           </span>
                         )}
-                        <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-secondary/30 text-muted-foreground/35 border border-border/15">
+                        <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-secondary/30 text-muted-foreground/65 border border-border/15">
                           {formatDuration(phase.stats.durationMs)}
                         </span>
                         {phaseTokens?.[phase.name] && (
-                          <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-secondary/30 text-muted-foreground/35 border border-border/15">
+                          <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-secondary/30 text-muted-foreground/65 border border-border/15">
                             {formatTokens(
                               (phaseTokens[phase.name]?.inputTokens ?? 0) + (phaseTokens[phase.name]?.outputTokens ?? 0)
                             )} tok
@@ -253,7 +253,7 @@ export function PhaseStepper({ phases, events = [], evidence = {}, isComplete = 
                     )}
                   </CollapsibleTrigger>
                   {phase.substatus && (
-                    <p className="text-[10px] font-mono text-muted-foreground/40 mt-0.5 ml-5 animate-fade-in">
+                    <p className="text-[10px] font-mono text-muted-foreground/70 mt-0.5 ml-5 animate-fade-in">
                       {phase.substatus}
                     </p>
                   )}
@@ -268,12 +268,12 @@ export function PhaseStepper({ phases, events = [], evidence = {}, isComplete = 
                     phase.status === "complete" && "text-foreground/70",
                     phase.status === "running" && "text-primary",
                     phase.status === "failed" && "text-destructive",
-                    phase.status === "pending" && "text-muted-foreground/25",
+                    phase.status === "pending" && "text-muted-foreground/55",
                   )}>
                     {phase.label}
                   </p>
                   {phase.substatus && (
-                    <p className="text-[10px] font-mono text-muted-foreground/40 mt-0.5 animate-fade-in">
+                    <p className="text-[10px] font-mono text-muted-foreground/70 mt-0.5 animate-fade-in">
                       {phase.substatus}
                     </p>
                   )}

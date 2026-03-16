@@ -89,15 +89,15 @@ export function EvidenceCards({ evidence }: { evidence: EvidenceData }) {
               </div>
               <div className="flex items-center gap-3 mt-1.5">
                 <span className="text-[11px] font-mono text-primary/70">{obs.currentValue}</span>
-                <span className="text-[10px] text-muted-foreground/30">/</span>
-                <span className="text-[11px] font-mono text-muted-foreground/40">baseline {obs.baselineValue}</span>
+                <span className="text-[10px] text-muted-foreground/60">/</span>
+                <span className="text-[11px] font-mono text-muted-foreground/70">baseline {obs.baselineValue}</span>
               </div>
             </EvidenceItem>
           ) : (
             <StringEvidence key={i} text={JSON.stringify(obs)} index={i} />
           )
         )}
-        {mc === 0 && (!evidence.timeSeries || evidence.timeSeries.length === 0) && <p className="text-xs text-muted-foreground/35 py-4 text-center font-mono">No metric findings yet</p>}
+        {mc === 0 && (!evidence.timeSeries || evidence.timeSeries.length === 0) && <p className="text-xs text-muted-foreground/65 py-4 text-center font-mono">No metric findings yet</p>}
       </TabsContent>
 
       <TabsContent value="logs" className="space-y-2 mt-3">
@@ -120,7 +120,7 @@ export function EvidenceCards({ evidence }: { evidence: EvidenceData }) {
             <StringEvidence key={i} text={JSON.stringify(obs)} index={i} />
           )
         )}
-        {lc === 0 && <p className="text-xs text-muted-foreground/35 py-4 text-center font-mono">No log findings yet</p>}
+        {lc === 0 && <p className="text-xs text-muted-foreground/65 py-4 text-center font-mono">No log findings yet</p>}
       </TabsContent>
 
       <TabsContent value="infra" className="space-y-2 mt-3">
@@ -133,13 +133,13 @@ export function EvidenceCards({ evidence }: { evidence: EvidenceData }) {
                 <span className="font-mono text-xs text-foreground/70">{obs.resource}</span>
                 <Badge variant={obs.status === "unhealthy" ? "destructive" : "secondary"} className="text-[10px]">{obs.status}</Badge>
               </div>
-              <p className="text-[11px] text-muted-foreground/45 mt-1">{obs.detail}</p>
+              <p className="text-[11px] text-muted-foreground/65 mt-1">{obs.detail}</p>
             </EvidenceItem>
           ) : (
             <StringEvidence key={i} text={JSON.stringify(obs)} index={i} />
           )
         )}
-        {ic === 0 && <p className="text-xs text-muted-foreground/35 py-4 text-center font-mono">No infra findings yet</p>}
+        {ic === 0 && <p className="text-xs text-muted-foreground/65 py-4 text-center font-mono">No infra findings yet</p>}
       </TabsContent>
     </Tabs>
   );
