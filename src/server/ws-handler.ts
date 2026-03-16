@@ -3,15 +3,28 @@ import { WebSocketServer, WebSocket } from "ws";
 import { ulid } from "ulid";
 import pino from "pino";
 import type { Database } from "./db.js";
-import type { IChatAgent, IInvestigationAgent } from "../types/agent-interfaces.js";
+import type { IChatAgent, IInvestigationAgent, IDiscoverAgent } from "../types/agent-interfaces.js";
 import type { IntentRouter } from "../agents/intent.js";
 import { resolveServiceFromHistory } from "../agents/intent.js";
 import type { ConversationMemory } from "../memory/conversation.js";
-import type { ServiceConfig } from "../config/schema.js";
+import type { ServiceConfig, DiscoveryConfig } from "../config/schema.js";
 import type { ClientMessage, ServerMessage, PhaseStats, ChartSeries } from "../types/ws-types.js";
+import type { ValidatedServiceConfig } from "../types/discovery-types.js";
 import type { SkillStore } from "../skills/store.js";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
+
+/** Map raw LLM errors to user-friendly messages. */
+function friendlyError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  if (/bad gateway|service unavailable|502|503/i.test(raw))
+    return "LLM API is currently unavailable. Please try again later.";
+  if (/timeout|timed out|ETIMEDOUT/i.test(raw))
+    return "LLM API request timed out. Please try again.";
+  if (/rate limit|429/i.test(raw))
+    return "LLM API rate limit reached. Please wait and try again.";
+  return raw;
+}
 
 /**
  * Map backend investigation phase names (from investigation.ts onPhase callback)
@@ -125,6 +138,10 @@ export interface WsDeps {
   skillStore?: SkillStore;
   validateLlmServiceMatch: (llmService: string | undefined, userMessage: string, services: ServiceConfig[]) => ServiceConfig | undefined;
   matchServiceFromText: (text: string, services: ServiceConfig[]) => ServiceConfig | undefined;
+  discoverAgent?: IDiscoverAgent;
+  discoveryConfig?: DiscoveryConfig;
+  getPendingDiscovery?: () => ValidatedServiceConfig[] | null;
+  clearPendingDiscovery?: () => void;
 }
 
 export function setupWebSocket(server: Server, deps: WsDeps): void {
@@ -134,14 +151,21 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
     const threadId = `web_${ulid()}`;
     logger.info({ threadId }, "WebSocket client connected");
 
+    const send = (m: ServerMessage) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(m));
+      }
+    };
+
+    // Notify newly connected clients of pending discovery results
+    const pending = deps.getPendingDiscovery?.();
+    if (pending) {
+      send({ type: "discover:pending", services: pending });
+    }
+
     ws.on("message", async (raw: Buffer) => {
       try {
         const msg = JSON.parse(raw.toString()) as ClientMessage;
-        const send = (m: ServerMessage) => {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify(m));
-          }
-        };
         await handleClientMessage(msg, send, deps, threadId);
       } catch (err) {
         logger.error({ err }, "WebSocket message handling error");
@@ -292,8 +316,7 @@ async function handleDeepInvestigate(
       durationMs: Date.now() - chatStartMs,
     });
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : "Unknown error";
-    send({ type: "chat:stream_end", content: `Error: ${errorMsg}` });
+    send({ type: "chat:stream_end", content: `Error: ${friendlyError(err)}` });
   }
 }
 
@@ -311,6 +334,97 @@ export async function handleClientMessage(
 
   if (msg.type === "deep_investigate") {
     await handleDeepInvestigate(msg, send, deps, threadId);
+    return;
+  }
+
+  if (msg.type === "discover" && deps.discoverAgent) {
+    const totalTokens = { inputTokens: 0, outputTokens: 0 };
+    const phaseTokens = { inputTokens: 0, outputTokens: 0 };
+    let currentPhase = "discovery";
+    const discoveryStartMs = Date.now();
+    let phaseStartMs = Date.now();
+
+    const onTokenUsage = (u: { inputTokens: number; outputTokens: number }) => {
+      totalTokens.inputTokens += u.inputTokens;
+      totalTokens.outputTokens += u.outputTokens;
+      phaseTokens.inputTokens += u.inputTokens;
+      phaseTokens.outputTokens += u.outputTokens;
+    };
+
+    try {
+      const services = await deps.discoverAgent.discover(
+        deps.discoveryConfig ?? { autoRefresh: false, excludeServices: [], maxIterations: 40 },
+        (phase) => {
+          // Emit usage for the phase that just ended
+          if (phaseTokens.inputTokens > 0 || phaseTokens.outputTokens > 0) {
+            send({
+              type: "discover:phase_usage",
+              phase: currentPhase,
+              inputTokens: phaseTokens.inputTokens,
+              outputTokens: phaseTokens.outputTokens,
+              durationMs: Date.now() - phaseStartMs,
+            });
+          }
+          phaseTokens.inputTokens = 0;
+          phaseTokens.outputTokens = 0;
+          currentPhase = phase;
+          phaseStartMs = Date.now();
+          send({ type: "discover:phase", phase, status: "running" });
+        },
+        (phase, iteration, maxIterations, description) =>
+          send({ type: "discover:iteration", phase, iteration, maxIterations, description }),
+        (name, args, result, durationMs, error, phase) =>
+          send({
+            type: "discover:tool_call",
+            phase: phase ?? "discovery",
+            tool: name,
+            args,
+            status: error ? "error" : result ? "success" : "calling",
+            result,
+            durationMs,
+          }),
+        onTokenUsage,
+      );
+      send({ type: "discover:phase", phase: "validation", status: "complete" });
+      if (services.length === 0) {
+        send({ type: "discover:error", message: "Discovery returned no services. The LLM may be unavailable — try again." });
+      } else {
+        send({ type: "discover:complete", services });
+      }
+
+      // Emit usage for the final phase
+      if (phaseTokens.inputTokens > 0 || phaseTokens.outputTokens > 0) {
+        send({
+          type: "discover:phase_usage",
+          phase: currentPhase,
+          inputTokens: phaseTokens.inputTokens,
+          outputTokens: phaseTokens.outputTokens,
+          durationMs: Date.now() - phaseStartMs,
+        });
+      }
+
+      send({
+        type: "discover:total_usage",
+        inputTokens: totalTokens.inputTokens,
+        outputTokens: totalTokens.outputTokens,
+        durationMs: Date.now() - discoveryStartMs,
+      });
+    } catch (err) {
+      send({ type: "discover:error", message: friendlyError(err) });
+    }
+    return;
+  }
+
+  if (msg.type === "discover:accept" && deps.discoverAgent) {
+    await deps.discoverAgent.accept(msg.services, "discovery");
+    deps.clearPendingDiscovery?.();
+    // Update in-memory services so chat/investigation agents see the new registry
+    deps.services = msg.services;
+    return;
+  }
+
+  if (msg.type === "discover:reject") {
+    deps.clearPendingDiscovery?.();
     return;
   }
 
@@ -486,7 +600,7 @@ export async function handleClientMessage(
     } catch (err) {
       logger.error({ err, invId, service: service.name }, "Investigation failed");
       db.updateInvestigation(invId, { status: "failed" });
-      const errorMsg = err instanceof Error ? err.message : "Unknown error";
+      const errorMsg = friendlyError(err);
       send({ type: "investigation:failed", id: invId, error: errorMsg });
       send({ type: "chat", role: "assistant", content: `Investigation failed: ${errorMsg}` });
     }

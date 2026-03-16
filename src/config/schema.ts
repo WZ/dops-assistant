@@ -98,7 +98,6 @@ const SkillsSchema = z.object({
 const DiscoverySchema = z.object({
   autoRefresh: z.boolean().default(false),
   excludeServices: z.array(z.string()).default([]),
-  consulMetric: z.string().default("consul_catalog_service_node_healthy"),
   maxIterations: z.number().default(40),
 });
 

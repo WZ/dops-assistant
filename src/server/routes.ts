@@ -3,6 +3,7 @@ import type { Database, InvestigationRow, PhaseRow, EventRow } from "./db.js";
 import type { ServiceConfig } from "../config/schema.js";
 import type { SkillStore } from "../skills/store.js";
 import type { ProviderRole } from "../config/schema.js";
+import type { ServiceRegistryStore } from "../services/registry.js";
 
 /** Minimal MCP interface needed by routes (dependency graph queries). */
 export interface IMcpClient {
@@ -65,7 +66,10 @@ export function buildHandlers(db: Database, services: ServiceConfig[], mcp: IMcp
   };
 }
 
-export function registerRoutes(app: Express, db: Database, services: ServiceConfig[], mcp: IMcpClient, skillStore?: SkillStore): void {
+export function registerRoutes(
+  app: Express, db: Database, services: ServiceConfig[], mcp: IMcpClient,
+  skillStore?: SkillStore, registryStore?: ServiceRegistryStore,
+): void {
   const handlers = buildHandlers(db, services, mcp);
 
   app.get("/api/services", (_req: Request, res: Response) => {
@@ -207,6 +211,47 @@ export function registerRoutes(app: Express, db: Database, services: ServiceConf
         });
       } catch (err) {
         res.status(500).json({ error: err instanceof Error ? err.message : "Failed to generate skill" });
+      }
+    });
+  }
+
+  // ── Service Registry REST API ─────────────────────────────────────────────
+  if (registryStore) {
+    app.put("/api/services", (req: Request, res: Response) => {
+      try {
+        const services = req.body as ServiceConfig[];
+        if (!Array.isArray(services)) {
+          res.status(400).json({ error: "Body must be an array of services" });
+          return;
+        }
+        const versionId = registryStore.save(services, "manual");
+        res.json({ versionId, serviceCount: services.length });
+      } catch (err) {
+        res.status(500).json({ error: String(err) });
+      }
+    });
+
+    app.get("/api/services/versions", (_req: Request, res: Response) => {
+      res.json(registryStore.listVersions());
+    });
+
+    app.get("/api/services/versions/:id", (req: Request, res: Response) => {
+      try {
+        const id = Array.isArray(req.params["id"]) ? req.params["id"][0]! : req.params["id"]!;
+        const services = registryStore.getVersion(id);
+        res.json(services);
+      } catch (err) {
+        res.status(404).json({ error: String(err) });
+      }
+    });
+
+    app.post("/api/services/versions/:id/restore", (req: Request, res: Response) => {
+      try {
+        const id = Array.isArray(req.params["id"]) ? req.params["id"][0]! : req.params["id"]!;
+        registryStore.rollback(id);
+        res.json({ restored: true, services: registryStore.load() });
+      } catch (err) {
+        res.status(404).json({ error: String(err) });
       }
     });
   }
