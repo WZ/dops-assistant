@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MastraChatAgentAdapter,
   MastraInvestigationAdapter,
+  MastraDiscoverAdapter,
   createMastraAdapters,
 } from "./agents.js";
 import type { ChatRequest } from "../types/agent-types.js";
@@ -284,6 +285,19 @@ describe("MastraInvestigationAdapter", () => {
     expect(report.service).toBe("failing-svc");
     expect(report.rootCause).toBe("Unable to determine root cause");
     expect(report.confidence).toBe("low");
+  });
+});
+
+describe("MastraDiscoverAdapter", () => {
+  it("exposes discover() and accept() methods", () => {
+    const adapter = new MastraDiscoverAdapter({
+      model: {} as any,
+      providers: [],
+      discoveryConfig: { autoRefresh: false, excludeServices: [], maxIterations: 5 },
+      registryStore: { load: () => [], save: () => "id", listVersions: () => [], getVersion: () => [], rollback: () => {} } as any,
+    });
+    expect(typeof adapter.discover).toBe("function");
+    expect(typeof adapter.accept).toBe("function");
   });
 });
 
