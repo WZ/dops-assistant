@@ -39,10 +39,9 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
     ? wrapToolsWithCallbacks(metricsOnly, config.onToolCall, "discovery")
     : metricsOnly;
 
-  // Discovery typically needs only 5-10 tool calls. Keep maxSteps low so the
-  // quirk wind-down (which disables tools to force JSON output) fires early
-  // enough to prevent the model from returning empty content.
-  const maxSteps = Math.min(config.discoveryConfig.maxIterations, 15);
+  // Keep maxSteps capped so the quirk wind-down (which disables tools to
+  // force JSON output) fires before the model exhausts all iterations.
+  const maxSteps = Math.min(config.discoveryConfig.maxIterations, 25);
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     const agent = createDiscoverAgent({
