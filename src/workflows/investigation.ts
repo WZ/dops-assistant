@@ -38,6 +38,7 @@ export interface WorkflowConfig {
   onPhase?: (phase: string) => void;
   onIteration?: (phase: string, iteration: number, maxIterations: number, label: string) => void;
   onToolCall?: (name: string, args: Record<string, unknown>, result?: string, duration?: number, error?: string, phase?: string) => void;
+  onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
 }
 
 // ── Workflow factory ──────────────────────────────────────────────────────────

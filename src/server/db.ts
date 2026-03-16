@@ -8,6 +8,9 @@ export interface InvestigationRow {
   report: string | null;
   created_at: string;
   completed_at: string | null;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_duration_ms: number;
 }
 
 export interface PhaseRow {
@@ -79,6 +82,9 @@ export class Database {
     try {
       this.db.exec(`ALTER TABLE messages ADD COLUMN chart_data TEXT`);
     } catch { /* column already exists */ }
+    try { this.db.exec("ALTER TABLE investigations ADD COLUMN total_input_tokens INTEGER DEFAULT 0"); } catch {}
+    try { this.db.exec("ALTER TABLE investigations ADD COLUMN total_output_tokens INTEGER DEFAULT 0"); } catch {}
+    try { this.db.exec("ALTER TABLE investigations ADD COLUMN total_duration_ms INTEGER DEFAULT 0"); } catch {}
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS investigation_events (
         id                TEXT PRIMARY KEY,
@@ -94,13 +100,16 @@ export class Database {
     this.db.prepare("INSERT INTO investigations (id, service, query, status) VALUES (?, ?, ?, ?)").run(inv.id, inv.service, inv.query, inv.status);
   }
 
-  updateInvestigation(id: string, updates: { status?: string; report?: string; completed_at?: string }): void {
+  updateInvestigation(id: string, updates: { status?: string; report?: string; completed_at?: string; total_input_tokens?: number; total_output_tokens?: number; total_duration_ms?: number }): void {
     const sets: string[] = [];
     const vals: unknown[] = [];
     if (updates.status !== undefined) { sets.push("status = ?"); vals.push(updates.status); }
     if (updates.report !== undefined) { sets.push("report = ?"); vals.push(updates.report); }
     if (updates.completed_at !== undefined) { sets.push("completed_at = ?"); vals.push(updates.completed_at); }
     else if (updates.status === "complete" || updates.status === "failed") { sets.push("completed_at = datetime('now')"); }
+    if (updates.total_input_tokens !== undefined) { sets.push("total_input_tokens = ?"); vals.push(updates.total_input_tokens); }
+    if (updates.total_output_tokens !== undefined) { sets.push("total_output_tokens = ?"); vals.push(updates.total_output_tokens); }
+    if (updates.total_duration_ms !== undefined) { sets.push("total_duration_ms = ?"); vals.push(updates.total_duration_ms); }
     if (sets.length === 0) return;
     vals.push(id);
     this.db.prepare(`UPDATE investigations SET ${sets.join(", ")} WHERE id = ?`).run(...vals);

@@ -41,4 +41,7 @@ export type ServerMessage =
   | { type: "chat:stream_start" }
   | { type: "chat:stream_delta"; content: string; reasoning?: boolean }
   | { type: "chat:stream_end"; content: string; chartData?: ChartSeries[]; skillsUsed?: string[] }
+  | { type: "investigation:phase_usage"; investigationId: string; phase: string; inputTokens: number; outputTokens: number; durationMs: number }
+  | { type: "investigation:total_usage"; investigationId: string; inputTokens: number; outputTokens: number; durationMs: number }
+  | { type: "chat:usage"; inputTokens: number; outputTokens: number; durationMs: number }
   | { type: "error"; message: string };
