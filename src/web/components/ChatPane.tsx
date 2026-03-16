@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { Badge } from "@/components/ui/badge";
 import { renderInline } from "../lib/renderInline";
 import { renderMarkdown } from "../lib/renderMarkdown";
+import { formatTokens } from "../lib/formatTokens.js";
 import { MetricChart, type TimeSeriesData } from "./MetricChart";
 import type { useWebSocket } from "../hooks/useWebSocket";
 import type { ChartSeries } from "../../types/ws-types.js";
@@ -24,6 +25,7 @@ interface ChatMessage {
   report?: RcaReportSummary;
   chartData?: ChartSeries[];
   skillsUsed?: string[];
+  tokenUsage?: { inputTokens: number; outputTokens: number; durationMs: number };
 }
 
 interface ChatPaneProps {
@@ -62,6 +64,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
   const [chatLoading, setChatLoading] = useState(false);
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [contextSwitch, setContextSwitch] = useState<{ previousService: string; newService: string } | null>(null);
+  const [sessionTokens, setSessionTokens] = useState({ inputTokens: 0, outputTokens: 0, messageCount: 0 });
   const [streamingMessage, setStreamingMessage] = useState<{
     content: string;
     reasoning: string;
@@ -213,6 +216,28 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
         setDeepLoading(false);
         setActiveTool(null);
       }
+      if (msg.type === "chat:usage") {
+        const usage = { inputTokens: msg.inputTokens, outputTokens: msg.outputTokens, durationMs: msg.durationMs };
+
+        const updateMessages = (prev: ChatMessage[]) => {
+          if (prev.length === 0) return prev;
+          const last = prev[prev.length - 1]!;
+          if (last.role !== "assistant") return prev;
+          return [...prev.slice(0, -1), { ...last, tokenUsage: usage }];
+        };
+
+        if (isDeepMode) {
+          setDeepMessages(updateMessages);
+        } else {
+          setChatMessages(updateMessages);
+        }
+
+        setSessionTokens((prev) => ({
+          inputTokens: prev.inputTokens + msg.inputTokens,
+          outputTokens: prev.outputTokens + msg.outputTokens,
+          messageCount: prev.messageCount + 1,
+        }));
+      }
       if (msg.type === "chat:tool_call") {
         setActiveTool(msg.status === "calling" ? msg.tool : null);
       }
@@ -227,6 +252,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
         setChatLoading(false);
         setActiveTool(null);
         setContextSwitch(null);
+        setSessionTokens({ inputTokens: 0, outputTokens: 0, messageCount: 0 });
       }
       if (msg.type === "context_switch") {
         setContextSwitch({ previousService: msg.previousService, newService: msg.newService });
@@ -457,6 +483,11 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                       ))}
                     </div>
                   )}
+                  {msg.tokenUsage && (
+                    <div className="text-[10px] font-mono text-muted-foreground/40 mt-1">
+                      {formatTokens(msg.tokenUsage.inputTokens + msg.tokenUsage.outputTokens)} tokens · {(msg.tokenUsage.durationMs / 1000).toFixed(1)}s
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -534,6 +565,16 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
               {prompt}
             </button>
           ))}
+        </div>
+      )}
+
+      {/* Session token usage footer */}
+      {sessionTokens.messageCount > 0 && (
+        <div className="flex items-center gap-2 px-4 py-1.5 text-[10px] font-mono text-muted-foreground/40 border-t border-border/20 bg-background/80">
+          <span>This session:</span>
+          <span>{formatTokens(sessionTokens.inputTokens + sessionTokens.outputTokens)} tokens</span>
+          <span>·</span>
+          <span>{sessionTokens.messageCount} messages</span>
         </div>
       )}
 
