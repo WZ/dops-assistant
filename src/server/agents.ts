@@ -16,17 +16,21 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { ServiceConfig } from "../config/schema.js";
+import type { ServiceConfig, DiscoveryConfig } from "../config/schema.js";
 import type { RcaReport } from "../types/rca-types.js";
-import type { OnToolCallEnriched, OnIteration } from "../types/agent-interfaces.js";
+import type { IDiscoverAgent, OnToolCallEnriched, OnIteration } from "../types/agent-interfaces.js";
 import type { ChatRequest, ChatResponse, ImageAttachment } from "../types/agent-types.js";
 import type { TokenUsage } from "../types/llm-types.js";
+import type { ValidatedServiceConfig } from "../types/discovery-types.js";
 import { createChatAgent } from "../agents/chat.js";
 import { createInvestigationWorkflow, type WorkflowConfig } from "../workflows/investigation.js";
+import { runDiscovery } from "../workflows/discovery.js";
 import { createModel } from "../mastra/index.js";
 import type { Config } from "../config/schema.js";
 import type { MastraProvider } from "../mcp/provider.js";
 import { getAllTools } from "../mcp/provider.js";
+import type { ServiceRegistryStore } from "../services/registry.js";
+import type { LanguageModel } from "ai";
 
 type MastraChatAgent = ReturnType<typeof createChatAgent>;
 type MastraStreamInput = Parameters<MastraChatAgent["stream"]>[0];
@@ -330,12 +334,52 @@ export class MastraInvestigationAdapter {
   }
 }
 
+// ── DiscoverAgent adapter ─────────────────────────────────────────────────────
+
+export interface MastraDiscoverAdapterDeps {
+  model: LanguageModel;
+  providers: MastraProvider[];
+  discoveryConfig: DiscoveryConfig;
+  registryStore: ServiceRegistryStore;
+}
+
+export class MastraDiscoverAdapter implements IDiscoverAgent {
+  private deps: MastraDiscoverAdapterDeps;
+
+  constructor(deps: MastraDiscoverAdapterDeps) {
+    this.deps = deps;
+  }
+
+  async discover(
+    config: DiscoveryConfig,
+    onPhase?: (phase: string) => void,
+    onIteration?: OnIteration,
+    onToolCall?: OnToolCallEnriched,
+    onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void,
+  ): Promise<ValidatedServiceConfig[]> {
+    return runDiscovery({
+      model: this.deps.model,
+      providers: this.deps.providers,
+      discoveryConfig: config,
+      onPhase,
+      onIteration,
+      onToolCall,
+      onTokenUsage,
+    });
+  }
+
+  async accept(services: ServiceConfig[], source: "discovery" | "manual"): Promise<string> {
+    return this.deps.registryStore.save(services, source);
+  }
+}
+
 // ── Factory ───────────────────────────────────────────────────────────────────
 
 export interface MastraAdapterDeps {
   config: Config;
   providers: MastraProvider[];
   noHistory?: boolean;
+  registryStore?: ServiceRegistryStore;
 }
 
 /**
@@ -384,5 +428,14 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
 
   const investigationAgent = new MastraInvestigationAdapter(workflowConfig);
 
-  return { chatAgent, investigationAgent };
+  const discoverAgent = deps.registryStore
+    ? new MastraDiscoverAdapter({
+        model,
+        providers,
+        discoveryConfig: config.discovery,
+        registryStore: deps.registryStore,
+      })
+    : undefined;
+
+  return { chatAgent, investigationAgent, discoverAgent };
 }

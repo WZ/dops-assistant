@@ -21,6 +21,7 @@ logs/
 
 # Design/plan docs (internal)
 docs/plans/
+docs/superpowers/
 
 # Claude Code
 .claude/

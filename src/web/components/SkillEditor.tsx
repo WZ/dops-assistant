@@ -38,7 +38,7 @@ function TagInput({ label, values, onChange }: { label: string; values: string[]
         {values.map((v) => (
           <span key={v} className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-mono rounded-full bg-secondary/60 text-foreground/70 border border-border/30">
             {v}
-            <button onClick={() => onChange(values.filter((x) => x !== v))} className="text-muted-foreground/40 hover:text-destructive transition-colors">
+            <button onClick={() => onChange(values.filter((x) => x !== v))} className="text-muted-foreground/70 hover:text-destructive transition-colors">
               &times;
             </button>
           </span>
@@ -50,7 +50,7 @@ function TagInput({ label, values, onChange }: { label: string; values: string[]
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addTag(); } }}
           placeholder={`Add ${label.toLowerCase()}...`}
-          className="flex-1 px-2.5 py-1.5 text-xs font-mono rounded-md border border-border/40 bg-secondary/20 text-foreground/80 placeholder:text-muted-foreground/30 focus:outline-none focus:border-primary/30"
+          className="flex-1 px-2.5 py-1.5 text-xs font-mono rounded-md border border-border/40 bg-secondary/20 text-foreground/80 placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary/30"
         />
         <button onClick={addTag} className="px-2 py-1 text-[10px] font-mono rounded-md border border-border/30 text-muted-foreground/60 hover:text-foreground/70 hover:bg-secondary/40 transition-colors">
           Add
@@ -131,7 +131,7 @@ export function SkillEditor({ skill, isNew, onSave, onDelete, onCancel }: SkillE
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="w-full px-3 py-2 text-sm font-body rounded-md border border-border/40 bg-secondary/20 text-foreground/85 placeholder:text-muted-foreground/30 focus:outline-none focus:border-primary/30"
+              className="w-full px-3 py-2 text-sm font-body rounded-md border border-border/40 bg-secondary/20 text-foreground/85 placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary/30"
               placeholder="e.g., Investigate Kafka Consumer Lag"
             />
           </div>
@@ -156,7 +156,7 @@ export function SkillEditor({ skill, isNew, onSave, onDelete, onCancel }: SkillE
               <textarea
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
-                className="w-full px-3 py-2.5 text-sm font-mono rounded-md border border-border/40 bg-secondary/20 text-foreground/80 placeholder:text-muted-foreground/30 focus:outline-none focus:border-primary/30 min-h-[300px] resize-y leading-relaxed"
+                className="w-full px-3 py-2.5 text-sm font-mono rounded-md border border-border/40 bg-secondary/20 text-foreground/80 placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary/30 min-h-[300px] resize-y leading-relaxed"
                 placeholder="## When to use&#10;&#10;## Investigation steps&#10;1. &#10;&#10;## Known gotchas&#10;- "
               />
             )}

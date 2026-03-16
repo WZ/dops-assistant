@@ -129,7 +129,7 @@ export function MetricChart({ series }: { series: TimeSeriesData }) {
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {series.instance && (
-            <span className="text-[8px] font-mono text-muted-foreground/35 px-1.5 py-0.5 rounded bg-secondary/30 border border-border/15">
+            <span className="text-[8px] font-mono text-muted-foreground/65 px-1.5 py-0.5 rounded bg-secondary/30 border border-border/15">
               {series.instance}
             </span>
           )}
@@ -288,24 +288,24 @@ export function MetricChart({ series }: { series: TimeSeriesData }) {
         <div className="flex items-center gap-4 px-3.5 py-1.5 border-t border-border/10 bg-secondary/10">
           {series.min !== undefined && (
             <div className="flex items-center gap-1.5">
-              <span className="text-[8px] font-mono text-muted-foreground/35 uppercase">min</span>
+              <span className="text-[8px] font-mono text-muted-foreground/65 uppercase">min</span>
               <span className="text-[9px] font-mono text-foreground/55">{formatValue(series.min)}</span>
             </div>
           )}
           {series.avg !== undefined && (
             <div className="flex items-center gap-1.5">
-              <span className="text-[8px] font-mono text-muted-foreground/35 uppercase">avg</span>
+              <span className="text-[8px] font-mono text-muted-foreground/65 uppercase">avg</span>
               <span className="text-[9px] font-mono text-primary/70">{formatValue(series.avg)}</span>
             </div>
           )}
           {series.max !== undefined && (
             <div className="flex items-center gap-1.5">
-              <span className="text-[8px] font-mono text-muted-foreground/35 uppercase">max</span>
+              <span className="text-[8px] font-mono text-muted-foreground/65 uppercase">max</span>
               <span className="text-[9px] font-mono text-foreground/55">{formatValue(series.max)}</span>
             </div>
           )}
           <div className="ml-auto">
-            <span className="text-[8px] font-mono text-muted-foreground/25">{series.values.length} pts</span>
+            <span className="text-[8px] font-mono text-muted-foreground/55">{series.values.length} pts</span>
           </div>
         </div>
       )}

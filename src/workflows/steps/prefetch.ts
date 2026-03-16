@@ -453,7 +453,7 @@ async function probeWorkingLogSelector(
   candidates.push(
     `{job="default/${escapedName}"}`,
     `{container_name="${escapedName}"}`,
-    `{app_fortidata_name="${escapedName}"}`,
+    `{app="${escapedName}"}`,
     `{chart="${escapedName}"}`,
   );
 
