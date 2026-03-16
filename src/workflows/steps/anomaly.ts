@@ -79,6 +79,12 @@ export function buildAnomalyStep(config: WorkflowConfig) {
                   }
                 }
                 if (step.text) anomalyToolData.push(`Model: ${step.text}`);
+                if (step.usage && config.onTokenUsage) {
+                  config.onTokenUsage({
+                    inputTokens: step.usage.inputTokens ?? 0,
+                    outputTokens: step.usage.outputTokens ?? 0,
+                  });
+                }
               } catch (err) {
                 debug("ANOMALY onStepFinish error:", err);
               }
