@@ -1,3 +1,5 @@
+import { formatTokens } from "../lib/formatTokens.js";
+
 interface ToolCallEntry {
   timestamp: string;
   tool: string;
@@ -11,11 +13,13 @@ interface DiscoveryProgressProps {
   iteration?: { current: number; max: number; description: string };
   toolCalls: ToolCallEntry[];
   error?: string | null;
+  phaseTokens?: Record<string, { inputTokens: number; outputTokens: number; durationMs: number }>;
+  totalUsage?: { inputTokens: number; outputTokens: number; durationMs: number } | null;
   onRetry?: () => void;
   onBack: () => void;
 }
 
-export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, error, onRetry, onBack }: DiscoveryProgressProps) {
+export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, error, phaseTokens, totalUsage, onRetry, onBack }: DiscoveryProgressProps) {
   const phases = ["discovery", "validation", "review"];
   const currentIdx = phases.indexOf(phase);
 
@@ -43,6 +47,11 @@ export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, er
             <span className={`text-xs ${i <= currentIdx ? "text-foreground" : "text-muted-foreground/50"}`}>
               {p.charAt(0).toUpperCase() + p.slice(1)}
             </span>
+            {phaseTokens?.[p] && (
+              <span className="text-[8px] font-mono text-muted-foreground/50">
+                {formatTokens(phaseTokens[p]!.inputTokens + phaseTokens[p]!.outputTokens)} tok · {(phaseTokens[p]!.durationMs / 1000).toFixed(1)}s
+              </span>
+            )}
           </div>
         ))}
       </div>
@@ -115,6 +124,19 @@ export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, er
               Back
             </button>
           </div>
+        </div>
+      )}
+
+      {totalUsage && (
+        <div className="flex items-center gap-2 px-4 py-2 text-[10px] font-mono text-muted-foreground/50 border-t border-border/20">
+          <span>Total:</span>
+          <span>{formatTokens(totalUsage.inputTokens)} input</span>
+          <span>·</span>
+          <span>{formatTokens(totalUsage.outputTokens)} output</span>
+          <span>·</span>
+          <span>{formatTokens(totalUsage.inputTokens + totalUsage.outputTokens)} tokens</span>
+          <span>·</span>
+          <span>{(totalUsage.durationMs / 1000).toFixed(1)}s</span>
         </div>
       )}
     </div>

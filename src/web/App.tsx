@@ -47,6 +47,8 @@ export function App() {
     toolCalls: [] as Array<{ timestamp: string; tool: string; status: "calling" | "success" | "error"; args?: Record<string, unknown> }>,
     results: [] as ValidatedServiceConfig[],
     error: null as string | null,
+    phaseTokens: {} as Record<string, { inputTokens: number; outputTokens: number; durationMs: number }>,
+    totalUsage: null as { inputTokens: number; outputTokens: number; durationMs: number } | null,
   });
 
   useEffect(() => {
@@ -73,6 +75,19 @@ export function App() {
     } else if (last.type === "discover:complete") {
       setDiscoveryState((prev) => ({ ...prev, results: last.services, error: null }));
       setLeftPane({ type: "services:review" });
+    } else if (last.type === "discover:phase_usage") {
+      setDiscoveryState((prev) => ({
+        ...prev,
+        phaseTokens: {
+          ...prev.phaseTokens,
+          [last.phase]: { inputTokens: last.inputTokens, outputTokens: last.outputTokens, durationMs: last.durationMs },
+        },
+      }));
+    } else if (last.type === "discover:total_usage") {
+      setDiscoveryState((prev) => ({
+        ...prev,
+        totalUsage: { inputTokens: last.inputTokens, outputTokens: last.outputTokens, durationMs: last.durationMs },
+      }));
     } else if (last.type === "discover:pending") {
       setDiscoveryState((prev) => ({ ...prev, results: last.services, error: null }));
       setLeftPane({ type: "services:review" });
@@ -166,11 +181,14 @@ export function App() {
                     iteration={discoveryState.iteration}
                     toolCalls={discoveryState.toolCalls}
                     error={discoveryState.error}
+                    phaseTokens={discoveryState.phaseTokens}
+                    totalUsage={discoveryState.totalUsage}
                     onRetry={() => {
                       setDiscoveryState({
                         phase: "discovery", status: "running",
                         iteration: { current: 0, max: 0, description: "" },
                         toolCalls: [], results: [], error: null,
+                        phaseTokens: {}, totalUsage: null,
                       });
                       ws.send({ type: "discover" });
                     }}
