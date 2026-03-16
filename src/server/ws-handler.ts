@@ -418,6 +418,8 @@ export async function handleClientMessage(
   if (msg.type === "discover:accept" && deps.discoverAgent) {
     await deps.discoverAgent.accept(msg.services, "discovery");
     deps.clearPendingDiscovery?.();
+    // Update in-memory services so chat/investigation agents see the new registry
+    deps.services = msg.services;
     return;
   }
 
