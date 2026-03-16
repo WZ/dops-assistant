@@ -6,6 +6,7 @@ import { RcaReport } from "./RcaReport";
 import type { TimelineEvent } from "./ActivityTimeline";
 import type { TimeSeriesData } from "./MetricChart";
 import type { ServerMessage } from "../../types/ws-types.js";
+import { formatTokens } from "../lib/formatTokens.js";
 
 const DEFAULT_PHASES: PhaseState[] = [
   { name: "planning", label: "Planning", status: "pending" },
@@ -22,6 +23,8 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
   const [service, setService] = useState("");
   const [query, setQuery] = useState("");
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
+  const [phaseTokens, setPhaseTokens] = useState<Record<string, { inputTokens: number; outputTokens: number }>>({});
+  const [totalUsage, setTotalUsage] = useState<{ inputTokens: number; outputTokens: number; durationMs: number } | null>(null);
   const processedCount = useRef(0);
 
   // Determine if this investigation is active (has WS messages) or historical
@@ -54,13 +57,21 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
         return r.json();
       })
       .then((data: {
-        investigation: { service: string; query: string; status: string; report: string | null };
+        investigation: { service: string; query: string; status: string; report: string | null; total_input_tokens?: number; total_output_tokens?: number; total_duration_ms?: number };
         phases: Array<{ phase: string; status: string; findings: string | null }>;
         events?: Array<{ event_type: string; payload: string; created_at: string }>;
       }) => {
         if (cancelled) return;
         setService(data.investigation.service);
         if (data.investigation.query) setQuery(data.investigation.query);
+
+        if (data.investigation.total_input_tokens && data.investigation.total_input_tokens > 0) {
+          setTotalUsage({
+            inputTokens: data.investigation.total_input_tokens,
+            outputTokens: data.investigation.total_output_tokens ?? 0,
+            durationMs: data.investigation.total_duration_ms ?? 0,
+          });
+        }
 
         const phaseMap = new Map(data.phases.map((p) => [p.phase, p]));
         setPhases(DEFAULT_PHASES.map((dp) => {
@@ -184,6 +195,15 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
           p.name === msg.phase ? { ...p, substatus: msg.step } : p,
         ));
       }
+      if (msg.type === "investigation:phase_usage" && msg.investigationId === investigationId) {
+        setPhaseTokens((prev) => ({
+          ...prev,
+          [msg.phase]: { inputTokens: msg.inputTokens, outputTokens: msg.outputTokens },
+        }));
+      }
+      if (msg.type === "investigation:total_usage" && msg.investigationId === investigationId) {
+        setTotalUsage({ inputTokens: msg.inputTokens, outputTokens: msg.outputTokens, durationMs: msg.durationMs });
+      }
       if (msg.type === "investigation:complete" && msg.id === investigationId) {
         setReport(msg.report);
         const rpt = msg.report as Record<string, unknown> | null;
@@ -289,7 +309,7 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
 
           {/* Phase progress with merged activity */}
           <section>
-            <PhaseStepper phases={phases} events={timelineEvents} evidence={evidence} isComplete={isComplete} />
+            <PhaseStepper phases={phases} events={timelineEvents} evidence={evidence} isComplete={isComplete} phaseTokens={phaseTokens} />
           </section>
 
           {/* Report */}
@@ -332,6 +352,19 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
               <Skeleton className="h-32 w-full rounded-lg" />
             </div>
           ) : null}
+
+          {totalUsage && (
+            <div className="flex items-center gap-2 px-4 py-2 text-[10px] font-mono text-muted-foreground/50 border-t border-border/20">
+              <span>Total:</span>
+              <span>{formatTokens(totalUsage.inputTokens)} input</span>
+              <span>·</span>
+              <span>{formatTokens(totalUsage.outputTokens)} output</span>
+              <span>·</span>
+              <span>{formatTokens(totalUsage.inputTokens + totalUsage.outputTokens)} tokens</span>
+              <span>·</span>
+              <span>{(totalUsage.durationMs / 1000).toFixed(1)}s</span>
+            </div>
+          )}
 
           {/* Evidence */}
           {hasEvidence && (
