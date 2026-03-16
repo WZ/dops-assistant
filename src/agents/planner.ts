@@ -28,6 +28,7 @@ You MUST respond with a JSON object matching this exact schema (no trailing text
     tools: {},
     defaultOptions: {
       maxSteps: config.maxSteps ?? 3,
+      modelSettings: { temperature: 0 },
     },
   });
 }
