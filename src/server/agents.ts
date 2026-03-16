@@ -355,6 +355,7 @@ export class MastraDiscoverAdapter implements IDiscoverAgent {
     onPhase?: (phase: string) => void,
     onIteration?: OnIteration,
     onToolCall?: OnToolCallEnriched,
+    onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void,
   ): Promise<ValidatedServiceConfig[]> {
     return runDiscovery({
       model: this.deps.model,
@@ -363,6 +364,7 @@ export class MastraDiscoverAdapter implements IDiscoverAgent {
       onPhase,
       onIteration,
       onToolCall,
+      onTokenUsage,
     });
   }
 

@@ -50,6 +50,7 @@ export interface IDiscoverAgent {
     onPhase?: (phase: string) => void,
     onIteration?: OnIteration,
     onToolCall?: OnToolCallEnriched,
+    onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void,
   ): Promise<ValidatedServiceConfig[]>;
 
   accept(services: ServiceConfig[], source: "discovery" | "manual"): Promise<string>;
