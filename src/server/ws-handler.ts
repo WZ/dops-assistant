@@ -3,13 +3,12 @@ import { WebSocketServer, WebSocket } from "ws";
 import { ulid } from "ulid";
 import pino from "pino";
 import type { Database } from "./db.js";
-import type { ChatAgent } from "../agent/core.js";
-import type { InvestigationAgent } from "../agent/investigation.js";
-import type { IntentRouter } from "../agent/intent.js";
-import { resolveServiceFromHistory } from "../agent/intent.js";
+import type { IChatAgent, IInvestigationAgent } from "../types/agent-interfaces.js";
+import type { IntentRouter } from "../agents/intent.js";
+import { resolveServiceFromHistory } from "../agents/intent.js";
 import type { ConversationMemory } from "../memory/conversation.js";
 import type { ServiceConfig } from "../config/schema.js";
-import type { ClientMessage, ServerMessage, PhaseStats, ChartSeries } from "../shared/ws-types.js";
+import type { ClientMessage, ServerMessage, PhaseStats, ChartSeries } from "../types/ws-types.js";
 import type { SkillStore } from "../skills/store.js";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
@@ -29,6 +28,12 @@ function mapBackendPhase(backendPhase: string): string[] {
       return ["planning"];
     case "Analyzing metrics, logs & infrastructure":
       return ["metrics", "logs", "infra"];
+    case "Analyzing metrics":
+      return ["metrics"];
+    case "Analyzing logs":
+      return ["logs"];
+    case "Checking infrastructure":
+      return ["infra"];
     case "Building event timeline":
       return ["synthesis"];
     case "Synthesizing root cause":
@@ -112,8 +117,8 @@ function extractChartSeries(rawResult: string, args: Record<string, unknown>): C
 
 export interface WsDeps {
   db: Database;
-  agent: ChatAgent;
-  investigationAgent: InvestigationAgent;
+  agent: IChatAgent;
+  investigationAgent: IInvestigationAgent;
   router: IntentRouter;
   memory: ConversationMemory;
   services: ServiceConfig[];
@@ -354,9 +359,9 @@ export async function handleClientMessage(
 
       const report = await investigationAgent.investigate(
         service, undefined, invId, undefined, msg.message,
-        // onToolCall — enriched
-        (name, args, result, durationMs, error) => {
-          const activePhase = runningPhases.size > 0 ? [...runningPhases][0]! : "planning";
+        // onToolCall — enriched (phase passed from workflow for parallel steps)
+        (name, args, result, durationMs, error, phase) => {
+          const activePhase = phase ?? (runningPhases.size > 0 ? [...runningPhases][0]! : "planning");
           const stats = phaseStats.get(activePhase);
           if (stats && (result !== undefined || error !== undefined)) stats.toolCalls++;
 
