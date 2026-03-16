@@ -27,7 +27,7 @@ INVESTIGATION STEPS:
 IMPORTANT query_loki_logs parameters:
 - Uses "startRfc3339"/"endRfc3339" (RFC3339 format, e.g. "2026-03-07T00:00:00Z").
 - Always use limit=30 or higher to capture enough evidence.
-- Common Loki label names: "app_fortidata_name" (service name), "chart" (Helm chart), "namespace", "container_name", "job" (format: "namespace/name"), "host", "instance".
+- Common Loki label names: "app" (service name), "chart" (Helm chart), "namespace", "container_name", "job" (format: "namespace/name"), "host", "instance".
 - Do NOT call list_datasources, list_loki_label_names, or list_loki_label_values — this context is pre-fetched and provided in the user message.
 
 IMPORTANT: Only report VERIFIABLE counts. The "count" field must reflect the number of matching lines actually returned by Loki, not an extrapolated estimate.

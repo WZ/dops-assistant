@@ -14,11 +14,13 @@ import { registerRoutes, type IMcpClient } from "./routes.js";
 import { setupWebSocket } from "./ws-handler.js";
 import { IntentRouter, matchServiceFromText, validateLlmServiceMatch } from "../agents/intent.js";
 import { ConversationMemory } from "../memory/conversation.js";
-import { loadConfig } from "../config/loader.js";
+import { loadConfig, getServicesFilePath } from "../config/loader.js";
 import { SkillStore } from "../skills/store.js";
 import { createMastraAdapters } from "./agents.js";
 import { createMcpProvider, getAllTools } from "../mcp/provider.js";
 import { createModel } from "../mastra/index.js";
+import { ServiceRegistryStore } from "../services/registry.js";
+import type { ValidatedServiceConfig } from "../types/discovery-types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
@@ -37,10 +39,15 @@ function createStubMcpClient(): IMcpClient {
 }
 
 async function main() {
-  const config = loadConfig(process.env["CONFIG_PATH"] ?? "config.yaml");
+  const configPath = process.env["CONFIG_PATH"] ?? "config.yaml";
+  const config = loadConfig(configPath);
 
   const dbPath = process.env["DB_PATH"] ?? "dops.sqlite";
   const db = new Database(dbPath);
+
+  // Service registry store
+  const servicesPath = getServicesFilePath(configPath);
+  const registryStore = new ServiceRegistryStore(servicesPath);
 
   // Mastra MCP providers
   const providers = config.providers.map(createMcpProvider);
@@ -49,8 +56,8 @@ async function main() {
   const router = new IntentRouter(model);
   const memory = new ConversationMemory(config.agent.conversationMemory);
 
-  const mastraAdapters = await createMastraAdapters({ config, providers });
-  const { chatAgent: agent, investigationAgent } = mastraAdapters;
+  const mastraAdapters = await createMastraAdapters({ config, providers, registryStore });
+  const { chatAgent: agent, investigationAgent, discoverAgent } = mastraAdapters;
 
   const toolCount = Object.keys(await getAllTools(providers).catch(() => ({}))).length;
   logger.info("MCP connected (%d tools)", toolCount);
@@ -64,12 +71,32 @@ async function main() {
   const server = createServer(app);
   const port = Number(process.env["PORT"] ?? 3000);
 
-  registerRoutes(app, db, config.services, createStubMcpClient(), skillStore);
+  registerRoutes(app, db, config.services, createStubMcpClient(), skillStore, registryStore);
+
+  let pendingDiscovery: ValidatedServiceConfig[] | null = null;
 
   setupWebSocket(server, {
     db, agent, investigationAgent, router, memory,
     services: config.services, skillStore, validateLlmServiceMatch, matchServiceFromText,
+    discoverAgent,
+    discoveryConfig: config.discovery,
+    getPendingDiscovery: () => pendingDiscovery,
+    clearPendingDiscovery: () => { pendingDiscovery = null; },
   });
+
+  // Auto-refresh: run background discovery on startup if enabled
+  if (config.discovery.autoRefresh && discoverAgent) {
+    logger.info("Auto-refresh enabled, running background discovery...");
+    discoverAgent
+      .discover(config.discovery)
+      .then((services) => {
+        pendingDiscovery = services;
+        logger.info({ count: services.length }, "Auto-refresh discovery complete, pending review");
+      })
+      .catch((err) => {
+        logger.warn({ err }, "Auto-refresh discovery failed");
+      });
+  }
 
   const staticDir = path.resolve(__dirname, "../../dist/web");
   app.use(express.static(staticDir));

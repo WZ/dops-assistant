@@ -184,7 +184,7 @@ export function SkillsPage() {
                 </svg>
               </div>
               <p className="text-sm text-muted-foreground/50 font-body">No skills yet</p>
-              <p className="text-[11px] text-muted-foreground/30 mt-1 font-mono">
+              <p className="text-[11px] text-muted-foreground/60 mt-1 font-mono">
                 Create runbooks to guide investigations
               </p>
             </div>
@@ -216,7 +216,7 @@ export function SkillsPage() {
                         </span>
                       ))}
                       {skill.tags.length > 5 && (
-                        <span className="text-[9px] font-mono text-muted-foreground/40">+{skill.tags.length - 5}</span>
+                        <span className="text-[9px] font-mono text-muted-foreground/70">+{skill.tags.length - 5}</span>
                       )}
                     </div>
                   )}

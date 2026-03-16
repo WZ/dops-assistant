@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { ServiceCard } from "./ServiceCard";
-
-interface ServiceConfig { name: string; }
+import { FirstRunBanner } from "./FirstRunBanner";
+import { ServicesSection } from "./ServicesSection";
+import type { ServiceConfig } from "../../config/schema.js";
 
 interface InvestigationSummary {
   id: string;
@@ -12,9 +13,17 @@ interface InvestigationSummary {
   created_at: string;
 }
 
-export function Dashboard({ onInvestigationClick, onInvestigateService }: { onInvestigationClick: (id: string) => void; onInvestigateService: (serviceName: string) => void }) {
+interface DashboardProps {
+  onInvestigationClick: (id: string) => void;
+  onInvestigateService: (serviceName: string) => void;
+  onManageServices: () => void;
+  onRunDiscovery: () => void;
+}
+
+export function Dashboard({ onInvestigationClick, onInvestigateService, onManageServices, onRunDiscovery }: DashboardProps) {
   const [services, setServices] = useState<ServiceConfig[]>([]);
   const [investigations, setInvestigations] = useState<InvestigationSummary[]>([]);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
 
   useEffect(() => {
     fetch("/api/services").then((r) => r.json()).then(setServices).catch(() => {});
@@ -38,10 +47,18 @@ export function Dashboard({ onInvestigationClick, onInvestigateService }: { onIn
         <h1 className="font-display text-xl font-bold tracking-tight text-foreground/90">
           Services Overview
         </h1>
-        <p className="text-xs font-mono text-muted-foreground/40 mt-1 tracking-wide">
+        <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">
           {services.length} service{services.length !== 1 ? "s" : ""} monitored
         </p>
       </div>
+
+      {/* First-run banner */}
+      {services.length === 0 && !bannerDismissed && (
+        <FirstRunBanner
+          onRunDiscovery={onRunDiscovery}
+          onDismiss={() => setBannerDismissed(true)}
+        />
+      )}
 
       {/* Services Grid */}
       <section className="mb-10">
@@ -53,7 +70,7 @@ export function Dashboard({ onInvestigationClick, onInvestigateService }: { onIn
         </div>
         {services.length === 0 ? (
           <div className="py-8 text-center">
-            <p className="text-sm text-muted-foreground/40">No services configured</p>
+            <p className="text-sm text-muted-foreground/70">No services configured</p>
           </div>
         ) : (
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
@@ -76,8 +93,8 @@ export function Dashboard({ onInvestigationClick, onInvestigateService }: { onIn
         </div>
         {investigations.length === 0 ? (
           <div className="py-8 text-center">
-            <p className="text-sm text-muted-foreground/40">No investigations yet</p>
-            <p className="text-xs text-muted-foreground/25 mt-1 font-mono">
+            <p className="text-sm text-muted-foreground/70">No investigations yet</p>
+            <p className="text-xs text-muted-foreground/55 mt-1 font-mono">
               click a service card or use the chat to start one
             </p>
           </div>
@@ -101,7 +118,7 @@ export function Dashboard({ onInvestigationClick, onInvestigateService }: { onIn
                       <div className={`w-1.5 h-1.5 rounded-full ${statusColor}`} />
                       <span className="font-body text-sm font-medium text-foreground/80 group-hover:text-foreground/95 transition-colors">{inv.service}</span>
                     </div>
-                    <span className="text-[10px] font-mono text-muted-foreground/35">{timeAgo(inv.created_at)}</span>
+                    <span className="text-[10px] font-mono text-muted-foreground/65">{timeAgo(inv.created_at)}</span>
                   </div>
                   {rootCause && (
                     <p className="text-xs text-muted-foreground/50 truncate pl-3.5 font-body">{rootCause}</p>
@@ -123,6 +140,13 @@ export function Dashboard({ onInvestigationClick, onInvestigateService }: { onIn
           </div>
         )}
       </section>
+
+      {/* Services management section */}
+      <ServicesSection
+        services={services}
+        onManage={onManageServices}
+        onRediscover={onRunDiscovery}
+      />
     </div>
   );
 }
