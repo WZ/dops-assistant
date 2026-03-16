@@ -57,4 +57,6 @@ export type ServerMessage =
   | { type: "discover:error"; message: string }
   | { type: "discover:pending"; services: ValidatedServiceConfig[] }
   | { type: "discover:resolved" }
+  | { type: "discover:phase_usage"; phase: string; inputTokens: number; outputTokens: number; durationMs: number }
+  | { type: "discover:total_usage"; inputTokens: number; outputTokens: number; durationMs: number }
   | { type: "error"; message: string };

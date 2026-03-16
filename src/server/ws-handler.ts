@@ -338,10 +338,39 @@ export async function handleClientMessage(
   }
 
   if (msg.type === "discover" && deps.discoverAgent) {
+    const totalTokens = { inputTokens: 0, outputTokens: 0 };
+    const phaseTokens = { inputTokens: 0, outputTokens: 0 };
+    let currentPhase = "discovery";
+    const discoveryStartMs = Date.now();
+    let phaseStartMs = Date.now();
+
+    const onTokenUsage = (u: { inputTokens: number; outputTokens: number }) => {
+      totalTokens.inputTokens += u.inputTokens;
+      totalTokens.outputTokens += u.outputTokens;
+      phaseTokens.inputTokens += u.inputTokens;
+      phaseTokens.outputTokens += u.outputTokens;
+    };
+
     try {
       const services = await deps.discoverAgent.discover(
         deps.discoveryConfig ?? { autoRefresh: false, excludeServices: [], maxIterations: 40 },
-        (phase) => send({ type: "discover:phase", phase, status: "running" }),
+        (phase) => {
+          // Emit usage for the phase that just ended
+          if (phaseTokens.inputTokens > 0 || phaseTokens.outputTokens > 0) {
+            send({
+              type: "discover:phase_usage",
+              phase: currentPhase,
+              inputTokens: phaseTokens.inputTokens,
+              outputTokens: phaseTokens.outputTokens,
+              durationMs: Date.now() - phaseStartMs,
+            });
+          }
+          phaseTokens.inputTokens = 0;
+          phaseTokens.outputTokens = 0;
+          currentPhase = phase;
+          phaseStartMs = Date.now();
+          send({ type: "discover:phase", phase, status: "running" });
+        },
         (phase, iteration, maxIterations, description) =>
           send({ type: "discover:iteration", phase, iteration, maxIterations, description }),
         (name, args, result, durationMs, error, phase) =>
@@ -354,6 +383,7 @@ export async function handleClientMessage(
             result,
             durationMs,
           }),
+        onTokenUsage,
       );
       send({ type: "discover:phase", phase: "validation", status: "complete" });
       if (services.length === 0) {
@@ -361,6 +391,24 @@ export async function handleClientMessage(
       } else {
         send({ type: "discover:complete", services });
       }
+
+      // Emit usage for the final phase
+      if (phaseTokens.inputTokens > 0 || phaseTokens.outputTokens > 0) {
+        send({
+          type: "discover:phase_usage",
+          phase: currentPhase,
+          inputTokens: phaseTokens.inputTokens,
+          outputTokens: phaseTokens.outputTokens,
+          durationMs: Date.now() - phaseStartMs,
+        });
+      }
+
+      send({
+        type: "discover:total_usage",
+        inputTokens: totalTokens.inputTokens,
+        outputTokens: totalTokens.outputTokens,
+        durationMs: Date.now() - discoveryStartMs,
+      });
     } catch (err) {
       send({ type: "discover:error", message: friendlyError(err) });
     }

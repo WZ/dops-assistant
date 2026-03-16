@@ -14,6 +14,7 @@ export interface ValidateStepConfig {
   services: ServiceConfig[];
   onToolCall?: OnToolCallEnriched;
   onIteration?: OnIteration;
+  onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
 }
 
 export async function runValidateStep(config: ValidateStepConfig): Promise<ValidatedServiceConfig[]> {
@@ -48,6 +49,14 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
   console.error(`[VALIDATE] Agent returned ${result.text?.length ?? 0} chars`);
   if (result.text) {
     console.error(`[VALIDATE] Response preview: ${result.text.slice(0, 500)}`);
+  }
+
+  const usage = (result as any).totalUsage ?? (result as any).usage;
+  if (usage && config.onTokenUsage) {
+    config.onTokenUsage({
+      inputTokens: usage.inputTokens ?? 0,
+      outputTokens: usage.outputTokens ?? 0,
+    });
   }
 
   const parsed = safeJsonParse(result.text);
