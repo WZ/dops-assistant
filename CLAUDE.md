@@ -1,58 +1,87 @@
 # CLAUDE.md
 
-## Critical Rules
+## Do NOT
 
-- **Security review before every commit and PR**: Before committing or creating a PR, scan ALL staged changes (`git diff --cached`) for secrets, API keys, tokens, passwords, credentials, private URLs, and sensitive data. Look for patterns like `sk-`, `xoxb-`, `xapp-`, `glsa_`, `Bearer`, `password=`, base64-encoded keys, and hardcoded URLs with credentials. If anything suspicious is found, STOP and alert the user. Never assume a file is safe — always check.
-- **NEVER commit `dev/` folder** — it contains secrets (API keys, tokens, .env files). It is in `.gitignore`.
-- **Always stage specific files by name** (`git add src/foo.ts`) — never use `git add .` or `git add -A` which can accidentally include secret files.
-- **Never push directly to main**. Always create a feature branch, run tests, push to the feature branch, and open a PR.
+- **`git add .` or `git add -A`** — stage files by name. `dev/` contains secrets.
+- **Commit `dev/`** — API keys, tokens, `.env` files. It's gitignored.
+- **Commit `docs/plans/` or `docs/superpowers/`** — specs and plans are local working documents, gitignored. They've been accidentally committed twice before.
+- **Push directly to main** — always create a feature branch and open a PR.
+- **Use `npm run dev`** — that's a different entrypoint with no dotenv. Use `npm run web` for the server.
+- **Run the CLI inside Claude Code** — Ink requires raw stdin which isn't available in this shell.
+- **Assume training data is correct about Mastra** — this project uses custom patterns (role-based MCP routing, `prepareStep` hooks, step factories) that don't match Mastra docs. Read the code.
 
 ## Project Overview
 
-dops-assistant — an AI-powered DevOps assistant that integrates with Grafana via MCP for monitoring, alerting, and root cause analysis.
+dops-assistant — AI-powered DevOps assistant integrating with Grafana via MCP for monitoring, alerting, and root cause analysis.
 
-## Architecture
-
-- **Chat agent**: `src/agents/chat.ts` — Mastra Agent with MCP tools for conversational queries
-- **Investigation**: `src/workflows/investigation.ts` — orchestrates 6-phase workflow via step factories in `src/workflows/steps/`
-- **Agents**: `src/agents/` — 7 specialized agents (anomaly-detector, planner, metrics, logs, infra, synthesis, chat) + intent router
-- **Workflow steps**: `src/workflows/steps/` — prefetch, anomaly, planning, evidence (metrics/logs/infra), synthesis, post-synthesis
-- **MCP**: `src/mcp/provider.ts` — role-based tool routing via `@mastra/mcp`
-- **Server adapter**: `src/server/agents.ts` — wraps Mastra agents into server/CLI interfaces
-- **Intent routing**: `src/agents/intent.ts` — classifies user messages (uses AI SDK `generateText`)
-- **CLI**: `src/cli/` — Ink React terminal UI (entry: `index.tsx`, components: `App.tsx`, `Markdown.tsx`)
-- **Types**: `src/types/` — shared types (RCA report, agent interfaces, LLM types, WebSocket protocol)
-
-## Dev Setup
-
-- **Config**: `dev/config.yaml` — symlink to `config.yaml` in project root (`ln -sf dev/config.yaml config.yaml`). The config file must exist at the project root for the server to start.
-- **Env vars**: `dev/.env` — contains `OPENAI_API_KEY` and other secrets. The web server (`src/server/index.ts`) auto-loads it via dotenv. The CLI (`src/cli/index.tsx`) also loads it via dotenv.
-- `docker-compose.dev.yml` — grafana-mcp with `-tls-skip-verify` for self-signed certs
+TypeScript, ESM (`"type": "module"`), Vitest, pino logging.
 
 ## Commands
 
-- `npm run web` — start the web server (loads `dev/.env` automatically, serves UI on port 3000)
-- `npm run build:web` — build the frontend (Vite → `dist/web/`). **Must rebuild after any change to `src/web/`** — the server serves static files from `dist/web/`, not a dev server. Restart the server after rebuilding.
-- `npm run cli` — start the CLI with `NODE_TLS_REJECT_UNAUTHORIZED=0`
-- `npx vitest run` — run all tests
-- `npx tsc --noEmit` — type check
+```bash
+npm run web              # Start web server (port 3000, loads dev/.env)
+npm run build:web        # Build frontend (Vite → dist/web/) — MUST rebuild after src/web/ changes
+npm run cli              # Terminal UI (Ink) — doesn't work inside Claude Code
+npm run discover         # Run AI service discovery
+npx vitest run           # Run all tests
+npx vitest run src/path  # Run a single test file
+npx tsc --noEmit         # Type check
+```
 
-## Conventions
+**"Run it" means**: `npm run build:web && CONFIG_PATH=dev/config.yaml npm run web`
 
-- TypeScript, ESM (`"type": "module"`)
-- Vitest for tests
-- pino for logging
+**After editing server-side code** (`src/server/`, `src/agents/`, `src/mcp/`, `src/config/`, `src/workflows/`): if the server is running on port 3000, kill and restart it so changes take effect.
+
+## Where to Look
+
+| Task | Location |
+|------|----------|
+| Chat agent behavior | `src/agents/chat.ts` |
+| Investigation workflow | `src/workflows/investigation.ts` → step factories in `src/workflows/steps/` |
+| Add/modify a specialized agent | `src/agents/` — anomaly-detector, planner, metrics, logs, infra, synthesis, discover |
+| Intent classification | `src/agents/intent.ts` (AI SDK `generateText`) |
+| MCP tool routing | `src/mcp/provider.ts` — role-based routing via `@mastra/mcp` |
+| Config schema | `src/config/schema.ts` — Zod schema, validated at startup |
+| Service discovery | `src/agents/discover.ts` + `src/workflows/discovery.ts` → writes `services.yaml` |
+| Service registry | `src/services/registry.ts` — loads `services.yaml`, static overrides in `config.yaml` take precedence |
+| Web UI | `src/web/` — React SPA (Vite). Server serves built files from `dist/web/` |
+| CLI commands | `src/cli/commands/` — investigate, chat, mcp-check, discover, e2e |
+| Server + WebSocket | `src/server/index.ts`, `src/server/ws-handler.ts` |
+| LLM quirk workarounds | `src/agents/shared/prepare-step.ts` (`prepareStep` hook) |
+| Shared types | `src/types/` — RCA report, agent interfaces, LLM types, WebSocket protocol |
+| Mastra wiring | `src/mastra/index.ts` — agent/workflow registration |
+
+## Testing
+
+- **Framework**: Vitest
+- **Convention**: Co-located `*.test.ts` files next to source (e.g., `src/agents/chat.test.ts`)
+- **Run all**: `npx vitest run`
+- **Run one**: `npx vitest run src/agents/chat.test.ts`
+- **Watch mode**: `npx vitest` (alias: `npm run test:watch`)
+- **36 test files** across agents, CLI commands, server, workflows, config, and web utils
+
+## Dev Setup
+
+- **Config**: `dev/config.yaml` symlinked to `config.yaml` in project root (`ln -sf dev/config.yaml config.yaml`). Must exist at root for server to start.
+- **Env vars**: `dev/.env` — contains `OPENAI_API_KEY` and other secrets. Auto-loaded by server and CLI via dotenv.
+- **Docker**: `docker-compose.dev.yml` — grafana-mcp with `-tls-skip-verify` for self-signed certs.
+- **Specs/plans**: Save to `docs/plans/` (gitignored). Never commit.
 
 ## LLM Quirks (gpt-oss-120b)
 
-- Produces `<|constrain|>json` hallucinated tool calls when both tools + json_schema responseFormat are set. Fix: only send responseFormat when tools array is empty; ignore function_calls from LLM when tools=[]
-- Model tends to exhaust all tool iterations without producing JSON — need midpoint nudge + wind-down iterations
+- Produces `<|constrain|>json` hallucinated tool calls when both tools + `json_schema` responseFormat are set. Fix: only send responseFormat when tools array is empty; ignore function_calls when tools=[]
+- Exhausts all tool iterations without producing JSON — needs midpoint nudge + wind-down iterations
 - Grafana MCP `list_datasources` returns `{"datasources": [...]}` not a flat array — must unwrap
-- All quirk workarounds are isolated in `src/agents/shared/prepare-step.ts` (`prepareStep` hook) — removable when switching to a model without these quirks
+- All workarounds isolated in `src/agents/shared/prepare-step.ts` — removable when switching models
 
-## Investigation Workflow Patterns
+## Key Patterns
 
-- Prefetch context runs as a dedicated workflow step (`src/workflows/steps/prefetch.ts`) before agent steps start
-- Six parallel evidence agents (metrics, logs, infra, anomaly-detector, planner, synthesis) wired as Mastra agents
-- Workflow degrades gracefully: agent step failures produce empty findings rather than crashing the workflow
-- Truncation and LLM quirk handling isolated in `src/agents/shared/prepare-step.ts` and `src/workflows/helpers.ts`
+- **Role-based MCP routing**: `providers` in config assign roles (metrics, logs, dashboards) to MCP servers. `src/mcp/provider.ts` routes tool calls by role, not by provider name.
+- **Step factories**: Investigation workflow uses factory functions in `src/workflows/steps/` that produce Mastra workflow steps. Each agent is wired as a step.
+- **Graceful degradation**: Agent step failures produce empty findings rather than crashing the workflow.
+- **Discovery → services.yaml**: `npm run discover` uses AI to find services via Prometheus metrics, writes `services.yaml`. Static overrides in `config.yaml` take precedence.
+- **`prepareStep` hook**: Intercepts every LLM call to handle truncation, quirk workarounds, and tool filtering. Lives in `src/agents/shared/prepare-step.ts`.
+
+## Security
+
+Before every commit and PR, scan staged changes (`git diff --cached`) for secrets: `sk-`, `xoxb-`, `xapp-`, `glsa_`, `Bearer`, `password=`, base64-encoded keys, hardcoded URLs with credentials. If anything suspicious is found, STOP and alert.
