@@ -13,6 +13,7 @@ export interface DiscoveryWorkflowConfig {
   onPhase?: (phase: string) => void;
   onIteration?: OnIteration;
   onToolCall?: OnToolCallEnriched;
+  onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
 }
 
 export async function runDiscovery(config: DiscoveryWorkflowConfig): Promise<ValidatedServiceConfig[]> {
@@ -23,6 +24,7 @@ export async function runDiscovery(config: DiscoveryWorkflowConfig): Promise<Val
     discoveryConfig: config.discoveryConfig,
     onToolCall: config.onToolCall,
     onIteration: config.onIteration,
+    onTokenUsage: config.onTokenUsage,
   });
 
   if (discovered.length === 0) return [];
@@ -34,6 +36,7 @@ export async function runDiscovery(config: DiscoveryWorkflowConfig): Promise<Val
     services: discovered,
     onToolCall: config.onToolCall,
     onIteration: config.onIteration,
+    onTokenUsage: config.onTokenUsage,
   });
 
   return validated;
