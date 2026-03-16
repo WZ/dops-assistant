@@ -38,6 +38,7 @@ You MUST end your response with a JSON object matching this exact schema (no tra
     tools: config.tools ?? {},
     defaultOptions: {
       maxSteps,
+      modelSettings: { temperature: 0 },
       prepareStep: config.useQuirkHandling
         ? createQuirkPrepareStep({ maxSteps })
         : undefined,
