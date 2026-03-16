@@ -351,7 +351,13 @@ export async function handleClientMessage(
         send({ type: "discover:complete", services });
       }
     } catch (err) {
-      send({ type: "discover:error", message: err instanceof Error ? err.message : String(err) });
+      const raw = err instanceof Error ? err.message : String(err);
+      const friendly = /bad gateway|service unavailable|502|503/i.test(raw)
+        ? "LLM API is currently unavailable. Please try again later."
+        : /timeout|timed out|ETIMEDOUT/i.test(raw)
+          ? "LLM API request timed out. Please try again."
+          : `Discovery failed: ${raw}`;
+      send({ type: "discover:error", message: friendly });
     }
     return;
   }
