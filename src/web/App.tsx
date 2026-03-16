@@ -46,6 +46,7 @@ export function App() {
     iteration: { current: 0, max: 0, description: "" },
     toolCalls: [] as Array<{ timestamp: string; tool: string; status: "calling" | "success" | "error"; args?: Record<string, unknown> }>,
     results: [] as ValidatedServiceConfig[],
+    error: null as string | null,
   });
 
   useEffect(() => {
@@ -70,11 +71,13 @@ export function App() {
         }],
       }));
     } else if (last.type === "discover:complete") {
-      setDiscoveryState((prev) => ({ ...prev, results: last.services }));
+      setDiscoveryState((prev) => ({ ...prev, results: last.services, error: null }));
       setLeftPane({ type: "services:review" });
     } else if (last.type === "discover:pending") {
-      setDiscoveryState((prev) => ({ ...prev, results: last.services }));
+      setDiscoveryState((prev) => ({ ...prev, results: last.services, error: null }));
       setLeftPane({ type: "services:review" });
+    } else if (last.type === "discover:error") {
+      setDiscoveryState((prev) => ({ ...prev, error: last.message }));
     }
   }, [ws.messages]);
 
@@ -162,6 +165,15 @@ export function App() {
                     phaseStatus={discoveryState.status}
                     iteration={discoveryState.iteration}
                     toolCalls={discoveryState.toolCalls}
+                    error={discoveryState.error}
+                    onRetry={() => {
+                      setDiscoveryState({
+                        phase: "discovery", status: "running",
+                        iteration: { current: 0, max: 0, description: "" },
+                        toolCalls: [], results: [], error: null,
+                      });
+                      ws.send({ type: "discover" });
+                    }}
                     onBack={() => setLeftPane({ type: "services:manage" })}
                   />
                 ) : leftPane.type === "services:review" ? (

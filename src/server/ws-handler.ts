@@ -345,7 +345,11 @@ export async function handleClientMessage(
           }),
       );
       send({ type: "discover:phase", phase: "validation", status: "complete" });
-      send({ type: "discover:complete", services });
+      if (services.length === 0) {
+        send({ type: "discover:error", message: "Discovery returned no services. The LLM may be unavailable — try again." });
+      } else {
+        send({ type: "discover:complete", services });
+      }
     } catch (err) {
       send({ type: "discover:error", message: err instanceof Error ? err.message : String(err) });
     }

@@ -10,10 +10,12 @@ interface DiscoveryProgressProps {
   phaseStatus: "running" | "complete";
   iteration?: { current: number; max: number; description: string };
   toolCalls: ToolCallEntry[];
+  error?: string | null;
+  onRetry?: () => void;
   onBack: () => void;
 }
 
-export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, onBack }: DiscoveryProgressProps) {
+export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, error, onRetry, onBack }: DiscoveryProgressProps) {
   const phases = ["discovery", "validation", "review"];
   const currentIdx = phases.indexOf(phase);
 
@@ -73,6 +75,28 @@ export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, on
           ))}
         </div>
       </div>
+
+      {error && (
+        <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 p-4">
+          <p className="text-sm text-red-400 mb-3">{error}</p>
+          <div className="flex gap-2">
+            {onRetry && (
+              <button
+                onClick={onRetry}
+                className="px-4 py-1.5 text-xs font-medium rounded bg-primary text-primary-foreground hover:bg-primary/90"
+              >
+                Retry
+              </button>
+            )}
+            <button
+              onClick={onBack}
+              className="px-4 py-1.5 text-xs rounded border border-border text-muted-foreground hover:bg-accent"
+            >
+              Back
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

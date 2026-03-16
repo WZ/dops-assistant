@@ -28,10 +28,25 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
     excludeServices: config.discoveryConfig.excludeServices,
   });
 
+  const toolCount = Object.keys(tools).length;
+  console.error(`[DISCOVER] Starting discovery with ${toolCount} tools, maxSteps=${config.discoveryConfig.maxIterations}`);
+
   const result = await agent.generate("Discover all monitored services using the available tools. Return the complete list as JSON.");
 
+  console.error(`[DISCOVER] Agent returned ${result.text?.length ?? 0} chars`);
+  if (result.text) {
+    console.error(`[DISCOVER] Response preview: ${result.text.slice(0, 500)}`);
+  }
+
   const parsed = safeJsonParse(result.text);
-  if (Array.isArray(parsed)) return parsed;
-  if (parsed?.services && Array.isArray(parsed.services)) return parsed.services;
+  if (Array.isArray(parsed)) {
+    console.error(`[DISCOVER] Parsed ${parsed.length} services from array`);
+    return parsed;
+  }
+  if (parsed?.services && Array.isArray(parsed.services)) {
+    console.error(`[DISCOVER] Parsed ${parsed.services.length} services from .services`);
+    return parsed.services;
+  }
+  console.error(`[DISCOVER] Failed to parse services from response`);
   return [];
 }
