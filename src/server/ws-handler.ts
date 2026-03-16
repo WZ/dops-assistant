@@ -14,6 +14,18 @@ import type { SkillStore } from "../skills/store.js";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
 
+/** Map raw LLM errors to user-friendly messages. */
+function friendlyError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  if (/bad gateway|service unavailable|502|503/i.test(raw))
+    return "LLM API is currently unavailable. Please try again later.";
+  if (/timeout|timed out|ETIMEDOUT/i.test(raw))
+    return "LLM API request timed out. Please try again.";
+  if (/rate limit|429/i.test(raw))
+    return "LLM API rate limit reached. Please wait and try again.";
+  return raw;
+}
+
 /**
  * Map backend investigation phase names (from investigation.ts onPhase callback)
  * to the short phase names the frontend expects ("planning", "metrics", "logs", "infra", "synthesis").
@@ -304,8 +316,7 @@ async function handleDeepInvestigate(
       durationMs: Date.now() - chatStartMs,
     });
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : "Unknown error";
-    send({ type: "chat:stream_end", content: `Error: ${errorMsg}` });
+    send({ type: "chat:stream_end", content: `Error: ${friendlyError(err)}` });
   }
 }
 
@@ -351,13 +362,7 @@ export async function handleClientMessage(
         send({ type: "discover:complete", services });
       }
     } catch (err) {
-      const raw = err instanceof Error ? err.message : String(err);
-      const friendly = /bad gateway|service unavailable|502|503/i.test(raw)
-        ? "LLM API is currently unavailable. Please try again later."
-        : /timeout|timed out|ETIMEDOUT/i.test(raw)
-          ? "LLM API request timed out. Please try again."
-          : `Discovery failed: ${raw}`;
-      send({ type: "discover:error", message: friendly });
+      send({ type: "discover:error", message: friendlyError(err) });
     }
     return;
   }
@@ -545,7 +550,7 @@ export async function handleClientMessage(
     } catch (err) {
       logger.error({ err, invId, service: service.name }, "Investigation failed");
       db.updateInvestigation(invId, { status: "failed" });
-      const errorMsg = err instanceof Error ? err.message : "Unknown error";
+      const errorMsg = friendlyError(err);
       send({ type: "investigation:failed", id: invId, error: errorMsg });
       send({ type: "chat", role: "assistant", content: `Investigation failed: ${errorMsg}` });
     }

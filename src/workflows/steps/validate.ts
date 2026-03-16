@@ -33,9 +33,7 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
 
   let result;
   try {
-    result = await agent.generate("Validate each service by querying its metrics and log labels. Return the complete annotated list as JSON.", {
-      maxTokens: 16384,
-    });
+    result = await agent.generate("Validate each service by querying its metrics and log labels. Return the complete annotated list as JSON.");
   } catch (err) {
     console.error(`[VALIDATE] Agent threw error:`, err instanceof Error ? err.message : err);
     return config.services.map((s) => ({
