@@ -6,25 +6,29 @@
 
 ## Motivation
 
-Token usage tracking is now wired in the Mastra adapters (chat and investigation), but the web GUI doesn't display it. Users need visibility into token costs and timing at every level — per-phase, per-tool-call, per-chat-message, and overall totals — to understand agent efficiency and optimize prompts.
+Token usage tracking is now wired in the Mastra adapters (chat and investigation), but the web GUI doesn't display it. Users need visibility into token costs and timing at every level — per-phase, per-chat-message, and overall totals — to understand agent efficiency and optimize prompts.
 
 ## WebSocket Protocol Changes
 
 ### New Message Types
+
+All three must be added to the `ServerMessage` union in `src/types/ws-types.ts`.
 
 **`investigation:phase_usage`** — emitted when a phase completes:
 ```typescript
 {
   type: "investigation:phase_usage";
   investigationId: string;
-  phase: string;
+  phase: string;       // Frontend phase name (e.g., "planning", "metrics", "synthesis")
   inputTokens: number;
   outputTokens: number;
   durationMs: number;
 }
 ```
 
-**`investigation:total_usage`** — emitted once after `investigation:complete`:
+The `phase` field uses **frontend phase names** (matching the `phase` field in existing `investigation:phase` messages), not raw backend phase names. When a single backend phase maps to multiple frontend phases (e.g., `"Analyzing metrics, logs & infrastructure"` → `["metrics", "logs", "infra"]`), the token total is emitted once under the first frontend phase name. The parallel evidence phases share a single agent step, so tokens cannot be meaningfully split.
+
+**`investigation:total_usage`** — emitted once after `investigation:complete` (on success only):
 ```typescript
 {
   type: "investigation:total_usage";
@@ -34,6 +38,8 @@ Token usage tracking is now wired in the Mastra adapters (chat and investigation
   durationMs: number;
 }
 ```
+
+On investigation failure (`investigation:failed`), this message is **not emitted**. The total summary bar is only rendered when `investigation:total_usage` is received.
 
 **`chat:usage`** — emitted after `chat:stream_end`:
 ```typescript
@@ -45,24 +51,11 @@ Token usage tracking is now wired in the Mastra adapters (chat and investigation
 }
 ```
 
-### Modified Message Types
-
-**`investigation:tool_call`** — add optional token fields:
-```typescript
-{
-  // ...existing fields (phase, tool, args, status, result, durationMs)
-  inputTokens?: number;
-  outputTokens?: number;
-}
-```
-
-These are populated per-agent-step (not per-tool), so most tool calls will have `undefined` tokens. Only the final tool call in each agent step carries the step's token usage.
-
 ## Frontend Display
 
 ### Token Formatting
 
-Compact display using a shared formatter:
+Compact display using a shared formatter (`src/web/lib/formatTokens.ts`):
 - `< 1000` → literal number (e.g., `892`)
 - `1,000 – 999,999` → `18.2k`
 - `>= 1,000,000` → `1.2M`
@@ -75,7 +68,7 @@ Each phase's existing stats badge gains a token count:
 10 tools · 4 iterations · 12.3s · 18.2k tok
 ```
 
-Token data comes from `investigation:phase_usage` messages, matched by `investigationId` and `phase`.
+**Data flow:** `InvestigationPane.tsx` maintains a `phaseTokens: Record<string, { inputTokens: number; outputTokens: number }>` state, populated by handling `investigation:phase_usage` messages. This map is passed as a prop to `PhaseStepper`, which reads it by phase name to render the token badge alongside existing `PhaseStats` data.
 
 ### Investigation — Total Summary Bar
 
@@ -85,7 +78,7 @@ Rendered below the `RcaReport` component after investigation completes. Uses the
 Total: 54.7k input · 6.3k output · 61.0k tokens · 35.4s
 ```
 
-Data comes from `investigation:total_usage` message. For historical investigations, data comes from DB columns on the `investigations` table.
+Data comes from `investigation:total_usage` message for live investigations. For historical investigations, data comes from DB columns on the `investigations` table, served via the `/api/investigations/:id` REST endpoint.
 
 ### Chat — Per-Message Usage
 
@@ -95,47 +88,68 @@ Small muted text below each assistant message:
 3.8k tokens · 1.2s
 ```
 
-Only shown for messages that have usage data. Historical messages (loaded from DB) will not have usage data — this is live-only.
-
-Data comes from `chat:usage` message, associated with the preceding `chat:stream_end`.
+Only shown for messages that have usage data. Historical messages (loaded from DB) will not have usage data — this is live-only, a known trade-off.
 
 ### Chat — Session Footer
 
-Sticky footer at bottom of chat pane, accumulates across all messages in the session:
+Sticky footer at bottom of chat pane, labeled "This session" to distinguish from historical messages:
 
 ```
-Session: 24.1k tokens · 12 messages
+This session: 24.1k tokens · 12 messages
 ```
 
-Resets on `new_session`. Accumulates `inputTokens + outputTokens` from each `chat:usage` event.
+Resets on `new_session`. Accumulates `inputTokens + outputTokens` from each `chat:usage` event received during the current WebSocket connection. Does not retroactively count hydrated historical messages — this is intentional and the "This session" label makes it clear.
 
-## Backend Wiring (ws-handler.ts)
+## Backend Wiring
 
-### Investigation Token Tracking
+### Investigation Token Tracking (ws-handler.ts)
 
-1. At `investigation:started`, create a per-investigation accumulator:
+1. At `investigation:started`, create per-investigation accumulators:
    ```typescript
-   const usage = { inputTokens: 0, outputTokens: 0 };
+   const totalUsage = { inputTokens: 0, outputTokens: 0 };
    const phaseUsage = { inputTokens: 0, outputTokens: 0 };
    ```
 
-2. The existing `onTokenUsage` callback accumulates into both `usage` (total) and `phaseUsage` (current phase).
+2. **Pass `onTokenUsage` to `investigationAgent.investigate()`** — the current call site passes `undefined` for this argument. Change it to a lambda that accumulates into both `totalUsage` and `phaseUsage`:
+   ```typescript
+   const onTokenUsage = (u: TokenUsage) => {
+     totalUsage.inputTokens += u.inputTokens;
+     totalUsage.outputTokens += u.outputTokens;
+     phaseUsage.inputTokens += u.inputTokens;
+     phaseUsage.outputTokens += u.outputTokens;
+   };
+   ```
 
-3. On each `onPhase` transition (when completing a phase), emit `investigation:phase_usage` with `phaseUsage` values and the phase's duration, then reset `phaseUsage` to zeros.
+3. On each `onPhase` transition (when completing a phase), emit `investigation:phase_usage` with `phaseUsage` values and the phase's duration using **frontend phase names** (from `mapBackendPhase()`), then reset `phaseUsage` to zeros.
 
-4. After `investigation:complete`, emit `investigation:total_usage` with `usage` totals and overall duration. Persist totals to DB.
+4. After `investigation:complete`, emit `investigation:total_usage` with `totalUsage` and overall duration. Persist totals to DB via `updateInvestigation()`.
 
-### Chat Token Tracking
+5. On `investigation:failed`, do **not** emit `investigation:total_usage`.
+
+### Chat Token Tracking (ws-handler.ts)
 
 1. Record start time when chat request is received.
-2. The existing `onTokenUsage` callback accumulates tokens during the response.
-3. After `chat:stream_end`, emit `chat:usage` with accumulated tokens and `Date.now() - startTime`.
+
+2. **Pass `onTokenUsage` in the `agent.chat()` request** — the current call sites (both conversational and deep-investigate paths) do not include `onTokenUsage` in the `ChatRequest` object. Add it:
+   ```typescript
+   const chatUsage = { inputTokens: 0, outputTokens: 0 };
+   const onTokenUsage = (u: TokenUsage) => {
+     chatUsage.inputTokens += u.inputTokens;
+     chatUsage.outputTokens += u.outputTokens;
+   };
+   // Pass in ChatRequest:
+   agent.chat({ ...request, onTokenUsage });
+   ```
+
+3. After `chat:stream_end`, emit `chat:usage` with `chatUsage` and `Date.now() - startTime`.
 
 ### No Workflow Step Changes
 
-The workflow steps already emit `onTokenUsage` via `onStepFinish` (anomaly, planning, evidence) and `agent.generate()` results (planning, synthesis). The `ws-handler.ts` is the only backend file that needs changes.
+The workflow steps already emit `onTokenUsage` via `onStepFinish` (anomaly, planning, evidence) and `agent.generate()` results (planning, synthesis). The chat adapter emits via `stream.totalUsage`. No changes needed in workflow code.
 
 ## Database Schema Changes
+
+### Migrations (db.ts)
 
 Add three columns to the `investigations` table:
 
@@ -147,19 +161,34 @@ ALTER TABLE investigations ADD COLUMN total_duration_ms INTEGER DEFAULT 0;
 
 Applied in `db.ts` init, same pattern as existing schema setup (additive migration with `ALTER TABLE` wrapped in try/catch for idempotency).
 
-Populated when `investigation:complete` fires, from the accumulated totals.
+### updateInvestigation() (db.ts)
 
-Historical investigation views read these columns to show the total summary bar.
+Extend the method signature and `InvestigationRow` type to accept and return the three new columns:
+```typescript
+updateInvestigation(id: string, data: {
+  status?: string;
+  report?: string;
+  completed_at?: string;
+  total_input_tokens?: number;
+  total_output_tokens?: number;
+  total_duration_ms?: number;
+})
+```
+
+### REST API (routes.ts)
+
+The `GET /api/investigations/:id` endpoint must include the three new columns in its response so historical investigations can display the total summary bar. No new endpoint needed — just ensure the existing response shape includes `totalInputTokens`, `totalOutputTokens`, `totalDurationMs` from the row.
 
 ## Files Changed
 
 ### Backend
-- `src/types/ws-types.ts` — add 3 new ServerMessage types, extend `investigation:tool_call`
-- `src/server/ws-handler.ts` — accumulate tokens, emit new WS events, persist totals
-- `src/server/db.ts` — add 3 columns to investigations table
+- `src/types/ws-types.ts` — add 3 new types to `ServerMessage` union
+- `src/server/ws-handler.ts` — pass `onTokenUsage` callbacks at both `investigate()` and `agent.chat()` call sites, accumulate tokens, emit new WS events, persist totals
+- `src/server/db.ts` — add 3 columns, extend `updateInvestigation()` and `InvestigationRow`
+- `src/server/routes.ts` — include token columns in `/api/investigations/:id` response
 
 ### Frontend
-- `src/web/components/PhaseStepper.tsx` — add token count to phase stats badge
-- `src/web/components/RcaReport.tsx` or `InvestigationPane.tsx` — add total summary bar
-- `src/web/components/ChatPane.tsx` — add per-message usage + session footer
+- `src/web/components/InvestigationPane.tsx` — maintain `phaseTokens` state from WS events, pass to PhaseStepper, render total summary bar
+- `src/web/components/PhaseStepper.tsx` — accept `phaseTokens` prop, render token count in stats badge
+- `src/web/components/ChatPane.tsx` — per-message usage display + "This session" footer
 - `src/web/lib/formatTokens.ts` (new) — shared compact token formatter
