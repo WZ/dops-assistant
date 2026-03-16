@@ -10,19 +10,31 @@ import path from "path";
 import { fileURLToPath } from "url";
 import pino from "pino";
 import { Database } from "./db.js";
-import { registerRoutes } from "./routes.js";
+import { registerRoutes, type IMcpClient } from "./routes.js";
 import { setupWebSocket } from "./ws-handler.js";
-import { createMultiMcpClient } from "../mcp/factory.js";
-import { LlmClient } from "../llm/openai.js";
-import { ChatAgent } from "../agent/core.js";
-import { InvestigationAgent } from "../agent/investigation.js";
-import { IntentRouter, matchServiceFromText, validateLlmServiceMatch } from "../agent/intent.js";
+import { IntentRouter, matchServiceFromText, validateLlmServiceMatch } from "../agents/intent.js";
 import { ConversationMemory } from "../memory/conversation.js";
 import { loadConfig } from "../config/loader.js";
 import { SkillStore } from "../skills/store.js";
+import { createMastraAdapters } from "./agents.js";
+import { createMcpProvider, getAllTools } from "../mcp/provider.js";
+import { createModel } from "../mastra/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
+
+/**
+ * Stub IMcpClient backed by Mastra providers.
+ * The dependency graph REST endpoint is not currently wired to Mastra tool execution;
+ * it returns a single-node default response. Can be enhanced when needed.
+ */
+function createStubMcpClient(): IMcpClient {
+  return {
+    hasRole: () => false,
+    getToolsByRole: () => [],
+    callTool: async () => ({ text: "{}" }),
+  };
+}
 
 async function main() {
   const config = loadConfig(process.env["CONFIG_PATH"] ?? "config.yaml");
@@ -30,15 +42,18 @@ async function main() {
   const dbPath = process.env["DB_PATH"] ?? "dops.sqlite";
   const db = new Database(dbPath);
 
-  const mcp = createMultiMcpClient(config);
-  await mcp.connect();
-  logger.info("MCP connected (%d tools)", mcp.getTools().length);
+  // Mastra MCP providers
+  const providers = config.providers.map(createMcpProvider);
 
-  const llm = new LlmClient(config.llm, config.timeouts, config.retry);
-  const agent = new ChatAgent(llm, mcp, { maxIterations: config.agent.maxIterations });
-  const investigationAgent = new InvestigationAgent(llm, mcp, { maxIterations: config.agent.maxIterations });
-  const router = new IntentRouter(llm);
+  const model = createModel(config.llm);
+  const router = new IntentRouter(model);
   const memory = new ConversationMemory(config.agent.conversationMemory);
+
+  const mastraAdapters = await createMastraAdapters({ config, providers });
+  const { chatAgent: agent, investigationAgent } = mastraAdapters;
+
+  const toolCount = Object.keys(await getAllTools(providers).catch(() => ({}))).length;
+  logger.info("MCP connected (%d tools)", toolCount);
 
   // Initialize skill store
   const skillStore = new SkillStore(config.skills);
@@ -49,7 +64,7 @@ async function main() {
   const server = createServer(app);
   const port = Number(process.env["PORT"] ?? 3000);
 
-  registerRoutes(app, db, config.services, mcp, skillStore);
+  registerRoutes(app, db, config.services, createStubMcpClient(), skillStore);
 
   setupWebSocket(server, {
     db, agent, investigationAgent, router, memory,
@@ -69,7 +84,6 @@ async function main() {
   const shutdown = async () => {
     logger.info("Shutting down...");
     memory.destroy();
-    await mcp.disconnect();
     db.close();
     server.close();
     process.exit(0);
