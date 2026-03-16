@@ -29,12 +29,38 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
     maxSteps: 15,
   });
 
-  const result = await agent.generate("Validate each service by querying its metrics and log labels. Return the complete annotated list as JSON.");
+  console.error(`[VALIDATE] Starting validation of ${config.services.length} services with ${Object.keys(tools).length} tools`);
+
+  let result;
+  try {
+    result = await agent.generate("Validate each service by querying its metrics and log labels. Return the complete annotated list as JSON.", {
+      maxTokens: 16384,
+    });
+  } catch (err) {
+    console.error(`[VALIDATE] Agent threw error:`, err instanceof Error ? err.message : err);
+    return config.services.map((s) => ({
+      ...s,
+      confidence: "unverified" as const,
+      validationNotes: "validation agent error",
+    }));
+  }
+
+  console.error(`[VALIDATE] Agent returned ${result.text?.length ?? 0} chars`);
+  if (result.text) {
+    console.error(`[VALIDATE] Response preview: ${result.text.slice(0, 500)}`);
+  }
 
   const parsed = safeJsonParse(result.text);
-  if (Array.isArray(parsed)) return parsed;
-  if (parsed?.services && Array.isArray(parsed.services)) return parsed.services;
+  if (Array.isArray(parsed)) {
+    console.error(`[VALIDATE] Parsed ${parsed.length} validated services`);
+    return parsed;
+  }
+  if (parsed?.services && Array.isArray(parsed.services)) {
+    console.error(`[VALIDATE] Parsed ${parsed.services.length} from .services`);
+    return parsed.services;
+  }
 
+  console.error(`[VALIDATE] Failed to parse — falling back to unverified`);
   // Fallback: return all services as unverified
   return config.services.map((s) => ({
     ...s,
