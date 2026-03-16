@@ -1,8 +1,14 @@
+import type { ServiceConfig } from "../config/schema.js";
+import type { ValidatedServiceConfig } from "./discovery-types.js";
+
 // Client to Server
 export type ClientMessage =
   | { type: "chat"; message: string }
   | { type: "deep_investigate"; investigationId: string; message: string }
-  | { type: "new_session" };
+  | { type: "new_session" }
+  | { type: "discover" }
+  | { type: "discover:accept"; services: ServiceConfig[] }
+  | { type: "discover:reject" };
 
 // Phase stats emitted on phase completion
 export type PhaseStats = {
@@ -44,4 +50,13 @@ export type ServerMessage =
   | { type: "investigation:phase_usage"; investigationId: string; phase: string; inputTokens: number; outputTokens: number; durationMs: number }
   | { type: "investigation:total_usage"; investigationId: string; inputTokens: number; outputTokens: number; durationMs: number }
   | { type: "chat:usage"; inputTokens: number; outputTokens: number; durationMs: number }
+  | { type: "discover:phase"; phase: string; status: "running" | "complete" }
+  | { type: "discover:iteration"; phase: string; iteration: number; maxIterations: number; description: string }
+  | { type: "discover:tool_call"; phase: string; tool: string; args: Record<string, unknown>; status: "calling" | "success" | "error"; result?: string; durationMs?: number }
+  | { type: "discover:complete"; services: ValidatedServiceConfig[] }
+  | { type: "discover:error"; message: string }
+  | { type: "discover:pending"; services: ValidatedServiceConfig[] }
+  | { type: "discover:resolved" }
+  | { type: "discover:phase_usage"; phase: string; inputTokens: number; outputTokens: number; durationMs: number }
+  | { type: "discover:total_usage"; inputTokens: number; outputTokens: number; durationMs: number }
   | { type: "error"; message: string };

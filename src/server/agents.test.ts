@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MastraChatAgentAdapter,
   MastraInvestigationAdapter,
+  MastraDiscoverAdapter,
   createMastraAdapters,
 } from "./agents.js";
 import type { ChatRequest } from "../types/agent-types.js";
@@ -287,6 +288,19 @@ describe("MastraInvestigationAdapter", () => {
   });
 });
 
+describe("MastraDiscoverAdapter", () => {
+  it("exposes discover() and accept() methods", () => {
+    const adapter = new MastraDiscoverAdapter({
+      model: {} as any,
+      providers: [],
+      discoveryConfig: { autoRefresh: false, excludeServices: [], maxIterations: 5 },
+      registryStore: { load: () => [], save: () => "id", listVersions: () => [], getVersion: () => [], rollback: () => {} } as any,
+    });
+    expect(typeof adapter.discover).toBe("function");
+    expect(typeof adapter.accept).toBe("function");
+  });
+});
+
 describe("createMastraAdapters", () => {
   it("creates separate web and CLI chat agents with different tool availability", async () => {
     mockGetAllTools.mockResolvedValue({
@@ -313,7 +327,7 @@ describe("createMastraAdapters", () => {
         retry: { maxAttempts: 3, baseDelayMs: 500 },
         observability: { port: 9090, logLevel: "info" },
         skills: { dir: "./skills", maxPerQuery: 3, maxCharsPerSkill: 2000 },
-        discovery: { autoRefresh: false, excludeServices: [], consulMetric: "consul_catalog_service_node_healthy", maxIterations: 40 },
+        discovery: { autoRefresh: false, excludeServices: [], maxIterations: 40 },
         memory: { storage: "memory", dbPath: ".dops/memory.db" },
       },
       providers: [],

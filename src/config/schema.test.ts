@@ -47,7 +47,6 @@ describe("ConfigSchema – defaults", () => {
       providers: [grafanaProvider],
       discovery: {
         excludeServices: ["consul", "prometheus"],
-        consulMetric: "consul_catalog_service_node_healthy",
       },
     });
     expect(result.success).toBe(true);

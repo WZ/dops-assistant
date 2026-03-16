@@ -98,6 +98,23 @@ async function dispatch(): Promise<void> {
     return writeOutput(result, exitCode);
   }
 
+  if (parsed.command === "discover") {
+    const { createMastraAdapters } = await import("../server/agents.js");
+    const { ServiceRegistryStore } = await import("../services/registry.js");
+    const { getServicesFilePath } = await import("../config/loader.js");
+    const { runDiscover } = await import("./commands/discover.js");
+
+    const servicesPath = getServicesFilePath(parsed.flags.config);
+    const registryStore = new ServiceRegistryStore(servicesPath);
+    const { discoverAgent } = await createMastraAdapters({ config, providers, registryStore });
+
+    if (!discoverAgent) {
+      return writeOutput({ command: "discover", status: "error", error: "No MCP providers configured" }, 1);
+    }
+
+    return runDiscover(discoverAgent, config.discovery);
+  }
+
   if (parsed.command === "e2e") {
     const scenarioPath = parsed.args[0];
     if (!scenarioPath) {
@@ -140,7 +157,7 @@ async function dispatch(): Promise<void> {
 
   // Unknown command
   return writeOutput(
-    { command: parsed.command, status: "error", error: `unknown command: ${parsed.command}. Available: investigate, chat, mcp-check, e2e, interactive` },
+    { command: parsed.command, status: "error", error: `unknown command: ${parsed.command}. Available: investigate, chat, discover, mcp-check, e2e, interactive` },
     2,
   );
 }

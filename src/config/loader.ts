@@ -2,6 +2,7 @@ import { readFileSync, existsSync, realpathSync } from "fs";
 import { dirname, resolve } from "path";
 import { parse } from "yaml";
 import { ConfigSchema, type Config, type ServiceConfig } from "./schema.js";
+import { ServiceRegistryStore } from "../services/registry.js";
 
 function resolveEnvVars(obj: unknown): unknown {
   if (typeof obj === "string") {
@@ -72,7 +73,9 @@ export function loadConfig(configPath: string): Config {
 
   // Merge services from services.yaml (inline config takes precedence)
   const config = result.data;
-  const fileServices = loadServicesFile(configPath);
+  const servicesPath = getServicesFilePath(configPath);
+  const registryStore = new ServiceRegistryStore(servicesPath);
+  const fileServices = registryStore.load();
   if (fileServices.length > 0) {
     const inlineNames = new Set(config.services.map((s) => s.name));
     const extra = fileServices.filter((s) => !inlineNames.has(s.name));
