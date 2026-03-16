@@ -1,8 +1,15 @@
 import type { Express, Request, Response } from "express";
 import type { Database, InvestigationRow, PhaseRow, EventRow } from "./db.js";
 import type { ServiceConfig } from "../config/schema.js";
-import type { MultiMcpClient } from "../mcp/multi-client.js";
 import type { SkillStore } from "../skills/store.js";
+import type { ProviderRole } from "../config/schema.js";
+
+/** Minimal MCP interface needed by routes (dependency graph queries). */
+export interface IMcpClient {
+  hasRole(role: ProviderRole): boolean;
+  getToolsByRole(role: ProviderRole): { function: { name: string } }[];
+  callTool(name: string, args: Record<string, unknown>): Promise<{ text: string }>;
+}
 
 export interface DependencyNode {
   id: string;
@@ -24,7 +31,7 @@ export interface RouteHandlers {
   getDependencies(service: string): Promise<{ nodes: DependencyNode[]; edges: DependencyEdge[] }>;
 }
 
-export function buildHandlers(db: Database, services: ServiceConfig[], mcp: MultiMcpClient): RouteHandlers {
+export function buildHandlers(db: Database, services: ServiceConfig[], mcp: IMcpClient): RouteHandlers {
   return {
     getServices: () => services,
     listInvestigations: (limit, offset) => db.listInvestigations(limit, offset),
@@ -58,7 +65,7 @@ export function buildHandlers(db: Database, services: ServiceConfig[], mcp: Mult
   };
 }
 
-export function registerRoutes(app: Express, db: Database, services: ServiceConfig[], mcp: MultiMcpClient, skillStore?: SkillStore): void {
+export function registerRoutes(app: Express, db: Database, services: ServiceConfig[], mcp: IMcpClient, skillStore?: SkillStore): void {
   const handlers = buildHandlers(db, services, mcp);
 
   app.get("/api/services", (_req: Request, res: Response) => {

@@ -13,15 +13,20 @@ dops-assistant — an AI-powered DevOps assistant that integrates with Grafana v
 
 ## Architecture
 
-- **LLM client**: `src/llm/openai.ts` — OpenAI Responses API
-- **Chat agent**: `src/agent/core.ts` — ChatAgent, conversational + proactive modes
-- **Investigation**: `src/agent/investigation.ts` — 5-phase RCA pipeline
-- **CLI**: `src/cli.tsx` + `src/interfaces/cli/App.tsx` — Ink React terminal UI
-- **MCP**: `src/mcp/client.ts` — Grafana MCP integration
+- **Chat agent**: `src/agents/chat.ts` — Mastra Agent with MCP tools for conversational queries
+- **Investigation**: `src/workflows/investigation.ts` — orchestrates 6-phase workflow via step factories in `src/workflows/steps/`
+- **Agents**: `src/agents/` — 7 specialized agents (anomaly-detector, planner, metrics, logs, infra, synthesis, chat) + intent router
+- **Workflow steps**: `src/workflows/steps/` — prefetch, anomaly, planning, evidence (metrics/logs/infra), synthesis, post-synthesis
+- **MCP**: `src/mcp/provider.ts` — role-based tool routing via `@mastra/mcp`
+- **Server adapter**: `src/server/agents.ts` — wraps Mastra agents into server/CLI interfaces
+- **Intent routing**: `src/agents/intent.ts` — classifies user messages (uses AI SDK `generateText`)
+- **CLI**: `src/cli/` — Ink React terminal UI (entry: `index.tsx`, components: `App.tsx`, `Markdown.tsx`)
+- **Types**: `src/types/` — shared types (RCA report, agent interfaces, LLM types, WebSocket protocol)
+
 ## Dev Setup
 
 - **Config**: `dev/config.yaml` — symlink to `config.yaml` in project root (`ln -sf dev/config.yaml config.yaml`). The config file must exist at the project root for the server to start.
-- **Env vars**: `dev/.env` — contains `OPENAI_API_KEY` and other secrets. The web server (`src/server/index.ts`) auto-loads it via dotenv. The CLI entrypoint (`src/index.ts`) does NOT auto-load it.
+- **Env vars**: `dev/.env` — contains `OPENAI_API_KEY` and other secrets. The web server (`src/server/index.ts`) auto-loads it via dotenv. The CLI (`src/cli/index.tsx`) also loads it via dotenv.
 - `docker-compose.dev.yml` — grafana-mcp with `-tls-skip-verify` for self-signed certs
 
 ## Commands
@@ -43,11 +48,11 @@ dops-assistant — an AI-powered DevOps assistant that integrates with Grafana v
 - Produces `<|constrain|>json` hallucinated tool calls when both tools + json_schema responseFormat are set. Fix: only send responseFormat when tools array is empty; ignore function_calls from LLM when tools=[]
 - Model tends to exhaust all tool iterations without producing JSON — need midpoint nudge + wind-down iterations
 - Grafana MCP `list_datasources` returns `{"datasources": [...]}` not a flat array — must unwrap
+- All quirk workarounds are isolated in `src/agents/shared/prepare-step.ts` (`prepareStep` hook) — removable when switching to a model without these quirks
 
-## Investigation Agent Patterns
+## Investigation Workflow Patterns
 
-- Pre-fetch datasource UIDs and dashboard list to inject as context (avoids iteration waste)
-- Evidence phases get 10 iterations, last 2 are wind-down (no tools, responseFormat enabled)
-- Post-loop fresh-prompt extraction: collect tool response data → new conversation → summarize into JSON
-- Truncation retry: fresh prompt with 500-char hint (don't push 50k+ truncated content back)
-- Synthesis/reflection wrapped in try/catch — degrade to defaults on failure
+- Prefetch context runs as a dedicated workflow step (`src/workflows/steps/prefetch.ts`) before agent steps start
+- Six parallel evidence agents (metrics, logs, infra, anomaly-detector, planner, synthesis) wired as Mastra agents
+- Workflow degrades gracefully: agent step failures produce empty findings rather than crashing the workflow
+- Truncation and LLM quirk handling isolated in `src/agents/shared/prepare-step.ts` and `src/workflows/helpers.ts`

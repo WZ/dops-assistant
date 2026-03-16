@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import type { ClientMessage, ServerMessage } from "../../shared/ws-types.js";
+import type { ClientMessage, ServerMessage } from "../../types/ws-types.js";
 
 type ConnectionStatus = "connecting" | "connected" | "disconnected";
 

@@ -4,7 +4,7 @@ import { renderInline } from "../lib/renderInline";
 import { renderMarkdown } from "../lib/renderMarkdown";
 import { MetricChart, type TimeSeriesData } from "./MetricChart";
 import type { useWebSocket } from "../hooks/useWebSocket";
-import type { ChartSeries } from "../../shared/ws-types.js";
+import type { ChartSeries } from "../../types/ws-types.js";
 
 interface RcaReportSummary {
   rootCause: string;
@@ -297,7 +297,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
               </svg>
               <span className="font-display text-[11px] font-semibold tracking-[0.12em] uppercase text-muted-foreground/50">
-                Chat
+                Console
               </span>
             </>
           )}

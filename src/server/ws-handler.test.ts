@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { handleClientMessage } from "./ws-handler.js";
 import type { WsDeps } from "./ws-handler.js";
-import type { ServerMessage } from "../shared/ws-types.js";
+import type { ServerMessage } from "../types/ws-types.js";
 
 function mockDeps(): WsDeps {
   return {
