@@ -3,12 +3,13 @@ import { WebSocketServer, WebSocket } from "ws";
 import { ulid } from "ulid";
 import pino from "pino";
 import type { Database } from "./db.js";
-import type { IChatAgent, IInvestigationAgent } from "../types/agent-interfaces.js";
+import type { IChatAgent, IInvestigationAgent, IDiscoverAgent } from "../types/agent-interfaces.js";
 import type { IntentRouter } from "../agents/intent.js";
 import { resolveServiceFromHistory } from "../agents/intent.js";
 import type { ConversationMemory } from "../memory/conversation.js";
-import type { ServiceConfig } from "../config/schema.js";
+import type { ServiceConfig, DiscoveryConfig } from "../config/schema.js";
 import type { ClientMessage, ServerMessage, PhaseStats, ChartSeries } from "../types/ws-types.js";
+import type { ValidatedServiceConfig } from "../types/discovery-types.js";
 import type { SkillStore } from "../skills/store.js";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
@@ -125,6 +126,10 @@ export interface WsDeps {
   skillStore?: SkillStore;
   validateLlmServiceMatch: (llmService: string | undefined, userMessage: string, services: ServiceConfig[]) => ServiceConfig | undefined;
   matchServiceFromText: (text: string, services: ServiceConfig[]) => ServiceConfig | undefined;
+  discoverAgent?: IDiscoverAgent;
+  discoveryConfig?: DiscoveryConfig;
+  getPendingDiscovery?: () => ValidatedServiceConfig[] | null;
+  clearPendingDiscovery?: () => void;
 }
 
 export function setupWebSocket(server: Server, deps: WsDeps): void {
@@ -134,14 +139,21 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
     const threadId = `web_${ulid()}`;
     logger.info({ threadId }, "WebSocket client connected");
 
+    const send = (m: ServerMessage) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(m));
+      }
+    };
+
+    // Notify newly connected clients of pending discovery results
+    const pending = deps.getPendingDiscovery?.();
+    if (pending) {
+      send({ type: "discover:pending", services: pending });
+    }
+
     ws.on("message", async (raw: Buffer) => {
       try {
         const msg = JSON.parse(raw.toString()) as ClientMessage;
-        const send = (m: ServerMessage) => {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify(m));
-          }
-        };
         await handleClientMessage(msg, send, deps, threadId);
       } catch (err) {
         logger.error({ err }, "WebSocket message handling error");
@@ -311,6 +323,43 @@ export async function handleClientMessage(
 
   if (msg.type === "deep_investigate") {
     await handleDeepInvestigate(msg, send, deps, threadId);
+    return;
+  }
+
+  if (msg.type === "discover" && deps.discoverAgent) {
+    try {
+      const services = await deps.discoverAgent.discover(
+        deps.discoveryConfig ?? { autoRefresh: false, excludeServices: [], maxIterations: 40 },
+        (phase) => send({ type: "discover:phase", phase, status: "running" }),
+        (phase, iteration, maxIterations, description) =>
+          send({ type: "discover:iteration", phase, iteration, maxIterations, description }),
+        (name, args, result, durationMs, error, phase) =>
+          send({
+            type: "discover:tool_call",
+            phase: phase ?? "discovery",
+            tool: name,
+            args,
+            status: error ? "error" : result ? "success" : "calling",
+            result,
+            durationMs,
+          }),
+      );
+      send({ type: "discover:phase", phase: "validation", status: "complete" });
+      send({ type: "discover:complete", services });
+    } catch (err) {
+      send({ type: "discover:error", message: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
+
+  if (msg.type === "discover:accept" && deps.discoverAgent) {
+    await deps.discoverAgent.accept(msg.services, "discovery");
+    deps.clearPendingDiscovery?.();
+    return;
+  }
+
+  if (msg.type === "discover:reject") {
+    deps.clearPendingDiscovery?.();
     return;
   }
 
