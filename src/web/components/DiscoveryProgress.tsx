@@ -48,32 +48,52 @@ export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, er
       </div>
 
       <div className="rounded-lg border bg-card/40 p-4">
-        {iteration && iteration.max > 0 && (
-          <>
-            <div className="flex items-center gap-2 mb-2 text-sm">
-              <div className="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-              <span>{iteration.description} ({iteration.current}/{iteration.max})</span>
+        {/* Spinner + status when running */}
+        {!error && (
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+            <div>
+              <div className="text-sm font-medium">
+                {phase === "discovery" ? "Discovering services..." : "Validating services..."}
+              </div>
+              {iteration && iteration.max > 0 && (
+                <div className="text-[11px] text-muted-foreground/50">
+                  Step {iteration.current} of {iteration.max}
+                </div>
+              )}
             </div>
-            <div className="h-1 bg-muted rounded mb-4">
-              <div
-                className="h-1 bg-primary rounded transition-all"
-                style={{ width: `${(iteration.current / iteration.max) * 100}%` }}
-              />
-            </div>
-          </>
+          </div>
         )}
 
-        <div className="font-mono text-[11px] text-muted-foreground/60 max-h-40 overflow-y-auto space-y-0.5">
-          {toolCalls.slice(-20).map((tc, i) => (
-            <div key={i}>
-              <span className="text-muted-foreground/30">{tc.timestamp}</span>{" "}
-              <span className={tc.status === "error" ? "text-red-400" : tc.status === "success" ? "text-green-400" : "text-primary"}>
-                {tc.status === "success" ? "\u2713" : tc.status === "error" ? "\u2717" : "\u2192"}
-              </span>{" "}
-              {tc.tool}
-            </div>
-          ))}
-        </div>
+        {/* Progress bar */}
+        {iteration && iteration.max > 0 && !error && (
+          <div className="h-1 bg-muted rounded mb-4">
+            <div
+              className="h-1 bg-primary rounded transition-all"
+              style={{ width: `${(iteration.current / iteration.max) * 100}%` }}
+            />
+          </div>
+        )}
+
+        {/* Tool call log */}
+        {toolCalls.length > 0 && (
+          <div className="font-mono text-[11px] text-muted-foreground/60 max-h-40 overflow-y-auto space-y-0.5">
+            {toolCalls.slice(-20).map((tc, i) => (
+              <div key={i}>
+                <span className="text-muted-foreground/30">{tc.timestamp}</span>{" "}
+                <span className={tc.status === "error" ? "text-red-400" : tc.status === "success" ? "text-green-400" : "text-primary"}>
+                  {tc.status === "success" ? "\u2713" : tc.status === "error" ? "\u2717" : "\u2192"}
+                </span>{" "}
+                {tc.tool}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Empty state — waiting for first tool call */}
+        {toolCalls.length === 0 && !error && (
+          <div className="text-xs text-muted-foreground/40">Waiting for agent to start...</div>
+        )}
       </div>
 
       {error && (

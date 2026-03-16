@@ -22,11 +22,13 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
     ? wrapToolsWithCallbacks(rawTools, config.onToolCall, "validation")
     : rawTools;
 
+  const maxSteps = Math.max(40, config.services.length * 3);
   const agent = createValidatorAgent({
     model: config.model,
     tools,
     servicesToValidate: config.services,
-    maxSteps: 15,
+    maxSteps,
+    useQuirkHandling: true,
   });
 
   console.error(`[VALIDATE] Starting validation of ${config.services.length} services with ${Object.keys(tools).length} tools`);

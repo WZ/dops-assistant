@@ -1,12 +1,14 @@
 import { Agent } from "@mastra/core/agent";
 import type { LanguageModel } from "ai";
 import type { ServiceConfig } from "../config/schema.js";
+import { createQuirkPrepareStep } from "./shared/prepare-step.js";
 
 export interface ValidatorAgentConfig {
   model: LanguageModel;
   tools?: Record<string, any>;
   servicesToValidate: ServiceConfig[];
   maxSteps?: number;
+  useQuirkHandling?: boolean;
 }
 
 export function createValidatorAgent(config: ValidatorAgentConfig) {
@@ -43,5 +45,8 @@ Return the COMPLETE list — do not omit any services. Return valid JSON.`,
     defaultOptions: {
       maxSteps: config.maxSteps ?? 15,
     },
+    ...(config.useQuirkHandling !== false
+      ? { prepareStep: createQuirkPrepareStep({ maxSteps: config.maxSteps ?? 15 }) }
+      : {}),
   });
 }
