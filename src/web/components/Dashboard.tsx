@@ -47,7 +47,7 @@ export function Dashboard({ onInvestigationClick, onInvestigateService, onManage
         <h1 className="font-display text-xl font-bold tracking-tight text-foreground/90">
           Services Overview
         </h1>
-        <p className="text-xs font-mono text-muted-foreground/40 mt-1 tracking-wide">
+        <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">
           {services.length} service{services.length !== 1 ? "s" : ""} monitored
         </p>
       </div>
@@ -70,7 +70,7 @@ export function Dashboard({ onInvestigationClick, onInvestigateService, onManage
         </div>
         {services.length === 0 ? (
           <div className="py-8 text-center">
-            <p className="text-sm text-muted-foreground/40">No services configured</p>
+            <p className="text-sm text-muted-foreground/70">No services configured</p>
           </div>
         ) : (
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
@@ -93,8 +93,8 @@ export function Dashboard({ onInvestigationClick, onInvestigateService, onManage
         </div>
         {investigations.length === 0 ? (
           <div className="py-8 text-center">
-            <p className="text-sm text-muted-foreground/40">No investigations yet</p>
-            <p className="text-xs text-muted-foreground/25 mt-1 font-mono">
+            <p className="text-sm text-muted-foreground/70">No investigations yet</p>
+            <p className="text-xs text-muted-foreground/55 mt-1 font-mono">
               click a service card or use the chat to start one
             </p>
           </div>
@@ -118,7 +118,7 @@ export function Dashboard({ onInvestigationClick, onInvestigateService, onManage
                       <div className={`w-1.5 h-1.5 rounded-full ${statusColor}`} />
                       <span className="font-body text-sm font-medium text-foreground/80 group-hover:text-foreground/95 transition-colors">{inv.service}</span>
                     </div>
-                    <span className="text-[10px] font-mono text-muted-foreground/35">{timeAgo(inv.created_at)}</span>
+                    <span className="text-[10px] font-mono text-muted-foreground/65">{timeAgo(inv.created_at)}</span>
                   </div>
                   {rootCause && (
                     <p className="text-xs text-muted-foreground/50 truncate pl-3.5 font-body">{rootCause}</p>

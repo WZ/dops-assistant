@@ -75,7 +75,7 @@ export function DiscoveryReview({ services: initialServices, onAccept, onReject,
 
         {/* Service table */}
         <div className="mt-3 bg-background/50 rounded overflow-hidden">
-          <div className="grid grid-cols-[1fr_60px_80px_50px] px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground/40 border-b border-border/30">
+          <div className="grid grid-cols-[1fr_60px_80px_50px] px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground/70 border-b border-border/30">
             <span>Service</span>
             <span className="text-right">Metrics</span>
             <span className="text-right">Log Labels</span>
@@ -109,7 +109,7 @@ export function DiscoveryReview({ services: initialServices, onAccept, onReject,
         >
           <span className="text-primary mr-2">{showEditor ? "\u25BE" : "\u25B8"}</span>
           <span className="text-sm flex-1">Edit YAML</span>
-          <span className="text-[10px] text-muted-foreground/40">Click to expand and edit before accepting</span>
+          <span className="text-[10px] text-muted-foreground/70">Click to expand and edit before accepting</span>
         </button>
         {showEditor && (
           <div className="max-h-80 overflow-y-auto">

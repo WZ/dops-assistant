@@ -91,7 +91,7 @@ export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, er
           <div ref={toolCallLogRef} className="font-mono text-[11px] text-muted-foreground/60 max-h-40 overflow-y-auto space-y-0.5">
             {toolCalls.slice(-20).map((tc, i) => (
               <div key={i}>
-                <span className="text-muted-foreground/30">{tc.timestamp}</span>{" "}
+                <span className="text-muted-foreground/60">{tc.timestamp}</span>{" "}
                 <span className={tc.status === "error" ? "text-red-400" : tc.status === "success" ? "text-green-400" : "text-primary"}>
                   {tc.status === "success" ? "\u2713" : tc.status === "error" ? "\u2717" : "\u2192"}
                 </span>{" "}
@@ -103,7 +103,7 @@ export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, er
 
         {/* Empty state — waiting for first tool call */}
         {toolCalls.length === 0 && !error && (
-          <div className="text-xs text-muted-foreground/40">Waiting for agent to start...</div>
+          <div className="text-xs text-muted-foreground/70">Waiting for agent to start...</div>
         )}
       </div>
 

@@ -17,7 +17,7 @@ export function ServiceCard({ name, onClick }: { name: string; onClick: () => vo
         </svg>
       </div>
       <div className="mt-1.5 pl-[18px]">
-        <span className="text-[9px] font-mono text-muted-foreground/30 uppercase tracking-[0.15em]">
+        <span className="text-[9px] font-mono text-muted-foreground/60 uppercase tracking-[0.15em]">
           healthy
         </span>
       </div>

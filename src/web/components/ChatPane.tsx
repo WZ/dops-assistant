@@ -309,7 +309,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
             </>
           ) : (
             <>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-muted-foreground/40">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-muted-foreground/70">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
               </svg>
               <span className="font-display text-[11px] font-semibold tracking-[0.12em] uppercase text-muted-foreground/50">
@@ -376,7 +376,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
               <p className="text-sm text-muted-foreground/50 font-body">
                 Ask a question or start an investigation
               </p>
-              <p className="text-[11px] text-muted-foreground/30 mt-1.5 font-mono">
+              <p className="text-[11px] text-muted-foreground/60 mt-1.5 font-mono">
                 try &quot;investigate ingestion-server&quot;
               </p>
             </div>
@@ -401,7 +401,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                   {msg.content}
                 </div>
               ) : msg.role === "system" ? (
-                <div className="max-w-[90%] px-3 py-1.5 text-[11px] font-mono text-muted-foreground/40 text-center">
+                <div className="max-w-[90%] px-3 py-1.5 text-[11px] font-mono text-muted-foreground/70 text-center">
                   {msg.content}
                 </div>
               ) : msg.report && msg.investigationId ? (
@@ -474,7 +474,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                     </div>
                   )}
                   {msg.tokenUsage && (
-                    <div className="text-[10px] font-mono text-muted-foreground/40 mt-1">
+                    <div className="text-[10px] font-mono text-muted-foreground/70 mt-1">
                       {formatTokens(msg.tokenUsage.inputTokens + msg.tokenUsage.outputTokens)} tokens · {(msg.tokenUsage.durationMs / 1000).toFixed(1)}s
                     </div>
                   )}
@@ -560,7 +560,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
 
       {/* Session token usage footer */}
       {sessionTokens.messageCount > 0 && (
-        <div className="flex items-center gap-2 px-4 py-1.5 text-[10px] font-mono text-muted-foreground/40 border-t border-border/20 bg-background/80">
+        <div className="flex items-center gap-2 px-4 py-1.5 text-[10px] font-mono text-muted-foreground/70 border-t border-border/20 bg-background/80">
           <span>This session:</span>
           <span>{formatTokens(sessionTokens.inputTokens + sessionTokens.outputTokens)} tokens</span>
           <span>·</span>
@@ -574,7 +574,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            className={`w-full px-4 py-2.5 pr-10 rounded-lg border text-sm font-body text-foreground/85 placeholder:text-muted-foreground/30 focus:outline-none transition-all disabled:opacity-25 ${isDeepMode ? "bg-accent/4 border-accent/20 focus:border-accent/40" : "bg-secondary/30 border-border/40 focus:border-primary/35"}`}
+            className={`w-full px-4 py-2.5 pr-10 rounded-lg border text-sm font-body text-foreground/85 placeholder:text-muted-foreground/60 focus:outline-none transition-all disabled:opacity-25 ${isDeepMode ? "bg-accent/4 border-accent/20 focus:border-accent/40" : "bg-secondary/30 border-border/40 focus:border-primary/35"}`}
             placeholder={
               status !== "connected" ? "Reconnecting..." :
               isDeepMode ? "Ask a follow-up about this investigation..." :
@@ -585,7 +585,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
           <button
             type="submit"
             disabled={status !== "connected" || !input.trim() || isLoading}
-            className={`absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md transition-all disabled:opacity-15 ${isDeepMode ? "text-accent/40 hover:text-accent hover:bg-accent/10" : "text-muted-foreground/30 hover:text-primary hover:bg-primary/8"}`}
+            className={`absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md transition-all disabled:opacity-15 ${isDeepMode ? "text-accent/40 hover:text-accent hover:bg-accent/10" : "text-muted-foreground/60 hover:text-primary hover:bg-primary/8"}`}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/>

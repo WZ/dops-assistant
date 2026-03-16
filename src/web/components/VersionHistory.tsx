@@ -26,7 +26,7 @@ export function VersionHistory({ onBack }: VersionHistoryProps) {
   return (
     <div className="h-full overflow-y-auto p-6">
       <div className="text-xs text-muted-foreground/50 mb-4">
-        <span className="text-muted-foreground/40">Dashboard</span>
+        <span className="text-muted-foreground/70">Dashboard</span>
         <span className="mx-1.5">{"\u203A"}</span>
         <button onClick={onBack} className="text-primary hover:underline">Services</button>
         <span className="mx-1.5">{"\u203A"}</span>
@@ -37,7 +37,7 @@ export function VersionHistory({ onBack }: VersionHistoryProps) {
 
       <div className="space-y-2">
         {versions.length === 0 && (
-          <p className="text-sm text-muted-foreground/40">No version history yet</p>
+          <p className="text-sm text-muted-foreground/70">No version history yet</p>
         )}
         {versions.map((v, i) => (
           <div key={v.id} className="rounded-lg border bg-card/40 overflow-hidden">
@@ -50,7 +50,7 @@ export function VersionHistory({ onBack }: VersionHistoryProps) {
                   )}
                   <span className="text-[10px] px-2 py-0.5 rounded bg-muted text-muted-foreground">{v.source}</span>
                 </div>
-                <div className="text-[11px] text-muted-foreground/40 mt-1">
+                <div className="text-[11px] text-muted-foreground/70 mt-1">
                   {new Date(v.timestamp).toLocaleString()} {"\u00B7"} {v.serviceCount} services
                 </div>
               </div>

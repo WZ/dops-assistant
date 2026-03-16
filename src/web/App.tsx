@@ -116,7 +116,7 @@ export function App() {
             <span className="font-display font-bold text-sm tracking-wide text-foreground/90 uppercase">
               dops
             </span>
-            <span className="text-[9px] font-mono text-muted-foreground/40 tracking-[0.2em] uppercase">
+            <span className="text-[9px] font-mono text-muted-foreground/70 tracking-[0.2em] uppercase">
               assistant
             </span>
           </div>
@@ -145,7 +145,7 @@ export function App() {
           </div>
           <button
             onClick={theme.toggle}
-            className="p-1.5 rounded-md text-muted-foreground/40 hover:text-foreground/70 hover:bg-secondary/50 transition-all"
+            className="p-1.5 rounded-md text-muted-foreground/70 hover:text-foreground/70 hover:bg-secondary/50 transition-all"
             title={theme.dark ? "Switch to light" : "Switch to dark"}
           >
             {theme.dark ? (

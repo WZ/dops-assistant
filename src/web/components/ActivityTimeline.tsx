@@ -50,17 +50,17 @@ function ToolCallEvent({ event }: { event: Extract<TimelineEvent, { type: "tool_
               {formatDuration(event.durationMs)}
             </span>
           )}
-          <span className="text-[8px] font-mono text-muted-foreground/20 ml-auto shrink-0">
+          <span className="text-[8px] font-mono text-muted-foreground/50 ml-auto shrink-0">
             {formatTimeAgo(event.timestamp)}
           </span>
         </div>
         {expanded && (
           <div className="mt-1.5 space-y-1 animate-fade-in">
-            <pre className="text-[10px] font-mono text-muted-foreground/35 bg-background/30 rounded p-2 overflow-x-auto border border-border/10">
+            <pre className="text-[10px] font-mono text-muted-foreground/65 bg-background/30 rounded p-2 overflow-x-auto border border-border/10">
               {JSON.stringify(event.args, null, 2)}
             </pre>
             {event.result && (
-              <pre className="text-[10px] font-mono text-muted-foreground/30 bg-background/30 rounded p-2 overflow-x-auto border border-border/10 max-h-24 overflow-y-auto">
+              <pre className="text-[10px] font-mono text-muted-foreground/60 bg-background/30 rounded p-2 overflow-x-auto border border-border/10 max-h-24 overflow-y-auto">
                 {event.result}
               </pre>
             )}
@@ -75,7 +75,7 @@ function IterationEvent({ event }: { event: Extract<TimelineEvent, { type: "iter
   return (
     <div className="flex items-center gap-2.5 py-1 animate-fade-in">
       <div className="h-px flex-1 bg-border/20" />
-      <span className="text-[10px] font-mono text-muted-foreground/30 shrink-0">
+      <span className="text-[10px] font-mono text-muted-foreground/60 shrink-0">
         Iteration {event.iteration + 1}/{event.maxIterations}
       </span>
       <div className="h-px flex-1 bg-border/20" />
@@ -107,7 +107,7 @@ function PhaseChangeEvent({ event }: { event: Extract<TimelineEvent, { type: "ph
         {event.phase} {event.status === "complete" ? "\u2713" : "\u2717"}
       </span>
       {statsText && (
-        <span className="text-[8px] font-mono text-muted-foreground/25">{statsText}</span>
+        <span className="text-[8px] font-mono text-muted-foreground/55">{statsText}</span>
       )}
       <div className="h-px flex-1 bg-border/10" />
     </div>
@@ -139,7 +139,7 @@ export function ActivityTimeline({ events }: { events: TimelineEvent[] }) {
             <div className="w-1.5 h-1.5 rounded-full bg-primary/40 animate-status-pulse" style={{ animationDelay: "0.3s" }} />
             <div className="w-1.5 h-1.5 rounded-full bg-primary/30 animate-status-pulse" style={{ animationDelay: "0.6s" }} />
           </div>
-          <p className="text-[11px] font-mono text-muted-foreground/30">Waiting for investigation...</p>
+          <p className="text-[11px] font-mono text-muted-foreground/60">Waiting for investigation...</p>
         </div>
       </div>
     );
