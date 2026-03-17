@@ -51,6 +51,7 @@ ${visualizationGuidance}
     tools: config.tools ?? {},
     defaultOptions: {
       maxSteps: config.maxSteps ?? 15,
+      modelSettings: { temperature: 0.3 },
     },
   });
 }
