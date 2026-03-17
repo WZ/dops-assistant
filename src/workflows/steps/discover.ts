@@ -60,7 +60,7 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
         providerOptions: { "openai-compatible": { max_tokens: 16384 } },
       } as any);
 
-      console.error(`[DISCOVER] Agent returned ${result.text?.length ?? 0} chars`);
+      console.error(`[DISCOVER] Agent returned ${result.text?.length ?? 0} chars: ${JSON.stringify(result.text?.slice(0, 500))}`);
 
       const usage = (result as any).totalUsage ?? (result as any).usage;
       if (usage && config.onTokenUsage) {
