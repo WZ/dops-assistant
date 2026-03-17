@@ -55,6 +55,7 @@ Be thorough — discover ALL services. Return valid JSON.${excludeList}`,
     tools: config.tools ?? {},
     defaultOptions: {
       maxSteps: config.maxSteps ?? 40,
+      modelSettings: { temperature: 0 },
       prepareStep: config.useQuirkHandling !== false
         ? createQuirkPrepareStep({ maxSteps: config.maxSteps ?? 40 })
         : undefined,
