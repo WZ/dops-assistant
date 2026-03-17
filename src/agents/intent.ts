@@ -286,6 +286,7 @@ export class IntentRouter {
         model: this.model,
         system: buildIntentClassifierPrompt(serviceNames),
         prompt: message,
+        temperature: 0,
       });
 
       const parsed = JSON.parse(text) as { intent: string; service: string };
