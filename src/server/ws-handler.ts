@@ -345,7 +345,7 @@ export async function handleClientMessage(
       );
       send({ type: "discover:phase", phase: "validation", status: "complete" });
       if (services.length === 0) {
-        send({ type: "discover:error", message: "Discovery returned no services. The LLM may be unavailable — try again." });
+        send({ type: "discover:error", message: "Discovery completed but found no services. The LLM may have failed to parse Prometheus metrics — try again." });
       } else {
         send({ type: "discover:complete", services });
       }
