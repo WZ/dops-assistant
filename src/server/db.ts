@@ -93,6 +93,22 @@ export class Database {
         payload           TEXT NOT NULL,
         created_at        TEXT NOT NULL DEFAULT (datetime('now'))
       );
+      CREATE TABLE IF NOT EXISTS investigation_feedback (
+        id                TEXT PRIMARY KEY,
+        investigation_id  TEXT NOT NULL REFERENCES investigations(id),
+        rating            TEXT NOT NULL CHECK(rating IN ('useful', 'not_useful')),
+        created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS incident_patterns (
+        id                TEXT PRIMARY KEY,
+        service           TEXT NOT NULL,
+        symptom           TEXT NOT NULL,
+        root_cause        TEXT NOT NULL,
+        severity          TEXT NOT NULL,
+        recommended_actions TEXT,
+        source_investigation_id TEXT REFERENCES investigations(id),
+        created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+      );
     `);
   }
 
@@ -179,6 +195,30 @@ export class Database {
        WHERE status = 'running' AND created_at < datetime('now', '-' || ? || ' minutes')`
     ).run(staleMinutes);
     return result.changes;
+  }
+
+  // ── Feedback ─────────────────────────────────────────────────────────────
+
+  createFeedback(fb: { id: string; investigationId: string; rating: "useful" | "not_useful" }): void {
+    this.db.prepare("INSERT INTO investigation_feedback (id, investigation_id, rating) VALUES (?, ?, ?)").run(fb.id, fb.investigationId, fb.rating);
+  }
+
+  getFeedback(investigationId: string): { rating: string; created_at: string } | undefined {
+    return this.db.prepare("SELECT rating, created_at FROM investigation_feedback WHERE investigation_id = ? ORDER BY created_at DESC LIMIT 1").get(investigationId) as { rating: string; created_at: string } | undefined;
+  }
+
+  // ── Incident patterns ───────────────────────────────────────────────────
+
+  createPattern(p: { id: string; service: string; symptom: string; rootCause: string; severity: string; recommendedActions?: string; sourceInvestigationId?: string }): void {
+    this.db.prepare(
+      "INSERT INTO incident_patterns (id, service, symptom, root_cause, severity, recommended_actions, source_investigation_id) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).run(p.id, p.service, p.symptom, p.rootCause, p.severity, p.recommendedActions ?? null, p.sourceInvestigationId ?? null);
+  }
+
+  findSimilarPatterns(service: string, limit = 5): Array<{ id: string; service: string; symptom: string; root_cause: string; severity: string; recommended_actions: string | null; created_at: string }> {
+    return this.db.prepare(
+      "SELECT id, service, symptom, root_cause, severity, recommended_actions, created_at FROM incident_patterns WHERE service = ? ORDER BY created_at DESC LIMIT ?"
+    ).all(service, limit) as any[];
   }
 
   close(): void {
