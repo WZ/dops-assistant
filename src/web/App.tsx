@@ -108,7 +108,7 @@ export function App() {
       <header className="h-11 flex items-center justify-between px-5 border-b border-border/50 bg-card/60 backdrop-blur-md shrink-0 relative z-10">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1">
-            <div className="w-1.5 h-1.5 rounded-full bg-primary animate-glow-pulse" />
+            <div className="w-1.5 h-1.5 rounded-full bg-primary animate-status-pulse" />
             <div className="w-1.5 h-1.5 rounded-full bg-primary/50" />
             <div className="w-1.5 h-1.5 rounded-full bg-primary/25" />
           </div>

@@ -1,83 +1,83 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;0,9..144,800;1,9..144,400;1,9..144,500&family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap');
 @import "tailwindcss";
 
 @layer base {
   :root {
-    /* Warm Precision — Light */
-    --background: 48 20% 97%;
-    --foreground: 220 25% 14%;
+    /* Investigator's Desk — Light */
+    --background: 40 15% 97%;
+    --foreground: 216 8% 12%;
     --card: 0 0% 100%;
-    --card-foreground: 220 25% 14%;
+    --card-foreground: 216 8% 12%;
     --popover: 0 0% 100%;
-    --popover-foreground: 220 25% 14%;
-    --primary: 192 75% 36%;
+    --popover-foreground: 216 8% 12%;
+    --primary: 166 80% 27%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 220 12% 93%;
-    --secondary-foreground: 220 15% 40%;
-    --muted: 45 10% 94%;
-    --muted-foreground: 220 10% 35%;
-    --accent: 28 90% 52%;
+    --secondary: 36 16% 92%;
+    --secondary-foreground: 216 8% 32%;
+    --muted: 36 19% 94%;
+    --muted-foreground: 216 4% 44%;
+    --accent: 10 55% 50%;
     --accent-foreground: 0 0% 100%;
-    --destructive: 4 72% 50%;
+    --destructive: 0 55% 51%;
     --destructive-foreground: 0 0% 98%;
-    --border: 220 12% 88%;
-    --input: 220 12% 88%;
-    --ring: 192 75% 36%;
+    --border: 33 12% 87%;
+    --input: 33 12% 87%;
+    --ring: 166 80% 27%;
     --radius: 0.625rem;
-    --success: 160 55% 38%;
+    --success: 152 55% 39%;
     --success-foreground: 0 0% 100%;
-    --warning: 40 85% 48%;
+    --warning: 42 73% 42%;
     --warning-foreground: 30 40% 12%;
-    --info: 210 60% 48%;
+    --info: 210 58% 46%;
     --info-foreground: 0 0% 100%;
-    --glow-cyan: 0 0 10px hsl(192 75% 36% / 0.12);
-    --glow-amber: 0 0 10px hsl(28 90% 52% / 0.12);
-    --glow-green: 0 0 10px hsl(160 55% 38% / 0.12);
-    --glow-red: 0 0 10px hsl(4 72% 50% / 0.10);
-    --glow-warning: 0 0 10px hsl(40 85% 48% / 0.12);
-    --glow-info: 0 0 10px hsl(210 60% 48% / 0.10);
+    --glow-teal: 0 0 10px hsl(166 80% 27% / 0.12);
+    --glow-coral: 0 0 10px hsl(10 55% 50% / 0.12);
+    --glow-green: 0 0 10px hsl(152 55% 39% / 0.12);
+    --glow-red: 0 0 10px hsl(0 55% 51% / 0.10);
+    --glow-warning: 0 0 10px hsl(42 73% 42% / 0.12);
+    --glow-info: 0 0 10px hsl(210 58% 46% / 0.10);
   }
 
   .dark {
-    /* Deep Instrument — Dark */
-    --background: 228 35% 6%;
-    --foreground: 216 25% 88%;
-    --card: 225 28% 9%;
-    --card-foreground: 216 25% 88%;
-    --popover: 225 28% 11%;
-    --popover-foreground: 216 25% 88%;
-    --primary: 185 80% 48%;
-    --primary-foreground: 228 35% 6%;
-    --secondary: 225 18% 14%;
-    --secondary-foreground: 216 20% 68%;
-    --muted: 225 18% 12%;
-    --muted-foreground: 216 15% 65%;
-    --accent: 32 85% 55%;
-    --accent-foreground: 228 35% 6%;
-    --destructive: 0 68% 55%;
+    /* Deep Charcoal — Dark */
+    --background: 225 18% 7%;
+    --foreground: 216 12% 90%;
+    --card: 224 16% 11%;
+    --card-foreground: 216 12% 90%;
+    --popover: 224 16% 13%;
+    --popover-foreground: 216 12% 90%;
+    --primary: 160 67% 50%;
+    --primary-foreground: 225 18% 7%;
+    --secondary: 222 13% 17%;
+    --secondary-foreground: 216 8% 67%;
+    --muted: 222 13% 13%;
+    --muted-foreground: 216 5% 57%;
+    --accent: 14 65% 60%;
+    --accent-foreground: 225 18% 7%;
+    --destructive: 0 70% 58%;
     --destructive-foreground: 0 0% 98%;
-    --border: 225 16% 17%;
-    --input: 225 16% 17%;
-    --ring: 185 80% 48%;
+    --border: 220 14% 19%;
+    --input: 220 14% 19%;
+    --ring: 160 67% 50%;
     --radius: 0.625rem;
-    --success: 160 65% 42%;
-    --success-foreground: 228 35% 6%;
-    --warning: 38 80% 52%;
+    --success: 152 55% 46%;
+    --success-foreground: 225 18% 7%;
+    --warning: 42 73% 49%;
     --warning-foreground: 0 0% 98%;
-    --info: 215 70% 55%;
+    --info: 215 62% 56%;
     --info-foreground: 0 0% 98%;
-    --glow-cyan: 0 0 14px hsl(185 80% 48% / 0.30);
-    --glow-amber: 0 0 14px hsl(32 85% 55% / 0.25);
-    --glow-green: 0 0 14px hsl(160 65% 42% / 0.25);
-    --glow-red: 0 0 12px hsl(0 68% 55% / 0.22);
-    --glow-warning: 0 0 14px hsl(38 80% 52% / 0.25);
-    --glow-info: 0 0 14px hsl(215 70% 55% / 0.25);
+    --glow-teal: 0 0 14px hsl(160 67% 50% / 0.25);
+    --glow-coral: 0 0 14px hsl(14 65% 60% / 0.22);
+    --glow-green: 0 0 14px hsl(152 55% 46% / 0.25);
+    --glow-red: 0 0 12px hsl(0 70% 58% / 0.22);
+    --glow-warning: 0 0 14px hsl(42 73% 49% / 0.25);
+    --glow-info: 0 0 14px hsl(215 62% 56% / 0.25);
   }
 }
 
 @theme inline {
-  --font-display: "Outfit", sans-serif;
-  --font-body: "DM Sans", sans-serif;
+  --font-display: "Fraunces", serif;
+  --font-body: "Plus Jakarta Sans", sans-serif;
   --font-mono: "JetBrains Mono", monospace;
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
@@ -129,8 +129,8 @@
 }
 
 /* ── Glow utilities ── */
-.glow-cyan { box-shadow: var(--glow-cyan); }
-.glow-amber { box-shadow: var(--glow-amber); }
+.glow-teal { box-shadow: var(--glow-teal); }
+.glow-coral { box-shadow: var(--glow-coral); }
 .glow-green { box-shadow: var(--glow-green); }
 .glow-red { box-shadow: var(--glow-red); }
 .glow-warning { box-shadow: var(--glow-warning); }
@@ -160,10 +160,6 @@
   from { opacity: 0; transform: translateX(12px); }
   to { opacity: 1; transform: translateX(0); }
 }
-@keyframes glow-pulse {
-  0%, 100% { box-shadow: 0 0 6px hsl(var(--primary) / 0.25); }
-  50% { box-shadow: 0 0 16px hsl(var(--primary) / 0.45); }
-}
 @keyframes status-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
@@ -188,9 +184,6 @@
 }
 .animate-slide-in-right {
   animation: slide-in-right 0.35s ease-out both;
-}
-.animate-glow-pulse {
-  animation: glow-pulse 2.5s ease-in-out infinite;
 }
 .animate-status-pulse {
   animation: status-pulse 1.8s ease-in-out infinite;
