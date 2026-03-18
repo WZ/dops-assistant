@@ -197,7 +197,7 @@ export function PhaseStepper({ phases, events = [], evidence = {}, isComplete = 
               <div className={cn(
                 "w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-all duration-500",
                 phase.status === "complete" && "bg-success border-success text-success-foreground glow-green",
-                phase.status === "running" && "border-primary text-primary animate-glow-pulse",
+                phase.status === "running" && "border-primary text-primary animate-status-pulse",
                 phase.status === "failed" && "bg-destructive border-destructive text-destructive-foreground glow-red",
                 phase.status === "pending" && "border-border/60 text-muted-foreground/55",
               )}>

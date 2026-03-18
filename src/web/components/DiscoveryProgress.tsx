@@ -40,7 +40,7 @@ export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, er
           <div key={p} className="flex items-center gap-2">
             {i > 0 && <div className={`w-8 h-px ${i <= currentIdx ? "bg-primary" : "bg-border"}`} />}
             <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${
-              i < currentIdx ? "bg-green-500 text-black" :
+              i < currentIdx ? "bg-success text-success-foreground" :
               i === currentIdx ? "bg-primary text-primary-foreground" :
               "bg-muted text-muted-foreground"
             }`}>
@@ -92,7 +92,7 @@ export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, er
             {toolCalls.slice(-20).map((tc, i) => (
               <div key={i}>
                 <span className="text-muted-foreground/60">{tc.timestamp}</span>{" "}
-                <span className={tc.status === "error" ? "text-red-400" : tc.status === "success" ? "text-green-400" : "text-primary"}>
+                <span className={tc.status === "error" ? "text-destructive" : tc.status === "success" ? "text-success" : "text-primary"}>
                   {tc.status === "success" ? "\u2713" : tc.status === "error" ? "\u2717" : "\u2192"}
                 </span>{" "}
                 {tc.tool}
@@ -108,8 +108,8 @@ export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, er
       </div>
 
       {error && (
-        <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 p-4">
-          <p className="text-sm text-red-400 mb-3">{error}</p>
+        <div className="mt-4 rounded-lg border border-destructive/30 bg-destructive/10 p-4">
+          <p className="text-sm text-destructive mb-3">{error}</p>
           <div className="flex gap-2">
             {onRetry && (
               <button
