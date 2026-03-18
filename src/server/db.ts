@@ -168,6 +168,19 @@ export class Database {
     return this.db.prepare("SELECT * FROM messages ORDER BY created_at ASC LIMIT ?").all(limit) as MessageRow[];
   }
 
+  /**
+   * Mark investigations stuck in 'running' status as 'failed'.
+   * Called on server startup to clean up after crashes.
+   * Only marks investigations older than staleMinutes as stale.
+   */
+  markStaleInvestigations(staleMinutes = 10): number {
+    const result = this.db.prepare(
+      `UPDATE investigations SET status = 'failed', completed_at = datetime('now')
+       WHERE status = 'running' AND created_at < datetime('now', '-' || ? || ' minutes')`
+    ).run(staleMinutes);
+    return result.changes;
+  }
+
   close(): void {
     this.db.close();
   }

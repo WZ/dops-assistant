@@ -11,52 +11,10 @@ import type { ServiceConfig, DiscoveryConfig } from "../config/schema.js";
 import type { ClientMessage, ServerMessage, PhaseStats, ChartSeries } from "../types/ws-types.js";
 import type { ValidatedServiceConfig } from "../types/discovery-types.js";
 import type { SkillStore } from "../skills/store.js";
+import { InvestigationRunner, friendlyError } from "./investigation-runner.js";
+import type { InvestigationCallbacks } from "./investigation-runner.js";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
-
-/** Map raw LLM errors to user-friendly messages. */
-function friendlyError(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err);
-  if (/bad gateway|service unavailable|502|503/i.test(raw))
-    return "LLM API is currently unavailable. Please try again later.";
-  if (/timeout|timed out|ETIMEDOUT/i.test(raw))
-    return "LLM API request timed out. Please try again.";
-  if (/rate limit|429/i.test(raw))
-    return "LLM API rate limit reached. Please wait and try again.";
-  return raw;
-}
-
-/**
- * Map backend investigation phase names (from investigation.ts onPhase callback)
- * to the short phase names the frontend expects ("planning", "metrics", "logs", "infra", "synthesis").
- *
- * Some backend phases map to multiple frontend phases (e.g. the parallel evidence
- * phase covers metrics, logs, and infra simultaneously).
- */
-function mapBackendPhase(backendPhase: string): string[] {
-  switch (backendPhase) {
-    case "Detecting anomalies":
-      return ["planning"];
-    case "Planning investigation":
-      return ["planning"];
-    case "Analyzing metrics, logs & infrastructure":
-      return ["metrics", "logs", "infra"];
-    case "Analyzing metrics":
-      return ["metrics"];
-    case "Analyzing logs":
-      return ["logs"];
-    case "Checking infrastructure":
-      return ["infra"];
-    case "Building event timeline":
-      return ["synthesis"];
-    case "Synthesizing root cause":
-      return ["synthesis"];
-    case "Validating report":
-      return ["synthesis"];
-    default:
-      return [];
-  }
-}
 
 const MAX_CHART_SERIES = 4;
 
@@ -457,152 +415,45 @@ export async function handleClientMessage(
     }
 
     const invId = `inv_${ulid()}`;
-    db.createInvestigation({ id: invId, service: service.name, query: msg.message, status: "running" });
     memory.append(threadId, { role: "user", content: msg.message });
     send({ type: "investigation:started", id: invId, service: service.name, query: msg.message });
     send({ type: "chat", role: "assistant", content: `Starting investigation of **${service.name}**...` });
 
-    // Search for matching skills
-    let skillContext: string | undefined;
-    if (deps.skillStore) {
-      const matchedSkills = deps.skillStore.search({ service: service.name, query: msg.message });
-      if (matchedSkills.length > 0) {
-        skillContext = deps.skillStore.formatForPrompt(matchedSkills);
-        logger.debug({ skillCount: matchedSkills.length, skills: matchedSkills.map(s => s.id) }, "Injecting skills into investigation");
-      }
-    }
+    // Build WS-streaming callbacks for the runner
+    const wsCallbacks: InvestigationCallbacks = {
+      onPhase: (phase, status, stats) => {
+        send({ type: "investigation:phase", phase, status, stats });
+      },
+      onToolCall: (phase, tool, args, status, result, durationMs) => {
+        send({ type: "investigation:tool_call", phase, tool, args, status: status as "error" | "success" | "calling", result, durationMs });
+      },
+      onIteration: (phase, iteration, maxIterations, description) => {
+        send({ type: "investigation:iteration", phase, iteration, maxIterations, description });
+      },
+      onPhaseUsage: (investigationId, phase, inputTokens, outputTokens, durationMs) => {
+        send({ type: "investigation:phase_usage", investigationId, phase, inputTokens, outputTokens, durationMs });
+      },
+      onTotalUsage: (investigationId, inputTokens, outputTokens, durationMs) => {
+        send({ type: "investigation:total_usage", investigationId, inputTokens, outputTokens, durationMs });
+      },
+      onComplete: (investigationId, report) => {
+        send({ type: "investigation:complete", id: investigationId, report });
+        const summary = `**Root Cause:** ${report.rootCause}\n**Confidence:** ${report.confidence}\n**Trigger:** ${report.trigger}`;
+        memory.append(threadId, { role: "assistant", content: `Investigation of ${service.name}: ${summary}` });
+        send({ type: "chat", role: "assistant", content: summary, investigationId, report });
+        db.createMessage({ id: `msg_${ulid()}`, role: "assistant", content: summary, investigationId });
+      },
+      onFailed: (investigationId, error) => {
+        send({ type: "investigation:failed", id: investigationId, error });
+        send({ type: "chat", role: "assistant", content: `Investigation failed: ${error}` });
+      },
+    };
 
+    const runner = new InvestigationRunner({ db, investigationAgent, skillStore: deps.skillStore });
     try {
-      const runningPhases = new Set<string>();
-      const phaseStats = new Map<string, { toolCalls: number; iterations: number; startMs: number }>();
-      const totalTokens = { inputTokens: 0, outputTokens: 0 };
-      const phaseTokens = { inputTokens: 0, outputTokens: 0 };
-      const investigationStartMs = Date.now();
-
-      // Helper: send event to client AND persist to DB
-      const emit = (event: ServerMessage) => {
-        send(event);
-        if (event.type === "investigation:tool_call" || event.type === "investigation:iteration" || event.type === "investigation:phase") {
-          db.createEvent({ id: `evt_${ulid()}`, investigationId: invId, eventType: event.type, payload: JSON.stringify(event) });
-        }
-      };
-
-      const onTokenUsage = (u: { inputTokens: number; outputTokens: number }) => {
-        totalTokens.inputTokens += u.inputTokens;
-        totalTokens.outputTokens += u.outputTokens;
-        phaseTokens.inputTokens += u.inputTokens;
-        phaseTokens.outputTokens += u.outputTokens;
-      };
-
-      const report = await investigationAgent.investigate(
-        service, undefined, invId, onTokenUsage, msg.message,
-        // onToolCall — enriched (phase passed from workflow for parallel steps)
-        (name, args, result, durationMs, error, phase) => {
-          const activePhase = phase ?? (runningPhases.size > 0 ? [...runningPhases][0]! : "planning");
-          const stats = phaseStats.get(activePhase);
-          if (stats && (result !== undefined || error !== undefined)) stats.toolCalls++;
-
-          if (error) {
-            emit({ type: "investigation:tool_call", phase: activePhase, tool: name, args, status: "error", result: error, durationMs });
-          } else if (result !== undefined) {
-            emit({ type: "investigation:tool_call", phase: activePhase, tool: name, args, status: "success", result, durationMs });
-          } else {
-            emit({ type: "investigation:tool_call", phase: activePhase, tool: name, args, status: "calling" });
-          }
-        },
-        // onPhase
-        (backendPhase) => {
-          const frontendPhases = mapBackendPhase(backendPhase);
-
-          for (const prev of runningPhases) {
-            if (!frontendPhases.includes(prev)) {
-              const stats = phaseStats.get(prev);
-              const durationMs = stats ? Date.now() - stats.startMs : 0;
-              emit({
-                type: "investigation:phase", phase: prev, status: "complete",
-                stats: stats ? { observationCount: 0, criticalCount: 0, toolCalls: stats.toolCalls, iterations: stats.iterations, durationMs } : undefined,
-              });
-              emit({
-                type: "investigation:phase_usage",
-                investigationId: invId,
-                phase: prev,
-                inputTokens: phaseTokens.inputTokens,
-                outputTokens: phaseTokens.outputTokens,
-                durationMs,
-              });
-              phaseTokens.inputTokens = 0;
-              phaseTokens.outputTokens = 0;
-              runningPhases.delete(prev);
-            }
-          }
-
-          for (const fp of frontendPhases) {
-            if (!runningPhases.has(fp)) {
-              emit({ type: "investigation:phase", phase: fp, status: "running" });
-              runningPhases.add(fp);
-              phaseStats.set(fp, { toolCalls: 0, iterations: 0, startMs: Date.now() });
-            }
-          }
-        },
-        // onIteration
-        (phase, iteration, maxIterations, description) => {
-          const frontendPhase = runningPhases.has(phase) ? phase : (runningPhases.size > 0 ? [...runningPhases][0]! : phase);
-          const stats = phaseStats.get(frontendPhase);
-          if (stats) stats.iterations = Math.max(stats.iterations, iteration + 1);
-          emit({ type: "investigation:iteration", phase: frontendPhase, iteration, maxIterations, description });
-        },
-        skillContext,
-      );
-
-      // Complete remaining phases with stats
-      for (const fp of runningPhases) {
-        const stats = phaseStats.get(fp);
-        const durationMs = stats ? Date.now() - stats.startMs : 0;
-        emit({
-          type: "investigation:phase", phase: fp, status: "complete",
-          stats: stats ? { observationCount: 0, criticalCount: 0, toolCalls: stats.toolCalls, iterations: stats.iterations, durationMs } : undefined,
-        });
-        emit({
-          type: "investigation:phase_usage",
-          investigationId: invId,
-          phase: fp,
-          inputTokens: phaseTokens.inputTokens,
-          outputTokens: phaseTokens.outputTokens,
-          durationMs,
-        });
-        phaseTokens.inputTokens = 0;
-        phaseTokens.outputTokens = 0;
-      }
-      runningPhases.clear();
-
-      db.updateInvestigation(invId, { status: "complete", report: JSON.stringify(report) });
-      send({ type: "investigation:complete", id: invId, report });
-
-      const totalDurationMs = Date.now() - investigationStartMs;
-      emit({
-        type: "investigation:total_usage",
-        investigationId: invId,
-        inputTokens: totalTokens.inputTokens,
-        outputTokens: totalTokens.outputTokens,
-        durationMs: totalDurationMs,
-      });
-
-      db.updateInvestigation(invId, {
-        total_input_tokens: totalTokens.inputTokens,
-        total_output_tokens: totalTokens.outputTokens,
-        total_duration_ms: totalDurationMs,
-      });
-
-      const summary = `**Root Cause:** ${report.rootCause}\n**Confidence:** ${report.confidence}\n**Trigger:** ${report.trigger}`;
-      memory.append(threadId, { role: "assistant", content: `Investigation of ${service.name}: ${summary}` });
-      send({ type: "chat", role: "assistant", content: summary, investigationId: invId, report });
-      db.createMessage({ id: `msg_${ulid()}`, role: "assistant", content: summary, investigationId: invId });
-    } catch (err) {
-      logger.error({ err, invId, service: service.name }, "Investigation failed");
-      db.updateInvestigation(invId, { status: "failed" });
-      const errorMsg = friendlyError(err);
-      send({ type: "investigation:failed", id: invId, error: errorMsg });
-      send({ type: "chat", role: "assistant", content: `Investigation failed: ${errorMsg}` });
+      await runner.run({ service, message: msg.message, investigationId: invId, callbacks: wsCallbacks });
+    } catch {
+      // Error already handled by runner's onFailed callback
     }
   } else {
     const history = memory.get(threadId);

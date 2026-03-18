@@ -2,15 +2,7 @@ import type { Express, Request, Response } from "express";
 import type { Database, InvestigationRow, PhaseRow, EventRow } from "./db.js";
 import type { ServiceConfig } from "../config/schema.js";
 import type { SkillStore } from "../skills/store.js";
-import type { ProviderRole } from "../config/schema.js";
 import type { ServiceRegistryStore } from "../services/registry.js";
-
-/** Minimal MCP interface needed by routes (dependency graph queries). */
-export interface IMcpClient {
-  hasRole(role: ProviderRole): boolean;
-  getToolsByRole(role: ProviderRole): { function: { name: string } }[];
-  callTool(name: string, args: Record<string, unknown>): Promise<{ text: string }>;
-}
 
 export interface DependencyNode {
   id: string;
@@ -32,7 +24,7 @@ export interface RouteHandlers {
   getDependencies(service: string): Promise<{ nodes: DependencyNode[]; edges: DependencyEdge[] }>;
 }
 
-export function buildHandlers(db: Database, services: ServiceConfig[], mcp: IMcpClient): RouteHandlers {
+export function buildHandlers(db: Database, services: ServiceConfig[]): RouteHandlers {
   return {
     getServices: () => services,
     listInvestigations: (limit, offset) => db.listInvestigations(limit, offset),
@@ -44,33 +36,17 @@ export function buildHandlers(db: Database, services: ServiceConfig[], mcp: IMcp
       return { investigation, phases, events };
     },
     getDependencies: async (service: string) => {
-      if (!mcp.hasRole("dependencies")) {
-        return { nodes: [{ id: service, name: service, type: "service" as const }], edges: [] };
-      }
-
-      try {
-        const tools = mcp.getToolsByRole("dependencies");
-        const toolNames = tools.map((t) => t.function.name);
-
-        for (const name of toolNames) {
-          if (name.includes("dependenc") || name.includes("topology") || name.includes("service_map")) {
-            const result = await mcp.callTool(name, { service });
-            const parsed = JSON.parse(result.text);
-            if (parsed.nodes && parsed.edges) return parsed;
-          }
-        }
-      } catch { /* fall through */ }
-
+      // Dependency graph will be built from service registry + metric inference in batch 4.
       return { nodes: [{ id: service, name: service, type: "service" as const }], edges: [] };
     },
   };
 }
 
 export function registerRoutes(
-  app: Express, db: Database, services: ServiceConfig[], mcp: IMcpClient,
+  app: Express, db: Database, services: ServiceConfig[], _mcp?: unknown,
   skillStore?: SkillStore, registryStore?: ServiceRegistryStore,
 ): void {
-  const handlers = buildHandlers(db, services, mcp);
+  const handlers = buildHandlers(db, services);
 
   app.get("/api/services", (_req: Request, res: Response) => {
     res.json(handlers.getServices());
