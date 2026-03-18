@@ -37,3 +37,4 @@ bin/
 # Benchmarks (local)
 benchmark/
 benchmark/
+.gstack/
