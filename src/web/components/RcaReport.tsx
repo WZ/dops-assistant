@@ -70,8 +70,8 @@ export function RcaReport({ report }: { report: RcaReportData }) {
 
   const severityGlow =
     report.severity === "critical" ? "glow-red border-destructive/30" :
-    report.severity === "high" ? "glow-amber border-accent/25" :
-    "border-primary/20 glow-cyan";
+    report.severity === "high" ? "glow-coral border-accent/25" :
+    "border-primary/20 glow-teal";
 
   return (
     <div className={`rounded-xl border ${severityGlow} bg-card/50 overflow-hidden animate-fade-up`}>

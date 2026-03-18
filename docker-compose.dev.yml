@@ -7,17 +7,3 @@ services:
     ports:
       - "8000:8000"   # optional: expose for local curl/healthz checks
 
-  dops-assistant:
-    build: .
-    restart: "no"
-    env_file: dev/.env
-    environment:
-      CONFIG_PATH: /app/config.yaml
-      LOG_LEVEL: debug
-      GRAFANA_MCP_URL: http://grafana-mcp:8000/mcp
-    volumes:
-      - ./dev/config.yaml:/app/config.yaml:ro
-    ports:
-      - "9090:9090"
-    depends_on:
-      - grafana-mcp
