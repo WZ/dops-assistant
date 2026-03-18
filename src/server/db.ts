@@ -193,7 +193,7 @@ export class Database {
     const result = this.db.prepare(
       `UPDATE investigations SET status = 'failed', completed_at = datetime('now')
        WHERE status = 'running' AND created_at < datetime('now', '-' || ? || ' minutes')`
-    ).run(staleMinutes);
+    ).run(Math.floor(staleMinutes));
     return result.changes;
   }
 

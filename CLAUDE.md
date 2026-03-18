@@ -38,7 +38,7 @@ npx tsc --noEmit         # Type check
 |------|----------|
 | Chat agent behavior | `src/agents/chat.ts` |
 | Investigation workflow | `src/workflows/investigation.ts` → step factories in `src/workflows/steps/` |
-| Add/modify a specialized agent | `src/agents/` — anomaly-detector, planner, metrics, logs, infra, synthesis, discover |
+| Add/modify a specialized agent | `src/agents/` — anomaly-detector, planner, metrics, logs, infra, synthesis, discover, changes |
 | Intent classification | `src/agents/intent.ts` (AI SDK `generateText`) |
 | MCP tool routing | `src/mcp/provider.ts` — role-based routing via `@mastra/mcp` |
 | Config schema | `src/config/schema.ts` — Zod schema, validated at startup |
@@ -47,6 +47,9 @@ npx tsc --noEmit         # Type check
 | Web UI | `src/web/` — React SPA (Vite). Server serves built files from `dist/web/` |
 | CLI commands | `src/cli/commands/` — investigate, chat, mcp-check, discover, e2e |
 | Server + WebSocket | `src/server/index.ts`, `src/server/ws-handler.ts` |
+| Investigation runner | `src/server/investigation-runner.ts` — standalone executor with pluggable callbacks |
+| Alert webhook | `src/server/webhook-handler.ts` — Alertmanager payloads → headless investigations |
+| Health monitor | `src/server/health-monitor.ts` — background MCP/DB probes, `GET /api/health` |
 | LLM quirk workarounds | `src/agents/shared/prepare-step.ts` (`prepareStep` hook) |
 | Shared types | `src/types/` — RCA report, agent interfaces, LLM types, WebSocket protocol |
 | Mastra wiring | `src/mastra/index.ts` — agent/workflow registration |
@@ -81,6 +84,9 @@ npx tsc --noEmit         # Type check
 - **Graceful degradation**: Agent step failures produce empty findings rather than crashing the workflow.
 - **Discovery → services.yaml**: `npm run discover` uses AI to find services via Prometheus metrics, writes `services.yaml`. Static overrides in `config.yaml` take precedence.
 - **`prepareStep` hook**: Intercepts every LLM call to handle truncation, quirk workarounds, and tool filtering. Lives in `src/agents/shared/prepare-step.ts`.
+- **Investigation templates**: `quick` (metrics only), `standard` (metrics+logs), `full` (all phases + changes). Configured via `config.yaml` webhook section or GUI. See `src/workflows/investigation.ts`.
+- **Alert webhook**: `POST /api/webhook/alert` receives Alertmanager payloads, validates bearer token, dedup window, and runs headless investigations. See `src/server/webhook-handler.ts`.
+- **Changes evidence**: GitLab MCP provider with `"changes"` role feeds a 4th parallel evidence stream (deployments, MRs, pipelines) into investigations. See `src/agents/changes.ts`.
 
 ## Security
 

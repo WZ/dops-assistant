@@ -24,8 +24,8 @@ export function buildSynthesisStep(config: WorkflowConfig) {
     description: "Synthesize root cause from all evidence phases",
     inputSchema: z.object({
       "metrics-evidence": EvidenceOutputSchema,
-      "logs-evidence": EvidenceOutputSchema,
-      "infra-evidence": EvidenceOutputSchema,
+      "logs-evidence": EvidenceOutputSchema.optional(),
+      "infra-evidence": EvidenceOutputSchema.optional(),
       "changes-evidence": EvidenceOutputSchema.optional(),
     }),
     outputSchema: SynthesisOutputSchema,
@@ -33,8 +33,8 @@ export function buildSynthesisStep(config: WorkflowConfig) {
       debug("SYNTHESIS step entered, keys:", Object.keys(inputData));
       debug("SYNTHESIS inputData:", JSON.stringify(inputData).slice(0, 500));
       const metricsFindings = inputData["metrics-evidence"];
-      const logsFindings = inputData["logs-evidence"];
-      const infraFindings = inputData["infra-evidence"];
+      const logsFindings = inputData["logs-evidence"] ?? { summary: "Log analysis not run", observations: [] };
+      const infraFindings = inputData["infra-evidence"] ?? { summary: "Infrastructure analysis not run", observations: [] };
       const changesFindings = inputData["changes-evidence"];
       debug("SYNTHESIS findings:", { metrics: !!metricsFindings, logs: !!logsFindings, infra: !!infraFindings, changes: !!changesFindings });
 

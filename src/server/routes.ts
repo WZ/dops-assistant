@@ -312,13 +312,15 @@ export function registerRoutes(
       if (rating === "useful" && investigation.report) {
         try {
           const report = JSON.parse(investigation.report);
+          const validSeverities = ["low", "medium", "high", "critical"];
+          const actions = Array.isArray(report.recommendedActions) ? report.recommendedActions.join("; ") : "";
           db.createPattern({
             id: `pat_${makeId()}`,
             service: investigation.service,
-            symptom: report.summary ?? investigation.query,
-            rootCause: report.rootCause ?? "Unknown",
-            severity: report.severity ?? "medium",
-            recommendedActions: (report.recommendedActions ?? []).join("; "),
+            symptom: typeof report.summary === "string" ? report.summary.slice(0, 500) : investigation.query,
+            rootCause: typeof report.rootCause === "string" ? report.rootCause.slice(0, 500) : "Unknown",
+            severity: validSeverities.includes(report.severity) ? report.severity : "medium",
+            recommendedActions: actions.slice(0, 1000),
             sourceInvestigationId: investigationId,
           });
         } catch { /* pattern extraction failed — not critical */ }

@@ -39,15 +39,12 @@ interface AlertmanagerPayload {
   alerts: AlertmanagerAlert[];
 }
 
-// ── Dedup + concurrency state ───────────────────────────────────────────────
+// ── Dedup + concurrency helpers ──────────────────────────────────────────────
 
-const recentInvestigations = new Map<string, number>(); // service → timestamp
-let activeCount = 0;
-
-function cleanExpiredEntries(windowMs: number): void {
+function cleanExpiredEntries(map: Map<string, number>, windowMs: number): void {
   const now = Date.now();
-  for (const [key, ts] of recentInvestigations) {
-    if (now - ts > windowMs) recentInvestigations.delete(key);
+  for (const [key, ts] of map) {
+    if (now - ts > windowMs) map.delete(key);
   }
 }
 
@@ -87,6 +84,8 @@ export interface WebhookHandlerDeps {
 export function createWebhookHandler(deps: WebhookHandlerDeps) {
   const { runner, config, services } = deps;
   const dedupWindowMs = config.dedupWindowSeconds * 1000;
+  const recentInvestigations = new Map<string, number>();
+  let activeCount = 0;
 
   return async (req: Request, res: Response): Promise<void> => {
     // 1. Validate bearer token
@@ -130,7 +129,7 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
     }
 
     // 4. Dedup check
-    cleanExpiredEntries(dedupWindowMs);
+    cleanExpiredEntries(recentInvestigations, dedupWindowMs);
     const lastRun = recentInvestigations.get(service.name);
     if (lastRun && Date.now() - lastRun < dedupWindowMs) {
       logger.info({ service: service.name }, "Alert webhook: dedup — investigation already running/recent");
