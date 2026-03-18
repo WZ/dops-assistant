@@ -126,8 +126,12 @@ export const ANOMALY_TOOLS = ["query_prometheus"];
 export const METRICS_TOOLS = ["query_prometheus", "query_prometheus_histogram"];
 export const LOGS_TOOLS = ["query_loki_logs", "query_loki_stats", "query_loki_patterns", "find_error_pattern_logs"];
 export const INFRA_TOOLS = ["query_prometheus", "query_prometheus_histogram", "list_alert_rules", "get_alert_rule_by_uid"];
+/** Changes tools: accept ALL tools from the "changes" role (GitLab MCP provides its own) */
+export const CHANGES_TOOLS: string[] = [];
 
 export function selectToolsBySuffix(tools: Record<string, any>, allowedSuffixes: string[]): Record<string, any> {
+  // Empty allowlist = pass all tools through (used by changes step for GitLab MCP)
+  if (allowedSuffixes.length === 0) return tools;
   const filtered: Record<string, any> = {};
   for (const [name, tool] of Object.entries(tools)) {
     if (allowedSuffixes.some((suffix) => name.endsWith(suffix))) {

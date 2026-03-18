@@ -26,12 +26,14 @@ import {
   METRICS_TOOLS,
   LOGS_TOOLS,
   INFRA_TOOLS,
+  CHANGES_TOOLS,
 } from "../tool-utils.js";
 import { PlanningOutputSchema, EvidenceOutputSchema } from "../schemas.js";
 import { safeJsonParse } from "../../agents/shared/processors.js";
 import { createMetricsAgent } from "../../agents/metrics.js";
 import { createLogsAgent } from "../../agents/logs.js";
 import { createInfraAgent } from "../../agents/infra.js";
+import { createChangesAgent } from "../../agents/changes.js";
 
 // ── EvidenceStepConfig ────────────────────────────────────────────────────────
 
@@ -42,8 +44,8 @@ interface EvidenceStepConfig {
   phaseName: string;
   /** Iteration number emitted at the start of this step (2=metrics, 3=logs, 4=infra) */
   iterationStart: number;
-  /** MCP provider role to fetch tools from, e.g. "metrics" or "logs" */
-  toolRole: ProviderRole;
+  /** MCP provider role(s) to fetch tools from. Array merges tools from multiple roles. */
+  toolRole: ProviderRole | ProviderRole[];
   /** Tool name suffixes to filter from the provider tool set */
   toolAllowlist: string[];
   /** Factory that creates the specialized agent for this phase */
@@ -85,8 +87,11 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
       workflowConfig.onPhase?.("Analyzing metrics, logs & infrastructure");
       workflowConfig.onIteration?.(phaseName, iterationStart, 6, `Analyzing ${phaseName}`);
 
-      // 1. Get tools by role → filter by suffix → wrap with callbacks
-      const rawTools = await getToolsByRole(workflowConfig.providers, toolRole).catch(() => ({}));
+      // 1. Get tools by role(s) → filter by suffix → wrap with callbacks
+      const roles = Array.isArray(toolRole) ? toolRole : [toolRole];
+      const toolMaps = await Promise.all(roles.map(r => getToolsByRole(workflowConfig.providers, r).catch(() => ({}))));
+      const rawTools: Record<string, any> = {};
+      for (const m of toolMaps) Object.assign(rawTools, m);
       const filteredTools = selectToolsBySuffix(rawTools, toolAllowlist);
       debug(`${phaseName.toUpperCase()} tools:`, Object.keys(filteredTools));
       const tools = wrapToolsWithCallbacks(filteredTools, workflowConfig.onToolCall, phaseName);
@@ -266,7 +271,7 @@ export function buildInfraStep(config: WorkflowConfig) {
     id: "infra-evidence",
     phaseName: "infra",
     iterationStart: 4,
-    toolRole: "metrics",
+    toolRole: ["metrics", "infrastructure"],
     toolAllowlist: INFRA_TOOLS,
     createAgent: createInfraAgent,
     buildPrompt: (inputData, workflowConfig) => {
@@ -289,5 +294,38 @@ export function buildInfraStep(config: WorkflowConfig) {
     },
     extractorSchema: '{"summary": "string", "observations": [{"resource": "string", "status": "string", "detail": "string"}]}',
     fallbackMessage: "Infrastructure analysis unavailable",
+  });
+}
+
+/**
+ * Build a changes evidence step (GitLab MCP).
+ * Runs in parallel with metrics/logs/infra to correlate code changes with the incident.
+ * Gracefully returns empty if no "changes" provider is configured.
+ */
+export function buildChangesStep(config: WorkflowConfig) {
+  return buildEvidenceStep(config, {
+    id: "changes-evidence",
+    phaseName: "changes",
+    iterationStart: 5,
+    toolRole: "changes",
+    toolAllowlist: CHANGES_TOOLS,
+    createAgent: createChangesAgent,
+    buildPrompt: (inputData, workflowConfig) => {
+      const { anomalyContext } = inputData;
+      const timeWindowHint = buildTimeWindowHint(anomalyContext.summary, anomalyContext.userMessage);
+
+      return [
+        timeWindowHint,
+        `Known issue: ${anomalyContext.userMessage}`,
+        anomalyContext.serviceName ? `Service: ${anomalyContext.serviceName}` : "",
+        "Search for recent deployments, merge requests, and pipeline runs related to this service.",
+        "Focus on changes that happened within 6 hours before the incident started.",
+        anomalyContext.skillContext
+          ? `${anomalyContext.skillContext}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
+          : "",
+      ].filter(Boolean).join("\n");
+    },
+    extractorSchema: '{"summary": "string", "observations": [{"type": "string", "title": "string", "timestamp": "string", "author": "string", "detail": "string"}]}',
+    fallbackMessage: "Change analysis unavailable",
   });
 }

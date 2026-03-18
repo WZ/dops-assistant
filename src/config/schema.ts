@@ -27,7 +27,7 @@ const McpServerSchema = z.discriminatedUnion("transport", [
 ]);
 
 export const ProviderRoleSchema = z.enum([
-  "metrics", "logs", "dashboards", "dependencies",
+  "metrics", "logs", "dashboards", "dependencies", "infrastructure", "changes",
 ]);
 
 export const ProviderSchema = z.object({

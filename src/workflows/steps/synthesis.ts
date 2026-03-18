@@ -1,8 +1,8 @@
 /**
  * Synthesis step for the investigation workflow.
  *
- * Combines evidence from metrics, logs, and infra phases into a root cause
- * analysis report with severity validation.
+ * Combines evidence from metrics, logs, infra, and changes (optional) phases
+ * into a root cause analysis report with severity validation.
  */
 
 import { createStep } from "@mastra/core/workflows";
@@ -26,6 +26,7 @@ export function buildSynthesisStep(config: WorkflowConfig) {
       "metrics-evidence": EvidenceOutputSchema,
       "logs-evidence": EvidenceOutputSchema,
       "infra-evidence": EvidenceOutputSchema,
+      "changes-evidence": EvidenceOutputSchema.optional(),
     }),
     outputSchema: SynthesisOutputSchema,
     execute: async ({ inputData }) => {
@@ -34,7 +35,8 @@ export function buildSynthesisStep(config: WorkflowConfig) {
       const metricsFindings = inputData["metrics-evidence"];
       const logsFindings = inputData["logs-evidence"];
       const infraFindings = inputData["infra-evidence"];
-      debug("SYNTHESIS findings:", { metrics: !!metricsFindings, logs: !!logsFindings, infra: !!infraFindings });
+      const changesFindings = inputData["changes-evidence"];
+      debug("SYNTHESIS findings:", { metrics: !!metricsFindings, logs: !!logsFindings, infra: !!infraFindings, changes: !!changesFindings });
 
       // Build timeline from structured observations
       const metricsForTimeline = {
@@ -76,13 +78,20 @@ export function buildSynthesisStep(config: WorkflowConfig) {
 
       const agent = createSynthesisAgent({ model: config.model });
 
-      const prompt = [
+      const promptParts = [
         "Synthesize a root cause analysis from the following evidence:",
         `\nMetrics: ${JSON.stringify({ summary: metricsFindings.summary, observations: metricsFindings.observations })}`,
         `\nLogs: ${JSON.stringify({ summary: logsFindings.summary, observations: logsFindings.observations })}`,
         `\nInfra: ${JSON.stringify({ summary: infraFindings.summary, observations: infraFindings.observations })}`,
-        timeline ? `\nTimeline:\n${timeline}` : "",
-      ].filter(Boolean).join("\n");
+      ];
+      if (changesFindings?.observations?.length) {
+        promptParts.push(
+          `\nRecent Changes: ${JSON.stringify({ summary: changesFindings.summary, observations: changesFindings.observations })}`,
+          "\nIMPORTANT: If a deployment or code change occurred shortly before the incident, this is a strong root cause signal. Highlight it prominently.",
+        );
+      }
+      if (timeline) promptParts.push(`\nTimeline:\n${timeline}`);
+      const prompt = promptParts.filter(Boolean).join("\n");
 
       let agentResult: { text: string; usage?: any } = { text: "" };
       try {
@@ -104,7 +113,7 @@ export function buildSynthesisStep(config: WorkflowConfig) {
       let trigger = "Unknown";
       let contributingFactors: string[] = [];
       let timelineEvents: Array<{ time: string; event: string }> = [];
-      let evidence = { metrics: [] as string[], logs: [] as string[], infra: [] as string[] };
+      let evidence = { metrics: [] as string[], logs: [] as string[], infra: [] as string[], changes: [] as string[] };
       let dashboardLinks: string[] = [];
       let recommendedActions: string[] = [];
       let confidence: "low" | "medium" | "high" = "low";

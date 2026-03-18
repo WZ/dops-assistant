@@ -54,7 +54,7 @@ export function mapBackendPhase(backendPhase: string): string[] {
     case "Planning investigation":
       return ["planning"];
     case "Analyzing metrics, logs & infrastructure":
-      return ["metrics", "logs", "infra"];
+      return ["metrics", "logs", "infra", "changes"];
     case "Analyzing metrics":
       return ["metrics"];
     case "Analyzing logs":

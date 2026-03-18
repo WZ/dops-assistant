@@ -133,7 +133,7 @@ describe("mapBackendPhase", () => {
   });
 
   it("maps parallel evidence to multiple phases", () => {
-    expect(mapBackendPhase("Analyzing metrics, logs & infrastructure")).toEqual(["metrics", "logs", "infra"]);
+    expect(mapBackendPhase("Analyzing metrics, logs & infrastructure")).toEqual(["metrics", "logs", "infra", "changes"]);
   });
 
   it("maps synthesis phases", () => {
