@@ -60,6 +60,7 @@ export const ParallelEvidenceSchema = z.object({
   metrics: EvidenceOutputSchema,
   logs: EvidenceOutputSchema,
   infra: EvidenceOutputSchema,
+  changes: EvidenceOutputSchema.optional(),
   planningContext: PlanningOutputSchema,
 });
 
@@ -81,7 +82,8 @@ export const SynthesisOutputSchema = z.object({
     metrics: z.array(z.string()),
     logs: z.array(z.string()),
     infra: z.array(z.string()),
-  }).default({ metrics: [], logs: [], infra: [] }),
+    changes: z.array(z.string()).optional().default([]),
+  }).default({ metrics: [], logs: [], infra: [], changes: [] }),
   dashboardLinks: z.array(z.string()).default([]),
   recommendedActions: z.array(z.string()).default([]),
   confidence: z.enum(["low", "medium", "high"]).default("low"),
@@ -106,6 +108,7 @@ export const PostSynthesisOutputSchema = z.object({
     metrics: z.array(z.string()),
     logs: z.array(z.string()),
     infra: z.array(z.string()),
+    changes: z.array(z.string()).optional().default([]),
   }),
   dashboardLinks: z.array(z.string()),
   recommendedActions: z.array(z.string()),

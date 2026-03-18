@@ -2,15 +2,7 @@ import type { Express, Request, Response } from "express";
 import type { Database, InvestigationRow, PhaseRow, EventRow } from "./db.js";
 import type { ServiceConfig } from "../config/schema.js";
 import type { SkillStore } from "../skills/store.js";
-import type { ProviderRole } from "../config/schema.js";
 import type { ServiceRegistryStore } from "../services/registry.js";
-
-/** Minimal MCP interface needed by routes (dependency graph queries). */
-export interface IMcpClient {
-  hasRole(role: ProviderRole): boolean;
-  getToolsByRole(role: ProviderRole): { function: { name: string } }[];
-  callTool(name: string, args: Record<string, unknown>): Promise<{ text: string }>;
-}
 
 export interface DependencyNode {
   id: string;
@@ -32,7 +24,53 @@ export interface RouteHandlers {
   getDependencies(service: string): Promise<{ nodes: DependencyNode[]; edges: DependencyEdge[] }>;
 }
 
-export function buildHandlers(db: Database, services: ServiceConfig[], mcp: IMcpClient): RouteHandlers {
+/**
+ * Infer service dependency graph from service registry data.
+ * Uses metric query labels and service name patterns to detect relationships.
+ */
+function inferDependencyGraph(services: ServiceConfig[]): { nodes: DependencyNode[]; edges: DependencyEdge[] } {
+  const nodes: DependencyNode[] = services.map(s => ({
+    id: s.name,
+    name: s.name,
+    type: "service" as const,
+  }));
+
+  const edges: DependencyEdge[] = [];
+  const serviceNames = new Set(services.map(s => s.name));
+
+  for (const svc of services) {
+    // Check if any metric queries reference other services by name
+    for (const metric of svc.metrics) {
+      for (const otherName of serviceNames) {
+        if (otherName === svc.name) continue;
+        // Look for service references in metric queries (e.g., upstream="other-service")
+        if (metric.query.includes(otherName) || metric.query.includes(otherName.replace(/-/g, "_"))) {
+          const edgeId = `${svc.name}->${otherName}`;
+          if (!edges.some(e => e.source === svc.name && e.target === otherName)) {
+            edges.push({ source: svc.name, target: otherName, label: "metrics" });
+          }
+        }
+      }
+    }
+
+    // Check log labels for service references
+    const logLabelValues = Object.values(svc.logLabels ?? {});
+    for (const val of logLabelValues) {
+      for (const otherName of serviceNames) {
+        if (otherName === svc.name) continue;
+        if (val.includes(otherName)) {
+          if (!edges.some(e => e.source === svc.name && e.target === otherName)) {
+            edges.push({ source: svc.name, target: otherName, label: "logs" });
+          }
+        }
+      }
+    }
+  }
+
+  return { nodes, edges };
+}
+
+export function buildHandlers(db: Database, services: ServiceConfig[]): RouteHandlers {
   return {
     getServices: () => services,
     listInvestigations: (limit, offset) => db.listInvestigations(limit, offset),
@@ -44,36 +82,33 @@ export function buildHandlers(db: Database, services: ServiceConfig[], mcp: IMcp
       return { investigation, phases, events };
     },
     getDependencies: async (service: string) => {
-      if (!mcp.hasRole("dependencies")) {
-        return { nodes: [{ id: service, name: service, type: "service" as const }], edges: [] };
+      const graph = inferDependencyGraph(services);
+      // Filter to just the requested service and its neighbors
+      const related = new Set<string>([service]);
+      for (const edge of graph.edges) {
+        if (edge.source === service) related.add(edge.target);
+        if (edge.target === service) related.add(edge.source);
       }
-
-      try {
-        const tools = mcp.getToolsByRole("dependencies");
-        const toolNames = tools.map((t) => t.function.name);
-
-        for (const name of toolNames) {
-          if (name.includes("dependenc") || name.includes("topology") || name.includes("service_map")) {
-            const result = await mcp.callTool(name, { service });
-            const parsed = JSON.parse(result.text);
-            if (parsed.nodes && parsed.edges) return parsed;
-          }
-        }
-      } catch { /* fall through */ }
-
-      return { nodes: [{ id: service, name: service, type: "service" as const }], edges: [] };
+      return {
+        nodes: graph.nodes.filter(n => related.has(n.id)),
+        edges: graph.edges.filter(e => related.has(e.source) && related.has(e.target)),
+      };
     },
   };
 }
 
 export function registerRoutes(
-  app: Express, db: Database, services: ServiceConfig[], mcp: IMcpClient,
+  app: Express, db: Database, services: ServiceConfig[], _mcp?: unknown,
   skillStore?: SkillStore, registryStore?: ServiceRegistryStore,
 ): void {
-  const handlers = buildHandlers(db, services, mcp);
+  const handlers = buildHandlers(db, services);
 
   app.get("/api/services", (_req: Request, res: Response) => {
     res.json(handlers.getServices());
+  });
+
+  app.get("/api/services/graph", (_req: Request, res: Response) => {
+    res.json(inferDependencyGraph(services));
   });
 
   app.get("/api/investigations", (req: Request, res: Response) => {
@@ -255,4 +290,54 @@ export function registerRoutes(
       }
     });
   }
+
+  // ── Feedback + Patterns REST API ────────────────────────────────────────
+  app.post("/api/investigations/:id/feedback", async (req: Request, res: Response) => {
+    try {
+      const investigationId = Array.isArray(req.params["id"]) ? req.params["id"][0]! : req.params["id"]!;
+      const { rating } = req.body as { rating: string };
+      if (rating !== "useful" && rating !== "not_useful") {
+        res.status(400).json({ error: "rating must be 'useful' or 'not_useful'" });
+        return;
+      }
+      const investigation = db.getInvestigation(investigationId);
+      if (!investigation) {
+        res.status(404).json({ error: "Investigation not found" });
+        return;
+      }
+      const { ulid: makeId } = await import("ulid");
+      db.createFeedback({ id: `fb_${makeId()}`, investigationId, rating });
+
+      // If positive feedback + report exists, extract a pattern
+      if (rating === "useful" && investigation.report) {
+        try {
+          const report = JSON.parse(investigation.report);
+          const validSeverities = ["low", "medium", "high", "critical"];
+          const actions = Array.isArray(report.recommendedActions) ? report.recommendedActions.join("; ") : "";
+          db.createPattern({
+            id: `pat_${makeId()}`,
+            service: investigation.service,
+            symptom: typeof report.summary === "string" ? report.summary.slice(0, 500) : investigation.query,
+            rootCause: typeof report.rootCause === "string" ? report.rootCause.slice(0, 500) : "Unknown",
+            severity: validSeverities.includes(report.severity) ? report.severity : "medium",
+            recommendedActions: actions.slice(0, 1000),
+            sourceInvestigationId: investigationId,
+          });
+        } catch { /* pattern extraction failed — not critical */ }
+      }
+
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : "Failed to save feedback" });
+    }
+  });
+
+  app.get("/api/patterns", (req: Request, res: Response) => {
+    const service = req.query["service"] as string | undefined;
+    if (!service) {
+      res.status(400).json({ error: "service query parameter is required" });
+      return;
+    }
+    res.json(db.findSimilarPatterns(service));
+  });
 }

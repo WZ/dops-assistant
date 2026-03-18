@@ -10,7 +10,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import pino from "pino";
 import { Database } from "./db.js";
-import { registerRoutes, type IMcpClient } from "./routes.js";
+import { registerRoutes } from "./routes.js";
 import { setupWebSocket } from "./ws-handler.js";
 import { IntentRouter, matchServiceFromText, validateLlmServiceMatch } from "../agents/intent.js";
 import { ConversationMemory } from "../memory/conversation.js";
@@ -21,22 +21,12 @@ import { createMcpProvider, getAllTools } from "../mcp/provider.js";
 import { createModel } from "../mastra/index.js";
 import { ServiceRegistryStore } from "../services/registry.js";
 import type { ValidatedServiceConfig } from "../types/discovery-types.js";
+import { InvestigationRunner } from "./investigation-runner.js";
+import { createWebhookHandler } from "./webhook-handler.js";
+import { startHealthMonitor, stopHealthMonitor, healthHandler } from "./health-monitor.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
-
-/**
- * Stub IMcpClient backed by Mastra providers.
- * The dependency graph REST endpoint is not currently wired to Mastra tool execution;
- * it returns a single-node default response. Can be enhanced when needed.
- */
-function createStubMcpClient(): IMcpClient {
-  return {
-    hasRole: () => false,
-    getToolsByRole: () => [],
-    callTool: async () => ({ text: "{}" }),
-  };
-}
 
 async function main() {
   const configPath = process.env["CONFIG_PATH"] ?? "config.yaml";
@@ -44,6 +34,16 @@ async function main() {
 
   const dbPath = process.env["DB_PATH"] ?? "dops.sqlite";
   const db = new Database(dbPath);
+
+  // Clean up investigations left in 'running' state from prior crashes
+  try {
+    const staleCount = db.markStaleInvestigations();
+    if (staleCount > 0) {
+      logger.info({ staleCount }, "Marked stale investigations as failed");
+    }
+  } catch (err) {
+    logger.warn({ err }, "Failed to clean up stale investigations");
+  }
 
   // Service registry store
   const servicesPath = getServicesFilePath(configPath);
@@ -71,7 +71,19 @@ async function main() {
   const server = createServer(app);
   const port = Number(process.env["PORT"] ?? 3000);
 
-  registerRoutes(app, db, config.services, createStubMcpClient(), skillStore, registryStore);
+  registerRoutes(app, db, config.services, undefined, skillStore, registryStore);
+
+  // Health check endpoint with background monitoring
+  startHealthMonitor({ providers, db });
+  app.get("/api/health", healthHandler);
+
+  // Alert webhook endpoint (only if secret is configured)
+  const runner = new InvestigationRunner({ db, investigationAgent, skillStore });
+  if (config.webhook.secret) {
+    const webhookHandler = createWebhookHandler({ runner, config: config.webhook, services: config.services });
+    app.post("/api/webhook/alert", webhookHandler);
+    logger.info("Alert webhook enabled at POST /api/webhook/alert");
+  }
 
   let pendingDiscovery: ValidatedServiceConfig[] | null = null;
 
@@ -110,6 +122,7 @@ async function main() {
 
   const shutdown = async () => {
     logger.info("Shutting down...");
+    stopHealthMonitor();
     memory.destroy();
     db.close();
     server.close();

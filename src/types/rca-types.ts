@@ -72,6 +72,7 @@ export type RcaReport = {
     metrics: string[];
     logs: string[];
     infra: string[];
+    changes?: string[];
   };
   dashboardLinks: string[];
   recommendedActions: string[];
