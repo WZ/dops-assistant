@@ -21,6 +21,9 @@ import { createMcpProvider, getAllTools } from "../mcp/provider.js";
 import { createModel } from "../mastra/index.js";
 import { ServiceRegistryStore } from "../services/registry.js";
 import type { ValidatedServiceConfig } from "../types/discovery-types.js";
+import { InvestigationRunner } from "./investigation-runner.js";
+import { createWebhookHandler } from "./webhook-handler.js";
+import { startHealthMonitor, stopHealthMonitor, healthHandler } from "./health-monitor.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
@@ -70,6 +73,18 @@ async function main() {
 
   registerRoutes(app, db, config.services, undefined, skillStore, registryStore);
 
+  // Health check endpoint with background monitoring
+  startHealthMonitor({ providers, db });
+  app.get("/api/health", healthHandler);
+
+  // Alert webhook endpoint (only if secret is configured)
+  const runner = new InvestigationRunner({ db, investigationAgent, skillStore });
+  if (config.webhook.secret) {
+    const webhookHandler = createWebhookHandler({ runner, config: config.webhook, services: config.services });
+    app.post("/api/webhook/alert", webhookHandler);
+    logger.info("Alert webhook enabled at POST /api/webhook/alert");
+  }
+
   let pendingDiscovery: ValidatedServiceConfig[] | null = null;
 
   setupWebSocket(server, {
@@ -107,6 +122,7 @@ async function main() {
 
   const shutdown = async () => {
     logger.info("Shutting down...");
+    stopHealthMonitor();
     memory.destroy();
     db.close();
     server.close();

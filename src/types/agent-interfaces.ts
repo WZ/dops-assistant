@@ -7,7 +7,7 @@
 import type { ChatRequest, ChatResponse } from "./agent-types.js";
 import type { RcaReport } from "./rca-types.js";
 import type { ValidatedServiceConfig } from "./discovery-types.js";
-import type { ServiceConfig, DiscoveryConfig } from "../config/schema.js";
+import type { ServiceConfig, DiscoveryConfig, InvestigationTemplate } from "../config/schema.js";
 import type { TokenUsage } from "./llm-types.js";
 
 export interface IChatAgent {
@@ -41,6 +41,7 @@ export interface IInvestigationAgent {
     onPhase?: (phase: string) => void,
     onIteration?: OnIteration,
     skillContext?: string,
+    template?: InvestigationTemplate,
   ): Promise<RcaReport>;
 }
 

@@ -16,7 +16,7 @@ import pino from "pino";
 import type { Database } from "./db.js";
 import type { IInvestigationAgent } from "../types/agent-interfaces.js";
 import type { RcaReport } from "../types/rca-types.js";
-import type { ServiceConfig } from "../config/schema.js";
+import type { ServiceConfig, InvestigationTemplate } from "../config/schema.js";
 import type { SkillStore } from "../skills/store.js";
 import type { PhaseStats, ServerMessage } from "../types/ws-types.js";
 
@@ -98,6 +98,8 @@ export interface RunOptions {
   service: ServiceConfig;
   message: string;
   investigationId?: string;
+  /** Investigation depth: "quick" (metrics only), "standard" (metrics+logs), "full" (all phases) */
+  template?: InvestigationTemplate;
   callbacks?: InvestigationCallbacks;
 }
 
@@ -119,7 +121,7 @@ export class InvestigationRunner {
    * agent with phase/tool/token tracking, persists results, and emits callbacks.
    */
   async run(opts: RunOptions): Promise<RcaReport> {
-    const { service, message, callbacks } = opts;
+    const { service, message, callbacks, template } = opts;
     const invId = opts.investigationId ?? `inv_${ulid()}`;
 
     // 1. Create DB record
@@ -208,6 +210,7 @@ export class InvestigationRunner {
           persistEvent("investigation:iteration", { phase: frontendPhase, iteration, maxIterations, description });
         },
         skillContext,
+        template,
       );
 
       // 5. Complete remaining phases

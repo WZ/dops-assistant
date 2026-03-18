@@ -101,6 +101,26 @@ const DiscoverySchema = z.object({
   maxIterations: z.number().default(40),
 });
 
+export const InvestigationTemplateSchema = z.enum(["quick", "standard", "full"]);
+export type InvestigationTemplate = z.infer<typeof InvestigationTemplateSchema>;
+
+const WebhookSchema = z.object({
+  /** Bearer token for authenticating incoming Alertmanager webhooks */
+  secret: z.string().optional(),
+  /** Dedup window in seconds — skip alerts for the same service within this period */
+  dedupWindowSeconds: z.number().default(300),
+  /** Max concurrent investigations triggered by webhooks */
+  maxConcurrent: z.number().default(3),
+  /** Default investigation template for alert-triggered investigations */
+  defaultTemplate: InvestigationTemplateSchema.default("standard"),
+  /** Severity → template mapping (overrides defaultTemplate when alert has severity label) */
+  severityTemplateMap: z.record(InvestigationTemplateSchema).optional().default({
+    critical: "full",
+    warning: "standard",
+    info: "quick",
+  }),
+});
+
 export const ConfigSchema = z.object({
   llm: LlmSchema,
   providers: z.array(ProviderSchema).min(1).refine(
@@ -115,6 +135,7 @@ export const ConfigSchema = z.object({
   skills: SkillsSchema.optional().default({}),
   discovery: DiscoverySchema.optional().default({}),
   memory: MemorySchema.optional().default({}),
+  webhook: WebhookSchema.optional().default({}),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -125,3 +146,4 @@ export type TimeoutsConfig = z.infer<typeof TimeoutsSchema>;
 export type RetryConfig = z.infer<typeof RetrySchema>;
 export type ObservabilityConfig = z.infer<typeof ObservabilitySchema>;
 export type DiscoveryConfig = z.infer<typeof DiscoverySchema>;
+export type WebhookConfig = z.infer<typeof WebhookSchema>;
