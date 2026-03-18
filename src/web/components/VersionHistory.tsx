@@ -57,7 +57,7 @@ export function VersionHistory({ onBack }: VersionHistoryProps) {
               {i < versions.length - 1 && (
                 <button
                   onClick={() => handleRestore(v.id)}
-                  className="text-[11px] px-2.5 py-1 rounded border border-border text-yellow-400 hover:bg-accent"
+                  className="text-[11px] px-2.5 py-1 rounded border border-border text-warning hover:bg-accent"
                 >
                   Restore
                 </button>

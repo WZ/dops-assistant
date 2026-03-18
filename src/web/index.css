@@ -26,10 +26,16 @@
     --radius: 0.625rem;
     --success: 160 55% 38%;
     --success-foreground: 0 0% 100%;
+    --warning: 40 85% 48%;
+    --warning-foreground: 30 40% 12%;
+    --info: 210 60% 48%;
+    --info-foreground: 0 0% 100%;
     --glow-cyan: 0 0 10px hsl(192 75% 36% / 0.12);
     --glow-amber: 0 0 10px hsl(28 90% 52% / 0.12);
     --glow-green: 0 0 10px hsl(160 55% 38% / 0.12);
     --glow-red: 0 0 10px hsl(4 72% 50% / 0.10);
+    --glow-warning: 0 0 10px hsl(40 85% 48% / 0.12);
+    --glow-info: 0 0 10px hsl(210 60% 48% / 0.10);
   }
 
   .dark {
@@ -56,10 +62,16 @@
     --radius: 0.625rem;
     --success: 160 65% 42%;
     --success-foreground: 228 35% 6%;
+    --warning: 38 80% 52%;
+    --warning-foreground: 0 0% 98%;
+    --info: 215 70% 55%;
+    --info-foreground: 0 0% 98%;
     --glow-cyan: 0 0 14px hsl(185 80% 48% / 0.30);
     --glow-amber: 0 0 14px hsl(32 85% 55% / 0.25);
     --glow-green: 0 0 14px hsl(160 65% 42% / 0.25);
     --glow-red: 0 0 12px hsl(0 68% 55% / 0.22);
+    --glow-warning: 0 0 14px hsl(38 80% 52% / 0.25);
+    --glow-info: 0 0 14px hsl(215 70% 55% / 0.25);
   }
 }
 
@@ -88,6 +100,10 @@
   --color-ring: hsl(var(--ring));
   --color-success: hsl(var(--success));
   --color-success-foreground: hsl(var(--success-foreground));
+  --color-warning: hsl(var(--warning));
+  --color-warning-foreground: hsl(var(--warning-foreground));
+  --color-info: hsl(var(--info));
+  --color-info-foreground: hsl(var(--info-foreground));
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -117,6 +133,8 @@
 .glow-amber { box-shadow: var(--glow-amber); }
 .glow-green { box-shadow: var(--glow-green); }
 .glow-red { box-shadow: var(--glow-red); }
+.glow-warning { box-shadow: var(--glow-warning); }
+.glow-info { box-shadow: var(--glow-info); }
 
 /* ── Noise texture — very subtle grain ── */
 .noise::before {

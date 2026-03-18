@@ -95,7 +95,7 @@ export function ServicesManage({ onRunDiscovery, onViewHistory, onBack }: Servic
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="px-2.5 py-1 rounded bg-green-500 text-black text-[11px] mr-1.5 hover:bg-green-400 disabled:opacity-50"
+                className="px-2.5 py-1 rounded bg-success text-success-foreground text-[11px] mr-1.5 hover:bg-success/80 disabled:opacity-50"
               >
                 {saving ? "Saving..." : "Save"}
               </button>

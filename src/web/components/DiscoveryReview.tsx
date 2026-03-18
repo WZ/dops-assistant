@@ -61,15 +61,15 @@ export function DiscoveryReview({ services: initialServices, onAccept, onReject,
           </div>
           <div className="w-px bg-border" />
           <div>
-            <div className="text-2xl font-bold text-green-400">{verified}</div>
+            <div className="text-2xl font-bold text-success">{verified}</div>
             <div className="text-[10px] text-muted-foreground/50">verified</div>
           </div>
           <div>
-            <div className="text-2xl font-bold text-yellow-400">{partial}</div>
+            <div className="text-2xl font-bold text-warning">{partial}</div>
             <div className="text-[10px] text-muted-foreground/50">partial</div>
           </div>
           <div>
-            <div className="text-2xl font-bold text-red-400">{unverified}</div>
+            <div className="text-2xl font-bold text-destructive">{unverified}</div>
             <div className="text-[10px] text-muted-foreground/50">unverified</div>
           </div>
         </div>
@@ -92,8 +92,8 @@ export function DiscoveryReview({ services: initialServices, onAccept, onReject,
                 <span className="text-muted-foreground/60 text-right">{s.metrics?.length ?? 0}</span>
                 <span className="text-muted-foreground/60 text-right">{Object.keys(s.logLabels ?? {}).length}</span>
                 <span className={`text-right ${
-                  s.confidence === "verified" ? "text-green-400" :
-                  s.confidence === "partial" ? "text-yellow-400" : "text-red-400"
+                  s.confidence === "verified" ? "text-success" :
+                  s.confidence === "partial" ? "text-warning" : "text-destructive"
                 }`}>
                   {s.confidence === "verified" ? "✓" : s.confidence === "partial" ? "~" : "?"}
                 </span>
@@ -122,13 +122,13 @@ export function DiscoveryReview({ services: initialServices, onAccept, onReject,
       <div className="flex gap-2">
         <button
           onClick={handleAccept}
-          className="px-5 py-2 text-sm font-semibold rounded-md bg-green-500 text-black hover:bg-green-400"
+          className="px-5 py-2 text-sm font-semibold rounded-md bg-success text-success-foreground hover:bg-success/80"
         >
           Accept
         </button>
         <button
           onClick={onReject}
-          className="px-5 py-2 text-sm rounded-md border border-border text-red-400 hover:bg-accent"
+          className="px-5 py-2 text-sm rounded-md border border-border text-destructive hover:bg-accent"
         >
           Reject
         </button>
