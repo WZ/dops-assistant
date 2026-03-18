@@ -19,6 +19,7 @@ import { randomUUID } from "node:crypto";
 import type { ServiceConfig, DiscoveryConfig } from "../config/schema.js";
 import type { RcaReport } from "../types/rca-types.js";
 import type { IDiscoverAgent, OnToolCallEnriched, OnIteration } from "../types/agent-interfaces.js";
+import type { InvestigationTemplate } from "../config/schema.js";
 import type { ChatRequest, ChatResponse, ImageAttachment } from "../types/agent-types.js";
 import type { TokenUsage } from "../types/llm-types.js";
 import type { ValidatedServiceConfig } from "../types/discovery-types.js";
@@ -264,6 +265,7 @@ export class MastraInvestigationAdapter {
     onPhase?: (phase: string) => void,
     onIteration?: OnIteration,
     skillContext?: string,
+    template?: InvestigationTemplate,
   ): Promise<RcaReport> {
     const workflowConfig: WorkflowConfig = {
       ...this.workflowConfig,
@@ -276,7 +278,7 @@ export class MastraInvestigationAdapter {
       onTokenUsage,
     };
 
-    const workflow = createInvestigationWorkflow(workflowConfig);
+    const workflow = createInvestigationWorkflow(workflowConfig, template);
 
     let output: {
       severity: "low" | "medium" | "high" | "critical";

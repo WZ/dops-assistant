@@ -1,8 +1,10 @@
 /**
  * Investigation workflow — Mastra-based multi-step RCA pipeline.
  *
- * Structure:
- *   prefetchStep → anomalyStep → planningStep → [metricsStep || logsStep || infraStep] → synthesisStep → postSynthesisStep
+ * Templates control which phases run:
+ *   full:     prefetch → anomaly → planning → [metrics || logs || infra || changes] → synthesis → post
+ *   standard: prefetch → anomaly → planning → [metrics || logs]                     → synthesis → post
+ *   quick:    prefetch → anomaly → planning → [metrics]                             → synthesis → post
  *
  * Each step accesses providers and services via closure over WorkflowConfig.
  * The workflow is created as a factory so it can be instantiated with different
@@ -13,16 +15,16 @@ import { createWorkflow } from "@mastra/core/workflows";
 import type { LanguageModel } from "ai";
 import { WorkflowInputSchema, PostSynthesisOutputSchema } from "./schemas.js";
 import type { MastraProvider } from "../mcp/provider.js";
-import type { ServiceConfig } from "../config/schema.js";
+import type { ServiceConfig, InvestigationTemplate } from "../config/schema.js";
 import { buildPrefetchStep } from "./steps/prefetch-step.js";
 import { buildAnomalyStep } from "./steps/anomaly.js";
 import { buildPlanningStep } from "./steps/planning.js";
-import { buildMetricsStep, buildLogsStep, buildInfraStep } from "./steps/evidence.js";
+import { buildMetricsStep, buildLogsStep, buildInfraStep, buildChangesStep } from "./steps/evidence.js";
 import { buildSynthesisStep } from "./steps/synthesis.js";
 import { buildPostSynthesisStep } from "./steps/post-synthesis.js";
 
 // Re-export so callers can import step builders from either location
-export { buildMetricsStep, buildLogsStep, buildInfraStep } from "./steps/evidence.js";
+export { buildMetricsStep, buildLogsStep, buildInfraStep, buildChangesStep } from "./steps/evidence.js";
 export { buildSynthesisStep } from "./steps/synthesis.js";
 
 // ── WorkflowConfig ────────────────────────────────────────────────────────────
@@ -44,55 +46,83 @@ export interface WorkflowConfig {
 // ── Workflow factory ──────────────────────────────────────────────────────────
 
 /**
- * Create the investigation workflow.
+ * Create the investigation workflow for the given template.
  *
- * The workflow follows a 6-phase pipeline:
- *   1. prefetchStep    — discover datasources, dashboards, log labels
- *   2. anomalyStep     — detect anomalies with metrics + dashboards tools
- *   3. planningStep    — generate hypotheses using incident history
- *   4. [parallel]      — metricsStep, logsStep, infraStep run concurrently
- *   5. synthesisStep   — combine evidence into RCA report + severity validation
- *   6. postSynthesisStep — save incident to history store
+ * Template determines which phases are included:
+ *   - "full" (default): all 6 phases, 3 parallel evidence streams (~2-3 min)
+ *   - "standard": prefetch + anomaly + planning + metrics/logs + synthesis (~1 min)
+ *   - "quick": prefetch + metrics + synthesis only (~30s)
  */
-export function createInvestigationWorkflow(workflowConfig: WorkflowConfig) {
+export function createInvestigationWorkflow(workflowConfig: WorkflowConfig, template: InvestigationTemplate = "full") {
   const prefetchStep = buildPrefetchStep(workflowConfig);
-  const anomalyStep = buildAnomalyStep(workflowConfig);
-  const planningStep = buildPlanningStep(workflowConfig);
   const metricsStep = buildMetricsStep(workflowConfig);
-  const logsStep = buildLogsStep(workflowConfig);
-  const infraStep = buildInfraStep(workflowConfig);
   const synthesisStep = buildSynthesisStep(workflowConfig);
   const postSynthesisStep = buildPostSynthesisStep(workflowConfig);
 
+  // All templates include anomaly + planning (they're fast, no tools, and produce
+  // the PlanningOutputSchema that evidence steps require as input)
+  const anomalyStep = buildAnomalyStep(workflowConfig);
+  const planningStep = buildPlanningStep(workflowConfig);
+
+  if (template === "quick") {
+    // Quick: prefetch → anomaly → planning → metrics only → synthesis → post
+    const workflow = createWorkflow({
+      id: "investigation-quick",
+      description: "Quick metrics-only investigation",
+      inputSchema: WorkflowInputSchema,
+      outputSchema: PostSynthesisOutputSchema,
+      steps: [prefetchStep, anomalyStep, planningStep, metricsStep, synthesisStep, postSynthesisStep],
+    });
+    (workflow
+      .then(prefetchStep)
+      .then(anomalyStep)
+      .then(planningStep)
+      .then(metricsStep) as any)
+      .then(synthesisStep)
+      .then(postSynthesisStep)
+      .commit();
+    return workflow;
+  }
+
+  if (template === "standard") {
+    // Standard: prefetch → anomaly → planning → [metrics || logs] → synthesis → post
+    const logsStep = buildLogsStep(workflowConfig);
+    const workflow = createWorkflow({
+      id: "investigation-standard",
+      description: "Standard metrics + logs investigation",
+      inputSchema: WorkflowInputSchema,
+      outputSchema: PostSynthesisOutputSchema,
+      steps: [prefetchStep, anomalyStep, planningStep, metricsStep, logsStep, synthesisStep, postSynthesisStep],
+    });
+    (workflow
+      .then(prefetchStep)
+      .then(anomalyStep)
+      .then(planningStep)
+      .parallel([metricsStep, logsStep]) as any)
+      .then(synthesisStep)
+      .then(postSynthesisStep)
+      .commit();
+    return workflow;
+  }
+
+  // Full: all phases including changes evidence (4 parallel streams)
+  const logsStep = buildLogsStep(workflowConfig);
+  const infraStep = buildInfraStep(workflowConfig);
+  const changesStep = buildChangesStep(workflowConfig);
   const workflow = createWorkflow({
     id: "investigation",
     description: "Multi-phase root cause analysis investigation pipeline",
     inputSchema: WorkflowInputSchema,
     outputSchema: PostSynthesisOutputSchema,
-    steps: [
-      prefetchStep,
-      anomalyStep,
-      planningStep,
-      metricsStep,
-      logsStep,
-      infraStep,
-      synthesisStep,
-      postSynthesisStep,
-    ],
+    steps: [prefetchStep, anomalyStep, planningStep, metricsStep, logsStep, infraStep, changesStep, synthesisStep, postSynthesisStep],
   });
-
-  // The .parallel() → .then() chain produces correct shapes at runtime, but
-  // Mastra's TypeScript generics can't infer the parallel output type through
-  // the chain. The cast is safe — the synthesis step's inputSchema validates
-  // the actual data at runtime.
   (workflow
     .then(prefetchStep)
     .then(anomalyStep)
     .then(planningStep)
-    .parallel([metricsStep, logsStep, infraStep]) as any)
+    .parallel([metricsStep, logsStep, infraStep, changesStep]) as any)
     .then(synthesisStep)
     .then(postSynthesisStep)
     .commit();
-
   return workflow;
 }

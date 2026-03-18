@@ -33,7 +33,16 @@ function filterOutLokiTools(tools: Record<string, any>): Record<string, any> {
 }
 
 export async function runDiscoverStep(config: DiscoverStepConfig): Promise<ServiceConfig[]> {
-  const rawTools = await getAllTools(config.providers).catch(() => ({}));
+  let rawTools: Record<string, any>;
+  try {
+    rawTools = await getAllTools(config.providers);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`MCP connection failed — cannot reach monitoring providers. ${msg}`);
+  }
+  if (Object.keys(rawTools).length === 0) {
+    throw new Error("No MCP tools available — check that your Grafana MCP server is running and reachable.");
+  }
   const metricsOnly = filterOutLokiTools(rawTools);
   const tools = config.onToolCall
     ? wrapToolsWithCallbacks(metricsOnly, config.onToolCall, "discovery")
