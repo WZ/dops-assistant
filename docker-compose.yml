@@ -14,7 +14,12 @@ services:
       GRAFANA_MCP_URL: http://grafana-mcp:8000/mcp
     volumes:
       - ./config.yaml:/app/config.yaml:ro
+      - dops-data:/app/data              # SQLite persistence
     ports:
-      - "9090:9090"
+      - "3000:3000"                       # Web UI + API
+      - "9090:9090"                       # Prometheus metrics
     depends_on:
       - grafana-mcp
+
+volumes:
+  dops-data:

@@ -251,6 +251,7 @@ describe("MastraInvestigationAdapter", () => {
         onIteration,
         onToolCall,
       }),
+      undefined,
     );
     expect(mockRunStart).toHaveBeenCalledWith({
       inputData: expect.objectContaining({
@@ -372,6 +373,7 @@ describe("createMastraAdapters", () => {
 
     expect(vi.mocked(createInvestigationWorkflow)).toHaveBeenCalledWith(
       expect.objectContaining({ projectRoot: process.cwd() }),
+      undefined,
     );
   });
 
@@ -395,6 +397,7 @@ describe("createMastraAdapters", () => {
 
     expect(vi.mocked(createInvestigationWorkflow)).toHaveBeenCalledWith(
       expect.objectContaining({ projectRoot: undefined }),
+      undefined,
     );
   });
 
@@ -418,6 +421,7 @@ describe("createMastraAdapters", () => {
 
     expect(vi.mocked(createInvestigationWorkflow)).toHaveBeenCalledWith(
       expect.objectContaining({ projectRoot: process.cwd() }),
+      undefined,
     );
   });
 });

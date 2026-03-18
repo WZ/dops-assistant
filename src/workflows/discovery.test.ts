@@ -3,6 +3,12 @@ import { runDiscovery } from "./discovery.js";
 import type { DiscoveryWorkflowConfig } from "./discovery.js";
 import type { LanguageModel } from "ai";
 
+vi.mock("../mcp/provider.js", () => ({
+  getAllTools: vi.fn().mockResolvedValue({ grafana_query_prometheus: {} }),
+  getToolsByRole: vi.fn().mockResolvedValue({}),
+  listProviderTools: vi.fn().mockResolvedValue({}),
+}));
+
 vi.mock("@mastra/core/agent", () => ({
   Agent: class MockAgent {
     id: string;
