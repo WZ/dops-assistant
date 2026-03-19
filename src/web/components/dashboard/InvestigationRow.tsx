@@ -68,7 +68,7 @@ export function InvestigationRow({
   className,
 }: InvestigationRowProps) {
   let rootCause = "";
-  let confidence = "";
+  let confidence: unknown = "";
   let severity = "";
 
   if (inv.report) {
@@ -127,12 +127,12 @@ export function InvestigationRow({
 
         {/* Right-aligned metrics */}
         <div className="flex items-center gap-2 flex-shrink-0">
-          {confidence && (
+          {confidence !== "" && confidence != null && (
             <span className="font-mono text-[10px] text-foreground/60">
               {typeof confidence === "number"
-                ? `${Math.round((confidence as number) * 100)}%`
+                ? `${Math.round(confidence * 100)}%`
                 : String(confidence).includes("%")
-                  ? confidence
+                  ? String(confidence)
                   : `${confidence}%`}
             </span>
           )}
