@@ -41,6 +41,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
   const [refreshProgress, setRefreshProgress] = useState(0);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [servicesExpanded, setServicesExpanded] = useState(false);
 
   const processedRef = useRef(0);
 
@@ -393,7 +394,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
         ) : (
           <>
             <div className="grid grid-cols-2 gap-3 dashboard-services-grid">
-              {services.map((svc, i) => (
+              {(servicesExpanded ? services : services.slice(0, 9)).map((svc, i) => (
                 <div key={svc.name} className={`animate-fade-up delay-${Math.min(i + 1, 8)}`}>
                   <ServiceCard
                     name={svc.name}
@@ -405,7 +406,16 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
               ))}
             </div>
             <div className="flex items-center gap-3 mt-3 pl-3">
-              <button onClick={onManageServices} className="text-[10px] font-mono text-primary/70 hover:text-primary transition-colors py-3 px-2 min-h-[44px]">Manage</button>
+              {services.length > 9 && (
+                <button
+                  onClick={() => setServicesExpanded(!servicesExpanded)}
+                  className="py-3 px-2 min-h-[44px] text-[10px] font-mono text-primary/70 hover:text-primary transition-colors"
+                >
+                  {servicesExpanded ? "Show less" : `Show all ${services.length}`}
+                </button>
+              )}
+              {services.length > 9 && <span className="text-muted-foreground/20">&middot;</span>}
+              <button onClick={onManageServices} className="py-3 px-2 min-h-[44px] text-[10px] font-mono text-primary/70 hover:text-primary transition-colors">Manage</button>
               <span className="text-muted-foreground/20">&middot;</span>
               <button onClick={onRunDiscovery} className="text-[10px] font-mono text-primary/70 hover:text-primary transition-colors py-3 px-2 min-h-[44px]">Re-discover</button>
             </div>
