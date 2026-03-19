@@ -13,7 +13,17 @@ import { VersionHistory } from "./components/VersionHistory";
 import { DiscoveryProgress } from "./components/DiscoveryProgress";
 import { DiscoveryReview } from "./components/DiscoveryReview";
 import { useWebSocket } from "./hooks/useWebSocket";
+import { useHealthPolling } from "./components/dashboard/useHealthPolling";
 import type { ValidatedServiceConfig } from "../types/discovery-types.js";
+
+function formatUptime(seconds: number): string {
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${mins}m`;
+  return `${mins}m`;
+}
 
 export type LeftPaneView =
   | { type: "dashboard" }
@@ -39,6 +49,7 @@ export function App() {
   });
   const ws = useWebSocket();
   const theme = useTheme();
+  const health = useHealthPolling();
 
   const [discoveryState, setDiscoveryState] = useState({
     phase: "discovery",
@@ -137,6 +148,37 @@ export function App() {
           </nav>
         </div>
         <div className="flex items-center gap-3">
+          {/* Health status indicators */}
+          <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-secondary/30">
+            <div className={`w-1.5 h-1.5 rounded-full transition-colors ${
+              health.connectionState === "connected" && health.health?.status === "healthy"
+                ? "bg-success"
+                : health.health?.status === "degraded"
+                ? "bg-warning"
+                : health.connectionState === "unreachable"
+                ? "bg-destructive"
+                : "bg-muted-foreground/30"
+            }`} />
+            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/60">
+              {health.connectionState === "connected" && health.health?.status === "healthy"
+                ? "HEALTHY"
+                : health.health?.status === "degraded"
+                ? "DEGRADED"
+                : health.connectionState === "unreachable"
+                ? "UNREACHABLE"
+                : "UNKNOWN"}
+            </span>
+            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/60">
+              {health.health ? formatUptime(health.health.uptime) : "—"}
+            </span>
+            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/60">
+              {health.health ? (health.health.probes.mcp.status === "ok" ? "mcp:ok" : "mcp:—") : "mcp:—"}
+            </span>
+            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/60">
+              {health.health ? (health.health.probes.db.status === "ok" ? "db:ok" : "db:—") : "db:—"}
+            </span>
+          </div>
+          {/* WS status pill */}
           <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-secondary/30">
             <div className={`w-1.5 h-1.5 rounded-full transition-colors ${ws.status === "connected" ? "bg-success" : ws.status === "connecting" ? "bg-accent animate-status-pulse" : "bg-destructive"}`} />
             <span className="text-[9px] font-mono text-muted-foreground/60 uppercase tracking-wider">
@@ -225,6 +267,8 @@ export function App() {
                   />
                 ) : leftPane.type === "dashboard" ? (
                   <Dashboard
+                    // @ts-expect-error wsMessages prop added in Dashboard rewrite (Task 5)
+                    wsMessages={ws.messages}
                     onInvestigationClick={(id) =>
                       setLeftPane({ type: "investigation", id })
                     }
