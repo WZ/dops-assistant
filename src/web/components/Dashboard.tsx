@@ -4,6 +4,8 @@ import { ServiceCard } from "./ServiceCard";
 import { FirstRunBanner } from "./FirstRunBanner";
 import { StatCard } from "./dashboard/StatCard";
 import { InvestigationRow } from "./dashboard/InvestigationRow";
+import { ToastContainer } from "./dashboard/ToastContainer";
+import type { ToastItem } from "./dashboard/ToastContainer";
 import { formatTokens } from "@/lib/formatTokens";
 import { formatDuration, severityVariant, computeKpiData } from "@/lib/dashboard-utils";
 import type { InvestigationSummary, Pattern } from "@/lib/dashboard-utils";
@@ -38,6 +40,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [refreshProgress, setRefreshProgress] = useState(0);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
 
   const processedRef = useRef(0);
 
@@ -144,15 +147,18 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
       }
 
       if (msg.type === "investigation:complete") {
+        const invService = activeInvestigations.get(msg.id)?.service ?? "Unknown";
         setActiveInvestigations(prev => {
           const next = new Map(prev);
           next.delete(msg.id);
           return next;
         });
+        setToasts(prev => [...prev, { id: msg.id, service: invService, status: "complete", timestamp: Date.now() }]);
         shouldRefetch = true;
       }
 
       if (msg.type === "investigation:failed") {
+        const invService = activeInvestigations.get(msg.id)?.service ?? "Unknown";
         setActiveInvestigations(prev => {
           const next = new Map(prev);
           const existing = next.get(msg.id);
@@ -161,6 +167,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
           }
           return next;
         });
+        setToasts(prev => [...prev, { id: msg.id, service: invService, status: "failed", timestamp: Date.now() }]);
         shouldRefetch = true;
       }
     }
@@ -251,6 +258,10 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
   };
 
   const isStale = lastUpdated ? Date.now() - lastUpdated.getTime() > 2 * 60 * 1000 : false;
+
+  const handleToastDismiss = (id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  };
 
   return (
     <div className="h-full overflow-y-auto p-6 relative z-[2] dashboard-container">
@@ -451,6 +462,12 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
           )}
         </section>
       )}
+
+      <ToastContainer
+        toasts={toasts}
+        onDismiss={handleToastDismiss}
+        onClickToast={(id) => { handleToastDismiss(id); onInvestigationClick(id); }}
+      />
     </div>
   );
 }
