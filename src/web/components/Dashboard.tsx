@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { ServiceCard } from "./ServiceCard";
 import { FirstRunBanner } from "./FirstRunBanner";
-import { ServicesSection } from "./ServicesSection";
+import { StatCard } from "./dashboard/StatCard";
+import { InvestigationRow } from "./dashboard/InvestigationRow";
 import type { ServiceConfig } from "../../config/schema.js";
+import type { ServerMessage } from "../../types/ws-types.js";
 
 interface InvestigationSummary {
   id: string;
@@ -11,142 +13,438 @@ interface InvestigationSummary {
   status: string;
   report: string | null;
   created_at: string;
+  completed_at: string | null;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_duration_ms: number;
 }
 
 interface DashboardProps {
+  wsMessages: ServerMessage[];
   onInvestigationClick: (id: string) => void;
   onInvestigateService: (serviceName: string) => void;
   onManageServices: () => void;
   onRunDiscovery: () => void;
 }
 
-export function Dashboard({ onInvestigationClick, onInvestigateService, onManageServices, onRunDiscovery }: DashboardProps) {
+interface Pattern {
+  id: string;
+  service: string;
+  symptom: string;
+  rootCause: string;
+  severity: string;
+  recommendedActions: string;
+  sourceInvestigationId: string;
+}
+
+interface ActiveInvestigation {
+  id: string;
+  service: string;
+  startTime: number;
+  phase: string;
+  failed?: boolean;
+  failedAt?: number;
+}
+
+function severityVariant(severity: string): "destructive" | "warning" | "secondary" | "outline" {
+  switch (severity?.toLowerCase()) {
+    case "critical": return "destructive";
+    case "high": return "warning";
+    case "medium": return "secondary";
+    default: return "outline";
+  }
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+function formatDuration(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
+export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateService, onManageServices, onRunDiscovery }: DashboardProps) {
   const [services, setServices] = useState<ServiceConfig[]>([]);
   const [investigations, setInvestigations] = useState<InvestigationSummary[]>([]);
+  const [loading, setLoading] = useState(true);
   const [bannerDismissed, setBannerDismissed] = useState(false);
+  const [patterns, setPatterns] = useState<Pattern[]>([]);
+  const [patternsExpanded, setPatternsExpanded] = useState(false);
+  const [activeInvestigations, setActiveInvestigations] = useState<Map<string, ActiveInvestigation>>(new Map());
 
+  const processedRef = useRef(0);
+
+  // Fetch data from API
+  async function fetchData() {
+    try {
+      const [invRes, svcRes] = await Promise.all([
+        fetch("/api/investigations?limit=100"),
+        fetch("/api/services"),
+      ]);
+      const [invData, svcData] = await Promise.all([invRes.json(), svcRes.json()]);
+      setInvestigations(invData);
+      setServices(svcData);
+    } catch { /* silently fail — keep last data */ }
+    setLoading(false);
+  }
+
+  // Initial data fetch
   useEffect(() => {
-    fetch("/api/services").then((r) => r.json()).then(setServices).catch(() => {});
-    fetch("/api/investigations?limit=10").then((r) => r.json()).then(setInvestigations).catch(() => {});
+    fetchData();
   }, []);
 
-  const timeAgo = (dateStr: string): string => {
-    const diff = Date.now() - new Date(dateStr).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return "just now";
-    if (mins < 60) return `${mins}m ago`;
-    const hours = Math.floor(mins / 60);
-    if (hours < 24) return `${hours}h ago`;
-    return `${Math.floor(hours / 24)}d ago`;
+  // WS-driven re-fetch and active investigation tracking
+  useEffect(() => {
+    const start = processedRef.current;
+    if (wsMessages.length <= start) return;
+    processedRef.current = wsMessages.length;
+
+    let shouldRefetch = false;
+
+    for (let i = start; i < wsMessages.length; i++) {
+      const msg = wsMessages[i];
+
+      if (msg.type === "investigation:started") {
+        setActiveInvestigations(prev => {
+          const next = new Map(prev);
+          next.set(msg.id, {
+            id: msg.id,
+            service: msg.service,
+            startTime: Date.now(),
+            phase: "starting",
+          });
+          return next;
+        });
+      }
+
+      if (msg.type === "investigation:phase") {
+        setActiveInvestigations(prev => {
+          const next = new Map(prev);
+          // Find the active investigation (there could be multiple; update whichever has this phase)
+          for (const [id, inv] of next) {
+            if (!inv.failed) {
+              next.set(id, { ...inv, phase: msg.phase });
+              break;
+            }
+          }
+          return next;
+        });
+      }
+
+      if (msg.type === "investigation:complete") {
+        setActiveInvestigations(prev => {
+          const next = new Map(prev);
+          next.delete(msg.id);
+          return next;
+        });
+        shouldRefetch = true;
+      }
+
+      if (msg.type === "investigation:failed") {
+        setActiveInvestigations(prev => {
+          const next = new Map(prev);
+          const existing = next.get(msg.id);
+          if (existing) {
+            next.set(msg.id, { ...existing, failed: true, failedAt: Date.now() });
+          }
+          return next;
+        });
+        shouldRefetch = true;
+      }
+    }
+
+    if (shouldRefetch) {
+      fetchData();
+    }
+  }, [wsMessages]);
+
+  // Clean up failed investigations after 30 minutes
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setActiveInvestigations(prev => {
+        let changed = false;
+        const next = new Map(prev);
+        for (const [id, inv] of next) {
+          if (inv.failed && inv.failedAt && now - inv.failedAt > 30 * 60 * 1000) {
+            next.delete(id);
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }, 60_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Fetch patterns for top 3 services after investigations load
+  useEffect(() => {
+    if (investigations.length === 0) return;
+    const serviceCounts = new Map<string, number>();
+    for (const inv of investigations) {
+      serviceCounts.set(inv.service, (serviceCounts.get(inv.service) ?? 0) + 1);
+    }
+    const topServices = [...serviceCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([name]) => name);
+
+    Promise.all(
+      topServices.map(svc => fetch(`/api/patterns?service=${encodeURIComponent(svc)}`).then(r => r.json()).catch(() => []))
+    ).then(results => setPatterns(results.flat()));
+  }, [investigations]);
+
+  // KPI computations
+  const kpiData = useMemo(() => {
+    const total = investigations.length;
+    const active = investigations.filter(i => i.status === "running").length;
+    const complete = investigations.filter(i => i.status === "complete").length;
+    const failed = investigations.filter(i => i.status === "failed").length;
+
+    // Services health based on most recent investigation per service
+    const latestByService = new Map<string, InvestigationSummary>();
+    for (const inv of investigations) {
+      const existing = latestByService.get(inv.service);
+      if (!existing || new Date(inv.created_at) > new Date(existing.created_at)) {
+        latestByService.set(inv.service, inv);
+      }
+    }
+    const totalServices = services.length;
+    let criticalCount = 0;
+    let degradedCount = 0;
+    for (const inv of latestByService.values()) {
+      if (inv.status === "failed") criticalCount++;
+      else if (inv.status === "running") degradedCount++;
+    }
+    const healthyCount = totalServices - criticalCount - degradedCount;
+
+    // MTTR (7d) — average duration of completed investigations in last 7 days
+    const now = Date.now();
+    const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
+    const fourteenDaysAgo = now - 14 * 24 * 60 * 60 * 1000;
+
+    const completedLast7d = investigations.filter(
+      i => i.status === "complete" && new Date(i.created_at).getTime() >= sevenDaysAgo
+    );
+    const completedPrior7d = investigations.filter(
+      i => i.status === "complete" &&
+        new Date(i.created_at).getTime() >= fourteenDaysAgo &&
+        new Date(i.created_at).getTime() < sevenDaysAgo
+    );
+
+    const avgMttr7d = completedLast7d.length > 0
+      ? completedLast7d.reduce((sum, i) => sum + i.total_duration_ms, 0) / completedLast7d.length
+      : 0;
+    const avgMttrPrior = completedPrior7d.length > 0
+      ? completedPrior7d.reduce((sum, i) => sum + i.total_duration_ms, 0) / completedPrior7d.length
+      : 0;
+
+    let mttrTrend: { direction: "up" | "down"; value: string; positive: boolean } | undefined;
+    if (avgMttr7d > 0 && avgMttrPrior > 0) {
+      const pctChange = ((avgMttr7d - avgMttrPrior) / avgMttrPrior) * 100;
+      if (pctChange < 0) {
+        mttrTrend = { direction: "down", value: `${Math.abs(Math.round(pctChange))}%`, positive: true };
+      } else if (pctChange > 0) {
+        mttrTrend = { direction: "up", value: `${Math.round(pctChange)}%`, positive: false };
+      }
+    }
+
+    // Token usage
+    const totalInput = investigations.reduce((sum, i) => sum + (i.total_input_tokens ?? 0), 0);
+    const totalOutput = investigations.reduce((sum, i) => sum + (i.total_output_tokens ?? 0), 0);
+    const totalTokens = totalInput + totalOutput;
+
+    return {
+      total, active, complete, failed,
+      totalServices, healthyCount, criticalCount, degradedCount,
+      avgMttr7d, mttrTrend, completedLast7dCount: completedLast7d.length,
+      totalTokens, totalInput, totalOutput,
+    };
+  }, [investigations, services]);
+
+  // Format elapsed time for active investigations
+  const formatElapsed = (startTime: number): string => {
+    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+    if (elapsed < 60) return `${elapsed}s`;
+    return `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;
   };
+
+  // Force re-render for elapsed time updates
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (activeInvestigations.size === 0) return;
+    const interval = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(interval);
+  }, [activeInvestigations.size]);
+
+  const activeList = useMemo(() => [...activeInvestigations.values()], [activeInvestigations]);
 
   return (
     <div className="h-full overflow-y-auto p-6 relative z-[2]">
-      {/* Title */}
-      <div className="mb-8 animate-fade-up">
-        <h1 className="font-display text-xl font-bold tracking-tight text-foreground/90">
-          Services Overview
-        </h1>
-        <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">
-          {services.length} service{services.length !== 1 ? "s" : ""} monitored
-        </p>
-      </div>
-
       {/* First-run banner */}
       {services.length === 0 && !bannerDismissed && (
-        <FirstRunBanner
-          onRunDiscovery={onRunDiscovery}
-          onDismiss={() => setBannerDismissed(true)}
-        />
+        <FirstRunBanner onRunDiscovery={onRunDiscovery} onDismiss={() => setBannerDismissed(true)} />
       )}
 
-      {/* Services Grid */}
-      <section className="mb-10">
-        <div className="flex items-center gap-2 mb-4">
-          <div className="w-1 h-4 rounded-full bg-primary/60" />
-          <h2 className="text-[11px] font-display font-semibold text-muted-foreground/60 uppercase tracking-[0.15em]">
-            Services
-          </h2>
+      {/* Section A: Title */}
+      <div className="mb-6 animate-fade-up">
+        <h1 className="font-display text-xl font-bold tracking-tight text-foreground/90">Operations Desk</h1>
+        <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">{services.length} services monitored</p>
+      </div>
+
+      {/* Section B: KPI Stat Cards */}
+      <section aria-label="Overview" className="mb-6">
+        <div className="flex items-center gap-2 mb-3">
+          <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
+          <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">Overview</h2>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <StatCard
+            label="Investigations"
+            value={String(kpiData.total)}
+            detail={`${kpiData.active} active \u00b7 ${kpiData.complete} complete \u00b7 ${kpiData.failed} failed`}
+            loading={loading}
+          />
+          <StatCard
+            label="Services Healthy"
+            value={`${kpiData.healthyCount}/${kpiData.totalServices}`}
+            variant={kpiData.healthyCount === kpiData.totalServices && kpiData.totalServices > 0 ? "success" : "default"}
+            detail={`${kpiData.criticalCount} critical \u00b7 ${kpiData.degradedCount} degraded`}
+            loading={loading}
+          />
+          <StatCard
+            label="Avg MTTR (7d)"
+            value={kpiData.completedLast7dCount > 0 ? formatDuration(kpiData.avgMttr7d) : "\u2014"}
+            detail={kpiData.completedLast7dCount > 0 ? `${kpiData.completedLast7dCount} completed investigations` : "needs completed investigations"}
+            trend={kpiData.mttrTrend}
+            loading={loading}
+          />
+          <StatCard
+            label="Token Usage"
+            value={formatTokens(kpiData.totalTokens)}
+            detail={`${formatTokens(kpiData.totalInput)} input \u00b7 ${formatTokens(kpiData.totalOutput)} output`}
+            loading={loading}
+          />
+        </div>
+      </section>
+
+      {/* Section C: Active Investigations */}
+      {activeList.length > 0 && (
+        <section aria-label="Active" className="mb-6 animate-fade-up">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-0.5 h-3.5 rounded-full bg-accent/60" />
+            <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">Active</h2>
+          </div>
+          <div className="rounded-lg border border-accent/20 bg-accent/5 p-3 space-y-2">
+            {activeList.map(inv => (
+              <div key={inv.id} className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className={`w-1.5 h-1.5 rounded-full ${inv.failed ? "bg-destructive" : "bg-accent animate-status-pulse"}`} />
+                  <span className="font-body text-sm font-medium text-foreground/80">{inv.service}</span>
+                  <Badge variant="secondary" className="text-[10px] py-0 h-4">{inv.phase}</Badge>
+                </div>
+                <span className="font-mono text-[10px] text-muted-foreground/65">{formatElapsed(inv.startTime)}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Section D: Services Grid */}
+      <section aria-label="Services" className="mb-6">
+        <div className="flex items-center gap-2 mb-3">
+          <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
+          <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">Services</h2>
         </div>
         {services.length === 0 ? (
           <div className="py-8 text-center">
             <p className="text-sm text-muted-foreground/70">No services configured</p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-            {services.map((svc, i) => (
-              <div key={svc.name} className={`animate-fade-up delay-${i + 1}`}>
-                <ServiceCard name={svc.name} onClick={() => onInvestigateService(svc.name)} />
+          <>
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+              {services.map((svc, i) => (
+                <div key={svc.name} className={`animate-fade-up delay-${Math.min(i + 1, 8)}`}>
+                  <ServiceCard name={svc.name} onClick={() => onInvestigateService(svc.name)} />
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center gap-3 mt-3 pl-3">
+              <button onClick={onManageServices} className="text-[10px] font-mono text-primary/70 hover:text-primary transition-colors">Manage</button>
+              <span className="text-muted-foreground/20">&middot;</span>
+              <button onClick={onRunDiscovery} className="text-[10px] font-mono text-primary/70 hover:text-primary transition-colors">Re-discover</button>
+            </div>
+          </>
+        )}
+      </section>
+
+      {/* Section E: Investigation Log */}
+      <section aria-label="Investigation Log" className="mb-6">
+        <div className="flex items-center gap-2 mb-3">
+          <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
+          <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">Investigation Log</h2>
+        </div>
+        {loading ? (
+          <div className="space-y-2">
+            {[0, 1, 2].map(i => (
+              <div key={i} className="h-16 rounded-lg bg-muted/30" style={{
+                background: "linear-gradient(90deg, hsl(var(--muted)) 25%, hsl(var(--secondary)) 50%, hsl(var(--muted)) 75%)",
+                backgroundSize: "200% 100%",
+                animation: "shimmer 1.6s infinite",
+                animationDelay: `${i * 0.1}s`,
+              }} />
+            ))}
+          </div>
+        ) : investigations.length === 0 ? (
+          <div className="py-8 text-center">
+            <p className="text-sm text-muted-foreground/70">No investigations yet</p>
+            <p className="text-xs text-muted-foreground/55 mt-1 font-mono">start one from chat or click a service</p>
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            {investigations.slice(0, 15).map((inv, i) => (
+              <div key={inv.id} className={`animate-fade-up delay-${Math.min(i + 1, 8)}`}>
+                <InvestigationRow investigation={inv} onClick={onInvestigationClick} />
               </div>
             ))}
           </div>
         )}
       </section>
 
-      {/* Recent Investigations */}
-      <section>
-        <div className="flex items-center gap-2 mb-4">
-          <div className="w-1 h-4 rounded-full bg-accent/60" />
-          <h2 className="text-[11px] font-display font-semibold text-muted-foreground/60 uppercase tracking-[0.15em]">
-            Recent Investigations
-          </h2>
-        </div>
-        {investigations.length === 0 ? (
-          <div className="py-8 text-center">
-            <p className="text-sm text-muted-foreground/70">No investigations yet</p>
-            <p className="text-xs text-muted-foreground/55 mt-1 font-mono">
-              click a service card or use the chat to start one
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-1.5">
-            {investigations.map((inv, i) => {
-              let rootCause = "";
-              let confidence = "";
-              if (inv.report) {
-                try { const r = JSON.parse(inv.report); rootCause = r.rootCause ?? ""; confidence = r.confidence ?? ""; } catch { /* ignore */ }
-              }
-              const statusColor = inv.status === "complete" ? "bg-success" : inv.status === "failed" ? "bg-destructive" : "bg-accent animate-status-pulse";
-              return (
-                <div
-                  key={inv.id}
-                  onClick={() => onInvestigationClick(inv.id)}
-                  className={`animate-fade-up delay-${Math.min(i + 1, 8)} group cursor-pointer rounded-lg border border-border/40 bg-card/40 hover:bg-card/70 hover:border-primary/25 px-4 py-3 transition-all card-lift`}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center gap-2">
-                      <div className={`w-1.5 h-1.5 rounded-full ${statusColor}`} />
-                      <span className="font-body text-sm font-medium text-foreground/80 group-hover:text-foreground/95 transition-colors">{inv.service}</span>
-                    </div>
-                    <span className="text-[10px] font-mono text-muted-foreground/65">{timeAgo(inv.created_at)}</span>
-                  </div>
-                  {rootCause && (
-                    <p className="text-xs text-muted-foreground/50 truncate pl-3.5 font-body">{rootCause}</p>
-                  )}
-                  {confidence && (
-                    <div className="flex gap-1.5 mt-1.5 pl-3.5">
-                      <Badge variant="outline" className="text-[10px] py-0 h-4 border-border/40 text-muted-foreground/50">{confidence}</Badge>
-                      <Badge
-                        variant={inv.status === "complete" ? "default" : inv.status === "failed" ? "destructive" : "secondary"}
-                        className="text-[10px] py-0 h-4"
-                      >
-                        {inv.status}
-                      </Badge>
-                    </div>
-                  )}
+      {/* Section F: Learned Patterns */}
+      {patterns.length > 0 && (
+        <section aria-label="Learned Patterns" className="mb-6">
+          <button
+            role="button"
+            aria-expanded={patternsExpanded}
+            onClick={() => setPatternsExpanded(!patternsExpanded)}
+            className="flex items-center gap-2 mb-3 group cursor-pointer"
+          >
+            <div className="w-0.5 h-3.5 rounded-full bg-primary/40" />
+            <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60 group-hover:text-muted-foreground/80 transition-colors">
+              Learned Patterns ({patterns.length})
+            </h2>
+            <svg className={`w-3 h-3 text-muted-foreground/40 transition-transform ${patternsExpanded ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="m6 9 6 6 6-6"/>
+            </svg>
+          </button>
+          {patternsExpanded && (
+            <div className="space-y-1.5 animate-fade-in">
+              {patterns.map((p, i) => (
+                <div key={i} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-card/30">
+                  <Badge variant={severityVariant(p.severity)} className="text-[10px] py-0 h-4">{p.severity}</Badge>
+                  <span className="font-body text-xs text-foreground/70">{p.service}</span>
+                  <span className="font-mono text-[10px] text-muted-foreground/50 truncate">{p.rootCause}</span>
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      {/* Services management section */}
-      <ServicesSection
-        services={services}
-        onManage={onManageServices}
-        onRediscover={onRunDiscovery}
-      />
+              ))}
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
 }

@@ -267,7 +267,6 @@ export function App() {
                   />
                 ) : leftPane.type === "dashboard" ? (
                   <Dashboard
-                    // @ts-expect-error wsMessages prop added in Dashboard rewrite (Task 5)
                     wsMessages={ws.messages}
                     onInvestigationClick={(id) =>
                       setLeftPane({ type: "investigation", id })
