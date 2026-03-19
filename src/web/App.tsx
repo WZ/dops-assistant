@@ -135,13 +135,13 @@ export function App() {
           <nav className="flex items-center gap-1 ml-4">
             <button
               onClick={() => setLeftPane({ type: "dashboard" })}
-              className={`px-2.5 py-1 text-[10px] font-mono rounded transition-colors ${leftPane.type === "dashboard" ? "text-primary bg-primary/8" : "text-muted-foreground/50 hover:text-foreground/70 hover:bg-secondary/30"}`}
+              className={`px-2.5 py-2 min-h-[44px] flex items-center text-[10px] font-mono rounded transition-colors ${leftPane.type === "dashboard" ? "text-primary bg-primary/8" : "text-muted-foreground/50 hover:text-foreground/70 hover:bg-secondary/30"}`}
             >
               Dashboard
             </button>
             <button
               onClick={() => setLeftPane({ type: "skills" })}
-              className={`px-2.5 py-1 text-[10px] font-mono rounded transition-colors ${leftPane.type === "skills" ? "text-primary bg-primary/8" : "text-muted-foreground/50 hover:text-foreground/70 hover:bg-secondary/30"}`}
+              className={`px-2.5 py-2 min-h-[44px] flex items-center text-[10px] font-mono rounded transition-colors ${leftPane.type === "skills" ? "text-primary bg-primary/8" : "text-muted-foreground/50 hover:text-foreground/70 hover:bg-secondary/30"}`}
             >
               Skills
             </button>
@@ -187,7 +187,7 @@ export function App() {
           </div>
           <button
             onClick={theme.toggle}
-            className="p-1.5 rounded-md text-muted-foreground/70 hover:text-foreground/70 hover:bg-secondary/50 transition-all"
+            className="p-2.5 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-md text-muted-foreground/70 hover:text-foreground/70 hover:bg-secondary/50 transition-all"
             title={theme.dark ? "Switch to light" : "Switch to dark"}
           >
             {theme.dark ? (

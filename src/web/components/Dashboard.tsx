@@ -355,9 +355,9 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
               ))}
             </div>
             <div className="flex items-center gap-3 mt-3 pl-3">
-              <button onClick={onManageServices} className="text-[10px] font-mono text-primary/70 hover:text-primary transition-colors">Manage</button>
+              <button onClick={onManageServices} className="text-[10px] font-mono text-primary/70 hover:text-primary transition-colors py-3 px-2 min-h-[44px]">Manage</button>
               <span className="text-muted-foreground/20">&middot;</span>
-              <button onClick={onRunDiscovery} className="text-[10px] font-mono text-primary/70 hover:text-primary transition-colors">Re-discover</button>
+              <button onClick={onRunDiscovery} className="text-[10px] font-mono text-primary/70 hover:text-primary transition-colors py-3 px-2 min-h-[44px]">Re-discover</button>
             </div>
           </>
         )}
