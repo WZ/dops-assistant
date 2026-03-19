@@ -1,8 +1,10 @@
 import type { Express, Request, Response } from "express";
 import type { Database, InvestigationRow, PhaseRow, EventRow } from "./db.js";
 import type { ServiceConfig } from "../config/schema.js";
+import { ProviderSchema } from "../config/schema.js";
 import type { SkillStore } from "../skills/store.js";
 import type { ServiceRegistryStore } from "../services/registry.js";
+import type { ProviderRegistry } from "../mcp/provider-registry.js";
 
 export interface DependencyNode {
   id: string;
@@ -100,6 +102,7 @@ export function buildHandlers(db: Database, services: ServiceConfig[]): RouteHan
 export function registerRoutes(
   app: Express, db: Database, services: ServiceConfig[], _mcp?: unknown,
   skillStore?: SkillStore, registryStore?: ServiceRegistryStore,
+  providerRegistry?: ProviderRegistry,
 ): void {
   const handlers = buildHandlers(db, services);
 
@@ -340,4 +343,97 @@ export function registerRoutes(
     }
     res.json(db.findSimilarPatterns(service));
   });
+
+  // ── Provider Management REST API ──────────────────────────────────────
+  if (providerRegistry) {
+    // GET /api/providers — list all with connection status
+    app.get("/api/providers", (_req: Request, res: Response) => {
+      const providers = providerRegistry.getAll();
+      res.json(providers.map(p => ({
+        name: p.config.name,
+        roles: p.config.roles,
+        region: p.config.region,
+        transport: p.config.mcpServer.transport,
+        command: p.config.mcpServer.transport === "stdio" ? p.config.mcpServer.command : undefined,
+        url: p.config.mcpServer.transport === "http" ? p.config.mcpServer.url : undefined,
+        source: p.source,
+        status: p.status,
+        toolCount: p.toolCount,
+        error: p.error,
+      })));
+    });
+
+    // POST /api/providers — add a new provider
+    app.post("/api/providers", async (req: Request, res: Response) => {
+      try {
+        const config = req.body;
+        const parsed = ProviderSchema.safeParse(config);
+        if (!parsed.success) {
+          res.status(400).json({ error: parsed.error.issues.map(i => i.message).join(", ") });
+          return;
+        }
+        const info = await providerRegistry.add(parsed.data);
+        res.status(201).json({
+          name: info.config.name,
+          status: info.status,
+          toolCount: info.toolCount,
+          error: info.error,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("already exists")) {
+          res.status(409).json({ error: msg });
+        } else {
+          res.status(500).json({ error: msg });
+        }
+      }
+    });
+
+    // PUT /api/providers/:name — update
+    app.put("/api/providers/:name", async (req: Request, res: Response) => {
+      try {
+        const name = Array.isArray(req.params["name"]) ? req.params["name"][0]! : req.params["name"]!;
+        const config = req.body;
+        const parsed = ProviderSchema.safeParse(config);
+        if (!parsed.success) {
+          res.status(400).json({ error: parsed.error.issues.map(i => i.message).join(", ") });
+          return;
+        }
+        const info = await providerRegistry.update(name, parsed.data);
+        res.json({ name: info.config.name, status: info.status, toolCount: info.toolCount });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("system provider")) res.status(403).json({ error: msg });
+        else if (msg.includes("not found")) res.status(404).json({ error: msg });
+        else res.status(500).json({ error: msg });
+      }
+    });
+
+    // DELETE /api/providers/:name — remove
+    app.delete("/api/providers/:name", async (req: Request, res: Response) => {
+      try {
+        const name = Array.isArray(req.params["name"]) ? req.params["name"][0]! : req.params["name"]!;
+        await providerRegistry.remove(name);
+        res.status(204).end();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("system provider")) res.status(403).json({ error: msg });
+        else if (msg.includes("not found")) res.status(404).json({ error: msg });
+        else res.status(500).json({ error: msg });
+      }
+    });
+
+    // POST /api/providers/:name/test — test connection
+    app.post("/api/providers/:name/test", async (req: Request, res: Response) => {
+      try {
+        const name = Array.isArray(req.params["name"]) ? req.params["name"][0]! : req.params["name"]!;
+        const result = await providerRegistry.test(name);
+        res.json(result);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("not found")) res.status(404).json({ error: msg });
+        else res.status(500).json({ error: msg });
+      }
+    });
+  }
 }

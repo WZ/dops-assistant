@@ -17,7 +17,8 @@ import { ConversationMemory } from "../memory/conversation.js";
 import { loadConfig, getServicesFilePath } from "../config/loader.js";
 import { SkillStore } from "../skills/store.js";
 import { createMastraAdapters } from "./agents.js";
-import { createMcpProvider, getAllTools } from "../mcp/provider.js";
+import { getAllTools } from "../mcp/provider.js";
+import { ProviderRegistry } from "../mcp/provider-registry.js";
 import { createModel } from "../mastra/index.js";
 import { ServiceRegistryStore } from "../services/registry.js";
 import type { ValidatedServiceConfig } from "../types/discovery-types.js";
@@ -49,8 +50,11 @@ async function main() {
   const servicesPath = getServicesFilePath(configPath);
   const registryStore = new ServiceRegistryStore(servicesPath);
 
-  // Mastra MCP providers
-  const providers = config.providers.map(createMcpProvider);
+  // Mastra MCP providers via ProviderRegistry
+  const providersFilePath = resolve(path.dirname(configPath), "providers.yaml");
+  const registry = new ProviderRegistry(config.providers, providersFilePath);
+  await registry.initialize();
+  const providers = registry.getProviders();
 
   const model = createModel(config.llm);
   const router = new IntentRouter(model);
@@ -71,7 +75,7 @@ async function main() {
   const server = createServer(app);
   const port = Number(process.env["PORT"] ?? 3000);
 
-  registerRoutes(app, db, config.services, undefined, skillStore, registryStore);
+  registerRoutes(app, db, config.services, undefined, skillStore, registryStore, registry);
 
   // Health check endpoint with background monitoring
   startHealthMonitor({ providers, db });
