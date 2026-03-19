@@ -379,8 +379,16 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
           <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">Services</h2>
         </div>
         {services.length === 0 ? (
-          <div className="py-8 text-center">
-            <p className="text-sm text-muted-foreground/70">No services configured</p>
+          <div className="py-8 flex flex-col items-center gap-3">
+            <svg width="48" height="48" viewBox="0 0 64 64" fill="none" className="text-muted-foreground/15" aria-hidden="true">
+              <circle cx="32" cy="32" r="24" stroke="currentColor" strokeWidth="1.5" strokeDasharray="4 3" />
+              <path d="M32 16v32M16 32h32" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" opacity="0.5" />
+              <circle cx="32" cy="32" r="4" stroke="currentColor" strokeWidth="1.5" />
+              <path d="M32 8l2 4-2-1-2 1 2-4z" stroke="currentColor" strokeWidth="1" fill="currentColor" opacity="0.4" />
+            </svg>
+            <div className="text-center">
+              <p className="font-body text-[13px] text-muted-foreground/70">No services configured</p>
+            </div>
           </div>
         ) : (
           <>
@@ -418,9 +426,19 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
             ))}
           </div>
         ) : investigations.length === 0 ? (
-          <div className="py-8 text-center">
-            <p className="text-sm text-muted-foreground/70">No investigations yet</p>
-            <p className="text-xs text-muted-foreground/55 mt-1 font-mono">start one from chat or click a service</p>
+          <div className="py-8 flex flex-col items-center gap-3">
+            <svg width="48" height="48" viewBox="0 0 64 64" fill="none" className="text-muted-foreground/15" aria-hidden="true">
+              <rect x="12" y="8" width="32" height="44" rx="2" stroke="currentColor" strokeWidth="1.5" />
+              <line x1="20" y1="20" x2="36" y2="20" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" opacity="0.3" />
+              <line x1="20" y1="28" x2="36" y2="28" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" opacity="0.3" />
+              <line x1="20" y1="36" x2="28" y2="36" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" opacity="0.3" />
+              <circle cx="44" cy="44" r="12" stroke="currentColor" strokeWidth="1.5" />
+              <line x1="52" y1="52" x2="58" y2="58" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+            <div className="text-center">
+              <p className="font-body text-[13px] text-muted-foreground/70">No investigations yet</p>
+              <p className="font-mono text-[10px] text-muted-foreground/50 mt-1">start one from chat or click a service</p>
+            </div>
           </div>
         ) : (
           <div className="space-y-1.5">
