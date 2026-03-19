@@ -8,6 +8,7 @@ import { ChatPane } from "./components/ChatPane";
 import { Dashboard } from "./components/Dashboard";
 import { InvestigationPane } from "./components/InvestigationPane";
 import { SkillsPage } from "./components/SkillsPage";
+import { ProvidersPage } from "./components/ProvidersPage";
 import { ServicesManage } from "./components/ServicesManage";
 import { VersionHistory } from "./components/VersionHistory";
 import { DiscoveryProgress } from "./components/DiscoveryProgress";
@@ -29,6 +30,7 @@ export type LeftPaneView =
   | { type: "dashboard" }
   | { type: "investigation"; id: string }
   | { type: "skills" }
+  | { type: "providers" }
   | { type: "services:manage" }
   | { type: "services:history" }
   | { type: "services:discovery" }
@@ -138,6 +140,12 @@ export function App() {
               className={`px-2.5 py-2 min-h-[44px] flex items-center text-[10px] font-mono rounded transition-colors ${leftPane.type === "dashboard" ? "text-primary bg-primary/8" : "text-muted-foreground/50 hover:text-foreground/70 hover:bg-secondary/30"}`}
             >
               Dashboard
+            </button>
+            <button
+              onClick={() => setLeftPane({ type: "providers" })}
+              className={`px-2.5 py-2 min-h-[44px] flex items-center text-[10px] font-mono rounded transition-colors ${leftPane.type === "providers" ? "text-primary bg-primary/8" : "text-muted-foreground/50 hover:text-foreground/70 hover:bg-secondary/30"}`}
+            >
+              Providers
             </button>
             <button
               onClick={() => setLeftPane({ type: "skills" })}
@@ -275,6 +283,13 @@ export function App() {
                       ws.send({ type: "chat", message: `investigate ${serviceName}` });
                     }}
                     onManageServices={() => setLeftPane({ type: "services:manage" })}
+                    onRunDiscovery={() => {
+                      ws.send({ type: "discover" });
+                      setLeftPane({ type: "services:discovery" });
+                    }}
+                  />
+                ) : leftPane.type === "providers" ? (
+                  <ProvidersPage
                     onRunDiscovery={() => {
                       ws.send({ type: "discover" });
                       setLeftPane({ type: "services:discovery" });
