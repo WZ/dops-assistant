@@ -35,6 +35,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
   const [patterns, setPatterns] = useState<Pattern[]>([]);
   const [patternsExpanded, setPatternsExpanded] = useState(false);
   const [activeInvestigations, setActiveInvestigations] = useState<Map<string, ActiveInvestigation>>(new Map());
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   const processedRef = useRef(0);
 
@@ -45,10 +46,18 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
         fetch("/api/investigations?limit=100"),
         fetch("/api/services"),
       ]);
+      if (!invRes.ok || !svcRes.ok) {
+        throw new Error(`Server error: ${!invRes.ok ? invRes.status : svcRes.status}`);
+      }
       const [invData, svcData] = await Promise.all([invRes.json(), svcRes.json()]);
       setInvestigations(invData);
       setServices(svcData);
-    } catch { /* silently fail — keep last data */ }
+      setFetchError(null);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to load data";
+      console.error("Dashboard fetch failed:", message);
+      setFetchError(message);
+    }
     setLoading(false);
   }
 
@@ -203,6 +212,27 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
         <h1 className="font-display text-xl font-bold tracking-tight text-foreground/90">Operations Desk</h1>
         <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">{services.length} services monitored</p>
       </div>
+
+      {/* Error banner */}
+      {fetchError && (
+        <div className="mb-6 rounded-lg border border-destructive/15 bg-destructive/6 px-4 py-3 animate-fade-up">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-destructive text-sm flex-shrink-0">⚠</span>
+              <div className="min-w-0">
+                <p className="font-body text-[13px] text-foreground/70">Unable to load dashboard data</p>
+                <p className="font-mono text-[10px] text-muted-foreground/50 truncate">{fetchError}</p>
+              </div>
+            </div>
+            <button
+              onClick={() => { setFetchError(null); fetchData(); }}
+              className="flex-shrink-0 font-mono text-[10px] uppercase tracking-[0.1em] text-destructive hover:text-destructive/80 transition-colors py-2 px-3 min-h-[44px]"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Section B: KPI Stat Cards */}
       <section aria-label="Overview" className="mb-6">
