@@ -4,20 +4,11 @@ import { ServiceCard } from "./ServiceCard";
 import { FirstRunBanner } from "./FirstRunBanner";
 import { StatCard } from "./dashboard/StatCard";
 import { InvestigationRow } from "./dashboard/InvestigationRow";
+import { formatTokens } from "@/lib/formatTokens";
+import { formatDuration, severityVariant } from "@/lib/dashboard-utils";
+import type { InvestigationSummary, Pattern } from "@/lib/dashboard-utils";
 import type { ServiceConfig } from "../../config/schema.js";
 import type { ServerMessage } from "../../types/ws-types.js";
-
-interface InvestigationSummary {
-  id: string;
-  service: string;
-  status: string;
-  report: string | null;
-  created_at: string;
-  completed_at: string | null;
-  total_input_tokens: number;
-  total_output_tokens: number;
-  total_duration_ms: number;
-}
 
 interface DashboardProps {
   wsMessages: ServerMessage[];
@@ -27,16 +18,6 @@ interface DashboardProps {
   onRunDiscovery: () => void;
 }
 
-interface Pattern {
-  id: string;
-  service: string;
-  symptom: string;
-  rootCause: string;
-  severity: string;
-  recommendedActions: string;
-  sourceInvestigationId: string;
-}
-
 interface ActiveInvestigation {
   id: string;
   service: string;
@@ -44,27 +25,6 @@ interface ActiveInvestigation {
   phase: string;
   failed?: boolean;
   failedAt?: number;
-}
-
-function severityVariant(severity: string): "destructive" | "warning" | "secondary" | "outline" {
-  switch (severity?.toLowerCase()) {
-    case "critical": return "destructive";
-    case "high": return "warning";
-    case "medium": return "secondary";
-    default: return "outline";
-  }
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
-}
-
-function formatDuration(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
 export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateService, onManageServices, onRunDiscovery }: DashboardProps) {
@@ -284,7 +244,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
   const activeList = useMemo(() => [...activeInvestigations.values()], [activeInvestigations]);
 
   return (
-    <div className="h-full overflow-y-auto p-6 relative z-[2]">
+    <div className="h-full overflow-y-auto p-6 relative z-[2] dashboard-container">
       {/* First-run banner */}
       {services.length === 0 && !bannerDismissed && (
         <FirstRunBanner onRunDiscovery={onRunDiscovery} onDismiss={() => setBannerDismissed(true)} />
@@ -302,7 +262,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
           <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
           <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">Overview</h2>
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-3 dashboard-kpi-grid">
           <StatCard
             label="Investigations"
             value={String(kpiData.total)}
@@ -366,10 +326,20 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3 dashboard-services-grid">
               {services.map((svc, i) => (
                 <div key={svc.name} className={`animate-fade-up delay-${Math.min(i + 1, 8)}`}>
-                  <ServiceCard name={svc.name} onClick={() => onInvestigateService(svc.name)} />
+                  <ServiceCard
+                    name={svc.name}
+                    onClick={() => onInvestigateService(svc.name)}
+                    lastInvestigation={(() => {
+                      const latest = investigations
+                        .filter(inv => inv.service === svc.name)
+                        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+                      return latest ? { status: latest.status, created_at: latest.created_at } : null;
+                    })()}
+                    investigationCount={investigations.filter(inv => inv.service === svc.name).length}
+                  />
                 </div>
               ))}
             </div>
@@ -419,7 +389,6 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
       {patterns.length > 0 && (
         <section aria-label="Learned Patterns" className="mb-6">
           <button
-            role="button"
             aria-expanded={patternsExpanded}
             onClick={() => setPatternsExpanded(!patternsExpanded)}
             className="flex items-center gap-2 mb-3 group cursor-pointer"

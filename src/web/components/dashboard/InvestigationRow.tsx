@@ -1,40 +1,13 @@
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-
-interface InvestigationSummary {
-  id: string;
-  service: string;
-  status: string; // "complete" | "failed" | "running"
-  report: string | null; // JSON string with { rootCause, confidence, severity, summary, ... }
-  created_at: string; // ISO timestamp
-  total_input_tokens: number;
-  total_output_tokens: number;
-  total_duration_ms: number;
-}
+import { formatTokens } from "@/lib/formatTokens";
+import { formatDuration, normalizeConfidence, severityVariant } from "@/lib/dashboard-utils";
+import type { InvestigationSummary } from "@/lib/dashboard-utils";
 
 interface InvestigationRowProps {
   investigation: InvestigationSummary;
   onClick: (id: string) => void;
   className?: string;
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
-}
-
-function formatDuration(ms: number): string {
-  const totalSeconds = Math.floor(ms / 1000);
-  if (totalSeconds < 60) return `${totalSeconds}s`;
-  const totalMinutes = Math.floor(totalSeconds / 60);
-  if (totalMinutes < 60) {
-    const secs = totalSeconds % 60;
-    return secs > 0 ? `${totalMinutes}m ${secs}s` : `${totalMinutes}m`;
-  }
-  const hours = Math.floor(totalMinutes / 60);
-  const mins = totalMinutes % 60;
-  return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
 }
 
 function timeAgo(dateStr: string): string {
@@ -47,35 +20,20 @@ function timeAgo(dateStr: string): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-type BadgeVariant = "destructive" | "warning" | "secondary" | "outline";
-
-function severityVariant(severity: string): BadgeVariant {
-  switch (severity?.toLowerCase()) {
-    case "critical":
-      return "destructive";
-    case "high":
-      return "warning";
-    case "medium":
-      return "secondary";
-    default:
-      return "outline";
-  }
-}
-
 export function InvestigationRow({
   investigation: inv,
   onClick,
   className,
 }: InvestigationRowProps) {
   let rootCause = "";
-  let confidence: unknown = "";
+  let confidenceDisplay = "";
   let severity = "";
 
   if (inv.report) {
     try {
       const r = JSON.parse(inv.report);
       rootCause = r.rootCause ?? "";
-      confidence = r.confidence ?? "";
+      confidenceDisplay = normalizeConfidence(r.confidence);
       severity = r.severity ?? "";
     } catch {
       // ignore malformed JSON
@@ -127,13 +85,9 @@ export function InvestigationRow({
 
         {/* Right-aligned metrics */}
         <div className="flex items-center gap-2 flex-shrink-0">
-          {confidence !== "" && confidence != null && (
+          {confidenceDisplay && (
             <span className="font-mono text-[10px] text-foreground/60">
-              {typeof confidence === "number"
-                ? `${Math.round(confidence * 100)}%`
-                : String(confidence).includes("%")
-                  ? String(confidence)
-                  : `${confidence}%`}
+              {confidenceDisplay}
             </span>
           )}
           {totalTokens > 0 && (
