@@ -327,7 +327,9 @@ function enrichLogLabels(
       }
     }
 
-    // Pass 3: Substring containment
+    // Pass 3: Substring containment with similarity threshold
+    // The shorter string must cover ≥60% of the longer string's length to avoid
+    // false positives like "controller" matching "kube-controller-manager"
     for (const [labelKey, valueMap] of sortedLabels) {
       if (labelKey === "filename" || labelKey === "namespace" || labelKey === "batch_kubernetes_io_job_name") continue;
       for (const variant of nameVariants) {
@@ -335,9 +337,13 @@ function enrichLogLabels(
         for (const [lowerVal, originalVal] of valueMap) {
           if (lowerVal.length < 5) continue;
           if (lowerVal.includes(variant) || variant.includes(lowerVal)) {
-            enrichedCount++;
-            console.error(`[VALIDATE] Log label match: "${service.name}" → ${labelKey}="${originalVal}" (substring)`);
-            return { ...service, logLabels: { [labelKey]: originalVal } };
+            const shorter = Math.min(variant.length, lowerVal.length);
+            const longer = Math.max(variant.length, lowerVal.length);
+            if (shorter / longer >= 0.6) {
+              enrichedCount++;
+              console.error(`[VALIDATE] Log label match: "${service.name}" → ${labelKey}="${originalVal}" (substring, ${Math.round(shorter/longer*100)}% coverage)`);
+              return { ...service, logLabels: { [labelKey]: originalVal } };
+            }
           }
         }
       }
