@@ -37,6 +37,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
   const [activeInvestigations, setActiveInvestigations] = useState<Map<string, ActiveInvestigation>>(new Map());
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [refreshProgress, setRefreshProgress] = useState(0);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const processedRef = useRef(0);
 
@@ -72,6 +73,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
         return changed ? next : prev;
       });
       setFetchError(null);
+      setLastUpdated(new Date());
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load data";
       console.error("Dashboard fetch failed:", message);
@@ -243,6 +245,13 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
     return map;
   }, [investigations, services]);
 
+  // Format and compute freshness of last updated timestamp
+  const formatLastUpdated = (date: Date): string => {
+    return date.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  };
+
+  const isStale = lastUpdated ? Date.now() - lastUpdated.getTime() > 2 * 60 * 1000 : false;
+
   return (
     <div className="h-full overflow-y-auto p-6 relative z-[2] dashboard-container">
       {/* Auto-refresh progress bar */}
@@ -263,7 +272,14 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
       {/* Section A: Title */}
       <div className="mb-6 animate-fade-up">
         <h1 className="font-display text-xl font-bold tracking-tight text-foreground/90">Operations Desk</h1>
-        <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">{services.length} services monitored</p>
+        <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">
+          {services.length} services monitored
+          {lastUpdated && (
+            <span className={`text-[9px] tabular-nums ${isStale ? "text-warning/60" : "text-muted-foreground/50"}`}>
+              {" · "}Updated {formatLastUpdated(lastUpdated)}
+            </span>
+          )}
+        </p>
       </div>
 
       {/* Error banner */}
