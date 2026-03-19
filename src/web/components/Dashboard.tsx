@@ -128,15 +128,18 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
     }
   }, [wsMessages]);
 
-  // Clean up failed investigations after 30 minutes
+  // Clean up stale active investigations after 30 minutes
   useEffect(() => {
     const interval = setInterval(() => {
       const now = Date.now();
+      const MAX_AGE_MS = 30 * 60 * 1000;
       setActiveInvestigations(prev => {
         let changed = false;
         const next = new Map(prev);
         for (const [id, inv] of next) {
-          if (inv.failed && inv.failedAt && now - inv.failedAt > 30 * 60 * 1000) {
+          const isFailedStale = inv.failed && inv.failedAt && now - inv.failedAt > MAX_AGE_MS;
+          const isStartStale = now - inv.startTime > MAX_AGE_MS;
+          if (isFailedStale || isStartStale) {
             next.delete(id);
             changed = true;
           }
