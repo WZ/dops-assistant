@@ -62,6 +62,12 @@ describe("normalizeConfidence", () => {
     expect(normalizeConfidence(0)).toBe("0%");
   });
 
+  it("converts confidenceScore (0-100) to percentage", () => {
+    expect(normalizeConfidence(87)).toBe("87%");
+    expect(normalizeConfidence(50)).toBe("50%");
+    expect(normalizeConfidence(100)).toBe("100%");
+  });
+
   it("passes through strings with %", () => {
     expect(normalizeConfidence("87%")).toBe("87%");
     expect(normalizeConfidence("50%")).toBe("50%");
@@ -69,6 +75,11 @@ describe("normalizeConfidence", () => {
 
   it("appends % to numeric strings", () => {
     expect(normalizeConfidence("87")).toBe("87%");
-    expect(normalizeConfidence("high")).toBe("high%");
+  });
+
+  it("returns non-numeric strings as-is", () => {
+    expect(normalizeConfidence("high")).toBe("high");
+    expect(normalizeConfidence("medium")).toBe("medium");
+    expect(normalizeConfidence("low")).toBe("low");
   });
 });

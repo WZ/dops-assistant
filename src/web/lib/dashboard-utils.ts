@@ -51,7 +51,14 @@ export function formatDuration(ms: number): string {
 /** Normalize unknown confidence value from JSON to a display string like "87%" */
 export function normalizeConfidence(raw: unknown): string {
   if (raw == null || raw === "") return "";
-  if (typeof raw === "number") return `${Math.round(raw * 100)}%`;
+  if (typeof raw === "number") {
+    // confidenceScore is 0-100, confidence as float is 0-1
+    return raw <= 1 ? `${Math.round(raw * 100)}%` : `${Math.round(raw)}%`;
+  }
   const str = String(raw);
-  return str.includes("%") ? str : `${str}%`;
+  if (str.includes("%")) return str;
+  // If it's a numeric string, append %
+  if (/^\d+(\.\d+)?$/.test(str)) return `${str}%`;
+  // Non-numeric strings (e.g. "high", "medium") returned as-is
+  return str;
 }

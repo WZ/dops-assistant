@@ -33,7 +33,7 @@ export function InvestigationRow({
     try {
       const r = JSON.parse(inv.report);
       rootCause = r.rootCause ?? "";
-      confidenceDisplay = normalizeConfidence(r.confidence);
+      confidenceDisplay = normalizeConfidence(r.confidenceScore ?? r.confidence);
       severity = r.severity ?? "";
     } catch {
       // ignore malformed JSON
