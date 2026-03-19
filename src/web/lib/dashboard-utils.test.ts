@@ -235,8 +235,8 @@ describe("computeKpiData", () => {
     const threeDaysAgo = new Date(NOW - 3 * 24 * 60 * 60_000).toISOString();
     const oneDayAgo = new Date(NOW - 1 * 24 * 60 * 60_000).toISOString();
     const investigations = [
-      makeInv({ id: "1", status: "complete", total_duration_ms: 60_000, created_at: threeDaysAgo }),
-      makeInv({ id: "2", status: "complete", total_duration_ms: 120_000, created_at: oneDayAgo }),
+      makeInv({ id: "1", status: "complete", total_duration_ms: 60_000, created_at: threeDaysAgo, completed_at: threeDaysAgo }),
+      makeInv({ id: "2", status: "complete", total_duration_ms: 120_000, created_at: oneDayAgo, completed_at: oneDayAgo }),
     ];
     const result = computeKpiData(investigations, []);
     // avg of 60_000 and 120_000 = 90_000
@@ -252,8 +252,8 @@ describe("computeKpiData", () => {
     const tenDaysAgo = new Date(NOW - 10 * 24 * 60 * 60_000).toISOString();
 
     const investigations = [
-      makeInv({ id: "1", status: "complete", total_duration_ms: 60_000, created_at: threeDaysAgo }),
-      makeInv({ id: "2", status: "complete", total_duration_ms: 120_000, created_at: tenDaysAgo }),
+      makeInv({ id: "1", status: "complete", total_duration_ms: 60_000, created_at: threeDaysAgo, completed_at: threeDaysAgo }),
+      makeInv({ id: "2", status: "complete", total_duration_ms: 120_000, created_at: tenDaysAgo, completed_at: tenDaysAgo }),
     ];
 
     const result = computeKpiData(investigations, []);
@@ -271,8 +271,8 @@ describe("computeKpiData", () => {
     const tenDaysAgo = new Date(NOW - 10 * 24 * 60 * 60_000).toISOString();
 
     const investigations = [
-      makeInv({ id: "1", status: "complete", total_duration_ms: 120_000, created_at: threeDaysAgo }),
-      makeInv({ id: "2", status: "complete", total_duration_ms: 60_000, created_at: tenDaysAgo }),
+      makeInv({ id: "1", status: "complete", total_duration_ms: 120_000, created_at: threeDaysAgo, completed_at: threeDaysAgo }),
+      makeInv({ id: "2", status: "complete", total_duration_ms: 60_000, created_at: tenDaysAgo, completed_at: tenDaysAgo }),
     ];
 
     const result = computeKpiData(investigations, []);
@@ -286,7 +286,7 @@ describe("computeKpiData", () => {
     // Only last 7d data, no prior 7d data
     const threeDaysAgo = new Date(NOW - 3 * 24 * 60 * 60_000).toISOString();
     const investigations = [
-      makeInv({ id: "1", status: "complete", total_duration_ms: 60_000, created_at: threeDaysAgo }),
+      makeInv({ id: "1", status: "complete", total_duration_ms: 60_000, created_at: threeDaysAgo, completed_at: threeDaysAgo }),
     ];
     const result = computeKpiData(investigations, []);
     expect(result.avgMttr7d).toBe(60_000);

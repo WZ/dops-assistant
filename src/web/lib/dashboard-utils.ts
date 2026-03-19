@@ -107,12 +107,12 @@ export function computeKpiData(
   const fourteenDaysAgo = now - 14 * 24 * 60 * 60 * 1000;
 
   const completedLast7d = investigations.filter(
-    i => i.status === "complete" && new Date(i.created_at).getTime() >= sevenDaysAgo
+    i => i.status === "complete" && new Date(i.completed_at ?? i.created_at).getTime() >= sevenDaysAgo
   );
   const completedPrior7d = investigations.filter(
     i => i.status === "complete" &&
-      new Date(i.created_at).getTime() >= fourteenDaysAgo &&
-      new Date(i.created_at).getTime() < sevenDaysAgo
+      new Date(i.completed_at ?? i.created_at).getTime() >= fourteenDaysAgo &&
+      new Date(i.completed_at ?? i.created_at).getTime() < sevenDaysAgo
   );
 
   const avgMttr7d = completedLast7d.length > 0

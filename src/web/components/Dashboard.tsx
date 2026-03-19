@@ -44,9 +44,11 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
   const [servicesExpanded, setServicesExpanded] = useState(false);
 
   const processedRef = useRef(0);
+  const fetchSeqRef = useRef(0);
 
-  // Fetch data from API
+  // Fetch data from API (sequence counter prevents stale responses from overwriting newer data)
   async function fetchData() {
+    const seq = ++fetchSeqRef.current;
     try {
       const [invRes, svcRes] = await Promise.all([
         fetch("/api/investigations?limit=100"),
@@ -55,6 +57,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
       if (!invRes.ok || !svcRes.ok) {
         throw new Error(`Server error: ${!invRes.ok ? invRes.status : svcRes.status}`);
       }
+      if (seq !== fetchSeqRef.current) return; // stale response — newer fetch in flight
       const [invData, svcData] = await Promise.all([invRes.json(), svcRes.json()]);
       setInvestigations(invData);
       setServices(svcData);
@@ -148,27 +151,27 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
       }
 
       if (msg.type === "investigation:complete") {
-        const invService = activeInvestigations.get(msg.id)?.service ?? "Unknown";
         setActiveInvestigations(prev => {
           const next = new Map(prev);
+          const service = next.get(msg.id)?.service ?? "Unknown";
           next.delete(msg.id);
+          setToasts(t => [...t.slice(-9), { id: msg.id, service, status: "complete", timestamp: Date.now() }]);
           return next;
         });
-        setToasts(prev => [...prev, { id: msg.id, service: invService, status: "complete", timestamp: Date.now() }]);
         shouldRefetch = true;
       }
 
       if (msg.type === "investigation:failed") {
-        const invService = activeInvestigations.get(msg.id)?.service ?? "Unknown";
         setActiveInvestigations(prev => {
           const next = new Map(prev);
           const existing = next.get(msg.id);
+          const service = existing?.service ?? "Unknown";
           if (existing) {
             next.set(msg.id, { ...existing, failed: true, failedAt: Date.now() });
           }
+          setToasts(t => [...t.slice(-9), { id: msg.id, service, status: "failed", timestamp: Date.now() }]);
           return next;
         });
-        setToasts(prev => [...prev, { id: msg.id, service: invService, status: "failed", timestamp: Date.now() }]);
         shouldRefetch = true;
       }
     }
@@ -178,17 +181,18 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
     }
   }, [wsMessages]);
 
-  // Clean up stale active investigations after 30 minutes
+  // Clean up stale active investigations (failed: 30min, non-failed: 2h to allow long investigations)
   useEffect(() => {
     const interval = setInterval(() => {
       const now = Date.now();
-      const MAX_AGE_MS = 30 * 60 * 1000;
+      const FAILED_MAX_AGE_MS = 30 * 60 * 1000;
+      const ACTIVE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
       setActiveInvestigations(prev => {
         let changed = false;
         const next = new Map(prev);
         for (const [id, inv] of next) {
-          const isFailedStale = inv.failed && inv.failedAt && now - inv.failedAt > MAX_AGE_MS;
-          const isStartStale = now - inv.startTime > MAX_AGE_MS;
+          const isFailedStale = inv.failed && inv.failedAt && now - inv.failedAt > FAILED_MAX_AGE_MS;
+          const isStartStale = !inv.failed && now - inv.startTime > ACTIVE_MAX_AGE_MS;
           if (isFailedStale || isStartStale) {
             next.delete(id);
             changed = true;
