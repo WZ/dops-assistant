@@ -422,7 +422,7 @@ export async function handleClientMessage(
     // Build WS-streaming callbacks for the runner
     const wsCallbacks: InvestigationCallbacks = {
       onPhase: (phase, status, stats) => {
-        send({ type: "investigation:phase", phase, status, stats });
+        send({ type: "investigation:phase", id: invId, phase, status, stats });
       },
       onToolCall: (phase, tool, args, status, result, durationMs) => {
         send({ type: "investigation:tool_call", phase, tool, args, status: status as "error" | "success" | "calling", result, durationMs });

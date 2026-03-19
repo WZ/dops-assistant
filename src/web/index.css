@@ -283,6 +283,13 @@ input:focus, textarea:focus {
   box-shadow: 0 4px 12px hsl(var(--foreground) / 0.06);
 }
 
+/* ── Shimmer skeleton loading ── */
+.shimmer-skeleton {
+  background: linear-gradient(90deg, hsl(var(--muted)) 25%, hsl(var(--secondary)) 50%, hsl(var(--muted)) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.6s infinite;
+}
+
 /* ── Indeterminate progress bar ── */
 @keyframes progress-indeterminate {
   0% { transform: translateX(-100%); }

@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { cn } from "@/lib/utils";
 
 interface StatCardProps {
@@ -13,7 +14,7 @@ interface StatCardProps {
   loading?: boolean;
 }
 
-export function StatCard({
+export const StatCard = memo(function StatCard({
   label,
   value,
   detail,
@@ -36,37 +37,11 @@ export function StatCard({
         className="rounded-lg border border-border/40 bg-card/50 p-4"
       >
         {/* Value skeleton */}
-        <div
-          className="h-8 w-3/5 rounded-md bg-muted-foreground/10"
-          style={{
-            background:
-              "linear-gradient(90deg, hsl(var(--muted)) 25%, hsl(var(--secondary)) 50%, hsl(var(--muted)) 75%)",
-            backgroundSize: "200% 100%",
-            animation: "shimmer 1.6s infinite",
-          }}
-        />
+        <div className="h-8 w-3/5 rounded-md shimmer-skeleton" />
         {/* Label skeleton */}
-        <div
-          className="mt-2 h-2.5 w-2/5 rounded"
-          style={{
-            background:
-              "linear-gradient(90deg, hsl(var(--muted)) 25%, hsl(var(--secondary)) 50%, hsl(var(--muted)) 75%)",
-            backgroundSize: "200% 100%",
-            animation: "shimmer 1.6s infinite",
-            animationDelay: "0.1s",
-          }}
-        />
+        <div className="mt-2 h-2.5 w-2/5 rounded shimmer-skeleton" style={{ animationDelay: "0.1s" }} />
         {/* Detail skeleton */}
-        <div
-          className="mt-1.5 h-2 w-4/5 rounded"
-          style={{
-            background:
-              "linear-gradient(90deg, hsl(var(--muted)) 25%, hsl(var(--secondary)) 50%, hsl(var(--muted)) 75%)",
-            backgroundSize: "200% 100%",
-            animation: "shimmer 1.6s infinite",
-            animationDelay: "0.2s",
-          }}
-        />
+        <div className="mt-1.5 h-2 w-4/5 rounded shimmer-skeleton" style={{ animationDelay: "0.2s" }} />
       </div>
     );
   }
@@ -115,4 +90,4 @@ export function StatCard({
       )}
     </div>
   );
-}
+});
