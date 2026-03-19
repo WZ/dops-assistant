@@ -36,6 +36,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
   const [patternsExpanded, setPatternsExpanded] = useState(false);
   const [activeInvestigations, setActiveInvestigations] = useState<Map<string, ActiveInvestigation>>(new Map());
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [refreshProgress, setRefreshProgress] = useState(0);
 
   const processedRef = useRef(0);
 
@@ -52,6 +53,24 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
       const [invData, svcData] = await Promise.all([invRes.json(), svcRes.json()]);
       setInvestigations(invData);
       setServices(svcData);
+      // Reconcile: remove active investigations that are now complete/failed in DB
+      setActiveInvestigations(prev => {
+        if (prev.size === 0) return prev;
+        let changed = false;
+        const next = new Map(prev);
+        const completedOrFailed = new Set(
+          (invData as InvestigationSummary[])
+            .filter(inv => inv.status === "complete" || inv.status === "failed")
+            .map(inv => inv.id)
+        );
+        for (const id of next.keys()) {
+          if (completedOrFailed.has(id)) {
+            next.delete(id);
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
       setFetchError(null);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load data";
@@ -64,6 +83,27 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
   // Initial data fetch
   useEffect(() => {
     fetchData();
+  }, []);
+
+  // Auto-refresh every 60 seconds with progress indicator
+  useEffect(() => {
+    let lastFetchTime = Date.now();
+
+    const progressTick = setInterval(() => {
+      const elapsed = Date.now() - lastFetchTime;
+      setRefreshProgress(Math.min((elapsed / 60_000) * 100, 100));
+    }, 1000);
+
+    const refreshTick = setInterval(() => {
+      lastFetchTime = Date.now();
+      setRefreshProgress(0);
+      fetchData();
+    }, 60_000);
+
+    return () => {
+      clearInterval(progressTick);
+      clearInterval(refreshTick);
+    };
   }, []);
 
   // WS-driven re-fetch and active investigation tracking
@@ -205,6 +245,16 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
 
   return (
     <div className="h-full overflow-y-auto p-6 relative z-[2] dashboard-container">
+      {/* Auto-refresh progress bar */}
+      <div className="progress-bar-track absolute top-0 left-0 right-0 z-10">
+        <div
+          className="h-full bg-primary/40"
+          style={{
+            width: `${refreshProgress}%`,
+            transition: refreshProgress === 0 ? "none" : "width 1s linear",
+          }}
+        />
+      </div>
       {/* First-run banner */}
       {services.length === 0 && !bannerDismissed && (
         <FirstRunBanner onRunDiscovery={onRunDiscovery} onDismiss={() => setBannerDismissed(true)} />
