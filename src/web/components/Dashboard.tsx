@@ -243,6 +243,22 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
 
   const activeList = useMemo(() => [...activeInvestigations.values()], [activeInvestigations]);
 
+  // Pre-compute per-service investigation data for ServiceCards
+  const serviceInvData = useMemo(() => {
+    const map = new Map<string, { lastInvestigation: { status: string; created_at: string } | null; count: number }>();
+    for (const svc of services) {
+      const svcInvs = investigations.filter(inv => inv.service === svc.name);
+      const latest = svcInvs.length > 0
+        ? svcInvs.reduce((a, b) => new Date(a.created_at) > new Date(b.created_at) ? a : b)
+        : null;
+      map.set(svc.name, {
+        lastInvestigation: latest ? { status: latest.status, created_at: latest.created_at } : null,
+        count: svcInvs.length,
+      });
+    }
+    return map;
+  }, [investigations, services]);
+
   return (
     <div className="h-full overflow-y-auto p-6 relative z-[2] dashboard-container">
       {/* First-run banner */}
@@ -332,13 +348,8 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
                   <ServiceCard
                     name={svc.name}
                     onClick={() => onInvestigateService(svc.name)}
-                    lastInvestigation={(() => {
-                      const latest = investigations
-                        .filter(inv => inv.service === svc.name)
-                        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
-                      return latest ? { status: latest.status, created_at: latest.created_at } : null;
-                    })()}
-                    investigationCount={investigations.filter(inv => inv.service === svc.name).length}
+                    lastInvestigation={serviceInvData.get(svc.name)?.lastInvestigation ?? null}
+                    investigationCount={serviceInvData.get(svc.name)?.count ?? 0}
                   />
                 </div>
               ))}
