@@ -137,6 +137,32 @@ Dark mode uses deep charcoal backgrounds (225° hue, cool undertone) rather than
 - **Horizontal rules:** Clean 1px borders as section dividers. No heavy card borders or shadow-heavy elevation. Let typography create hierarchy.
 - **Monospace stamps:** Section labels use JetBrains Mono uppercase with wide letter-spacing (0.1–0.12em). Creates a "case file classification" aesthetic.
 
+## Dashboard Layout
+The main dashboard ("Operations Desk") follows a two-panel layout: scrollable dashboard (left) + resizable console/chat (right).
+
+**Dashboard column (top to bottom):**
+1. **Status Strip** — system health, uptime, MCP/DB probe status. Monospace stamp. Always visible.
+2. **Page title** — "Operations Desk" in Fraunces 700.
+3. **KPI Stat Cards** — 2x2 grid. Investigations (active/complete/failed), Services Healthy (N/Total), Avg MTTR 7d (with trend arrow), Token Usage. Mono-display numbers, Fraunces labels.
+4. **Active Investigations** — conditional coral-tinted section. Pulsing dots for running, red for failed. Collapses when nothing active.
+5. **Services Grid** — 2-3 col cards with health dot, investigation count, last investigation time. Manage/Re-discover links below.
+6. **Investigation Log** — compact table: status dot, service + severity badge, root cause, confidence, tokens, duration.
+7. **Learned Patterns** — collapsed by default. Severity badge + service + symptom/root cause.
+
+**Console panel (right):** Existing ChatPane, resizable 240-500px.
+
+### Dashboard Interaction States
+
+**Error banner** — full-width below title on fetch failure. Destructive/06 background, destructive/15 border, ⚠ icon + "Unable to load dashboard data" (body 13px) + error detail (mono 10px). "Retry" text button in destructive color. Fade-up entrance. Auto-dismisses on successful retry.
+
+**Toast notifications** — bottom-right, 24px from edges, max-width 320px. Card background with border + shadow (0 8px 24px foreground/08). Status dot (success/destructive) + service name (body 13px semibold) + status text (mono 10px). Slide-in-right entrance (350ms), fade-out exit (250ms). Auto-dismiss 8s, hover pauses. Max 3 stacked, 8px gap. Click navigates to investigation.
+
+**"Last updated" timestamp** — right-aligned in title row after services count. JetBrains Mono 9px, muted-foreground/50, tracking-wide. Format: "Updated HH:MM:SS" (24h, tabular-nums). Shifts to warning/60 after 2 minutes stale.
+
+**Auto-refresh indicator** — full-width 2px hairline below status strip. Reuses progress-bar-track/fill pattern. Linear fill over 60 seconds (not eased — progress should feel steady). Instant reset on fetch. Indeterminate animation during manual retry.
+
+**Empty state illustrations** — monochrome line art (stroke: muted-foreground/15, 1.5px, no fill). 64px viewBox rendered at 48px. Investigations: magnifying glass over blank page. Services: compass with dotted sweep lines. Text below: body 13px muted-foreground/70, mono 10px subtext. Centered, 12px gap.
+
 ## Decisions Log
 | Date | Decision | Rationale |
 |------|----------|-----------|
@@ -147,3 +173,10 @@ Dark mode uses deep charcoal backgrounds (225° hue, cool undertone) rather than
 | 2026-03-18 | Chose coral (#C2533D) as accent | Warm, earthy attention without the alarm of red. Pairs naturally with teal (complementary relationship). |
 | 2026-03-18 | Restrained color approach | Most of the UI is typographic. Color is rare and meaningful. Differentiates from competitors who blast accent color everywhere. |
 | 2026-03-18 | Minimal-functional motion | Calm, precise product feel. No decorative animation. Matches the editorial aesthetic. |
+| 2026-03-18 | Dashboard layout: Status → KPIs → Active → Services → Log → Patterns | Status strip first (SRE glance bar), KPIs second (overall health), Active third (conditional fire detector). Information hierarchy matches incident response mental model. |
+| 2026-03-18 | KPIs: Investigations, Services Healthy, MTTR (7d trend), Token Usage | Four cards that answer: how many, how healthy, how fast, how much. MTTR trend arrow shows improvement/regression at a glance. |
+| 2026-03-18 | All card backgrounds use CSS variables, not hardcoded rgba | Light mode had muddy gray cards when using dark-theme rgba values. Theme-adaptive variables ensure both themes work independently. |
+| 2026-03-18 | Toast at bottom-right, not top-center | Top-center competes with the status strip and title. Bottom-right is out of the primary reading path — noticeable but not intrusive. Max 3 to prevent notification fatigue. |
+| 2026-03-18 | "Last updated" as inline text, not separate component | A dedicated "freshness bar" is over-designed for a single timestamp. Inline after service count keeps it discoverable without adding visual weight. Warning color at 2min signals staleness without alarm. |
+| 2026-03-18 | Empty states use monochrome line art, not filled illustrations | Colored illustrations would fight the restrained palette. Line art at 15% opacity stays subordinate to the content hierarchy — visible enough to humanize, light enough not to distract. |
+| 2026-03-18 | Auto-refresh uses linear easing, not ease-out | Progress bars with eased motion feel deceptive — they appear to speed up or slow down when the refresh interval is constant. Linear communicates honest, predictable behavior. |

@@ -34,7 +34,7 @@ export type ServerMessage =
   | { type: "chat"; role: "user" | "assistant" | "system"; content: string; investigationId?: string; report?: unknown; chartData?: ChartSeries[] }
   | { type: "chat:tool_call"; tool: string; status: "calling" | "complete" }
   | { type: "investigation:started"; id: string; service: string; query: string }
-  | { type: "investigation:phase"; phase: string; status: "running" | "complete" | "failed"; data?: unknown; stats?: PhaseStats }
+  | { type: "investigation:phase"; id: string; phase: string; status: "running" | "complete" | "failed"; data?: unknown; stats?: PhaseStats }
   | { type: "investigation:progress"; phase: string; step: string }
   | { type: "investigation:tool_call"; phase: string; tool: string; args: Record<string, unknown>; status: "calling" | "success" | "error"; result?: string; durationMs?: number }
   | { type: "investigation:iteration"; phase: string; iteration: number; maxIterations: number; description: string }
