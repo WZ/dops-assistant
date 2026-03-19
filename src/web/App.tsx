@@ -13,7 +13,17 @@ import { VersionHistory } from "./components/VersionHistory";
 import { DiscoveryProgress } from "./components/DiscoveryProgress";
 import { DiscoveryReview } from "./components/DiscoveryReview";
 import { useWebSocket } from "./hooks/useWebSocket";
+import { useHealthPolling } from "./components/dashboard/useHealthPolling";
 import type { ValidatedServiceConfig } from "../types/discovery-types.js";
+
+function formatUptime(seconds: number): string {
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${mins}m`;
+  return `${mins}m`;
+}
 
 export type LeftPaneView =
   | { type: "dashboard" }
@@ -39,6 +49,7 @@ export function App() {
   });
   const ws = useWebSocket();
   const theme = useTheme();
+  const health = useHealthPolling();
 
   const [discoveryState, setDiscoveryState] = useState({
     phase: "discovery",
@@ -124,19 +135,50 @@ export function App() {
           <nav className="flex items-center gap-1 ml-4">
             <button
               onClick={() => setLeftPane({ type: "dashboard" })}
-              className={`px-2.5 py-1 text-[10px] font-mono rounded transition-colors ${leftPane.type === "dashboard" ? "text-primary bg-primary/8" : "text-muted-foreground/50 hover:text-foreground/70 hover:bg-secondary/30"}`}
+              className={`px-2.5 py-2 min-h-[44px] flex items-center text-[10px] font-mono rounded transition-colors ${leftPane.type === "dashboard" ? "text-primary bg-primary/8" : "text-muted-foreground/50 hover:text-foreground/70 hover:bg-secondary/30"}`}
             >
               Dashboard
             </button>
             <button
               onClick={() => setLeftPane({ type: "skills" })}
-              className={`px-2.5 py-1 text-[10px] font-mono rounded transition-colors ${leftPane.type === "skills" ? "text-primary bg-primary/8" : "text-muted-foreground/50 hover:text-foreground/70 hover:bg-secondary/30"}`}
+              className={`px-2.5 py-2 min-h-[44px] flex items-center text-[10px] font-mono rounded transition-colors ${leftPane.type === "skills" ? "text-primary bg-primary/8" : "text-muted-foreground/50 hover:text-foreground/70 hover:bg-secondary/30"}`}
             >
               Skills
             </button>
           </nav>
         </div>
         <div className="flex items-center gap-3">
+          {/* Health status indicators */}
+          <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-secondary/30">
+            <div className={`w-1.5 h-1.5 rounded-full transition-colors ${
+              health.connectionState === "connected" && health.health?.status === "healthy"
+                ? "bg-success"
+                : health.health?.status === "degraded"
+                ? "bg-warning"
+                : health.connectionState === "unreachable"
+                ? "bg-destructive"
+                : "bg-muted-foreground/30"
+            }`} />
+            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/60">
+              {health.connectionState === "connected" && health.health?.status === "healthy"
+                ? "HEALTHY"
+                : health.health?.status === "degraded"
+                ? "DEGRADED"
+                : health.connectionState === "unreachable"
+                ? "UNREACHABLE"
+                : "UNKNOWN"}
+            </span>
+            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/60">
+              {health.health ? formatUptime(health.health.uptime) : "—"}
+            </span>
+            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/60">
+              {health.health ? (health.health.probes.mcp.status === "ok" ? "mcp:ok" : "mcp:—") : "mcp:—"}
+            </span>
+            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/60">
+              {health.health ? (health.health.probes.db.status === "ok" ? "db:ok" : "db:—") : "db:—"}
+            </span>
+          </div>
+          {/* WS status pill */}
           <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-secondary/30">
             <div className={`w-1.5 h-1.5 rounded-full transition-colors ${ws.status === "connected" ? "bg-success" : ws.status === "connecting" ? "bg-accent animate-status-pulse" : "bg-destructive"}`} />
             <span className="text-[9px] font-mono text-muted-foreground/60 uppercase tracking-wider">
@@ -145,7 +187,7 @@ export function App() {
           </div>
           <button
             onClick={theme.toggle}
-            className="p-1.5 rounded-md text-muted-foreground/70 hover:text-foreground/70 hover:bg-secondary/50 transition-all"
+            className="p-2.5 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-md text-muted-foreground/70 hover:text-foreground/70 hover:bg-secondary/50 transition-all"
             title={theme.dark ? "Switch to light" : "Switch to dark"}
           >
             {theme.dark ? (
@@ -225,6 +267,7 @@ export function App() {
                   />
                 ) : leftPane.type === "dashboard" ? (
                   <Dashboard
+                    wsMessages={ws.messages}
                     onInvestigationClick={(id) =>
                       setLeftPane({ type: "investigation", id })
                     }

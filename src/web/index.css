@@ -300,3 +300,49 @@ input:focus, textarea:focus {
   animation: progress-indeterminate 1.6s cubic-bezier(0.65, 0, 0.35, 1) infinite;
   border-radius: 2px;
 }
+
+/* ── Reduced motion — disable decorative animations ── */
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-up,
+  .animate-fade-in,
+  .animate-fade-in-fast,
+  .animate-slide-in-right {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .animate-status-pulse {
+    animation: none !important;
+  }
+  .phase-line-fill {
+    animation: none !important;
+    transform: scaleY(1) !important;
+  }
+  .progress-bar-fill {
+    animation: none !important;
+    transform: none !important;
+  }
+}
+
+/* ── Dashboard container queries ── */
+.dashboard-container {
+  container-type: inline-size;
+}
+@container (max-width: 400px) {
+  .dashboard-kpi-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .dashboard-services-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+@container (min-width: 401px) and (max-width: 600px) {
+  .dashboard-services-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+}
+@container (min-width: 601px) {
+  .dashboard-services-grid {
+    grid-template-columns: repeat(3, 1fr) !important;
+  }
+}

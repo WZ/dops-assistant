@@ -1,4 +1,43 @@
-export function ServiceCard({ name, onClick }: { name: string; onClick: () => void }) {
+interface ServiceCardProps {
+  name: string;
+  onClick: () => void;
+  lastInvestigation?: {
+    status: string; // "complete" | "failed" | "running"
+    created_at: string;
+  } | null;
+  investigationCount?: number;
+}
+
+function getRelativeTime(dateStr: string): string {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 1) return "just now";
+  if (diffMins < 60) return `${diffMins}m ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays}d ago`;
+}
+
+export function ServiceCard({ name, onClick, lastInvestigation, investigationCount }: ServiceCardProps) {
+  let dotClass = "w-2 h-2 rounded-full bg-muted-foreground/30";
+  let healthLabel = "unknown";
+
+  if (lastInvestigation) {
+    if (lastInvestigation.status === "complete") {
+      dotClass = "w-2 h-2 rounded-full bg-success/80 ring-2 ring-success/15";
+      healthLabel = "healthy";
+    } else if (lastInvestigation.status === "failed") {
+      dotClass = "w-2 h-2 rounded-full bg-destructive/80 ring-2 ring-destructive/15";
+      healthLabel = "error";
+    } else if (lastInvestigation.status === "running") {
+      dotClass = "w-2 h-2 rounded-full bg-accent/80 animate-status-pulse";
+      healthLabel = "investigating";
+    }
+  }
+
   return (
     <button
       onClick={onClick}
@@ -6,7 +45,7 @@ export function ServiceCard({ name, onClick }: { name: string; onClick: () => vo
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <div className="w-2 h-2 rounded-full bg-success/80 ring-2 ring-success/15" />
+          <div className={dotClass} />
           <span className="font-body text-sm font-medium text-foreground/75 group-hover:text-foreground/95 transition-colors">
             {name}
           </span>
@@ -16,10 +55,20 @@ export function ServiceCard({ name, onClick }: { name: string; onClick: () => vo
           <path d="m21 21-4.3-4.3"/>
         </svg>
       </div>
-      <div className="mt-1.5 pl-[18px]">
+      <div className="mt-1.5 pl-[18px] flex items-center gap-2">
         <span className="text-[9px] font-mono text-muted-foreground/60 uppercase tracking-[0.15em]">
-          healthy
+          {healthLabel}
         </span>
+        {investigationCount !== undefined && investigationCount > 0 && (
+          <span className="text-[9px] font-mono text-muted-foreground/40">
+            {investigationCount} investigations
+          </span>
+        )}
+        {lastInvestigation && (
+          <span className="text-[9px] font-mono text-muted-foreground/40">
+            {getRelativeTime(lastInvestigation.created_at)}
+          </span>
+        )}
       </div>
     </button>
   );
