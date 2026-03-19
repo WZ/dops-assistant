@@ -33,7 +33,7 @@ export function StatCard({
       <div
         role="group"
         aria-label={`${label}: loading`}
-        className="rounded-lg border border-border/40 bg-card/50 p-4 card-lift"
+        className="rounded-lg border border-border/40 bg-card/50 p-4"
       >
         {/* Value skeleton */}
         <div
