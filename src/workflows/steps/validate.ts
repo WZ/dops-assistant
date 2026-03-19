@@ -184,8 +184,8 @@ async function buildLabelMap(
   labelValuesTool: [string, any] | undefined,
   lokiDsUid: string | undefined,
   config: ValidateStepConfig,
-): Promise<Map<string, Set<string>>> {
-  const map = new Map<string, Set<string>>();
+): Promise<Map<string, Map<string, string>>> {
+  const map = new Map<string, Map<string, string>>();
   if (!labelNamesTool || !labelValuesTool || !lokiDsUid) return map;
 
   try {
@@ -214,7 +214,10 @@ async function buildLabelMap(
 
         const valParsed = unwrapMcpJson(valResult);
         const values: string[] = Array.isArray(valParsed) ? valParsed : valParsed?.values ?? valParsed?.data ?? [];
-        map.set(key, new Set(values.map((v: string) => v.toLowerCase())));
+        // Store lowercase → original mapping for case-preserving label selectors
+        const valueMap = new Map<string, string>();
+        for (const v of values) valueMap.set(v.toLowerCase(), v);
+        map.set(key, valueMap);
         console.error(`[VALIDATE] Label "${key}": ${values.length} values`);
       } catch { /* skip this label key */ }
     }
@@ -226,36 +229,124 @@ async function buildLabelMap(
 }
 
 /**
+ * Normalize a service name for fuzzy matching:
+ * - lowercase
+ * - strip common suffixes (-headless, -server, -svc, -service, -master, -metrics, -proxy)
+ * - strip trailing digits and hyphens (e.g., "redis-ha-announce-0" → "redis-ha-announce")
+ * - collapse repeated hyphens
+ */
+function normalizeName(name: string): string[] {
+  const lower = name.toLowerCase();
+  const variants = new Set<string>([lower]);
+
+  // Strip common suffixes
+  const suffixes = ["-headless", "-server", "-svc", "-service", "-master", "-metrics", "-proxy", "-internal", "-external"];
+  for (const suffix of suffixes) {
+    if (lower.endsWith(suffix)) {
+      variants.add(lower.slice(0, -suffix.length));
+    }
+  }
+
+  // Strip trailing -N (numbered instances like redis-ha-announce-0)
+  const noTrailingNum = lower.replace(/-\d+$/, "");
+  if (noTrailingNum !== lower) variants.add(noTrailingNum);
+
+  // Expand common abbreviations: svr→server, svc→service
+  const expanded = lower
+    .replace(/\bsvr\b/g, "server")
+    .replace(/\bsvc\b/g, "service");
+  if (expanded !== lower) variants.add(expanded);
+
+  // Also try the abbreviated form of the full name
+  const abbreviated = lower
+    .replace(/\bserver\b/g, "svr")
+    .replace(/\bservice\b/g, "svc");
+  if (abbreviated !== lower) variants.add(abbreviated);
+
+  return [...variants];
+}
+
+/**
  * For each service with empty logLabels, try to find a matching Loki label
  * by fuzzy-matching the service name against label values.
+ *
+ * Matching strategy (in priority order):
+ * 1. Exact match on name or normalized variants
+ * 2. namespace/name format match (for "job" labels)
+ * 3. Substring containment — label value contains service name or vice versa
  */
 function enrichLogLabels(
   services: ServiceConfig[],
-  labelMap: Map<string, Set<string>>,
+  labelMap: Map<string, Map<string, string>>,
 ): ServiceConfig[] {
   if (labelMap.size === 0) return services;
 
-  return services.map((service) => {
+  // Priority order: prefer specific label keys over generic ones
+  const LABEL_PRIORITY = ["app", "service_name", "app_kubernetes_io_name", "job", "name",
+    "app_kubernetes_io_component", "app_kubernetes_io_instance"];
+
+  const sortedLabels = [...labelMap.entries()].sort(([a], [b]) => {
+    const ai = LABEL_PRIORITY.indexOf(a);
+    const bi = LABEL_PRIORITY.indexOf(b);
+    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+  });
+
+  let enrichedCount = 0;
+
+  const result = services.map((service) => {
     if (Object.keys(service.logLabels).length > 0) return service;
 
-    const nameLower = service.name.toLowerCase();
-    const nameNoSuffix = nameLower.replace(/-headless$/, "");
+    const nameVariants = normalizeName(service.name);
 
-    for (const [labelKey, values] of labelMap) {
-      if (values.has(nameLower) || values.has(nameNoSuffix)) {
-        return { ...service, logLabels: { [labelKey]: service.name } };
+    // Pass 1: Exact match on any normalized variant
+    for (const [labelKey, valueMap] of sortedLabels) {
+      for (const variant of nameVariants) {
+        const original = valueMap.get(variant);
+        if (original) {
+          enrichedCount++;
+          console.error(`[VALIDATE] Log label match: "${service.name}" → ${labelKey}="${original}" (exact)`);
+          return { ...service, logLabels: { [labelKey]: original } };
+        }
       }
-      // For "job" labels, check "namespace/name" format
-      if (labelKey === "job") {
-        for (const v of values) {
-          const parts = v.split("/");
-          if (parts.length === 2 && parts[1] === nameLower) {
-            return { ...service, logLabels: { [labelKey]: v } };
+    }
+
+    // Pass 2: namespace/name format match (for job, job_name labels)
+    for (const [labelKey, valueMap] of sortedLabels) {
+      if (labelKey !== "job" && labelKey !== "job_name") continue;
+      for (const [lowerVal, originalVal] of valueMap) {
+        const parts = lowerVal.split("/");
+        if (parts.length === 2) {
+          for (const variant of nameVariants) {
+            if (parts[1] === variant) {
+              enrichedCount++;
+              console.error(`[VALIDATE] Log label match: "${service.name}" → ${labelKey}="${originalVal}" (namespace/name)`);
+              return { ...service, logLabels: { [labelKey]: originalVal } };
+            }
           }
         }
       }
     }
 
+    // Pass 3: Substring containment
+    for (const [labelKey, valueMap] of sortedLabels) {
+      if (labelKey === "filename" || labelKey === "namespace" || labelKey === "batch_kubernetes_io_job_name") continue;
+      for (const variant of nameVariants) {
+        if (variant.length < 5) continue;
+        for (const [lowerVal, originalVal] of valueMap) {
+          if (lowerVal.length < 5) continue;
+          if (lowerVal.includes(variant) || variant.includes(lowerVal)) {
+            enrichedCount++;
+            console.error(`[VALIDATE] Log label match: "${service.name}" → ${labelKey}="${originalVal}" (substring)`);
+            return { ...service, logLabels: { [labelKey]: originalVal } };
+          }
+        }
+      }
+    }
+
+    console.error(`[VALIDATE] No log label match for "${service.name}"`);
     return service;
   });
+
+  console.error(`[VALIDATE] Log label enrichment: ${enrichedCount}/${services.length} services matched`);
+  return result;
 }
