@@ -1,0 +1,64 @@
+/** Shape returned by GET /api/investigations */
+export interface InvestigationSummary {
+  id: string;
+  service: string;
+  status: string;
+  report: string | null;
+  created_at: string;
+  completed_at: string | null;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_duration_ms: number;
+}
+
+/** Shape returned by GET /api/patterns */
+export interface Pattern {
+  id: string;
+  service: string;
+  symptom: string;
+  rootCause: string;
+  severity: string;
+  recommendedActions: string;
+  sourceInvestigationId: string;
+}
+
+export function severityVariant(severity: string): "destructive" | "warning" | "secondary" | "outline" {
+  switch (severity?.toLowerCase()) {
+    case "critical":
+      return "destructive";
+    case "high":
+      return "warning";
+    case "medium":
+      return "secondary";
+    default:
+      return "outline";
+  }
+}
+
+export function formatDuration(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  if (totalMinutes < 60) {
+    const secs = totalSeconds % 60;
+    return secs > 0 ? `${totalMinutes}m ${secs}s` : `${totalMinutes}m`;
+  }
+  const hours = Math.floor(totalMinutes / 60);
+  const mins = totalMinutes % 60;
+  return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+}
+
+/** Normalize unknown confidence value from JSON to a display string like "87%" */
+export function normalizeConfidence(raw: unknown): string {
+  if (raw == null || raw === "") return "";
+  if (typeof raw === "number") {
+    // confidenceScore is 0-100, confidence as float is 0-1
+    return raw <= 1 ? `${Math.round(raw * 100)}%` : `${Math.round(raw)}%`;
+  }
+  const str = String(raw);
+  if (str.includes("%")) return str;
+  // If it's a numeric string, append %
+  if (/^\d+(\.\d+)?$/.test(str)) return `${str}%`;
+  // Non-numeric strings (e.g. "high", "medium") returned as-is
+  return str;
+}
