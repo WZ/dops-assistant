@@ -34,6 +34,7 @@ export const ProviderSchema = z.object({
   name: z.string().regex(/^[a-zA-Z0-9_-]+$/, "Provider name must only contain alphanumeric characters, hyphens, and underscores"),
   roles: z.array(ProviderRoleSchema).min(1),
   mcpServer: McpServerSchema,
+  region: z.string().optional(),
 });
 
 export type ProviderRole = z.infer<typeof ProviderRoleSchema>;
