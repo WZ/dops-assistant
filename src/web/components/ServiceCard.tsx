@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { timeAgo } from "@/lib/dashboard-utils";
 
 interface ServiceCardProps {
@@ -10,7 +11,7 @@ interface ServiceCardProps {
   investigationCount?: number;
 }
 
-export function ServiceCard({ name, onClick, lastInvestigation, investigationCount }: ServiceCardProps) {
+export const ServiceCard = memo(function ServiceCard({ name, onClick, lastInvestigation, investigationCount }: ServiceCardProps) {
   let dotClass = "w-2 h-2 rounded-full bg-muted-foreground/30";
   let healthLabel = "unknown";
 
@@ -61,4 +62,4 @@ export function ServiceCard({ name, onClick, lastInvestigation, investigationCou
       </div>
     </button>
   );
-}
+});

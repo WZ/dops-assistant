@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { cn } from "@/lib/utils";
 
 interface StatCardProps {
@@ -13,7 +14,7 @@ interface StatCardProps {
   loading?: boolean;
 }
 
-export function StatCard({
+export const StatCard = memo(function StatCard({
   label,
   value,
   detail,
@@ -89,4 +90,4 @@ export function StatCard({
       )}
     </div>
   );
-}
+});

@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { formatTokens } from "@/lib/formatTokens";
@@ -10,7 +11,7 @@ interface InvestigationRowProps {
   className?: string;
 }
 
-export function InvestigationRow({
+export const InvestigationRow = memo(function InvestigationRow({
   investigation: inv,
   onClick,
   className,
@@ -104,4 +105,4 @@ export function InvestigationRow({
       )}
     </div>
   );
-}
+});
