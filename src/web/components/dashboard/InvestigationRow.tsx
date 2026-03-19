@@ -1,23 +1,13 @@
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { formatTokens } from "@/lib/formatTokens";
-import { formatDuration, normalizeConfidence, severityVariant } from "@/lib/dashboard-utils";
+import { formatDuration, normalizeConfidence, severityVariant, timeAgo } from "@/lib/dashboard-utils";
 import type { InvestigationSummary } from "@/lib/dashboard-utils";
 
 interface InvestigationRowProps {
   investigation: InvestigationSummary;
   onClick: (id: string) => void;
   className?: string;
-}
-
-function timeAgo(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60_000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
 }
 
 export function InvestigationRow({

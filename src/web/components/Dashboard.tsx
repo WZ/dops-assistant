@@ -369,12 +369,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
         {loading ? (
           <div className="space-y-2">
             {[0, 1, 2].map(i => (
-              <div key={i} className="h-16 rounded-lg bg-muted/30" style={{
-                background: "linear-gradient(90deg, hsl(var(--muted)) 25%, hsl(var(--secondary)) 50%, hsl(var(--muted)) 75%)",
-                backgroundSize: "200% 100%",
-                animation: "shimmer 1.6s infinite",
-                animationDelay: `${i * 0.1}s`,
-              }} />
+              <div key={i} className="h-16 rounded-lg shimmer-skeleton" style={{ animationDelay: `${i * 0.1}s` }} />
             ))}
           </div>
         ) : investigations.length === 0 ? (

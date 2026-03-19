@@ -1,3 +1,5 @@
+import { timeAgo } from "@/lib/dashboard-utils";
+
 interface ServiceCardProps {
   name: string;
   onClick: () => void;
@@ -6,19 +8,6 @@ interface ServiceCardProps {
     created_at: string;
   } | null;
   investigationCount?: number;
-}
-
-function getRelativeTime(dateStr: string): string {
-  const date = new Date(dateStr);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  if (diffMins < 1) return "just now";
-  if (diffMins < 60) return `${diffMins}m ago`;
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-  const diffDays = Math.floor(diffHours / 24);
-  return `${diffDays}d ago`;
 }
 
 export function ServiceCard({ name, onClick, lastInvestigation, investigationCount }: ServiceCardProps) {
@@ -66,7 +55,7 @@ export function ServiceCard({ name, onClick, lastInvestigation, investigationCou
         )}
         {lastInvestigation && (
           <span className="text-[9px] font-mono text-muted-foreground/40">
-            {getRelativeTime(lastInvestigation.created_at)}
+            {timeAgo(lastInvestigation.created_at)}
           </span>
         )}
       </div>
