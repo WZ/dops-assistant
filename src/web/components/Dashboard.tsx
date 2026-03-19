@@ -84,12 +84,9 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
       if (msg.type === "investigation:phase") {
         setActiveInvestigations(prev => {
           const next = new Map(prev);
-          // Find the active investigation (there could be multiple; update whichever has this phase)
-          for (const [id, inv] of next) {
-            if (!inv.failed) {
-              next.set(id, { ...inv, phase: msg.phase });
-              break;
-            }
+          const existing = next.get(msg.id);
+          if (existing && !existing.failed) {
+            next.set(msg.id, { ...existing, phase: msg.phase });
           }
           return next;
         });
