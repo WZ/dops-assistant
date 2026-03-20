@@ -29,6 +29,8 @@ interface ActiveInvestigation {
   failedAt?: number;
 }
 
+type HealthStatus = "healthy" | "degraded" | "down" | "unknown";
+
 export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateService, onManageServices, onRunDiscovery }: DashboardProps) {
   const [services, setServices] = useState<ServiceConfig[]>([]);
   const [investigations, setInvestigations] = useState<InvestigationSummary[]>([]);
@@ -42,6 +44,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [servicesExpanded, setServicesExpanded] = useState(false);
+  const [healthData, setHealthData] = useState<Record<string, HealthStatus>>({});
 
   const processedRef = useRef(0);
   const fetchSeqRef = useRef(0);
@@ -50,15 +53,20 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
   async function fetchData() {
     const seq = ++fetchSeqRef.current;
     try {
-      const [invRes, svcRes] = await Promise.all([
+      const [invRes, svcRes, healthRes] = await Promise.all([
         fetch("/api/investigations?limit=100"),
         fetch("/api/services"),
+        fetch("/api/services/health"),
       ]);
       if (!invRes.ok || !svcRes.ok) {
         throw new Error(`Server error: ${!invRes.ok ? invRes.status : svcRes.status}`);
       }
       if (seq !== fetchSeqRef.current) return; // stale response — newer fetch in flight
       const [invData, svcData] = await Promise.all([invRes.json(), svcRes.json()]);
+      if (healthRes.ok) {
+        const hData = await healthRes.json();
+        setHealthData(hData as Record<string, HealthStatus>);
+      }
       setInvestigations(invData);
       setServices(svcData);
       // Reconcile: remove active investigations that are now complete/failed in DB
@@ -224,6 +232,30 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
   // KPI computations
   const kpiData = useMemo(() => computeKpiData(investigations, services), [investigations, services]);
 
+  // Live health KPI counts from /api/services/health
+  const healthKpi = useMemo(() => {
+    let healthy = 0, degraded = 0, down = 0;
+    for (const status of Object.values(healthData)) {
+      if (status === "healthy") healthy++;
+      else if (status === "degraded") degraded++;
+      else if (status === "down") down++;
+    }
+    return { healthy, degraded, down };
+  }, [healthData]);
+
+  // Sort services by health: down first, then degraded, then unknown, then healthy
+  const sortedServices = useMemo(() => {
+    const order: Record<string, number> = { down: 0, degraded: 1, unknown: 2, healthy: 3 };
+    return [...services].sort((a, b) => {
+      const aStatus = healthData[a.name] ?? "unknown";
+      const bStatus = healthData[b.name] ?? "unknown";
+      const aOrder = order[aStatus] ?? 2;
+      const bOrder = order[bStatus] ?? 2;
+      if (aOrder !== bOrder) return aOrder - bOrder;
+      return a.name.localeCompare(b.name);
+    });
+  }, [services, healthData]);
+
   // Format elapsed time for active investigations
   const formatElapsed = (startTime: number): string => {
     const elapsed = Math.floor((Date.now() - startTime) / 1000);
@@ -288,11 +320,34 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
       {/* Section A: Title */}
       <div className="mb-6 animate-fade-up">
         <h1 className="font-display text-xl font-bold tracking-tight text-foreground/90">Operations Desk</h1>
-        <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">
-          {services.length} services monitored
+        <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide flex items-center gap-2 flex-wrap">
+          <span>{services.length} services monitored</span>
           {lastUpdated && (
             <span className={`text-[9px] tabular-nums ${isStale ? "text-warning/60" : "text-muted-foreground/50"}`}>
               {" · "}Updated {formatLastUpdated(lastUpdated)}
+            </span>
+          )}
+          {(healthKpi.healthy > 0 || healthKpi.degraded > 0 || healthKpi.down > 0) && (
+            <span className="text-[10px] font-mono flex items-center gap-2">
+              <span className="text-muted-foreground/40">·</span>
+              {healthKpi.healthy > 0 && (
+                <span className="flex items-center gap-1">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-success/80" />
+                  <span className="text-muted-foreground/60">{healthKpi.healthy} healthy</span>
+                </span>
+              )}
+              {healthKpi.degraded > 0 && (
+                <span className="flex items-center gap-1">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-warning/80" />
+                  <span className="text-muted-foreground/60">{healthKpi.degraded} degraded</span>
+                </span>
+              )}
+              {healthKpi.down > 0 && (
+                <span className="flex items-center gap-1">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-destructive/80" />
+                  <span className="text-muted-foreground/60">{healthKpi.down} down</span>
+                </span>
+              )}
             </span>
           )}
         </p>
@@ -398,13 +453,14 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
         ) : (
           <>
             <div className="grid grid-cols-2 gap-3 dashboard-services-grid">
-              {(servicesExpanded ? services : services.slice(0, 9)).map((svc, i) => (
+              {(servicesExpanded ? sortedServices : sortedServices.slice(0, 9)).map((svc, i) => (
                 <div key={svc.name} className={`animate-fade-up delay-${Math.min(i + 1, 8)}`}>
                   <ServiceCard
                     name={svc.name}
                     onClick={() => onInvestigateService(svc.name)}
                     lastInvestigation={serviceInvData.get(svc.name)?.lastInvestigation ?? null}
                     investigationCount={serviceInvData.get(svc.name)?.count ?? 0}
+                    healthStatus={healthData[svc.name] as "healthy" | "degraded" | "down" | "unknown" | undefined}
                   />
                 </div>
               ))}
