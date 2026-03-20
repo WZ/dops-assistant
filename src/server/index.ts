@@ -77,12 +77,6 @@ async function main() {
   const server = createServer(app);
   const port = Number(process.env["PORT"] ?? 3000);
 
-  registerRoutes(app, db, config.services, undefined, skillStore, registryStore, registry, config.branding);
-
-  // Health check endpoint with background monitoring
-  startHealthMonitor({ providers, db });
-  app.get("/api/health", healthHandler);
-
   // Shared dedup for both webhook and health-poller auto-investigate
   const sharedDedup = new InvestigationDedup({
     dedupWindowSeconds: config.webhook.dedupWindowSeconds,
@@ -91,11 +85,6 @@ async function main() {
 
   // Alert webhook endpoint (only if secret is configured)
   const runner = new InvestigationRunner({ db, investigationAgent, skillStore });
-  if (config.webhook.secret) {
-    const webhookHandler = createWebhookHandler({ runner, config: config.webhook, services: config.services, dedup: sharedDedup });
-    app.post("/api/webhook/alert", webhookHandler);
-    logger.info("Alert webhook enabled at POST /api/webhook/alert");
-  }
 
   // Service health poller with auto-investigate on healthy→down transitions
   const healthPoller = new ServiceHealthPoller({
@@ -135,6 +124,18 @@ async function main() {
     },
   });
   healthPoller.start();
+
+  registerRoutes(app, db, config.services, undefined, skillStore, registryStore, registry, config.branding, healthPoller);
+
+  // Health check endpoint with background monitoring
+  startHealthMonitor({ providers, db });
+  app.get("/api/health", healthHandler);
+
+  if (config.webhook.secret) {
+    const webhookHandler = createWebhookHandler({ runner, config: config.webhook, services: config.services, dedup: sharedDedup });
+    app.post("/api/webhook/alert", webhookHandler);
+    logger.info("Alert webhook enabled at POST /api/webhook/alert");
+  }
 
   let pendingDiscovery: ValidatedServiceConfig[] | null = null;
 

@@ -1,10 +1,11 @@
 import type { Express, Request, Response } from "express";
 import type { Database, InvestigationRow, PhaseRow, EventRow } from "./db.js";
-import type { ServiceConfig } from "../config/schema.js";
+import type { ServiceConfig, BrandingConfig } from "../config/schema.js";
 import { ProviderSchema } from "../config/schema.js";
 import type { SkillStore } from "../skills/store.js";
 import type { ServiceRegistryStore } from "../services/registry.js";
 import type { ProviderRegistry } from "../mcp/provider-registry.js";
+import type { ServiceHealthPoller } from "./service-health-poller.js";
 
 export interface DependencyNode {
   id: string;
@@ -103,15 +104,47 @@ export function registerRoutes(
   app: Express, db: Database, services: ServiceConfig[], _mcp?: unknown,
   skillStore?: SkillStore, registryStore?: ServiceRegistryStore,
   providerRegistry?: ProviderRegistry,
+  branding?: BrandingConfig,
+  healthPoller?: ServiceHealthPoller,
 ): void {
   const handlers = buildHandlers(db, services);
 
   app.get("/api/services", (_req: Request, res: Response) => {
-    res.json(handlers.getServices());
+    // Read from registryStore (disk) when available so newly accepted
+    // discovery results are returned without a server restart.
+    res.json(registryStore ? registryStore.load() : handlers.getServices());
+  });
+
+  app.get("/api/branding", (_req: Request, res: Response) => {
+    res.json(branding ?? { title: "dops", subtitle: "assistant" });
   });
 
   app.get("/api/services/graph", (_req: Request, res: Response) => {
-    res.json(inferDependencyGraph(services));
+    const current = registryStore ? registryStore.load() : services;
+    res.json(inferDependencyGraph(current));
+  });
+
+  // ── Service Health REST API ───────────────────────────────────────────────
+  app.get("/api/services/health", (_req: Request, res: Response) => {
+    if (!healthPoller) {
+      res.json({});
+      return;
+    }
+    res.json(Object.fromEntries(healthPoller.getHealth()));
+  });
+
+  app.get("/api/services/health/history", (req: Request, res: Response) => {
+    const service = req.query["service"] as string | undefined;
+    if (!service) {
+      res.status(400).json({ error: "service query parameter is required" });
+      return;
+    }
+    const hours = Math.max(1, Math.min(Number(req.query["hours"]) || 6, 168));
+    if (!healthPoller) {
+      res.json([]);
+      return;
+    }
+    res.json(healthPoller.getHistory(service, hours));
   });
 
   app.get("/api/investigations", (req: Request, res: Response) => {

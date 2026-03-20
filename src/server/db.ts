@@ -110,6 +110,7 @@ export class Database {
         created_at        TEXT NOT NULL DEFAULT (datetime('now'))
       );
     `);
+    this.migrateServiceHealthChecks();
   }
 
   createInvestigation(inv: { id: string; service: string; query: string; status: string }): void {
