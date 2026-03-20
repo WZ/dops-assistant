@@ -91,9 +91,14 @@ export function parsePrometheusResult(raw: unknown): PrometheusResultEntry[] {
 
   const obj = parsed as PrometheusQueryResult;
 
-  // Unwrap data.result
+  // Unwrap data.result (standard Prometheus API)
   if (obj?.data?.result && Array.isArray(obj.data.result)) {
     return obj.data.result;
+  }
+
+  // Unwrap data as direct array (Grafana MCP format)
+  if (obj?.data && Array.isArray(obj.data)) {
+    return obj.data;
   }
 
   // Flat result array
@@ -222,11 +227,14 @@ export class ServiceHealthPoller {
         return;
       }
 
+      // Find the Prometheus datasource UID (required by grafana-mcp)
+      const promDsUid = await this.findPrometheusDatasourceUid(tools);
+
       // Run the 3 batch queries in parallel
       const [deploymentEntries, statefulsetEntries, upEntries] = await Promise.all([
-        this.runQuery(queryTool, "kube_deployment_status_replicas > 0"),
-        this.runQuery(queryTool, "kube_statefulset_status_replicas > 0"),
-        this.runQuery(queryTool, "up == 1"),
+        this.runQuery(queryTool, "kube_deployment_status_replicas > 0", promDsUid),
+        this.runQuery(queryTool, "kube_statefulset_status_replicas > 0", promDsUid),
+        this.runQuery(queryTool, "up == 1", promDsUid),
       ]);
 
       // Merge all result entries
@@ -260,7 +268,7 @@ export class ServiceHealthPoller {
       // Update cache
       this.cachedHealth = newHealth;
 
-      logger.debug(
+      logger.info(
         { summary: this.getSummary() },
         "ServiceHealthPoller: poll complete",
       );
@@ -301,6 +309,29 @@ export class ServiceHealthPoller {
 
   // ── Private helpers ─────────────────────────────────────────────────────
 
+  private async findPrometheusDatasourceUid(
+    tools: Record<string, unknown>,
+  ): Promise<string | undefined> {
+    const listDsTool = Object.entries(tools).find(([name]) => name.endsWith("list_datasources"));
+    if (!listDsTool) return undefined;
+    try {
+      const result = await (listDsTool[1] as { execute: (args: unknown) => Promise<unknown> }).execute({});
+      const outer = typeof result === "string" ? JSON.parse(result) : result;
+      const data = outer?.content?.[0]?.text ? JSON.parse(outer.content[0].text) : outer;
+      const datasources = Array.isArray(data) ? data : data?.datasources ?? [];
+      const prom = datasources.find((ds: Record<string, unknown>) =>
+        ds.type === "prometheus" || (ds.typeName as string)?.toLowerCase().includes("prometheus") || (ds.name as string)?.toLowerCase().includes("prometheus")
+      );
+      if (prom?.uid) {
+        logger.info({ uid: prom.uid, name: prom.name }, "ServiceHealthPoller: found Prometheus datasource");
+        return prom.uid as string;
+      }
+    } catch (err) {
+      logger.warn({ err }, "ServiceHealthPoller: failed to find Prometheus datasource UID");
+    }
+    return undefined;
+  }
+
   private findQueryPrometheusTool(
     tools: Record<string, unknown>,
   ): { execute: (args: unknown) => Promise<unknown> } | null {
@@ -315,10 +346,22 @@ export class ServiceHealthPoller {
   private async runQuery(
     tool: { execute: (args: unknown) => Promise<unknown> },
     query: string,
+    datasourceUid?: string,
   ): Promise<PrometheusResultEntry[]> {
     try {
-      const result = await tool.execute({ query });
-      return parsePrometheusResult(result);
+      const now = new Date();
+      const startTime = new Date(now.getTime() - 5 * 60 * 1000).toISOString(); // 5 min ago
+      const endTime = now.toISOString();
+      const args: Record<string, unknown> = { expr: query, queryType: "instant", startTime, endTime };
+      if (datasourceUid) args.datasourceUid = datasourceUid;
+      const result = await tool.execute(args);
+      const entries = parsePrometheusResult(result);
+      if (entries.length === 0) {
+        logger.info({ query, rawPreview: JSON.stringify(result).slice(0, 500) }, "ServiceHealthPoller: empty query result");
+      } else {
+        logger.info({ query, entriesCount: entries.length }, "ServiceHealthPoller: query result");
+      }
+      return entries;
     } catch (err) {
       logger.warn({ err, query }, "ServiceHealthPoller: query failed, treating as empty");
       return [];

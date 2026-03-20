@@ -234,14 +234,16 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
 
   // Live health KPI counts from /api/services/health
   const healthKpi = useMemo(() => {
-    let healthy = 0, degraded = 0, down = 0;
-    for (const status of Object.values(healthData)) {
+    let healthy = 0, degraded = 0, down = 0, unknown = 0;
+    for (const svc of services) {
+      const status = healthData[svc.name] ?? "unknown";
       if (status === "healthy") healthy++;
       else if (status === "degraded") degraded++;
       else if (status === "down") down++;
+      else unknown++;
     }
-    return { healthy, degraded, down };
-  }, [healthData]);
+    return { healthy, degraded, down, unknown };
+  }, [healthData, services]);
 
   // Sort services by health: down first, then degraded, then unknown, then healthy
   const sortedServices = useMemo(() => {
@@ -327,7 +329,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
               {" · "}Updated {formatLastUpdated(lastUpdated)}
             </span>
           )}
-          {(healthKpi.healthy > 0 || healthKpi.degraded > 0 || healthKpi.down > 0) && (
+          {services.length > 0 && (
             <span className="text-[10px] font-mono flex items-center gap-2">
               <span className="text-muted-foreground/40">·</span>
               {healthKpi.healthy > 0 && (
@@ -346,6 +348,12 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
                 <span className="flex items-center gap-1">
                   <span className="inline-block w-1.5 h-1.5 rounded-full bg-destructive/80" />
                   <span className="text-muted-foreground/60">{healthKpi.down} down</span>
+                </span>
+              )}
+              {healthKpi.unknown > 0 && (
+                <span className="flex items-center gap-1">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-muted-foreground/30" />
+                  <span className="text-muted-foreground/40">{healthKpi.unknown} unknown</span>
                 </span>
               )}
             </span>
