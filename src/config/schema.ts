@@ -96,6 +96,11 @@ const SkillsSchema = z.object({
   maxCharsPerSkill: z.number().default(2000),
 });
 
+const BrandingSchema = z.object({
+  title: z.string().default("dops"),
+  subtitle: z.string().default("assistant"),
+});
+
 const DiscoverySchema = z.object({
   autoRefresh: z.boolean().default(false),
   excludeServices: z.array(z.string()).default([]),
@@ -137,6 +142,7 @@ export const ConfigSchema = z.object({
   discovery: DiscoverySchema.optional().default({}),
   memory: MemorySchema.optional().default({}),
   webhook: WebhookSchema.optional().default({}),
+  branding: BrandingSchema.optional().default({}),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -148,3 +154,4 @@ export type RetryConfig = z.infer<typeof RetrySchema>;
 export type ObservabilityConfig = z.infer<typeof ObservabilitySchema>;
 export type DiscoveryConfig = z.infer<typeof DiscoverySchema>;
 export type WebhookConfig = z.infer<typeof WebhookSchema>;
+export type BrandingConfig = z.infer<typeof BrandingSchema>;

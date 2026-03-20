@@ -53,6 +53,11 @@ export function App() {
   const theme = useTheme();
   const health = useHealthPolling();
 
+  const [branding, setBranding] = useState({ title: "dops", subtitle: "assistant" });
+  useEffect(() => {
+    fetch("/api/branding").then((r) => r.json()).then(setBranding).catch(() => {});
+  }, []);
+
   const [discoveryState, setDiscoveryState] = useState({
     phase: "discovery",
     status: "running" as "running" | "complete",
@@ -127,10 +132,10 @@ export function App() {
           </div>
           <div className="flex items-baseline gap-1.5">
             <span className="font-display font-bold text-sm tracking-wide text-foreground/90 uppercase">
-              dops
+              {branding.title}
             </span>
             <span className="text-[9px] font-mono text-muted-foreground/70 tracking-[0.2em] uppercase">
-              assistant
+              {branding.subtitle}
             </span>
           </div>
           {/* Nav items */}
