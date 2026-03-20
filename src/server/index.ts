@@ -24,6 +24,8 @@ import { ServiceRegistryStore } from "../services/registry.js";
 import type { ValidatedServiceConfig } from "../types/discovery-types.js";
 import { InvestigationRunner } from "./investigation-runner.js";
 import { createWebhookHandler } from "./webhook-handler.js";
+import { InvestigationDedup } from "./investigation-dedup.js";
+import { ServiceHealthPoller } from "./service-health-poller.js";
 import { startHealthMonitor, stopHealthMonitor, healthHandler } from "./health-monitor.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -75,19 +77,64 @@ async function main() {
   const server = createServer(app);
   const port = Number(process.env["PORT"] ?? 3000);
 
-  registerRoutes(app, db, config.services, undefined, skillStore, registryStore, registry);
+  registerRoutes(app, db, config.services, undefined, skillStore, registryStore, registry, config.branding);
 
   // Health check endpoint with background monitoring
   startHealthMonitor({ providers, db });
   app.get("/api/health", healthHandler);
 
+  // Shared dedup for both webhook and health-poller auto-investigate
+  const sharedDedup = new InvestigationDedup({
+    dedupWindowSeconds: config.webhook.dedupWindowSeconds,
+    maxConcurrent: config.webhook.maxConcurrent,
+  });
+
   // Alert webhook endpoint (only if secret is configured)
   const runner = new InvestigationRunner({ db, investigationAgent, skillStore });
   if (config.webhook.secret) {
-    const webhookHandler = createWebhookHandler({ runner, config: config.webhook, services: config.services });
+    const webhookHandler = createWebhookHandler({ runner, config: config.webhook, services: config.services, dedup: sharedDedup });
     app.post("/api/webhook/alert", webhookHandler);
     logger.info("Alert webhook enabled at POST /api/webhook/alert");
   }
+
+  // Service health poller with auto-investigate on healthy→down transitions
+  const healthPoller = new ServiceHealthPoller({
+    providers,
+    registryStore,
+    db,
+    onTransition: (service, from, to) => {
+      if (to !== "down") return;
+      if (from !== "healthy" && from !== "unknown") return;
+
+      logger.info({ service, from, to }, "ServiceHealthPoller: service transitioned to down");
+
+      if (!sharedDedup.shouldInvestigate(service)) {
+        logger.info({ service, activeCount: sharedDedup.getActiveCount() }, "ServiceHealthPoller: auto-investigate suppressed by dedup/concurrency");
+        return;
+      }
+
+      // Find the service config by name
+      const serviceConfig = config.services.find((s) => s.name === service);
+      if (!serviceConfig) {
+        logger.warn({ service }, "ServiceHealthPoller: service not found in config, skipping auto-investigate");
+        return;
+      }
+
+      logger.info({ service }, "ServiceHealthPoller: triggering auto-investigate (template=quick)");
+      sharedDedup.markStarted(service);
+
+      runner.run({
+        service: serviceConfig,
+        message: `Service health check: ${service} transitioned from ${from} to down. Running quick investigation.`,
+        template: "quick",
+      }).catch((err) => {
+        logger.error({ err, service }, "ServiceHealthPoller: auto-investigate failed");
+      }).finally(() => {
+        sharedDedup.markCompleted();
+      });
+    },
+  });
+  healthPoller.start();
 
   let pendingDiscovery: ValidatedServiceConfig[] | null = null;
 
@@ -127,6 +174,7 @@ async function main() {
   const shutdown = async () => {
     logger.info("Shutting down...");
     stopHealthMonitor();
+    healthPoller.stop();
     memory.destroy();
     db.close();
     server.close();
