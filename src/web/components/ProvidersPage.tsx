@@ -38,18 +38,23 @@ export function ProvidersPage({ onRunDiscovery }: ProvidersPageProps) {
 
   useEffect(() => { fetchProviders(); }, [fetchProviders]);
 
-  // Add provider
+  // Add or update provider
   const handleSave = async (data: ProviderFormData) => {
     setSaving(true);
     try {
-      const res = await fetch("/api/providers", {
-        method: "POST",
+      const body = { name: data.name, roles: data.roles, region: data.region, mcpServer: data.mcpServer };
+      const isEdit = Boolean(editingProvider);
+      const url = isEdit
+        ? `/api/providers/${encodeURIComponent(editingProvider!.name)}`
+        : "/api/providers";
+      const res = await fetch(url, {
+        method: isEdit ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...data.mcpServer, name: data.name, roles: data.roles, region: data.region }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.error || "Failed to add provider");
+        throw new Error(err.error || `Failed to ${isEdit ? "update" : "add"} provider`);
       }
       setShowForm(false);
       setEditingProvider(null);
@@ -61,8 +66,17 @@ export function ProvidersPage({ onRunDiscovery }: ProvidersPageProps) {
   };
 
   // Test connection (from form, before save)
-  const handleTestFromForm = async (_data: ProviderFormData) => {
-    return { status: "unknown" as const, toolCount: 0 };
+  const handleTestFromForm = async (data: ProviderFormData) => {
+    try {
+      const res = await fetch("/api/providers/test-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: data.name, roles: data.roles, region: data.region, mcpServer: data.mcpServer }),
+      });
+      return await res.json();
+    } catch {
+      return { status: "error", toolCount: 0, error: "Network error" };
+    }
   };
 
   // Test existing provider (from card)

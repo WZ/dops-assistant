@@ -35,7 +35,8 @@ export interface HealthSummary {
 }
 
 export interface ServiceHealthPollerDeps {
-  providers: MastraProvider[];
+  /** Provider list or getter function for live provider resolution */
+  providers: MastraProvider[] | (() => MastraProvider[]);
   registryStore: ServiceRegistryStore;
   db: Database;
   intervalMs?: number;
@@ -166,7 +167,7 @@ export function matchResultsToServices(
 }
 
 export class ServiceHealthPoller {
-  private readonly providers: MastraProvider[];
+  private readonly resolveProviders: () => MastraProvider[];
   private readonly registryStore: ServiceRegistryStore;
   private readonly db: Database;
   private readonly intervalMs: number;
@@ -177,7 +178,9 @@ export class ServiceHealthPoller {
   private migrated = false;
 
   constructor(deps: ServiceHealthPollerDeps) {
-    this.providers = deps.providers;
+    this.resolveProviders = typeof deps.providers === "function"
+      ? deps.providers
+      : () => deps.providers as MastraProvider[];
     this.registryStore = deps.registryStore;
     this.db = deps.db;
     this.intervalMs = deps.intervalMs ?? 60_000;
@@ -215,7 +218,7 @@ export class ServiceHealthPoller {
       // Find query_prometheus tool
       let tools: Record<string, unknown>;
       try {
-        tools = await getAllTools(this.providers) as Record<string, unknown>;
+        tools = await getAllTools(this.resolveProviders()) as Record<string, unknown>;
       } catch (err) {
         logger.warn({ err }, "ServiceHealthPoller: failed to get MCP tools, skipping poll");
         return;
@@ -230,11 +233,13 @@ export class ServiceHealthPoller {
       // Find the Prometheus datasource UID (required by grafana-mcp)
       const promDsUid = await this.findPrometheusDatasourceUid(tools);
 
-      // Run the 3 batch queries in parallel
+      // Run the 3 batch queries in parallel — query raw metrics (not > 0 / == 1)
+      // so that zero-replica or down services appear in results with value 0.
+      // matchResultsToServices handles value-based health classification.
       const [deploymentEntries, statefulsetEntries, upEntries] = await Promise.all([
-        this.runQuery(queryTool, "kube_deployment_status_replicas > 0", promDsUid),
-        this.runQuery(queryTool, "kube_statefulset_status_replicas > 0", promDsUid),
-        this.runQuery(queryTool, "up == 1", promDsUid),
+        this.runQuery(queryTool, "kube_deployment_status_replicas", promDsUid),
+        this.runQuery(queryTool, "kube_statefulset_status_replicas", promDsUid),
+        this.runQuery(queryTool, "up", promDsUid),
       ]);
 
       // Merge all result entries

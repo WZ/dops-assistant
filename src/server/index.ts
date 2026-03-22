@@ -56,7 +56,9 @@ async function main() {
   const providersFilePath = resolve(path.dirname(configPath), "providers.yaml");
   const registry = new ProviderRegistry(config.providers, providersFilePath);
   await registry.initialize();
-  const providers = registry.getProviders();
+  // Use a getter so consumers always see the latest provider list
+  const getProviders = () => registry.getProviders();
+  const providers = getProviders();
 
   const model = createModel(config.llm);
   const router = new IntentRouter(model);
@@ -88,7 +90,7 @@ async function main() {
 
   // Service health poller with auto-investigate on healthy→down transitions
   const healthPoller = new ServiceHealthPoller({
-    providers,
+    providers: getProviders,
     registryStore,
     db,
     onTransition: (service, from, to) => {
@@ -102,10 +104,14 @@ async function main() {
         return;
       }
 
-      // Find the service config by name
-      const serviceConfig = config.services.find((s) => s.name === service);
+      // Find the service config from live registry or config.yaml
+      const allServices = [
+        ...config.services,
+        ...registryStore.load().filter((s) => !config.services.some((c) => c.name === s.name)),
+      ];
+      const serviceConfig = allServices.find((s) => s.name === service);
       if (!serviceConfig) {
-        logger.warn({ service }, "ServiceHealthPoller: service not found in config, skipping auto-investigate");
+        logger.warn({ service }, "ServiceHealthPoller: service not found in config or registry, skipping auto-investigate");
         return;
       }
 
@@ -128,7 +134,7 @@ async function main() {
   registerRoutes(app, db, config.services, undefined, skillStore, registryStore, registry, config.branding, healthPoller);
 
   // Health check endpoint with background monitoring
-  startHealthMonitor({ providers, db });
+  startHealthMonitor({ providers: getProviders, db });
   app.get("/api/health", healthHandler);
 
   if (config.webhook.secret) {

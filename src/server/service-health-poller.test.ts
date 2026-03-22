@@ -245,12 +245,12 @@ describe("ServiceHealthPoller", () => {
       const { poller } = makePoller(
         ["api", "db", "cache"],
         {
-          "kube_deployment_status_replicas > 0": [
+          "kube_deployment_status_replicas": [
             makePrometheusEntry({ deployment: "api" }, "2"),
             makePrometheusEntry({ deployment: "db" }, "1"),
           ],
-          "kube_statefulset_status_replicas > 0": [],
-          "up == 1": [],
+          "kube_statefulset_status_replicas": [],
+          "up": [],
         },
       );
 
@@ -271,11 +271,11 @@ describe("ServiceHealthPoller", () => {
       const { poller } = makePoller(
         ["api"],
         {
-          "kube_deployment_status_replicas > 0": [
+          "kube_deployment_status_replicas": [
             makePrometheusEntry({ deployment: "api" }, "0"),
           ],
-          "kube_statefulset_status_replicas > 0": [],
-          "up == 1": [],
+          "kube_statefulset_status_replicas": [],
+          "up": [],
         },
       );
 
@@ -283,13 +283,13 @@ describe("ServiceHealthPoller", () => {
       expect(poller.getHealth().get("api")).toBe("down");
     });
 
-    it("uses up == 1 results when deployment queries have no match", async () => {
+    it("uses up results when deployment queries have no match", async () => {
       const { poller } = makePoller(
         ["prometheus"],
         {
-          "kube_deployment_status_replicas > 0": [],
-          "kube_statefulset_status_replicas > 0": [],
-          "up == 1": [makePrometheusEntry({ job: "prometheus" }, "1")],
+          "kube_deployment_status_replicas": [],
+          "kube_statefulset_status_replicas": [],
+          "up": [makePrometheusEntry({ job: "prometheus" }, "1")],
         },
       );
 
@@ -310,9 +310,9 @@ describe("ServiceHealthPoller", () => {
       const { poller, transitions } = makePoller(
         ["api"],
         {
-          "kube_deployment_status_replicas > 0": [makePrometheusEntry({ deployment: "api" }, "2")],
-          "kube_statefulset_status_replicas > 0": [],
-          "up == 1": [],
+          "kube_deployment_status_replicas": [makePrometheusEntry({ deployment: "api" }, "2")],
+          "kube_statefulset_status_replicas": [],
+          "up": [],
         },
       );
 
@@ -322,8 +322,8 @@ describe("ServiceHealthPoller", () => {
 
       // Second poll — simulate service going down by replacing query results
       const queryTool = (poller as unknown as {
-        providers: MastraProvider[];
-      }).providers[0]!.client.listTools as ReturnType<typeof vi.fn>;
+        resolveProviders: () => MastraProvider[];
+      }).resolveProviders()[0]!.client.listTools as ReturnType<typeof vi.fn>;
       queryTool.mockResolvedValue({
         prom_query_prometheus: {
           execute: vi.fn().mockResolvedValue({
@@ -343,9 +343,9 @@ describe("ServiceHealthPoller", () => {
       const { poller, transitions } = makePoller(
         ["api"],
         {
-          "kube_deployment_status_replicas > 0": [makePrometheusEntry({ deployment: "api" }, "2")],
-          "kube_statefulset_status_replicas > 0": [],
-          "up == 1": [],
+          "kube_deployment_status_replicas": [makePrometheusEntry({ deployment: "api" }, "2")],
+          "kube_statefulset_status_replicas": [],
+          "up": [],
         },
       );
 
@@ -360,11 +360,11 @@ describe("ServiceHealthPoller", () => {
       const { poller, db } = makePoller(
         ["api", "db"],
         {
-          "kube_deployment_status_replicas > 0": [
+          "kube_deployment_status_replicas": [
             makePrometheusEntry({ deployment: "api" }, "1"),
           ],
-          "kube_statefulset_status_replicas > 0": [],
-          "up == 1": [],
+          "kube_statefulset_status_replicas": [],
+          "up": [],
         },
       );
 
@@ -377,9 +377,9 @@ describe("ServiceHealthPoller", () => {
 
     it("calls migrateServiceHealthChecks on start()", () => {
       const { poller, db } = makePoller(["api"], {
-        "kube_deployment_status_replicas > 0": [],
-        "kube_statefulset_status_replicas > 0": [],
-        "up == 1": [],
+        "kube_deployment_status_replicas": [],
+        "kube_statefulset_status_replicas": [],
+        "up": [],
       });
 
       poller.stop(); // stop before the interval fires
@@ -484,9 +484,9 @@ describe("ServiceHealthPoller", () => {
       const { poller } = makePoller(
         ["api"],
         {
-          "kube_deployment_status_replicas > 0": [makePrometheusEntry({ deployment: "api" }, "1")],
-          "kube_statefulset_status_replicas > 0": [],
-          "up == 1": [],
+          "kube_deployment_status_replicas": [makePrometheusEntry({ deployment: "api" }, "1")],
+          "kube_statefulset_status_replicas": [],
+          "up": [],
         },
         { db },
       );
@@ -520,12 +520,12 @@ describe("ServiceHealthPoller", () => {
       const { poller } = makePoller(
         ["a", "b", "c", "d"],
         {
-          "kube_deployment_status_replicas > 0": [
+          "kube_deployment_status_replicas": [
             makePrometheusEntry({ deployment: "a" }, "1"), // healthy
             makePrometheusEntry({ deployment: "b" }, "0"), // down
           ],
-          "kube_statefulset_status_replicas > 0": [],
-          "up == 1": [],
+          "kube_statefulset_status_replicas": [],
+          "up": [],
           // c and d → unknown
         },
       );

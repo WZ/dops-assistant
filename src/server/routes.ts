@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import type { Database, InvestigationRow, PhaseRow, EventRow } from "./db.js";
 import type { ServiceConfig, BrandingConfig } from "../config/schema.js";
 import { ProviderSchema } from "../config/schema.js";
+import { createMcpProvider, listProviderTools } from "../mcp/provider.js";
 import type { SkillStore } from "../skills/store.js";
 import type { ServiceRegistryStore } from "../services/registry.js";
 import type { ProviderRegistry } from "../mcp/provider-registry.js";
@@ -110,9 +111,15 @@ export function registerRoutes(
   const handlers = buildHandlers(db, services);
 
   app.get("/api/services", (_req: Request, res: Response) => {
-    // Read from registryStore (disk) when available so newly accepted
-    // discovery results are returned without a server restart.
-    res.json(registryStore ? registryStore.load() : handlers.getServices());
+    // Merge config.yaml inline services with registry (services.yaml) entries.
+    // Config services take precedence (dedup by name), then append registry-only services.
+    if (registryStore) {
+      const configNames = new Set(services.map(s => s.name));
+      const registryServices = registryStore.load().filter(s => !configNames.has(s.name));
+      res.json([...services, ...registryServices]);
+    } else {
+      res.json(handlers.getServices());
+    }
   });
 
   app.get("/api/branding", (_req: Request, res: Response) => {
@@ -120,7 +127,12 @@ export function registerRoutes(
   });
 
   app.get("/api/services/graph", (_req: Request, res: Response) => {
-    const current = registryStore ? registryStore.load() : services;
+    let current = services;
+    if (registryStore) {
+      const configNames = new Set(services.map(s => s.name));
+      const registryServices = registryStore.load().filter(s => !configNames.has(s.name));
+      current = [...services, ...registryServices];
+    }
     res.json(inferDependencyGraph(current));
   });
 
@@ -453,6 +465,24 @@ export function registerRoutes(
         if (msg.includes("system provider")) res.status(403).json({ error: msg });
         else if (msg.includes("not found")) res.status(404).json({ error: msg });
         else res.status(500).json({ error: msg });
+      }
+    });
+
+    // POST /api/providers/test-config — test a config without persisting
+    app.post("/api/providers/test-config", async (req: Request, res: Response) => {
+      try {
+        const parsed = ProviderSchema.safeParse(req.body);
+        if (!parsed.success) {
+          res.status(400).json({ error: parsed.error.issues.map(i => i.message).join(", ") });
+          return;
+        }
+        const provider = createMcpProvider(parsed.data);
+        const tools = await listProviderTools(provider);
+        const toolCount = Object.keys(tools).length;
+        res.json({ status: "ok", toolCount });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        res.json({ status: "error", toolCount: 0, error: msg });
       }
     });
 
