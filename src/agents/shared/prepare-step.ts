@@ -30,7 +30,7 @@ const DEFAULT_NUDGE_MESSAGE =
   "You are approaching the end of your investigation. Start synthesizing what you have found into a structured answer. Avoid calling more tools unless absolutely necessary.";
 
 const WIND_DOWN_STEPS = 2;
-const MIDPOINT_RATIO = 0.6;
+const MIDPOINT_RATIO = 0.65;
 
 /**
  * Factory that returns a Mastra `prepareStep` function handling two model quirks:
