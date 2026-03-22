@@ -61,16 +61,22 @@ function makePoller(
 
   const queryTool = {
     execute: vi.fn(async (args: unknown) => {
-      const { query } = args as { query: string };
-      const entries = queryResults[query] ?? [];
+      const { expr } = args as { expr: string };
+      const entries = queryResults[expr] ?? [];
       return { data: { result: entries } };
     }),
   };
 
-  const provider = makeProvider("prom", { prom_query_prometheus: queryTool });
-  // Patch listTools to return the tool directly so getAllTools picks it up
+  const listDatasourcesTool = {
+    execute: vi.fn(async () => ({
+      content: [{ type: "text", text: JSON.stringify({ datasources: [{ uid: "prometheus", name: "Prometheus", type: "prometheus" }] }) }],
+    })),
+  };
+  const provider = makeProvider("prom", { prom_query_prometheus: queryTool, prom_list_datasources: listDatasourcesTool });
+  // Patch listTools to return the tools directly so getAllTools picks them up
   (provider.client.listTools as ReturnType<typeof vi.fn>).mockResolvedValue({
     prom_query_prometheus: queryTool,
+    prom_list_datasources: listDatasourcesTool,
   });
 
   const db = makeDb();
