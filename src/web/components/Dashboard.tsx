@@ -29,6 +29,8 @@ interface ActiveInvestigation {
   failedAt?: number;
 }
 
+type HealthStatus = "healthy" | "degraded" | "down" | "unknown";
+
 export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateService, onManageServices, onRunDiscovery }: DashboardProps) {
   const [services, setServices] = useState<ServiceConfig[]>([]);
   const [investigations, setInvestigations] = useState<InvestigationSummary[]>([]);
@@ -38,10 +40,11 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
   const [patternsExpanded, setPatternsExpanded] = useState(false);
   const [activeInvestigations, setActiveInvestigations] = useState<Map<string, ActiveInvestigation>>(new Map());
   const [fetchError, setFetchError] = useState<string | null>(null);
-  const [refreshProgress, setRefreshProgress] = useState(0);
+  // refreshProgress state removed — replaced with CSS breathing animation
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [servicesExpanded, setServicesExpanded] = useState(false);
+  const [healthData, setHealthData] = useState<Record<string, HealthStatus>>({});
 
   const processedRef = useRef(0);
   const fetchSeqRef = useRef(0);
@@ -50,15 +53,20 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
   async function fetchData() {
     const seq = ++fetchSeqRef.current;
     try {
-      const [invRes, svcRes] = await Promise.all([
+      const [invRes, svcRes, healthRes] = await Promise.all([
         fetch("/api/investigations?limit=100"),
         fetch("/api/services"),
+        fetch("/api/services/health"),
       ]);
       if (!invRes.ok || !svcRes.ok) {
         throw new Error(`Server error: ${!invRes.ok ? invRes.status : svcRes.status}`);
       }
       if (seq !== fetchSeqRef.current) return; // stale response — newer fetch in flight
       const [invData, svcData] = await Promise.all([invRes.json(), svcRes.json()]);
+      if (healthRes.ok) {
+        const hData = await healthRes.json();
+        setHealthData(hData as Record<string, HealthStatus>);
+      }
       setInvestigations(invData);
       setServices(svcData);
       // Reconcile: remove active investigations that are now complete/failed in DB
@@ -94,25 +102,10 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
     fetchData();
   }, []);
 
-  // Auto-refresh every 60 seconds with progress indicator
+  // Auto-refresh every 60 seconds
   useEffect(() => {
-    let lastFetchTime = Date.now();
-
-    const progressTick = setInterval(() => {
-      const elapsed = Date.now() - lastFetchTime;
-      setRefreshProgress(Math.min((elapsed / 60_000) * 100, 100));
-    }, 1000);
-
-    const refreshTick = setInterval(() => {
-      lastFetchTime = Date.now();
-      setRefreshProgress(0);
-      fetchData();
-    }, 60_000);
-
-    return () => {
-      clearInterval(progressTick);
-      clearInterval(refreshTick);
-    };
+    const refreshTick = setInterval(() => fetchData(), 60_000);
+    return () => clearInterval(refreshTick);
   }, []);
 
   // WS-driven re-fetch and active investigation tracking
@@ -224,6 +217,44 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
   // KPI computations
   const kpiData = useMemo(() => computeKpiData(investigations, services), [investigations, services]);
 
+  // Live health KPI counts from /api/services/health
+  const healthKpi = useMemo(() => {
+    let healthy = 0, degraded = 0, down = 0, unknown = 0;
+    for (const svc of services) {
+      const status = healthData[svc.name] ?? "unknown";
+      if (status === "healthy") healthy++;
+      else if (status === "degraded") degraded++;
+      else if (status === "down") down++;
+      else unknown++;
+    }
+    return { healthy, degraded, down, unknown };
+  }, [healthData, services]);
+
+  // Group services by health category, sorted alphabetically within each
+  const serviceGroups = useMemo(() => {
+    const unhealthy: typeof services = [];
+    const healthy: typeof services = [];
+    const unknown: typeof services = [];
+    for (const svc of services) {
+      const status = healthData[svc.name] ?? "unknown";
+      if (status === "down" || status === "degraded") unhealthy.push(svc);
+      else if (status === "healthy") healthy.push(svc);
+      else unknown.push(svc);
+    }
+    unhealthy.sort((a, b) => a.name.localeCompare(b.name));
+    healthy.sort((a, b) => a.name.localeCompare(b.name));
+    unknown.sort((a, b) => a.name.localeCompare(b.name));
+    return { unhealthy, healthy, unknown };
+  }, [services, healthData]);
+
+  // Collapsed state for each group (unhealthy always open by default)
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({
+    unhealthy: false,
+    healthy: false,
+    unknown: true,
+  });
+  const toggleGroup = (group: string) => setCollapsedGroups(prev => ({ ...prev, [group]: !prev[group] }));
+
   // Format elapsed time for active investigations
   const formatElapsed = (startTime: number): string => {
     const elapsed = Math.floor((Date.now() - startTime) / 1000);
@@ -269,16 +300,10 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
   };
 
   return (
-    <div className="h-full overflow-y-auto p-6 relative z-[2] dashboard-container">
-      {/* Auto-refresh progress bar */}
-      <div className="progress-bar-track absolute top-0 left-0 right-0 z-10">
-        <div
-          className="h-full bg-primary/40"
-          style={{
-            width: `${refreshProgress}%`,
-            transition: refreshProgress === 0 ? "none" : "width 1s linear",
-          }}
-        />
+    <div className="h-full overflow-y-auto px-4 py-5 relative z-[2] dashboard-container">
+      {/* Auto-refresh breathing indicator */}
+      <div className="absolute top-0 left-0 right-0 z-10 h-[2px] bg-primary/8">
+        <div className="h-full w-full bg-primary/30 animate-refresh-breathe" />
       </div>
       {/* First-run banner */}
       {services.length === 0 && !bannerDismissed && (
@@ -288,11 +313,40 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
       {/* Section A: Title */}
       <div className="mb-6 animate-fade-up">
         <h1 className="font-display text-xl font-bold tracking-tight text-foreground/90">Operations Desk</h1>
-        <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">
-          {services.length} services monitored
+        <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide flex items-center gap-2 flex-wrap">
+          <span>{services.length} services monitored</span>
           {lastUpdated && (
             <span className={`text-[9px] tabular-nums ${isStale ? "text-warning/60" : "text-muted-foreground/50"}`}>
               {" · "}Updated {formatLastUpdated(lastUpdated)}
+            </span>
+          )}
+          {services.length > 0 && (
+            <span className="text-[10px] font-mono flex items-center gap-2">
+              <span className="text-muted-foreground/40">·</span>
+              {healthKpi.healthy > 0 && (
+                <span className="flex items-center gap-1">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-success/80" />
+                  <span className="text-muted-foreground/60">{healthKpi.healthy} healthy</span>
+                </span>
+              )}
+              {healthKpi.degraded > 0 && (
+                <span className="flex items-center gap-1">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-warning/80" />
+                  <span className="text-muted-foreground/60">{healthKpi.degraded} degraded</span>
+                </span>
+              )}
+              {healthKpi.down > 0 && (
+                <span className="flex items-center gap-1">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-destructive/80" />
+                  <span className="text-muted-foreground/60">{healthKpi.down} down</span>
+                </span>
+              )}
+              {healthKpi.unknown > 0 && (
+                <span className="flex items-center gap-1">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-muted-foreground/30" />
+                  <span className="text-muted-foreground/40">{healthKpi.unknown} unknown</span>
+                </span>
+              )}
             </span>
           )}
         </p>
@@ -377,7 +431,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
         </section>
       )}
 
-      {/* Section D: Services Grid */}
+      {/* Section D: Services Grid (grouped) */}
       <section aria-label="Services" className="mb-6">
         <div className="flex items-center gap-2 mb-3">
           <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
@@ -397,28 +451,44 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-2 gap-3 dashboard-services-grid">
-              {(servicesExpanded ? services : services.slice(0, 9)).map((svc, i) => (
-                <div key={svc.name} className={`animate-fade-up delay-${Math.min(i + 1, 8)}`}>
-                  <ServiceCard
-                    name={svc.name}
-                    onClick={() => onInvestigateService(svc.name)}
-                    lastInvestigation={serviceInvData.get(svc.name)?.lastInvestigation ?? null}
-                    investigationCount={serviceInvData.get(svc.name)?.count ?? 0}
-                  />
-                </div>
-              ))}
-            </div>
-            <div className="flex items-center gap-3 mt-3 pl-3">
-              {services.length > 9 && (
+            {/* Service groups */}
+            {([
+              { key: "unhealthy", label: "Unhealthy", services: serviceGroups.unhealthy, dotColor: "bg-destructive/70", textColor: "text-destructive/70" },
+              { key: "healthy", label: "Healthy", services: serviceGroups.healthy, dotColor: "bg-success/70", textColor: "text-success/70" },
+              { key: "unknown", label: "Unknown", services: serviceGroups.unknown, dotColor: "bg-muted-foreground/30", textColor: "text-muted-foreground/50" },
+            ] as const).filter(g => g.services.length > 0).map((group) => (
+              <div key={group.key} className="mb-4">
                 <button
-                  onClick={() => setServicesExpanded(!servicesExpanded)}
-                  className="py-3 px-2 min-h-[44px] text-[10px] font-mono text-primary/70 hover:text-primary transition-colors"
+                  onClick={() => toggleGroup(group.key)}
+                  className="flex items-center gap-2 mb-2 py-2.5 px-2 -ml-2 rounded hover:bg-secondary/30 transition-colors w-full text-left min-h-[44px]"
                 >
-                  {servicesExpanded ? "Show less" : `Show all ${services.length}`}
+                  <span className={`text-[9px] font-mono ${collapsedGroups[group.key] ? "text-muted-foreground/40" : "text-muted-foreground/60"}`}>
+                    {collapsedGroups[group.key] ? "▸" : "▾"}
+                  </span>
+                  <span className={`w-1.5 h-1.5 rounded-full ${group.dotColor}`} />
+                  <span className={`text-[10px] font-mono font-medium uppercase tracking-[0.1em] ${group.textColor}`}>
+                    {group.label}
+                  </span>
+                  <span className="text-[9px] font-mono text-muted-foreground/35">{group.services.length}</span>
                 </button>
-              )}
-              {services.length > 9 && <span className="text-muted-foreground/20">&middot;</span>}
+                {!collapsedGroups[group.key] && (
+                  <div className="grid grid-cols-3 gap-3 dashboard-services-grid">
+                    {group.services.map((svc, i) => (
+                      <div key={svc.name} className={`animate-fade-up delay-${Math.min(i + 1, 8)}`}>
+                        <ServiceCard
+                          name={svc.name}
+                          onClick={() => onInvestigateService(svc.name)}
+                          lastInvestigation={serviceInvData.get(svc.name)?.lastInvestigation ?? null}
+                          investigationCount={serviceInvData.get(svc.name)?.count ?? 0}
+                          healthStatus={healthData[svc.name] as "healthy" | "degraded" | "down" | "unknown" | undefined}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+            <div className="flex items-center gap-3 mt-1 pl-3">
               <button onClick={onManageServices} className="py-3 px-2 min-h-[44px] text-[10px] font-mono text-primary/70 hover:text-primary transition-colors">Manage</button>
               <span className="text-muted-foreground/20">&middot;</span>
               <button onClick={onRunDiscovery} className="text-[10px] font-mono text-primary/70 hover:text-primary transition-colors py-3 px-2 min-h-[44px]">Re-discover</button>

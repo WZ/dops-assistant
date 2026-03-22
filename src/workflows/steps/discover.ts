@@ -50,7 +50,9 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
 
   // Keep maxSteps capped so the quirk wind-down (which disables tools to
   // force JSON output) fires before the model exhausts all iterations.
-  const maxSteps = Math.min(config.discoveryConfig.maxIterations, 25);
+  // The agent runs multiple discovery queries (deployments, statefulsets,
+  // daemonsets, pods, scrape targets) so it needs enough iterations.
+  const maxSteps = Math.min(config.discoveryConfig.maxIterations, 35);
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     const agent = createDiscoverAgent({
