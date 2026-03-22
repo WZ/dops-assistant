@@ -349,16 +349,16 @@ input:focus, textarea:focus {
     grid-template-columns: 1fr !important;
   }
   .dashboard-services-grid {
-    grid-template-columns: 1fr !important;
+    grid-template-columns: minmax(0, 1fr) !important;
   }
 }
-@container (min-width: 401px) and (max-width: 600px) {
+@container (min-width: 300px) and (max-width: 419px) {
   .dashboard-services-grid {
-    grid-template-columns: repeat(2, 1fr) !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   }
 }
-@container (min-width: 601px) {
+@container (min-width: 420px) {
   .dashboard-services-grid {
-    grid-template-columns: repeat(3, 1fr) !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
   }
 }

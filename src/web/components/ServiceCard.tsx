@@ -1,27 +1,37 @@
 import { memo, useEffect, useState } from "react";
 import { timeAgo } from "@/lib/dashboard-utils";
 
-function Sparkline({ data }: { data: Array<{ status: string }> }) {
-  if (data.length < 5) return <span className="text-[9px] font-mono text-muted-foreground/40">&mdash;</span>;
+function DotTimeline({ data }: { data: Array<{ status: string }> }) {
+  if (data.length < 3) return <span className="text-[9px] font-mono text-muted-foreground/40">&mdash;</span>;
 
-  const w = 60, h = 16;
-  const step = w / (data.length - 1);
-
-  // Map status to y value: healthy=top (2), unknown=mid (8), down=bottom (14)
-  const points = data.map((d, i) => {
-    const y = d.status === "healthy" ? 2 : d.status === "down" ? 14 : 8;
-    return `${i * step},${y}`;
-  }).join(" ");
-
-  // Color: mostly healthy = success, mostly down = destructive, mixed = warning
+  const healthyCount = data.filter(d => d.status === "healthy").length;
   const downCount = data.filter(d => d.status === "down").length;
-  const ratio = downCount / data.length;
-  const color = ratio > 0.5 ? "var(--color-destructive)" : ratio > 0 ? "var(--color-warning)" : "var(--color-success)";
 
   return (
-    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} role="img" aria-label={`Health trend: ${downCount} of ${data.length} checks down`}>
-      <polyline points={points} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.6" />
-    </svg>
+    <div
+      className="flex gap-[1.5px] overflow-hidden"
+      role="img"
+      aria-label={`Health: ${healthyCount} of ${data.length} checks healthy${downCount > 0 ? `, ${downCount} down` : ""}`}
+    >
+      {data.map((d, i) => (
+        <div
+          key={i}
+          className="rounded-[1px]"
+          style={{
+            flex: "1 1 0",
+            minWidth: 2,
+            maxWidth: 6,
+            height: 8,
+            background: d.status === "healthy"
+              ? "var(--color-success)"
+              : d.status === "down"
+              ? "var(--color-destructive)"
+              : "var(--color-muted-foreground)",
+            opacity: d.status === "down" ? 0.7 : d.status === "healthy" ? 0.45 : 0.2,
+          }}
+        />
+      ))}
+    </div>
   );
 }
 
@@ -41,7 +51,7 @@ export const ServiceCard = memo(function ServiceCard({ name, onClick, lastInvest
 
   // Fetch sparkline history once on mount
   useEffect(() => {
-    fetch(`/api/services/health/history?service=${encodeURIComponent(name)}&hours=6`)
+    fetch(`/api/services/health/history?service=${encodeURIComponent(name)}&hours=24`)
       .then(r => r.ok ? r.json() : [])
       .then(data => {
         if (Array.isArray(data)) setHistoryData(data);
@@ -91,20 +101,29 @@ export const ServiceCard = memo(function ServiceCard({ name, onClick, lastInvest
           <path d="m21 21-4.3-4.3"/>
         </svg>
       </div>
-      <div className="mt-1.5 pl-[18px] flex items-center gap-2">
+      <div className="mt-1.5 pl-[18px]">
         <span className="text-[9px] font-mono text-muted-foreground/60 uppercase tracking-[0.15em]">
           {healthLabel}
         </span>
-        <Sparkline data={historyData} />
-        {investigationCount !== undefined && investigationCount > 0 && (
-          <span className="text-[9px] font-mono text-muted-foreground/40">
-            {investigationCount} investigations
-          </span>
-        )}
-        {lastInvestigation && (
-          <span className="text-[9px] font-mono text-muted-foreground/40">
-            {timeAgo(lastInvestigation.created_at)}
-          </span>
+        <div className="mt-1.5 flex items-center gap-1.5">
+          <div className="flex-1 min-w-0">
+            <DotTimeline data={historyData} />
+          </div>
+          <span className="text-[8px] font-mono text-muted-foreground/30 flex-shrink-0">24h</span>
+        </div>
+        {(investigationCount !== undefined && investigationCount > 0 || lastInvestigation) && (
+          <div className="mt-1.5 flex items-center gap-2">
+            {investigationCount !== undefined && investigationCount > 0 && (
+              <span className="text-[9px] font-mono text-muted-foreground/40">
+                {investigationCount} investigations
+              </span>
+            )}
+            {lastInvestigation && (
+              <span className="text-[9px] font-mono text-muted-foreground/40">
+                {timeAgo(lastInvestigation.created_at)}
+              </span>
+            )}
+          </div>
         )}
       </div>
     </button>
