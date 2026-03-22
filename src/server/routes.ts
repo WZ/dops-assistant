@@ -1,8 +1,12 @@
 import type { Express, Request, Response } from "express";
 import type { Database, InvestigationRow, PhaseRow, EventRow } from "./db.js";
-import type { ServiceConfig } from "../config/schema.js";
+import type { ServiceConfig, BrandingConfig } from "../config/schema.js";
+import { ProviderSchema } from "../config/schema.js";
+import { createMcpProvider, listProviderTools } from "../mcp/provider.js";
 import type { SkillStore } from "../skills/store.js";
 import type { ServiceRegistryStore } from "../services/registry.js";
+import type { ProviderRegistry } from "../mcp/provider-registry.js";
+import type { ServiceHealthPoller } from "./service-health-poller.js";
 
 export interface DependencyNode {
   id: string;
@@ -100,15 +104,59 @@ export function buildHandlers(db: Database, services: ServiceConfig[]): RouteHan
 export function registerRoutes(
   app: Express, db: Database, services: ServiceConfig[], _mcp?: unknown,
   skillStore?: SkillStore, registryStore?: ServiceRegistryStore,
+  providerRegistry?: ProviderRegistry,
+  branding?: BrandingConfig,
+  healthPoller?: ServiceHealthPoller,
 ): void {
   const handlers = buildHandlers(db, services);
 
   app.get("/api/services", (_req: Request, res: Response) => {
-    res.json(handlers.getServices());
+    // Merge config.yaml inline services with registry (services.yaml) entries.
+    // Config services take precedence (dedup by name), then append registry-only services.
+    if (registryStore) {
+      const configNames = new Set(services.map(s => s.name));
+      const registryServices = registryStore.load().filter(s => !configNames.has(s.name));
+      res.json([...services, ...registryServices]);
+    } else {
+      res.json(handlers.getServices());
+    }
+  });
+
+  app.get("/api/branding", (_req: Request, res: Response) => {
+    res.json(branding ?? { title: "dops", subtitle: "assistant" });
   });
 
   app.get("/api/services/graph", (_req: Request, res: Response) => {
-    res.json(inferDependencyGraph(services));
+    let current = services;
+    if (registryStore) {
+      const configNames = new Set(services.map(s => s.name));
+      const registryServices = registryStore.load().filter(s => !configNames.has(s.name));
+      current = [...services, ...registryServices];
+    }
+    res.json(inferDependencyGraph(current));
+  });
+
+  // ── Service Health REST API ───────────────────────────────────────────────
+  app.get("/api/services/health", (_req: Request, res: Response) => {
+    if (!healthPoller) {
+      res.json({});
+      return;
+    }
+    res.json(Object.fromEntries(healthPoller.getHealth()));
+  });
+
+  app.get("/api/services/health/history", (req: Request, res: Response) => {
+    const service = req.query["service"] as string | undefined;
+    if (!service) {
+      res.status(400).json({ error: "service query parameter is required" });
+      return;
+    }
+    const hours = Math.max(1, Math.min(Number(req.query["hours"]) || 6, 168));
+    if (!healthPoller) {
+      res.json([]);
+      return;
+    }
+    res.json(healthPoller.getHistory(service, hours));
   });
 
   app.get("/api/investigations", (req: Request, res: Response) => {
@@ -340,4 +388,115 @@ export function registerRoutes(
     }
     res.json(db.findSimilarPatterns(service));
   });
+
+  // ── Provider Management REST API ──────────────────────────────────────
+  if (providerRegistry) {
+    // GET /api/providers — list all with connection status
+    app.get("/api/providers", (_req: Request, res: Response) => {
+      const providers = providerRegistry.getAll();
+      res.json(providers.map(p => ({
+        name: p.config.name,
+        roles: p.config.roles,
+        region: p.config.region,
+        transport: p.config.mcpServer.transport,
+        command: p.config.mcpServer.transport === "stdio" ? p.config.mcpServer.command : undefined,
+        url: p.config.mcpServer.transport === "http" ? p.config.mcpServer.url : undefined,
+        source: p.source,
+        status: p.status,
+        toolCount: p.toolCount,
+        error: p.error,
+      })));
+    });
+
+    // POST /api/providers — add a new provider
+    app.post("/api/providers", async (req: Request, res: Response) => {
+      try {
+        const config = req.body;
+        const parsed = ProviderSchema.safeParse(config);
+        if (!parsed.success) {
+          res.status(400).json({ error: parsed.error.issues.map(i => i.message).join(", ") });
+          return;
+        }
+        const info = await providerRegistry.add(parsed.data);
+        res.status(201).json({
+          name: info.config.name,
+          status: info.status,
+          toolCount: info.toolCount,
+          error: info.error,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("already exists")) {
+          res.status(409).json({ error: msg });
+        } else {
+          res.status(500).json({ error: msg });
+        }
+      }
+    });
+
+    // PUT /api/providers/:name — update
+    app.put("/api/providers/:name", async (req: Request, res: Response) => {
+      try {
+        const name = Array.isArray(req.params["name"]) ? req.params["name"][0]! : req.params["name"]!;
+        const config = req.body;
+        const parsed = ProviderSchema.safeParse(config);
+        if (!parsed.success) {
+          res.status(400).json({ error: parsed.error.issues.map(i => i.message).join(", ") });
+          return;
+        }
+        const info = await providerRegistry.update(name, parsed.data);
+        res.json({ name: info.config.name, status: info.status, toolCount: info.toolCount });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("system provider")) res.status(403).json({ error: msg });
+        else if (msg.includes("not found")) res.status(404).json({ error: msg });
+        else res.status(500).json({ error: msg });
+      }
+    });
+
+    // DELETE /api/providers/:name — remove
+    app.delete("/api/providers/:name", async (req: Request, res: Response) => {
+      try {
+        const name = Array.isArray(req.params["name"]) ? req.params["name"][0]! : req.params["name"]!;
+        await providerRegistry.remove(name);
+        res.status(204).end();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("system provider")) res.status(403).json({ error: msg });
+        else if (msg.includes("not found")) res.status(404).json({ error: msg });
+        else res.status(500).json({ error: msg });
+      }
+    });
+
+    // POST /api/providers/test-config — test a config without persisting
+    app.post("/api/providers/test-config", async (req: Request, res: Response) => {
+      try {
+        const parsed = ProviderSchema.safeParse(req.body);
+        if (!parsed.success) {
+          res.status(400).json({ error: parsed.error.issues.map(i => i.message).join(", ") });
+          return;
+        }
+        const provider = createMcpProvider(parsed.data);
+        const tools = await listProviderTools(provider);
+        const toolCount = Object.keys(tools).length;
+        res.json({ status: "ok", toolCount });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        res.json({ status: "error", toolCount: 0, error: msg });
+      }
+    });
+
+    // POST /api/providers/:name/test — test connection
+    app.post("/api/providers/:name/test", async (req: Request, res: Response) => {
+      try {
+        const name = Array.isArray(req.params["name"]) ? req.params["name"][0]! : req.params["name"]!;
+        const result = await providerRegistry.test(name);
+        res.json(result);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("not found")) res.status(404).json({ error: msg });
+        else res.status(500).json({ error: msg });
+      }
+    });
+  }
 }

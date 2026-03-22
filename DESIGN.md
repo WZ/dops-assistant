@@ -14,24 +14,24 @@
 
 ### Competitive Positioning
 The observability space converges on cold grays, geometric sans-serifs, and single-accent-color differentiation. dops-assistant stands apart through:
-1. **Serif display type** — nobody in observability uses serifs. RCA reports read like authoritative publications, not generic chatbot output.
+1. **Clean sans-serif typography** — Inter's professional clarity at all sizes, paired with tight tracking for headers, creates an enterprise-grade feel appropriate for Fortinet's product family.
 2. **Deep Teal primary** — unclaimed in the space (Grafana=orange, Datadog=purple, PagerDuty=green). Signals calm expertise.
 3. **Restrained color** — 80% of the UI is typography and neutrals. When teal or coral appears, it means something.
 
 ## Typography
-- **Display/Hero:** Fraunces (300–800, optical sizing) — Warm serif with personality. Variable optical sizing adapts letterforms for display and text sizes. Completely unique in the observability space. Used for page titles, section headers, RCA report headings, stat card titles.
+- **Display/Hero:** Inter (300–800) — Clean, professional sans-serif with excellent readability at all sizes. Industry standard for enterprise SaaS. Used for page titles, section headers, RCA report headings, stat card titles, branding.
 - **Body:** Plus Jakarta Sans (300–700) — Geometric sans with humanist warmth. Excellent x-height and readability at small sizes. Used for paragraphs, chat messages, form labels, table content, descriptions.
 - **UI/Labels:** Same as body (Plus Jakarta Sans) at 11–12px medium weight.
 - **Data/Tables:** JetBrains Mono (400–600) — Industry standard for code. Supports `tabular-nums` for aligned metrics. Used for log output, PromQL queries, tool call names, phase codes, badges, metric values.
 - **Code:** JetBrains Mono
-- **Loading:** Google Fonts CDN — `https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;0,9..144,800;1,9..144,400;1,9..144,500&family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap`
+- **Loading:** Google Fonts CDN — `https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap`
 - **Scale:**
 
 | Level | Size | Font | Weight | Usage |
 |-------|------|------|--------|-------|
-| Display | 28–32px | Fraunces | 700 | Page titles, hero headings |
-| Title | 18–22px | Fraunces | 600 | Section headers, RCA report title |
-| Subtitle | 14–16px | Fraunces | 500–600 | Subsection headers, stat card labels |
+| Display | 28–32px | Inter | 700 | Page titles, hero headings |
+| Title | 18–22px | Inter | 600 | Section headers, RCA report title |
+| Subtitle | 14–16px | Inter | 500–600 | Subsection headers, stat card labels |
 | Body | 13–14px | Plus Jakarta Sans | 400 | Paragraphs, chat messages, descriptions |
 | Label | 11–12px | Plus Jakarta Sans | 500 | Form labels, table headers, secondary text |
 | Caption | 10px | Plus Jakarta Sans | 400 | Timestamps, tertiary info |
@@ -42,9 +42,6 @@ The observability space converges on cold grays, geometric sans-serifs, and sing
 
 ### Font Blacklist (never use)
 Papyrus, Comic Sans, Lobster, Impact, Jokerman, Bleeding Cowboys, Permanent Marker, Bradley Hand, Brush Script, Hobo, Trajan, Courier New (for body).
-
-### Overused Fonts (avoid as primary)
-Inter, Roboto, Arial, Helvetica, Open Sans, Lato, Montserrat, Poppins.
 
 ## Color
 - **Approach:** Restrained — teal primary + coral accent. Most of the UI is typographic. Color appears only where it carries semantic meaning. No decorative gradients or accent-color-everywhere patterns.
@@ -142,8 +139,8 @@ The main dashboard ("Operations Desk") follows a two-panel layout: scrollable da
 
 **Dashboard column (top to bottom):**
 1. **Status Strip** — system health, uptime, MCP/DB probe status. Monospace stamp. Always visible.
-2. **Page title** — "Operations Desk" in Fraunces 700.
-3. **KPI Stat Cards** — 2x2 grid. Investigations (active/complete/failed), Services Healthy (N/Total), Avg MTTR 7d (with trend arrow), Token Usage. Mono-display numbers, Fraunces labels.
+2. **Page title** — "Operations Desk" in Inter 700.
+3. **KPI Stat Cards** — 2x2 grid. Investigations (active/complete/failed), Services Healthy (N/Total), Avg MTTR 7d (with trend arrow), Token Usage. Mono-display numbers, Inter labels.
 4. **Active Investigations** — conditional coral-tinted section. Pulsing dots for running, red for failed. Collapses when nothing active.
 5. **Services Grid** — 2-3 col cards with health dot, investigation count, last investigation time. Manage/Re-discover links below.
 6. **Investigation Log** — compact table: status dot, service + severity badge, root cause, confidence, tokens, duration.
@@ -167,7 +164,7 @@ The main dashboard ("Operations Desk") follows a two-panel layout: scrollable da
 | Date | Decision | Rationale |
 |------|----------|-----------|
 | 2026-03-18 | Started fresh with "Investigator's Desk" direction | Previous "Industrial/Utilitarian" system was too similar to category norms. New editorial direction differentiates through serif typography and restrained color. |
-| 2026-03-18 | Chose Fraunces for display | Warm optical serif with full weight range. Unique in observability (every competitor uses geometric sans). Signals authority for RCA reports. |
+| 2026-03-20 | Switched display font from Fraunces to Inter | FortiSOC branding needs enterprise-grade sans-serif. Inter is clean and professional at all sizes. Fraunces serif felt out of place for a Fortinet product name. |
 | 2026-03-18 | Chose Plus Jakarta Sans for body | Geometric sans with humanist warmth. Better personality than Inter/Roboto without sacrificing readability. |
 | 2026-03-18 | Chose teal (#0D7C66) as primary | Unclaimed color in the observability space. Calm and stable — opposite of the "everything is on fire" energy most incident tools project. |
 | 2026-03-18 | Chose coral (#C2533D) as accent | Warm, earthy attention without the alarm of red. Pairs naturally with teal (complementary relationship). |

@@ -66,16 +66,20 @@ function probeDb(db: Database): ProbeResult {
 }
 
 export interface HealthMonitorDeps {
-  providers: MastraProvider[];
+  providers: MastraProvider[] | (() => MastraProvider[]);
   db: Database;
 }
 
 let intervalHandle: ReturnType<typeof setInterval> | undefined;
 
 export function startHealthMonitor(deps: HealthMonitorDeps, intervalMs = 30_000): void {
+  const resolveProviders = typeof deps.providers === "function"
+    ? deps.providers
+    : () => deps.providers as MastraProvider[];
+
   const runProbes = async () => {
     const [mcp, db] = await Promise.all([
-      probeMcp(deps.providers),
+      probeMcp(resolveProviders()),
       Promise.resolve(probeDb(deps.db)),
     ]);
 

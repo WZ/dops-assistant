@@ -110,6 +110,7 @@ export class Database {
         created_at        TEXT NOT NULL DEFAULT (datetime('now'))
       );
     `);
+    this.migrateServiceHealthChecks();
   }
 
   createInvestigation(inv: { id: string; service: string; query: string; status: string }): void {
@@ -219,6 +220,40 @@ export class Database {
     return this.db.prepare(
       "SELECT id, service, symptom, root_cause, severity, recommended_actions, created_at FROM incident_patterns WHERE service = ? ORDER BY created_at DESC LIMIT ?"
     ).all(service, limit) as any[];
+  }
+
+  // ── Service health checks ────────────────────────────────────────────────
+
+  /**
+   * Migrate service_health_checks table if it doesn't exist.
+   * Safe to call multiple times — uses CREATE TABLE IF NOT EXISTS.
+   */
+  migrateServiceHealthChecks(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS service_health_checks (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        service    TEXT NOT NULL,
+        status     TEXT NOT NULL,
+        checked_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_shc_service_checked ON service_health_checks (service, checked_at);
+    `);
+  }
+
+  insertServiceHealthCheck(service: string, status: string, checkedAt: string): void {
+    this.db.prepare(
+      "INSERT INTO service_health_checks (service, status, checked_at) VALUES (?, ?, ?)"
+    ).run(service, status, checkedAt);
+  }
+
+  getServiceHealthHistory(service: string, hours: number): Array<{ status: string; checked_at: string }> {
+    // Compute the cutoff timestamp in JS to avoid SQL string concatenation
+    const cutoff = new Date(Date.now() - Math.ceil(hours) * 3600 * 1000).toISOString();
+    return this.db.prepare(
+      `SELECT status, checked_at FROM service_health_checks
+       WHERE service = ? AND checked_at >= ?
+       ORDER BY checked_at ASC`
+    ).all(service, cutoff) as Array<{ status: string; checked_at: string }>;
   }
 
   close(): void {
