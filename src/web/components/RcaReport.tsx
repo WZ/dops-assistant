@@ -97,13 +97,21 @@ export function RcaReport({ report }: { report: RcaReportData }) {
         )}
       </div>
 
+      {/* Low confidence banner */}
+      {report.confidenceScore != null && report.confidenceScore < 0.5 && (
+        <div className="px-5 py-2.5 bg-warning/8 border-b border-warning/15 flex items-center gap-2">
+          <span className="text-warning text-sm">⚠</span>
+          <span className="text-[11px] font-body text-warning/80">Low confidence — insufficient data to determine root cause</span>
+        </div>
+      )}
+
       {/* Body */}
       <div className="px-5 py-4 space-y-4">
         {/* Root Cause, Trigger, Impact — aligned as a uniform list */}
         <div className="space-y-4">
           <div>
             <SectionLabel color="text-primary">Root Cause</SectionLabel>
-            <p className="text-sm font-body text-foreground/90 leading-relaxed">{renderInline(report.rootCause)}</p>
+            <p className={`text-sm font-body leading-relaxed ${report.confidenceScore != null && report.confidenceScore < 0.5 ? "text-foreground/50 italic" : "text-foreground/90"}`}>{renderInline(report.rootCause)}</p>
           </div>
 
           <div>
