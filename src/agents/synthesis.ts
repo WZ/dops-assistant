@@ -53,6 +53,11 @@ CRITICAL — EVIDENCE REQUIREMENTS (do NOT skip any category):
 - evidence.infra: Include 1-3 items if any infra anomalies found.
 - If a category has NO findings at all, use an empty array — do NOT fabricate evidence.
 
+CRITICAL — ROOT CAUSE QUALITY:
+- If you cannot identify a specific root cause, you MUST still cite all available evidence in the evidence arrays. Do NOT leave evidence arrays empty when findings were provided to you.
+- rootCause MUST cite at least one specific metric or log entry. "Unable to determine" is only acceptable when ALL evidence arrays are empty.
+- When evidence exists but causation is unclear, state what the evidence shows and note that the causal chain is uncertain — do NOT default to "Unable to determine".
+
 You MUST respond with a JSON object matching this exact schema (no trailing text after the JSON):
 {"severity": "low"|"medium"|"high"|"critical", "summary": "string", "impact": {"duration": "string", "description": "string"}, "trigger": "string", "rootCause": "string", "contributingFactors": ["string"], "timeline": [{"time": "string", "event": "string"}], "evidence": {"metrics": ["string"], "logs": ["string"], "infra": ["string"]}, "dashboardLinks": ["string"], "recommendedActions": ["string"], "confidence": "low"|"medium"|"high", "confidenceScore": number}`,
     model: config.model as any,
