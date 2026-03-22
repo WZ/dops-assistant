@@ -227,6 +227,17 @@ export class InvestigationRunner {
       }
       runningPhases.clear();
 
+      // 5.5 Confidence gate — force low score when rootCause is vague or evidence is missing
+      const vagueRootCause = /unable to determine|under investigation/i.test(report.rootCause ?? "");
+      const totalEvidence = (report.evidence?.metrics?.length ?? 0) + (report.evidence?.logs?.length ?? 0) + (report.evidence?.infra?.length ?? 0);
+      if (totalEvidence === 0) {
+        report.confidenceScore = Math.min(report.confidenceScore ?? 1, 0.2);
+        logger.info({ invId, service: service.name }, "Confidence gate: no evidence, forcing score to 0.2");
+      } else if (vagueRootCause) {
+        report.confidenceScore = Math.min(report.confidenceScore ?? 1, 0.3);
+        logger.info({ invId, service: service.name }, "Confidence gate: vague rootCause, forcing score to 0.3");
+      }
+
       // 6. Persist report and token usage
       const totalDurationMs = Date.now() - investigationStartMs;
       this.db.updateInvestigation(invId, { status: "complete", report: JSON.stringify(report) });
