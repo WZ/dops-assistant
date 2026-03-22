@@ -23,6 +23,9 @@ npm run web              # Start web server (port 3000, loads dev/.env)
 npm run build:web        # Build frontend (Vite → dist/web/) — MUST rebuild after src/web/ changes
 npm run cli              # Terminal UI (Ink) — doesn't work inside Claude Code
 npm run discover         # Run AI service discovery
+npx tsx src/eval/rca-eval.ts          # Score RCA report quality
+npx tsx src/eval/rca-eval.ts --save   # Score + save baseline
+npx tsx src/eval/rca-eval.ts --compare src/eval/baselines/2026-03-22.json  # Compare to baseline
 npx vitest run           # Run all tests
 npx vitest run src/path  # Run a single test file
 npx tsc --noEmit         # Type check
@@ -53,6 +56,7 @@ npx tsc --noEmit         # Type check
 | Service health poller | `src/server/service-health-poller.ts` — Prometheus polling, auto-investigate on transitions |
 | Investigation dedup | `src/server/investigation-dedup.ts` — shared dedup + concurrency guard |
 | Provider registry | `src/mcp/provider-registry.ts` — config + GUI providers, CRUD, `providers.yaml` persistence |
+| RCA eval harness | `src/eval/rca-eval.ts` — scores RCA reports on 5 quality dimensions, baselines in `src/eval/baselines/` |
 | LLM quirk workarounds | `src/agents/shared/prepare-step.ts` (`prepareStep` hook) |
 | Shared types | `src/types/` — RCA report, agent interfaces, LLM types, WebSocket protocol |
 | Mastra wiring | `src/mastra/index.ts` — agent/workflow registration |
@@ -64,7 +68,7 @@ npx tsc --noEmit         # Type check
 - **Run all**: `npx vitest run`
 - **Run one**: `npx vitest run src/agents/chat.test.ts`
 - **Watch mode**: `npx vitest` (alias: `npm run test:watch`)
-- **44 test files** across agents, CLI commands, server, workflows, config, and web utils
+- **45 test files** across agents, CLI commands, server, workflows, config, eval, and web utils
 
 ## Dev Setup
 
