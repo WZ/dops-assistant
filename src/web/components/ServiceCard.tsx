@@ -88,12 +88,12 @@ export const ServiceCard = memo(function ServiceCard({ name, onClick, lastInvest
       className="group w-full text-left rounded-lg border border-border/40 bg-card/50 hover:bg-card/80 hover:border-primary/25 px-4 py-3 transition-all card-lift"
     >
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2.5 min-w-0">
           <div
-            className={dotClass}
+            className={`shrink-0 ${dotClass}`}
             aria-label={`Service ${name}: status ${healthStatus ?? "unknown"}`}
           />
-          <span className="font-body text-sm font-medium text-foreground/75 group-hover:text-foreground/95 transition-colors">
+          <span className="font-body text-sm font-medium text-foreground/75 group-hover:text-foreground/95 transition-colors truncate" title={name}>
             {name}
           </span>
         </div>
