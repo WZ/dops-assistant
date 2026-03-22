@@ -460,7 +460,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
               <div key={group.key} className="mb-4">
                 <button
                   onClick={() => toggleGroup(group.key)}
-                  className="flex items-center gap-2 mb-2 py-1 px-1 -ml-1 rounded hover:bg-secondary/30 transition-colors w-full text-left"
+                  className="flex items-center gap-2 mb-2 py-2.5 px-2 -ml-2 rounded hover:bg-secondary/30 transition-colors w-full text-left min-h-[44px]"
                 >
                   <span className={`text-[9px] font-mono ${collapsedGroups[group.key] ? "text-muted-foreground/40" : "text-muted-foreground/60"}`}>
                     {collapsedGroups[group.key] ? "▸" : "▾"}
