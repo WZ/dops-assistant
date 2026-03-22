@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 import { useAutoScroll } from "../hooks/useAutoScroll.js";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Search, SearchCode, MessageSquare, Plus, FileText, ChevronRight, Send } from "lucide-react";
 import { renderInline } from "../lib/renderInline";
 import { renderMarkdown } from "../lib/renderMarkdown";
 import { formatTokens } from "../lib/formatTokens.js";
@@ -300,18 +302,14 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
         <div className="flex items-center gap-2">
           {isDeepMode ? (
             <>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-accent">
-                <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/><path d="M11 8v6"/><path d="M8 11h6"/>
-              </svg>
+              <SearchCode size={13} className="!size-auto text-accent" />
               <span className="font-display text-[11px] font-semibold tracking-[0.12em] uppercase text-accent">
                 Deep Investigation
               </span>
             </>
           ) : (
             <>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-muted-foreground/70">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-              </svg>
+              <MessageSquare size={13} strokeWidth={1.5} className="!size-auto text-muted-foreground/70" />
               <span className="font-display text-[11px] font-semibold tracking-[0.12em] uppercase text-muted-foreground/50">
                 Console
               </span>
@@ -319,15 +317,14 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
           )}
         </div>
         {!isDeepMode && chatMessages.length > 0 && (
-          <button
+          <Button
+            variant="ghost"
             onClick={() => { send({ type: "new_session" }); }}
-            className="flex items-center gap-1 px-2 py-1 text-[10px] font-mono rounded border border-border/30 text-muted-foreground/50 hover:text-foreground/70 hover:border-border/50 hover:bg-secondary/30 transition-colors"
+            className="h-auto px-2 py-1 text-[10px] font-mono rounded border border-border/30 text-muted-foreground/50 hover:text-foreground/70 hover:border-border/50 hover:bg-secondary/30"
           >
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M12 5v14M5 12h14"/>
-            </svg>
+            <Plus size={10} className="!size-auto" />
             New chat
-          </button>
+          </Button>
         )}
       </div>
 
@@ -346,18 +343,20 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
             New topic: <strong>{contextSwitch.newService}</strong> (was: {contextSwitch.previousService})
           </span>
           <div className="flex items-center gap-2">
-            <button
+            <Button
+              variant="outline"
               onClick={() => { send({ type: "new_session" }); setContextSwitch(null); }}
-              className="px-2 py-0.5 rounded border border-accent/25 text-accent/80 hover:bg-accent/10 transition-colors"
+              className="h-auto px-2 py-0.5 rounded border-accent/25 text-accent/80 hover:bg-accent/10"
             >
               Start fresh
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="outline"
               onClick={() => setContextSwitch(null)}
-              className="px-2 py-0.5 rounded border border-border/25 text-muted-foreground/50 hover:bg-secondary/30 transition-colors"
+              className="h-auto px-2 py-0.5 rounded border-border/25 text-muted-foreground/50 hover:bg-secondary/30"
             >
               Dismiss
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -368,10 +367,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
           {messages.length === 0 && !isDeepMode && !chatLoading && (
             <div className="h-full min-h-[200px] flex flex-col items-center justify-center text-center animate-fade-in">
               <div className="w-11 h-11 rounded-xl bg-primary/8 border border-primary/15 flex items-center justify-center mb-3">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-primary/50">
-                  <circle cx="11" cy="11" r="8"/>
-                  <path d="m21 21-4.3-4.3"/>
-                </svg>
+                <Search size={18} strokeWidth={1.5} className="!size-auto text-primary/50" />
               </div>
               <p className="text-sm text-muted-foreground/50 font-body">
                 Ask a question or start an investigation
@@ -455,9 +451,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                     <div className="flex flex-wrap gap-1 mb-1">
                       {msg.skillsUsed.map((s, si) => (
                         <span key={si} className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[9px] font-mono rounded bg-primary/8 text-primary/60 border border-primary/12">
-                          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>
-                          </svg>
+                          <FileText size={8} className="!size-auto" />
                           {s}
                         </span>
                       ))}
@@ -488,18 +482,17 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                 {/* Reasoning indicator */}
                 {streamingMessage.reasoning && (
                   <div>
-                    <button
+                    <Button
+                      variant="ghost"
                       onClick={() => setStreamingMessage((prev) => prev ? { ...prev, showReasoning: !prev.showReasoning } : null)}
-                      className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground/60 hover:text-muted-foreground/80 transition-colors mb-1"
+                      className="h-auto p-0 text-[10px] font-mono text-muted-foreground/60 hover:text-muted-foreground/80 hover:bg-transparent mb-1"
                     >
-                      <svg
-                        width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                        className={`transition-transform ${streamingMessage.showReasoning ? "rotate-90" : ""}`}
-                      >
-                        <path d="M9 18l6-6-6-6"/>
-                      </svg>
+                      <ChevronRight
+                        size={8}
+                        className={`!size-auto transition-transform ${streamingMessage.showReasoning ? "rotate-90" : ""}`}
+                      />
                       {streamingMessage.content ? "Thought" : "Thinking..."}
-                    </button>
+                    </Button>
                     {streamingMessage.showReasoning && (
                       <div className="px-3 py-2 rounded-lg bg-secondary/25 border border-border/20 text-[11px] font-mono text-muted-foreground/60 leading-relaxed max-h-[200px] overflow-y-auto whitespace-pre-wrap">
                         {streamingMessage.reasoning}
@@ -582,15 +575,15 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
             }
             disabled={status !== "connected" || isLoading}
           />
-          <button
+          <Button
+            variant="ghost"
+            size="icon"
             type="submit"
             disabled={status !== "connected" || !input.trim() || isLoading}
-            className={`absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md transition-all disabled:opacity-15 ${isDeepMode ? "text-accent/40 hover:text-accent hover:bg-accent/10" : "text-muted-foreground/60 hover:text-primary hover:bg-primary/8"}`}
+            className={`absolute right-2 top-1/2 -translate-y-1/2 h-auto w-auto p-1.5 rounded-md disabled:opacity-15 ${isDeepMode ? "text-accent/40 hover:text-accent hover:bg-accent/10" : "text-muted-foreground/60 hover:text-primary hover:bg-primary/8"}`}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/>
-            </svg>
-          </button>
+            <Send size={14} className="!size-auto" />
+          </Button>
         </form>
       </div>
     </div>

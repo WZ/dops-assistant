@@ -1,6 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useState, type ReactNode } from "react";
+import { ChevronRight, FileText } from "lucide-react";
 import { renderInline } from "../lib/renderInline";
 import { renderMarkdown } from "../lib/renderMarkdown";
 
@@ -52,9 +53,7 @@ function CollapsibleSection({ id, label, count, open, toggle, children }: { id: 
   return (
     <Collapsible open={open} onOpenChange={toggle}>
       <CollapsibleTrigger className="flex items-center gap-1.5 text-xs font-display font-bold uppercase tracking-[0.08em] text-foreground/70 hover:text-foreground transition-colors cursor-pointer">
-        <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" className={`transition-transform duration-200 ${open ? "rotate-90" : ""}`}>
-          <path d="M8 5l8 7-8 7z"/>
-        </svg>
+        <ChevronRight size={9} className={`!size-auto transition-transform duration-200 ${open ? "rotate-90" : ""}`} />
         {label} ({count})
       </CollapsibleTrigger>
       <CollapsibleContent className="mt-2.5">
@@ -173,9 +172,7 @@ export function RcaReport({ report }: { report: RcaReportData }) {
             <div className="flex flex-wrap gap-1.5">
               {report.skillsUsed.map((skill, i) => (
                 <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-mono rounded-full bg-primary/8 text-primary/70 border border-primary/15">
-                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>
-                  </svg>
+                  <FileText size={9} className="!size-auto" />
                   {skill}
                 </span>
               ))}

@@ -1,4 +1,5 @@
 import { memo, useEffect, useState } from "react";
+import { Search } from "lucide-react";
 import { timeAgo } from "@/lib/dashboard-utils";
 
 function DotTimeline({ data }: { data: Array<{ status: string }> }) {
@@ -96,10 +97,7 @@ export const ServiceCard = memo(function ServiceCard({ name, onClick, lastInvest
             {name}
           </span>
         </div>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-muted-foreground/15 group-hover:text-primary/50 transition-colors">
-          <circle cx="11" cy="11" r="8"/>
-          <path d="m21 21-4.3-4.3"/>
-        </svg>
+        <Search size={14} strokeWidth={1.5} className="!size-auto text-muted-foreground/15 group-hover:text-primary/50 transition-colors" />
       </div>
       <div className="mt-1.5 pl-[18px]">
         <span className="text-[9px] font-mono text-muted-foreground/60 uppercase tracking-[0.15em]">
