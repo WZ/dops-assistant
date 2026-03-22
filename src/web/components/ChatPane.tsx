@@ -579,6 +579,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
             variant="ghost"
             size="icon"
             type="submit"
+            aria-label="Send message"
             disabled={status !== "connected" || !input.trim() || isLoading}
             className={`absolute right-2 top-1/2 -translate-y-1/2 h-auto w-auto p-1.5 rounded-md disabled:opacity-15 ${isDeepMode ? "text-accent/40 hover:text-accent hover:bg-accent/10" : "text-muted-foreground/60 hover:text-primary hover:bg-primary/8"}`}
           >

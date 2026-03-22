@@ -209,6 +209,7 @@ export function App() {
             variant="ghost"
             size="icon"
             onClick={theme.toggle}
+            aria-label={theme.dark ? "Switch to light mode" : "Switch to dark mode"}
             className="min-h-[44px] min-w-[44px] text-muted-foreground/70 hover:text-foreground/70 hover:bg-secondary/50"
             title={theme.dark ? "Switch to light" : "Switch to dark"}
           >
