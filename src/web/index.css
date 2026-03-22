@@ -290,7 +290,16 @@ input:focus, textarea:focus {
   animation: shimmer 1.6s infinite;
 }
 
-/* ── Indeterminate progress bar ── */
+/* ── Auto-refresh breathing indicator ── */
+@keyframes refresh-breathe {
+  0%, 100% { opacity: 0.15; }
+  50% { opacity: 0.6; }
+}
+.animate-refresh-breathe {
+  animation: refresh-breathe 4s ease-in-out infinite;
+}
+
+/* ── Indeterminate progress bar (loading states) ── */
 @keyframes progress-indeterminate {
   0% { transform: translateX(-100%); }
   100% { transform: translateX(250%); }

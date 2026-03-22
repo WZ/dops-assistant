@@ -40,7 +40,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
   const [patternsExpanded, setPatternsExpanded] = useState(false);
   const [activeInvestigations, setActiveInvestigations] = useState<Map<string, ActiveInvestigation>>(new Map());
   const [fetchError, setFetchError] = useState<string | null>(null);
-  const [refreshProgress, setRefreshProgress] = useState(0);
+  // refreshProgress state removed — replaced with CSS breathing animation
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [servicesExpanded, setServicesExpanded] = useState(false);
@@ -102,25 +102,10 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
     fetchData();
   }, []);
 
-  // Auto-refresh every 60 seconds with progress indicator
+  // Auto-refresh every 60 seconds
   useEffect(() => {
-    let lastFetchTime = Date.now();
-
-    const progressTick = setInterval(() => {
-      const elapsed = Date.now() - lastFetchTime;
-      setRefreshProgress(Math.min((elapsed / 60_000) * 100, 100));
-    }, 1000);
-
-    const refreshTick = setInterval(() => {
-      lastFetchTime = Date.now();
-      setRefreshProgress(0);
-      fetchData();
-    }, 60_000);
-
-    return () => {
-      clearInterval(progressTick);
-      clearInterval(refreshTick);
-    };
+    const refreshTick = setInterval(() => fetchData(), 60_000);
+    return () => clearInterval(refreshTick);
   }, []);
 
   // WS-driven re-fetch and active investigation tracking
@@ -304,15 +289,9 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
 
   return (
     <div className="h-full overflow-y-auto p-6 relative z-[2] dashboard-container">
-      {/* Auto-refresh progress bar */}
-      <div className="progress-bar-track absolute top-0 left-0 right-0 z-10">
-        <div
-          className="h-full bg-primary/40"
-          style={{
-            width: `${refreshProgress}%`,
-            transition: refreshProgress === 0 ? "none" : "width 1s linear",
-          }}
-        />
+      {/* Auto-refresh breathing indicator */}
+      <div className="absolute top-0 left-0 right-0 z-10 h-[2px] bg-primary/8">
+        <div className="h-full w-full bg-primary/30 animate-refresh-breathe" />
       </div>
       {/* First-run banner */}
       {services.length === 0 && !bannerDismissed && (
