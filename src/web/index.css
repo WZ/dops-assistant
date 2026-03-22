@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;0,9..144,800;1,9..144,400;1,9..144,500&family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap');
 @import "tailwindcss";
 
 @layer base {
@@ -76,7 +76,7 @@
 }
 
 @theme inline {
-  --font-display: "Fraunces", serif;
+  --font-display: "Inter", sans-serif;
   --font-body: "Plus Jakarta Sans", sans-serif;
   --font-mono: "JetBrains Mono", monospace;
   --color-background: hsl(var(--background));
@@ -290,7 +290,16 @@ input:focus, textarea:focus {
   animation: shimmer 1.6s infinite;
 }
 
-/* ── Indeterminate progress bar ── */
+/* ── Auto-refresh breathing indicator ── */
+@keyframes refresh-breathe {
+  0%, 100% { opacity: 0.15; }
+  50% { opacity: 0.6; }
+}
+.animate-refresh-breathe {
+  animation: refresh-breathe 4s ease-in-out infinite;
+}
+
+/* ── Indeterminate progress bar (loading states) ── */
 @keyframes progress-indeterminate {
   0% { transform: translateX(-100%); }
   100% { transform: translateX(250%); }
@@ -340,16 +349,16 @@ input:focus, textarea:focus {
     grid-template-columns: 1fr !important;
   }
   .dashboard-services-grid {
-    grid-template-columns: 1fr !important;
+    grid-template-columns: minmax(0, 1fr) !important;
   }
 }
-@container (min-width: 401px) and (max-width: 600px) {
+@container (min-width: 300px) and (max-width: 419px) {
   .dashboard-services-grid {
-    grid-template-columns: repeat(2, 1fr) !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   }
 }
-@container (min-width: 601px) {
+@container (min-width: 420px) {
   .dashboard-services-grid {
-    grid-template-columns: repeat(3, 1fr) !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
   }
 }

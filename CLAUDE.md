@@ -50,6 +50,9 @@ npx tsc --noEmit         # Type check
 | Investigation runner | `src/server/investigation-runner.ts` — standalone executor with pluggable callbacks |
 | Alert webhook | `src/server/webhook-handler.ts` — Alertmanager payloads → headless investigations |
 | Health monitor | `src/server/health-monitor.ts` — background MCP/DB probes, `GET /api/health` |
+| Service health poller | `src/server/service-health-poller.ts` — Prometheus polling, auto-investigate on transitions |
+| Investigation dedup | `src/server/investigation-dedup.ts` — shared dedup + concurrency guard |
+| Provider registry | `src/mcp/provider-registry.ts` — config + GUI providers, CRUD, `providers.yaml` persistence |
 | LLM quirk workarounds | `src/agents/shared/prepare-step.ts` (`prepareStep` hook) |
 | Shared types | `src/types/` — RCA report, agent interfaces, LLM types, WebSocket protocol |
 | Mastra wiring | `src/mastra/index.ts` — agent/workflow registration |
@@ -61,7 +64,7 @@ npx tsc --noEmit         # Type check
 - **Run all**: `npx vitest run`
 - **Run one**: `npx vitest run src/agents/chat.test.ts`
 - **Watch mode**: `npx vitest` (alias: `npm run test:watch`)
-- **36 test files** across agents, CLI commands, server, workflows, config, and web utils
+- **44 test files** across agents, CLI commands, server, workflows, config, and web utils
 
 ## Dev Setup
 

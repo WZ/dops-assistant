@@ -25,14 +25,23 @@ export class ServiceRegistryStore {
   }
 
   save(services: ServiceConfig[], source: "discovery" | "manual"): string {
-    writeFileSync(this.servicesPath, stringify(services, { indent: 2 }));
+    // Deduplicate by name — keep the first occurrence (which has richer data
+    // when discovery queries overlap, e.g. deployments + scrape targets).
+    const seen = new Set<string>();
+    const deduped = services.filter((s) => {
+      const key = s.name.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    writeFileSync(this.servicesPath, stringify(deduped, { indent: 2 }));
     mkdirSync(this.historyDir, { recursive: true });
     const id = ulid();
     const versionFile = join(this.historyDir, `${id}-${source}.yaml`);
-    writeFileSync(versionFile, stringify(services, { indent: 2 }));
+    writeFileSync(versionFile, stringify(deduped, { indent: 2 }));
     // Index stores metadata only (not full services array)
     const index = this.readIndex();
-    index.push({ id, timestamp: new Date().toISOString(), source, serviceCount: services.length });
+    index.push({ id, timestamp: new Date().toISOString(), source, serviceCount: deduped.length });
     writeFileSync(this.indexPath, stringify(index, { indent: 2 }));
     return id;
   }

@@ -17,6 +17,7 @@ import type { Request, Response } from "express";
 import pino from "pino";
 import type { WebhookConfig, ServiceConfig, InvestigationTemplate } from "../config/schema.js";
 import type { InvestigationRunner } from "./investigation-runner.js";
+import { InvestigationDedup } from "./investigation-dedup.js";
 import { matchServiceFromText } from "../agents/intent.js";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
@@ -37,15 +38,6 @@ interface AlertmanagerPayload {
   status: "firing" | "resolved";
   receiver: string;
   alerts: AlertmanagerAlert[];
-}
-
-// ── Dedup + concurrency helpers ──────────────────────────────────────────────
-
-function cleanExpiredEntries(map: Map<string, number>, windowMs: number): void {
-  const now = Date.now();
-  for (const [key, ts] of map) {
-    if (now - ts > windowMs) map.delete(key);
-  }
 }
 
 // ── Service extraction from alert ───────────────────────────────────────────
@@ -79,13 +71,16 @@ export interface WebhookHandlerDeps {
   runner: InvestigationRunner;
   config: WebhookConfig;
   services: ServiceConfig[];
+  /** Optional shared dedup instance. If not provided, one is created internally. */
+  dedup?: InvestigationDedup;
 }
 
 export function createWebhookHandler(deps: WebhookHandlerDeps) {
   const { runner, config, services } = deps;
-  const dedupWindowMs = config.dedupWindowSeconds * 1000;
-  const recentInvestigations = new Map<string, number>();
-  let activeCount = 0;
+  const dedup = deps.dedup ?? new InvestigationDedup({
+    dedupWindowSeconds: config.dedupWindowSeconds,
+    maxConcurrent: config.maxConcurrent,
+  });
 
   return async (req: Request, res: Response): Promise<void> => {
     // 1. Validate bearer token
@@ -128,25 +123,21 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
       return;
     }
 
-    // 4. Dedup check
-    cleanExpiredEntries(recentInvestigations, dedupWindowMs);
-    const lastRun = recentInvestigations.get(service.name);
-    if (lastRun && Date.now() - lastRun < dedupWindowMs) {
-      logger.info({ service: service.name }, "Alert webhook: dedup — investigation already running/recent");
-      res.status(200).json({ message: "Investigation already in progress for this service", service: service.name });
+    // 4. Dedup + concurrency check
+    if (!dedup.shouldInvestigate(service.name)) {
+      const activeCount = dedup.getActiveCount();
+      if (activeCount >= config.maxConcurrent) {
+        logger.warn({ activeCount, maxConcurrent: config.maxConcurrent }, "Alert webhook: concurrency limit reached");
+        res.status(429).json({ error: "Too many concurrent investigations", activeCount, maxConcurrent: config.maxConcurrent });
+      } else {
+        logger.info({ service: service.name }, "Alert webhook: dedup — investigation already running/recent");
+        res.status(200).json({ message: "Investigation already in progress for this service", service: service.name });
+      }
       return;
     }
 
-    // 5. Concurrency check
-    if (activeCount >= config.maxConcurrent) {
-      logger.warn({ activeCount, maxConcurrent: config.maxConcurrent }, "Alert webhook: concurrency limit reached");
-      res.status(429).json({ error: "Too many concurrent investigations", activeCount, maxConcurrent: config.maxConcurrent });
-      return;
-    }
-
-    // 6. Mark as in-progress and respond immediately
-    recentInvestigations.set(service.name, Date.now());
-    activeCount++;
+    // 5. Mark as in-progress and respond immediately
+    dedup.markStarted(service.name);
     const template = resolveTemplate(alert, config);
     const description = alert.annotations["summary"] ?? alert.annotations["description"] ?? alert.labels["alertname"] ?? "Alert triggered";
 
@@ -157,7 +148,7 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
       alertName: alert.labels["alertname"],
     });
 
-    // 7. Run investigation in background (headless — no WS callbacks)
+    // 6. Run investigation in background (headless — no WS callbacks)
     logger.info({ service: service.name, template, alertName: alert.labels["alertname"] }, "Alert webhook: starting headless investigation");
     try {
       await runner.run({
@@ -168,7 +159,7 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
     } catch (err) {
       logger.error({ err, service: service.name }, "Alert webhook: headless investigation failed");
     } finally {
-      activeCount--;
+      dedup.markCompleted();
     }
   };
 }

@@ -1,0 +1,412 @@
+import { useState } from "react";
+import { cn } from "@/lib/utils.js";
+
+export interface ProviderFormData {
+  name: string;
+  roles: string[];
+  region?: string;
+  mcpServer: {
+    transport: "stdio" | "http";
+    command?: string;
+    args?: string[];
+    env?: Record<string, string>;
+    url?: string;
+  };
+}
+
+interface ProviderFormProps {
+  onSave: (config: ProviderFormData) => Promise<void>;
+  onCancel: () => void;
+  onTest: (
+    config: ProviderFormData
+  ) => Promise<{ status: string; toolCount: number; error?: string }>;
+  initialValues?: ProviderFormData;
+  saving?: boolean;
+}
+
+const AVAILABLE_ROLES = [
+  "metrics",
+  "logs",
+  "dashboards",
+  "infrastructure",
+  "changes",
+] as const;
+
+const LABEL_CLASS =
+  "font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/60";
+
+const INPUT_CLASS =
+  "w-full rounded-md border border-border/40 bg-card/50 px-3 py-2 font-mono text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/15";
+
+function envRecordToString(env?: Record<string, string>): string {
+  if (!env) return "";
+  return Object.entries(env)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("\n");
+}
+
+function parseEnvString(str: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const line of str.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const eqIdx = trimmed.indexOf("=");
+    if (eqIdx === -1) continue;
+    const key = trimmed.slice(0, eqIdx).trim();
+    const value = trimmed.slice(eqIdx + 1);
+    if (key) result[key] = value;
+  }
+  return result;
+}
+
+export function ProviderForm({
+  onSave,
+  onCancel,
+  onTest,
+  initialValues,
+  saving = false,
+}: ProviderFormProps) {
+  const [name, setName] = useState(initialValues?.name ?? "");
+  const [transport, setTransport] = useState<"stdio" | "http">(
+    initialValues?.mcpServer.transport ?? "stdio"
+  );
+  const [command, setCommand] = useState(
+    initialValues?.mcpServer.command ?? ""
+  );
+  const [argsStr, setArgsStr] = useState(
+    initialValues?.mcpServer.args?.join(", ") ?? ""
+  );
+  const [envStr, setEnvStr] = useState(
+    envRecordToString(initialValues?.mcpServer.env)
+  );
+  const [url, setUrl] = useState(initialValues?.mcpServer.url ?? "");
+  const [roles, setRoles] = useState<Set<string>>(
+    new Set(initialValues?.roles ?? [])
+  );
+  const [region, setRegion] = useState(initialValues?.region ?? "");
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [testResult, setTestResult] = useState<{
+    status: string;
+    toolCount: number;
+    error?: string;
+  } | null>(null);
+  const [testing, setTesting] = useState(false);
+
+  const isEditMode = Boolean(initialValues);
+
+  function buildFormData(): ProviderFormData {
+    const data: ProviderFormData = {
+      name,
+      roles: Array.from(roles),
+      mcpServer: {
+        transport,
+      },
+    };
+
+    if (region.trim()) {
+      data.region = region.trim();
+    }
+
+    if (transport === "stdio") {
+      if (command.trim()) data.mcpServer.command = command.trim();
+      const parsedArgs = argsStr
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (parsedArgs.length > 0) data.mcpServer.args = parsedArgs;
+      const parsedEnv = parseEnvString(envStr);
+      if (Object.keys(parsedEnv).length > 0) data.mcpServer.env = parsedEnv;
+    } else {
+      if (url.trim()) data.mcpServer.url = url.trim();
+    }
+
+    return data;
+  }
+
+  function validate(): boolean {
+    const newErrors: Record<string, string> = {};
+
+    if (!name.trim()) {
+      newErrors.name = "Name is required";
+    } else if (!/^[a-zA-Z0-9_-]+$/.test(name.trim())) {
+      newErrors.name =
+        "Name must only contain letters, numbers, underscores, and hyphens";
+    }
+
+    if (roles.size === 0) {
+      newErrors.roles = "At least one role is required";
+    }
+
+    if (transport === "stdio" && !command.trim()) {
+      newErrors.command = "Command is required for stdio transport";
+    }
+
+    if (transport === "http" && !url.trim()) {
+      newErrors.url = "URL is required for http transport";
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  }
+
+  function toggleRole(role: string) {
+    setRoles((prev) => {
+      const next = new Set(prev);
+      if (next.has(role)) {
+        next.delete(role);
+      } else {
+        next.add(role);
+      }
+      return next;
+    });
+    if (errors.roles) {
+      setErrors((prev) => {
+        const next = { ...prev };
+        delete next.roles;
+        return next;
+      });
+    }
+  }
+
+  async function handleTest() {
+    if (!validate()) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const result = await onTest(buildFormData());
+      setTestResult(result);
+    } catch (err) {
+      setTestResult({
+        status: "error",
+        toolCount: 0,
+        error: err instanceof Error ? err.message : "Unknown error",
+      });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  async function handleSave() {
+    if (!validate()) return;
+    await onSave(buildFormData());
+  }
+
+  return (
+    <div className="space-y-4 p-4">
+      {/* Name */}
+      <div>
+        <label className={LABEL_CLASS}>Name</label>
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => {
+            setName(e.target.value);
+            if (errors.name) {
+              setErrors((prev) => {
+                const next = { ...prev };
+                delete next.name;
+                return next;
+              });
+            }
+          }}
+          readOnly={isEditMode}
+          className={cn(
+            INPUT_CLASS,
+            "mt-1",
+            isEditMode && "opacity-60 cursor-not-allowed"
+          )}
+          placeholder="my-provider"
+        />
+        {errors.name && (
+          <p className="text-xs text-destructive/80 mt-1">{errors.name}</p>
+        )}
+      </div>
+
+      {/* Transport */}
+      <div>
+        <label className={LABEL_CLASS}>Transport</label>
+        <select
+          value={transport}
+          onChange={(e) => {
+            setTransport(e.target.value as "stdio" | "http");
+            setTestResult(null);
+          }}
+          className={cn(INPUT_CLASS, "mt-1")}
+        >
+          <option value="stdio">stdio</option>
+          <option value="http">http</option>
+        </select>
+      </div>
+
+      {/* stdio fields */}
+      {transport === "stdio" && (
+        <>
+          <div>
+            <label className={LABEL_CLASS}>Command</label>
+            <input
+              type="text"
+              value={command}
+              onChange={(e) => {
+                setCommand(e.target.value);
+                if (errors.command) {
+                  setErrors((prev) => {
+                    const next = { ...prev };
+                    delete next.command;
+                    return next;
+                  });
+                }
+              }}
+              className={cn(INPUT_CLASS, "mt-1")}
+              placeholder="npx @modelcontextprotocol/server-grafana"
+            />
+            {errors.command && (
+              <p className="text-xs text-destructive/80 mt-1">
+                {errors.command}
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label className={LABEL_CLASS}>Args (comma-separated)</label>
+            <input
+              type="text"
+              value={argsStr}
+              onChange={(e) => setArgsStr(e.target.value)}
+              className={cn(INPUT_CLASS, "mt-1")}
+              placeholder="--port, 3001"
+            />
+          </div>
+
+          <div>
+            <label className={LABEL_CLASS}>Env Vars (key=value, one per line)</label>
+            <textarea
+              value={envStr}
+              onChange={(e) => setEnvStr(e.target.value)}
+              rows={3}
+              className={cn(INPUT_CLASS, "mt-1 resize-y")}
+              placeholder={"GRAFANA_URL=http://localhost:3000\nGRAFANA_TOKEN=..."}
+            />
+          </div>
+        </>
+      )}
+
+      {/* http fields */}
+      {transport === "http" && (
+        <div>
+          <label className={LABEL_CLASS}>URL</label>
+          <input
+            type="text"
+            value={url}
+            onChange={(e) => {
+              setUrl(e.target.value);
+              if (errors.url) {
+                setErrors((prev) => {
+                  const next = { ...prev };
+                  delete next.url;
+                  return next;
+                });
+              }
+            }}
+            className={cn(INPUT_CLASS, "mt-1")}
+            placeholder="http://localhost:8080/mcp"
+          />
+          {errors.url && (
+            <p className="text-xs text-destructive/80 mt-1">{errors.url}</p>
+          )}
+        </div>
+      )}
+
+      {/* Roles */}
+      <div>
+        <label className={LABEL_CLASS}>Roles</label>
+        <div className="mt-2 flex flex-wrap gap-3">
+          {AVAILABLE_ROLES.map((role) => (
+            <label key={role} className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={roles.has(role)}
+                onChange={() => toggleRole(role)}
+                className="accent-primary"
+              />
+              <span className="font-body text-xs text-foreground/80">{role}</span>
+            </label>
+          ))}
+        </div>
+        {errors.roles && (
+          <p className="text-xs text-destructive/80 mt-1">{errors.roles}</p>
+        )}
+      </div>
+
+      {/* Region */}
+      <div>
+        <label className={LABEL_CLASS}>Region (optional)</label>
+        <input
+          type="text"
+          value={region}
+          onChange={(e) => setRegion(e.target.value)}
+          className={cn(INPUT_CLASS, "mt-1")}
+          placeholder="us-east-1"
+        />
+      </div>
+
+      {/* Actions */}
+      <div className="flex items-center gap-2 pt-1">
+        <button
+          type="button"
+          onClick={handleTest}
+          disabled={testing || saving}
+          className="text-[10px] font-mono text-primary/70 hover:text-primary py-3 px-2 min-h-[44px] disabled:opacity-50"
+        >
+          {testing ? "Testing..." : "Test Connection"}
+        </button>
+
+        <span className="flex-1" />
+
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={saving}
+          className="text-[10px] font-mono text-muted-foreground/70 hover:text-foreground py-3 px-2 min-h-[44px] disabled:opacity-50"
+        >
+          Cancel
+        </button>
+
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving}
+          className="rounded-md bg-primary text-primary-foreground px-4 py-2 font-mono text-xs font-medium min-h-[44px] disabled:opacity-50"
+        >
+          {saving ? "Saving..." : "Save"}
+        </button>
+      </div>
+
+      {/* Test result */}
+      {testResult && (
+        <div className="pt-1">
+          {testResult.error ? (
+            <p className="text-xs text-destructive/70">
+              Connection failed: {testResult.error}
+            </p>
+          ) : testResult.status === "ok" || testResult.status === "connected" ? (
+            <p className="text-xs text-success">
+              Connected &mdash; {testResult.toolCount} tools available
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              {testResult.status}
+            </p>
+          )}
+        </div>
+      )}
+
+      {testing && !testResult && (
+        <div className="pt-1">
+          <p className="text-xs text-muted-foreground animate-status-pulse">
+            Testing connection...
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
