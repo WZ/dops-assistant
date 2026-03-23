@@ -135,9 +135,11 @@ export function buildAnomalyStep(config: WorkflowConfig) {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 10_000);
 
-        const { text: timeText } = await generateText({
-          model: config.model,
-          system: `You are a time range extractor. Given a user message about a system issue and the current time context, extract the time window the user is asking about.
+        let timeText = "";
+        try {
+          const result = await generateText({
+            model: config.model,
+            system: `You are a time range extractor. Given a user message about a system issue and the current time context, extract the time window the user is asking about.
 
 ${timeContext}
 
@@ -153,12 +155,14 @@ Rules:
 - Use the timezone from the time context above. Output all timestamps in UTC (Z suffix).
 - For vague times ("around", "about"), use a ±1 hour window around the stated time
 - For day-only references ("last Friday"), use the full day (00:00-23:59 in local tz, converted to UTC)`,
-          prompt: inputData.userMessage,
-          temperature: 0,
-          abortSignal: controller.signal,
-        });
-
-        clearTimeout(timeout);
+            prompt: inputData.userMessage,
+            temperature: 0,
+            abortSignal: controller.signal,
+          });
+          timeText = result.text;
+        } finally {
+          clearTimeout(timeout);
+        }
 
         const parsed = safeJsonParse(timeText);
         if (parsed?.from && parsed?.to) {
