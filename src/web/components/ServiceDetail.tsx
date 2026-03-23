@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { ServiceDetailHeader } from "./ServiceDetailHeader";
-import { ServiceMetrics } from "./ServiceMetrics.tsx";
-import { ServiceHistory } from "./ServiceHistory.tsx";
-import { ServiceDependencyGraph } from "./ServiceDependencyGraph.tsx";
+import { ServiceMetrics } from "./ServiceMetrics";
+import { ServiceHistory } from "./ServiceHistory";
+import { ServiceDependencyGraph } from "./ServiceDependencyGraph";
 import type { useWebSocket } from "../hooks/useWebSocket";
 
 type TabId = "metrics" | "history" | "dependencies";
