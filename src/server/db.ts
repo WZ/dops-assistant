@@ -11,6 +11,14 @@ export interface InvestigationRow {
   total_input_tokens: number;
   total_output_tokens: number;
   total_duration_ms: number;
+  confidence_score: number | null;
+}
+
+export interface KpiStats {
+  investigations: { total: number; active: number; complete: number; failed: number };
+  successRate: number | null;
+  confidence: { avg: number | null; scored: number; lowConfidence: number };
+  mttr: { avg7d: number; completed7d: number; trend?: { direction: "up" | "down"; value: string; positive: boolean } };
 }
 
 export interface PhaseRow {
@@ -111,6 +119,7 @@ export class Database {
       );
     `);
     this.migrateServiceHealthChecks();
+    this.migrateHiddenServices();
   }
 
   createInvestigation(inv: { id: string; service: string; query: string; status: string }): void {
@@ -133,11 +142,15 @@ export class Database {
   }
 
   getInvestigation(id: string): InvestigationRow | undefined {
-    return this.db.prepare("SELECT * FROM investigations WHERE id = ?").get(id) as InvestigationRow | undefined;
+    return this.db.prepare(
+      "SELECT *, CASE WHEN json_valid(report) THEN json_extract(report, '$.confidenceScore') ELSE NULL END as confidence_score FROM investigations WHERE id = ?"
+    ).get(id) as InvestigationRow | undefined;
   }
 
   listInvestigations(limit: number, offset: number): InvestigationRow[] {
-    return this.db.prepare("SELECT * FROM investigations ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?").all(limit, offset) as InvestigationRow[];
+    return this.db.prepare(
+      "SELECT *, CASE WHEN json_valid(report) THEN json_extract(report, '$.confidenceScore') ELSE NULL END as confidence_score FROM investigations ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?"
+    ).all(limit, offset) as InvestigationRow[];
   }
 
   createPhase(phase: { id: string; investigationId: string; phase: string; status: string }): void {
@@ -198,6 +211,69 @@ export class Database {
     return result.changes;
   }
 
+  // ── KPI Stats ──────────────────────────────────────────────────────────
+
+  getKpiStats(): KpiStats {
+    // Investigation counts
+    const counts = this.db.prepare(
+      `SELECT COUNT(*) as total,
+        COALESCE(SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END), 0) as active,
+        COALESCE(SUM(CASE WHEN status = 'complete' THEN 1 ELSE 0 END), 0) as complete,
+        COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) as failed
+       FROM investigations`
+    ).get() as { total: number; active: number; complete: number; failed: number };
+
+    // Success rate (exclude stale-cleanup: failed with no report)
+    const completedCount = counts.complete;
+    const realFailedCount = (this.db.prepare(
+      `SELECT COUNT(*) as c FROM investigations WHERE status = 'failed' AND report IS NOT NULL`
+    ).get() as { c: number }).c;
+    const successDenom = completedCount + realFailedCount;
+    const successRate = successDenom > 0 ? (completedCount / successDenom) * 100 : null;
+
+    // Confidence (from completed investigations, json_valid guard)
+    const conf = this.db.prepare(
+      `SELECT
+        AVG(CASE WHEN json_valid(report) THEN json_extract(report, '$.confidenceScore') ELSE NULL END) as avg,
+        COUNT(CASE WHEN json_valid(report) AND json_extract(report, '$.confidenceScore') IS NOT NULL THEN 1 END) as scored,
+        COUNT(CASE WHEN json_valid(report) AND json_extract(report, '$.confidenceScore') IS NOT NULL
+          AND json_extract(report, '$.confidenceScore') < 0.5 THEN 1 END) as low
+       FROM investigations WHERE status = 'complete'`
+    ).get() as { avg: number | null; scored: number; low: number };
+
+    // MTTR (7d window + prior 7d for trend)
+    const mttr7d = this.db.prepare(
+      `SELECT AVG(total_duration_ms) as avg, COUNT(*) as count
+       FROM investigations
+       WHERE status = 'complete' AND completed_at >= datetime('now', '-7 days')`
+    ).get() as { avg: number | null; count: number };
+
+    const mttrPrior = this.db.prepare(
+      `SELECT AVG(total_duration_ms) as avg
+       FROM investigations
+       WHERE status = 'complete'
+         AND completed_at >= datetime('now', '-14 days')
+         AND completed_at < datetime('now', '-7 days')`
+    ).get() as { avg: number | null };
+
+    let trend: KpiStats["mttr"]["trend"];
+    if (mttr7d.avg && mttrPrior.avg) {
+      const pctChange = ((mttr7d.avg - mttrPrior.avg) / mttrPrior.avg) * 100;
+      if (pctChange < 0) {
+        trend = { direction: "down", value: `${Math.abs(Math.round(pctChange))}%`, positive: true };
+      } else if (pctChange > 0) {
+        trend = { direction: "up", value: `${Math.round(pctChange)}%`, positive: false };
+      }
+    }
+
+    return {
+      investigations: counts,
+      successRate,
+      confidence: { avg: conf.avg, scored: conf.scored, lowConfidence: conf.low },
+      mttr: { avg7d: mttr7d.avg ?? 0, completed7d: mttr7d.count, trend },
+    };
+  }
+
   // ── Feedback ─────────────────────────────────────────────────────────────
 
   createFeedback(fb: { id: string; investigationId: string; rating: "useful" | "not_useful" }): void {
@@ -254,6 +330,67 @@ export class Database {
        WHERE service = ? AND checked_at >= ?
        ORDER BY checked_at ASC`
     ).all(service, cutoff) as Array<{ status: string; checked_at: string }>;
+  }
+
+  // ── Hidden services ──────────────────────────────────────────────────────
+
+  migrateHiddenServices(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS hidden_services (
+        service   TEXT PRIMARY KEY,
+        reason    TEXT,
+        hidden_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+  }
+
+  hideService(service: string, reason?: string): void {
+    this.db.prepare(
+      "INSERT OR REPLACE INTO hidden_services (service, reason) VALUES (?, ?)"
+    ).run(service, reason ?? null);
+  }
+
+  unhideService(service: string): void {
+    this.db.prepare("DELETE FROM hidden_services WHERE service = ?").run(service);
+  }
+
+  getHiddenServices(): Set<string> {
+    const rows = this.db.prepare("SELECT service FROM hidden_services").all() as Array<{ service: string }>;
+    return new Set(rows.map(r => r.service));
+  }
+
+  getHiddenServiceDetails(): Array<{ service: string; reason: string | null; hidden_at: string }> {
+    return this.db.prepare(
+      "SELECT service, reason, hidden_at FROM hidden_services ORDER BY hidden_at DESC"
+    ).all() as Array<{ service: string; reason: string | null; hidden_at: string }>;
+  }
+
+  hideServices(services: string[], reason?: string): void {
+    if (services.length === 0) return;
+    const stmt = this.db.prepare(
+      "INSERT OR REPLACE INTO hidden_services (service, reason) VALUES (?, ?)"
+    );
+    const tx = this.db.transaction((svcs: string[]) => {
+      for (const svc of svcs) stmt.run(svc, reason ?? null);
+    });
+    tx(services);
+  }
+
+  isServiceHidden(service: string): boolean {
+    const row = this.db.prepare("SELECT 1 FROM hidden_services WHERE service = ?").get(service);
+    return row !== undefined;
+  }
+
+  getStaleUnknownServices(days: number): string[] {
+    const cutoff = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
+    return (this.db.prepare(
+      `SELECT DISTINCT service FROM service_health_checks
+       WHERE service NOT IN (
+         SELECT DISTINCT service FROM service_health_checks
+         WHERE status != 'unknown' AND checked_at >= ?
+       )
+       AND service NOT IN (SELECT service FROM hidden_services)`
+    ).all(cutoff) as Array<{ service: string }>).map(r => r.service);
   }
 
   close(): void {

@@ -515,6 +515,46 @@ describe("ServiceHealthPoller", () => {
     });
   });
 
+  describe("hidden services", () => {
+    it("skips hidden services during poll", async () => {
+      const { poller, db } = makePoller(
+        ["api", "hidden-svc"],
+        {
+          "kube_deployment_status_replicas": [
+            makePrometheusEntry({ deployment: "api" }, "1"),
+            makePrometheusEntry({ deployment: "hidden-svc" }, "1"),
+          ],
+          "kube_statefulset_status_replicas": [],
+          "up": [],
+        },
+        { getHiddenServices: () => new Set(["hidden-svc"]) },
+      );
+
+      await poller.poll();
+      const health = poller.getHealth();
+      expect(health.has("api")).toBe(true);
+      expect(health.has("hidden-svc")).toBe(false);
+    });
+
+    it("polls all services when none hidden", async () => {
+      const { poller } = makePoller(
+        ["api", "web"],
+        {
+          "kube_deployment_status_replicas": [
+            makePrometheusEntry({ deployment: "api" }, "1"),
+            makePrometheusEntry({ deployment: "web" }, "1"),
+          ],
+          "kube_statefulset_status_replicas": [],
+          "up": [],
+        },
+        { getHiddenServices: () => new Set() },
+      );
+
+      await poller.poll();
+      expect(poller.getHealth().size).toBe(2);
+    });
+  });
+
   describe("getSummary", () => {
     it("returns correct counts for mixed statuses", async () => {
       const { poller } = makePoller(
