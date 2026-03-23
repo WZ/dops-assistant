@@ -1,4 +1,3 @@
-import { useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Search, ExternalLink, Pencil, Plus } from "lucide-react";
 import { AliasEditor, TagEditor } from "./ServiceAliasEditor";
@@ -60,8 +59,6 @@ export function ServiceDetailHeader({
   onAliasEditorOpenChange,
   onTagEditorOpenChange,
 }: ServiceDetailHeaderProps) {
-  const aliasAnchorRef = useRef<HTMLDivElement>(null);
-  const tagAnchorRef = useRef<HTMLDivElement>(null);
   const displayName = alias || serviceName;
 
   return (
@@ -135,7 +132,7 @@ export function ServiceDetailHeader({
         </Button>
 
         {/* Edit Name button + inline alias editor */}
-        <div ref={aliasAnchorRef} className="relative">
+        <div className="relative">
           <Button
             variant="ghost"
             onClick={onEditAlias}
@@ -154,7 +151,7 @@ export function ServiceDetailHeader({
         </div>
 
         {/* Add Tag button + inline tag editor */}
-        <div ref={tagAnchorRef} className="relative">
+        <div className="relative">
           <Button
             variant="ghost"
             onClick={onAddTag}

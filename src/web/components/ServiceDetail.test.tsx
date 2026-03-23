@@ -21,7 +21,7 @@ function mockFetchResponses(overrides?: {
 }) {
   const metadata = overrides?.metadata ?? { alias: "Payments", tags: ["backend", "critical"] };
   const health = overrides?.health ?? { [TEST_SERVICE]: "healthy" };
-  const investigations = overrides?.investigations ?? { total: 5, investigations: [{ id: "inv-1" }] };
+  const investigations = overrides?.investigations ?? [{ id: "inv-1" }, { id: "inv-2" }, { id: "inv-3" }, { id: "inv-4" }, { id: "inv-5" }];
 
   (globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string | Request) => {
     const urlStr = typeof url === "string" ? url : url.toString();
@@ -113,7 +113,7 @@ describe("ServiceDetail", () => {
   it("shows investigation count in History tab label", async () => {
     renderServiceDetail();
     await waitFor(() => {
-      // The mock returns total: 5, so tab should show "History (5)"
+      // The mock returns 5 items in the array, so tab should show "History (5)"
       expect(screen.getByRole("tab", { name: /History \(5\)/i })).toBeTruthy();
     });
   });

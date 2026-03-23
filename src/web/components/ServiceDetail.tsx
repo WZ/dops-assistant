@@ -70,10 +70,10 @@ export function ServiceDetail({
         setHealthStatus(status ?? "unknown");
       }
 
-      // Investigation count — use total from paginated response
+      // Investigation count — API returns flat InvestigationRow[] array
       if (invRes?.ok) {
         const invData = await invRes.json();
-        setInvestigationCount(invData.total ?? invData.investigations?.length ?? 0);
+        setInvestigationCount(Array.isArray(invData) ? invData.length : 0);
       }
     }
 
@@ -82,7 +82,7 @@ export function ServiceDetail({
   }, [serviceName]);
 
   const handleInvestigate = useCallback(() => {
-    ws.send({ type: "chat", message: `investigate ${serviceName}` } as any);
+    ws.send({ type: "chat", message: `investigate ${serviceName}`, serviceContext: serviceName });
   }, [ws, serviceName]);
 
   const handleEditAlias = useCallback(() => {

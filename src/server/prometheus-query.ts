@@ -37,22 +37,28 @@ const RANGE_SECONDS: Record<string, number> = {
   "7d": 604800,
 };
 
+/** Sanitize a service name for safe embedding in PromQL label selectors. */
+function sanitizeForPromQL(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_.\-]/g, "");
+}
+
 /** Default PromQL queries when a service has no configured metrics. */
 function buildDefaultQueries(serviceName: string): { name: string; query: string; unit: string }[] {
+  const safe = sanitizeForPromQL(serviceName);
   return [
     {
       name: "Request Rate",
-      query: `sum(rate(http_requests_total{service=~".*${serviceName}.*"}[5m]))`,
+      query: `sum(rate(http_requests_total{service=~".*${safe}.*"}[5m]))`,
       unit: "req/s",
     },
     {
       name: "Error Rate",
-      query: `sum(rate(http_requests_total{service=~".*${serviceName}.*",code=~"5.."}[5m])) / sum(rate(http_requests_total{service=~".*${serviceName}.*"}[5m])) * 100`,
+      query: `sum(rate(http_requests_total{service=~".*${serviceName}.*",code=~"5.."}[5m])) / sum(rate(http_requests_total{service=~".*${safe}.*"}[5m])) * 100`,
       unit: "%",
     },
     {
       name: "Pod Replicas",
-      query: `kube_deployment_status_replicas{deployment=~".*${serviceName}.*"}`,
+      query: `kube_deployment_status_replicas{deployment=~".*${safe}.*"}`,
       unit: "",
     },
   ];
