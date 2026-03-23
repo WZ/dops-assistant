@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import type { Database, InvestigationRow, PhaseRow, EventRow } from "./db.js";
+import type { Database, InvestigationRow, PhaseRow, EventRow, KpiStats } from "./db.js";
 import type { ServiceConfig, BrandingConfig } from "../config/schema.js";
 import { ProviderSchema } from "../config/schema.js";
 import { createMcpProvider, listProviderTools } from "../mcp/provider.js";
@@ -26,6 +26,7 @@ export interface RouteHandlers {
   listInvestigations(limit: number, offset: number): InvestigationRow[];
   getInvestigation(id: string): { investigation: InvestigationRow; phases: PhaseRow[]; events: EventRow[] } | undefined;
   getDependencies(service: string): Promise<{ nodes: DependencyNode[]; edges: DependencyEdge[] }>;
+  getKpiStats(): KpiStats;
 }
 
 /**
@@ -78,6 +79,7 @@ export function buildHandlers(db: Database, services: ServiceConfig[]): RouteHan
   return {
     getServices: () => services,
     listInvestigations: (limit, offset) => db.listInvestigations(limit, offset),
+    getKpiStats: () => db.getKpiStats(),
     getInvestigation: (id) => {
       const investigation = db.getInvestigation(id);
       if (!investigation) return undefined;
@@ -157,6 +159,10 @@ export function registerRoutes(
       return;
     }
     res.json(healthPoller.getHistory(service, hours));
+  });
+
+  app.get("/api/stats/kpi", (_req: Request, res: Response) => {
+    res.json(handlers.getKpiStats());
   });
 
   app.get("/api/investigations", (req: Request, res: Response) => {

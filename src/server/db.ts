@@ -142,11 +142,15 @@ export class Database {
   }
 
   getInvestigation(id: string): InvestigationRow | undefined {
-    return this.db.prepare("SELECT * FROM investigations WHERE id = ?").get(id) as InvestigationRow | undefined;
+    return this.db.prepare(
+      "SELECT *, CASE WHEN json_valid(report) THEN json_extract(report, '$.confidenceScore') ELSE NULL END as confidence_score FROM investigations WHERE id = ?"
+    ).get(id) as InvestigationRow | undefined;
   }
 
   listInvestigations(limit: number, offset: number): InvestigationRow[] {
-    return this.db.prepare("SELECT * FROM investigations ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?").all(limit, offset) as InvestigationRow[];
+    return this.db.prepare(
+      "SELECT *, CASE WHEN json_valid(report) THEN json_extract(report, '$.confidenceScore') ELSE NULL END as confidence_score FROM investigations ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?"
+    ).all(limit, offset) as InvestigationRow[];
   }
 
   createPhase(phase: { id: string; investigationId: string; phase: string; status: string }): void {
@@ -205,6 +209,69 @@ export class Database {
        WHERE status = 'running' AND created_at < datetime('now', '-' || ? || ' minutes')`
     ).run(Math.floor(staleMinutes));
     return result.changes;
+  }
+
+  // ── KPI Stats ──────────────────────────────────────────────────────────
+
+  getKpiStats(): KpiStats {
+    // Investigation counts
+    const counts = this.db.prepare(
+      `SELECT COUNT(*) as total,
+        COALESCE(SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END), 0) as active,
+        COALESCE(SUM(CASE WHEN status = 'complete' THEN 1 ELSE 0 END), 0) as complete,
+        COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) as failed
+       FROM investigations`
+    ).get() as { total: number; active: number; complete: number; failed: number };
+
+    // Success rate (exclude stale-cleanup: failed with no report)
+    const completedCount = counts.complete;
+    const realFailedCount = (this.db.prepare(
+      `SELECT COUNT(*) as c FROM investigations WHERE status = 'failed' AND report IS NOT NULL`
+    ).get() as { c: number }).c;
+    const successDenom = completedCount + realFailedCount;
+    const successRate = successDenom > 0 ? (completedCount / successDenom) * 100 : null;
+
+    // Confidence (from completed investigations, json_valid guard)
+    const conf = this.db.prepare(
+      `SELECT
+        AVG(CASE WHEN json_valid(report) THEN json_extract(report, '$.confidenceScore') ELSE NULL END) as avg,
+        COUNT(CASE WHEN json_valid(report) AND json_extract(report, '$.confidenceScore') IS NOT NULL THEN 1 END) as scored,
+        COUNT(CASE WHEN json_valid(report) AND json_extract(report, '$.confidenceScore') IS NOT NULL
+          AND json_extract(report, '$.confidenceScore') < 0.5 THEN 1 END) as low
+       FROM investigations WHERE status = 'complete'`
+    ).get() as { avg: number | null; scored: number; low: number };
+
+    // MTTR (7d window + prior 7d for trend)
+    const mttr7d = this.db.prepare(
+      `SELECT AVG(total_duration_ms) as avg, COUNT(*) as count
+       FROM investigations
+       WHERE status = 'complete' AND completed_at >= datetime('now', '-7 days')`
+    ).get() as { avg: number | null; count: number };
+
+    const mttrPrior = this.db.prepare(
+      `SELECT AVG(total_duration_ms) as avg
+       FROM investigations
+       WHERE status = 'complete'
+         AND completed_at >= datetime('now', '-14 days')
+         AND completed_at < datetime('now', '-7 days')`
+    ).get() as { avg: number | null };
+
+    let trend: KpiStats["mttr"]["trend"];
+    if (mttr7d.avg && mttrPrior.avg) {
+      const pctChange = ((mttr7d.avg - mttrPrior.avg) / mttrPrior.avg) * 100;
+      if (pctChange < 0) {
+        trend = { direction: "down", value: `${Math.abs(Math.round(pctChange))}%`, positive: true };
+      } else if (pctChange > 0) {
+        trend = { direction: "up", value: `${Math.round(pctChange)}%`, positive: false };
+      }
+    }
+
+    return {
+      investigations: counts,
+      successRate,
+      confidence: { avg: conf.avg, scored: conf.scored, lowConfidence: conf.low },
+      mttr: { avg7d: mttr7d.avg ?? 0, completed7d: mttr7d.count, trend },
+    };
   }
 
   // ── Feedback ─────────────────────────────────────────────────────────────
