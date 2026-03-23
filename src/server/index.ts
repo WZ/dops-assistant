@@ -93,9 +93,12 @@ async function main() {
     providers: getProviders,
     registryStore,
     db,
+    getHiddenServices: () => db.getHiddenServices(),
     onTransition: (service, from, to) => {
       if (to !== "down") return;
       if (from !== "healthy" && from !== "unknown") return;
+      // Defense in depth: skip hidden services even if transition slips through
+      if (db.isServiceHidden(service)) return;
 
       logger.info({ service, from, to }, "ServiceHealthPoller: service transitioned to down");
 
@@ -138,7 +141,7 @@ async function main() {
   app.get("/api/health", healthHandler);
 
   if (config.webhook.secret) {
-    const webhookHandler = createWebhookHandler({ runner, config: config.webhook, services: config.services, dedup: sharedDedup });
+    const webhookHandler = createWebhookHandler({ runner, config: config.webhook, services: config.services, dedup: sharedDedup, getHiddenServices: () => db.getHiddenServices() });
     app.post("/api/webhook/alert", webhookHandler);
     logger.info("Alert webhook enabled at POST /api/webhook/alert");
   }
@@ -152,6 +155,7 @@ async function main() {
     discoveryConfig: config.discovery,
     getPendingDiscovery: () => pendingDiscovery,
     clearPendingDiscovery: () => { pendingDiscovery = null; },
+    getHiddenServices: () => db.getHiddenServices(),
   });
 
   // Auto-refresh: run background discovery on startup if enabled

@@ -1,4 +1,4 @@
-import { Button } from "@/components/ui/button";
+import { useEffect, useState } from "react";
 import { formatTokens } from "../lib/formatTokens.js";
 import { useAutoScroll } from "../hooks/useAutoScroll.js";
 
@@ -22,14 +22,37 @@ interface DiscoveryProgressProps {
 }
 
 export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, error, phaseTokens, totalUsage, onRetry, onBack }: DiscoveryProgressProps) {
-  const toolCallLogRef = useAutoScroll([toolCalls.length]);
+  // Elapsed timer + LLM thinking detection
+  const [startTime] = useState(() => Date.now());
+  const [elapsed, setElapsed] = useState(0);
+  const [lastToolCallAt, setLastToolCallAt] = useState(Date.now());
+  const [secondsSinceToolCall, setSecondsSinceToolCall] = useState(0);
+
+  // Track when new tool calls arrive
+  useEffect(() => {
+    if (toolCalls.length > 0) setLastToolCallAt(Date.now());
+  }, [toolCalls.length]);
+
+  useEffect(() => {
+    if (error || phaseStatus === "complete") return;
+    const interval = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startTime) / 1000));
+      setSecondsSinceToolCall(Math.floor((Date.now() - lastToolCallAt) / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [startTime, lastToolCallAt, error, phaseStatus]);
+
+  const elapsedStr = elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;
+  const isThinking = toolCalls.length > 0 && secondsSinceToolCall >= 5 && !error;
+
+  const toolCallLogRef = useAutoScroll([toolCalls.length, isThinking]);
   const phases = ["discovery", "validation", "review"];
   const currentIdx = phases.indexOf(phase);
 
   return (
     <div className="h-full overflow-y-auto p-6">
       <div className="text-xs text-muted-foreground/50 mb-4">
-        <Button variant="link" className="text-primary h-auto p-0 text-xs" onClick={onBack}>Dashboard</Button>
+        <button onClick={onBack} className="text-primary hover:underline">Dashboard</button>
         <span className="mx-1.5">{"\u203A"}</span>
         <span>Services</span>
         <span className="mx-1.5">{"\u203A"}</span>
@@ -68,11 +91,13 @@ export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, er
               <div className="text-sm font-medium">
                 {phase === "discovery" ? "Discovering services..." : "Validating services..."}
               </div>
-              {iteration && iteration.max > 0 && (
-                <div className="text-[11px] text-muted-foreground/50">
-                  Step {iteration.current} of {iteration.max}
-                </div>
-              )}
+              <div className="text-[11px] text-muted-foreground/50 flex items-center gap-2">
+                {iteration && iteration.max > 0 && (
+                  <span>Step {iteration.current} of {iteration.max}</span>
+                )}
+                <span className="tabular-nums">{elapsedStr} elapsed</span>
+              </div>
+              <div className="text-[10px] text-muted-foreground/40 mt-0.5">This may take several minutes to complete</div>
             </div>
           </div>
         )}
@@ -99,6 +124,12 @@ export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, er
                 {tc.tool}
               </div>
             ))}
+            {isThinking && (
+              <div className="flex items-center gap-2 pt-1.5 text-primary/60">
+                <span className="w-1.5 h-1.5 rounded-full bg-primary/60 animate-status-pulse flex-shrink-0" />
+                LLM is analyzing results and generating service list...
+              </div>
+            )}
           </div>
         )}
 
@@ -113,20 +144,19 @@ export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, er
           <p className="text-sm text-destructive mb-3">{error}</p>
           <div className="flex gap-2">
             {onRetry && (
-              <Button
+              <button
                 onClick={onRetry}
-                size="sm"
+                className="px-4 py-1.5 text-xs font-medium rounded bg-primary text-primary-foreground hover:bg-primary/90"
               >
                 Retry
-              </Button>
+              </button>
             )}
-            <Button
+            <button
               onClick={onBack}
-              variant="outline"
-              size="sm"
+              className="px-4 py-1.5 text-xs rounded border border-border text-muted-foreground hover:bg-accent"
             >
               Back
-            </Button>
+            </button>
           </div>
         </div>
       )}

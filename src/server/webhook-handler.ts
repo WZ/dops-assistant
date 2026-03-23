@@ -73,10 +73,17 @@ export interface WebhookHandlerDeps {
   services: ServiceConfig[];
   /** Optional shared dedup instance. If not provided, one is created internally. */
   dedup?: InvestigationDedup;
+  /** Optional getter for hidden services — alerts for hidden services are ignored */
+  getHiddenServices?: () => Set<string>;
 }
 
 export function createWebhookHandler(deps: WebhookHandlerDeps) {
-  const { runner, config, services } = deps;
+  const { runner, config } = deps;
+  // Filter hidden services from alert matching
+  const getVisibleServices = () => {
+    const hidden = deps.getHiddenServices?.() ?? new Set<string>();
+    return hidden.size > 0 ? deps.services.filter(s => !hidden.has(s.name)) : deps.services;
+  };
   const dedup = deps.dedup ?? new InvestigationDedup({
     dedupWindowSeconds: config.dedupWindowSeconds,
     maxConcurrent: config.maxConcurrent,
@@ -115,8 +122,8 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
     // Process the first firing alert (dedup handles the rest)
     const alert = firingAlerts[0]!;
 
-    // 3. Match service
-    const service = extractServiceFromAlert(alert, services);
+    // 3. Match service (exclude hidden services)
+    const service = extractServiceFromAlert(alert, getVisibleServices());
     if (!service) {
       logger.warn({ labels: alert.labels }, "Alert webhook: could not match service from labels");
       res.status(422).json({ error: "Could not identify service from alert labels" });

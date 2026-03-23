@@ -5,7 +5,7 @@ import { X } from "lucide-react";
 interface ToastItem {
   id: string;
   service: string;
-  status: "complete" | "failed";
+  status: "complete" | "failed" | "hidden" | "unhidden";
   timestamp: number;
 }
 
@@ -47,8 +47,8 @@ function Toast({ toast, onDismiss, onClick }: { toast: ToastItem; onDismiss: () 
       role="alert"
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
-      onClick={onClick}
-      className={`cursor-pointer max-w-[320px] rounded-lg border border-border bg-card p-3 transition-all ${
+      onClick={toast.status === "hidden" || toast.status === "unhidden" ? undefined : onClick}
+      className={`${toast.status !== "hidden" && toast.status !== "unhidden" ? "cursor-pointer" : ""} max-w-[320px] rounded-lg border border-border bg-card p-3 transition-all ${
         exiting ? "opacity-0 translate-x-3" : "animate-slide-in-right"
       }`}
       style={{
@@ -57,13 +57,32 @@ function Toast({ toast, onDismiss, onClick }: { toast: ToastItem; onDismiss: () 
       }}
     >
       <div className="flex items-start gap-2.5">
-        <div className={`mt-1 w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-          toast.status === "complete" ? "bg-success" : "bg-destructive"
-        }`} />
+        {(toast.status === "hidden" || toast.status === "unhidden") ? (
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="mt-1 flex-shrink-0 text-muted-foreground/60">
+            {toast.status === "hidden" ? (
+              <>
+                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+                <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+                <line x1="1" y1="1" x2="23" y2="23"/>
+              </>
+            ) : (
+              <>
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </>
+            )}
+          </svg>
+        ) : (
+          <div className={`mt-1 w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+            toast.status === "complete" ? "bg-success" : "bg-destructive"
+          }`} />
+        )}
         <div className="min-w-0 flex-1">
           <p className="font-body text-[13px] font-semibold text-foreground/80 truncate">{toast.service}</p>
           <p className="font-mono text-[10px] text-muted-foreground/60">
-            Investigation {toast.status === "complete" ? "complete" : "failed"} — click to view
+            {toast.status === "hidden" ? "hidden from monitoring"
+              : toast.status === "unhidden" ? "monitoring resumed"
+              : `Investigation ${toast.status === "complete" ? "complete" : "failed"} — click to view`}
           </p>
         </div>
         <Button

@@ -44,15 +44,26 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
     throw new Error("No MCP tools available — check that your Grafana MCP server is running and reachable.");
   }
   const metricsOnly = filterOutLokiTools(rawTools);
-  const tools = config.onToolCall
-    ? wrapToolsWithCallbacks(metricsOnly, config.onToolCall, "discovery")
-    : metricsOnly;
 
   // Keep maxSteps capped so the quirk wind-down (which disables tools to
   // force JSON output) fires before the model exhausts all iterations.
   // The agent runs multiple discovery queries (deployments, statefulsets,
   // daemonsets, pods, scrape targets) so it needs enough iterations.
   const maxSteps = Math.min(config.discoveryConfig.maxIterations, 35);
+
+  // Wrap tools with callbacks and emit synthetic iteration events based on tool call count
+  let toolCallCount = 0;
+  const wrappedOnToolCall: typeof config.onToolCall = config.onToolCall
+    ? (name, args, result, durationMs, error, phase) => {
+        toolCallCount++;
+        config.onIteration?.("discovery", toolCallCount, maxSteps, `Querying ${name}`);
+        config.onToolCall!(name, args, result, durationMs, error, phase);
+      }
+    : undefined;
+
+  const tools = wrappedOnToolCall
+    ? wrapToolsWithCallbacks(metricsOnly, wrappedOnToolCall, "discovery")
+    : metricsOnly;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     const agent = createDiscoverAgent({

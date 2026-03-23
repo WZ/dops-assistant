@@ -41,6 +41,8 @@ export interface ServiceHealthPollerDeps {
   db: Database;
   intervalMs?: number;
   onTransition?: (service: string, from: HealthStatus, to: HealthStatus) => void;
+  /** Optional getter for hidden services — hidden services are excluded from polling */
+  getHiddenServices?: () => Set<string>;
 }
 
 /** Prometheus query_prometheus result entry */
@@ -172,6 +174,7 @@ export class ServiceHealthPoller {
   private readonly db: Database;
   private readonly intervalMs: number;
   private readonly onTransition?: (service: string, from: HealthStatus, to: HealthStatus) => void;
+  private readonly getHiddenServices?: () => Set<string>;
 
   private cachedHealth: Map<string, HealthStatus> = new Map();
   private intervalHandle: ReturnType<typeof setInterval> | undefined;
@@ -185,6 +188,7 @@ export class ServiceHealthPoller {
     this.db = deps.db;
     this.intervalMs = deps.intervalMs ?? 60_000;
     this.onTransition = deps.onTransition;
+    this.getHiddenServices = deps.getHiddenServices;
   }
 
   /** Start the poller — runs immediately, then on interval. */
@@ -214,6 +218,14 @@ export class ServiceHealthPoller {
       }
 
       const serviceNames = new Set(services.map((s) => s.name));
+
+      // Exclude hidden services from polling
+      const hidden = this.getHiddenServices?.() ?? new Set<string>();
+      for (const name of hidden) serviceNames.delete(name);
+      if (serviceNames.size === 0) {
+        logger.debug("ServiceHealthPoller: all services hidden, skipping poll");
+        return;
+      }
 
       // Find query_prometheus tool
       let tools: Record<string, unknown>;
