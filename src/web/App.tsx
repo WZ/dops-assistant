@@ -10,6 +10,7 @@ import { Sun, Moon } from "lucide-react";
 import { ChatPane } from "./components/ChatPane";
 import { Dashboard } from "./components/Dashboard";
 import { InvestigationPane } from "./components/InvestigationPane";
+import { ServiceDetail } from "./components/ServiceDetail";
 import { SkillsPage } from "./components/SkillsPage";
 import { ProvidersPage } from "./components/ProvidersPage";
 import { ServicesManage } from "./components/ServicesManage";
@@ -32,6 +33,7 @@ function formatUptime(seconds: number): string {
 export type LeftPaneView =
   | { type: "dashboard" }
   | { type: "investigation"; id: string }
+  | { type: "service:detail"; serviceName: string }
   | { type: "skills" }
   | { type: "providers" }
   | { type: "services:manage" }
@@ -227,7 +229,7 @@ export function App() {
         <ResizablePanelGroup orientation="horizontal">
           <ResizablePanel defaultSize={60} minSize={30}>
             <div className="h-full bg-grid relative">
-              <div key={leftPane.type === "investigation" ? `inv-${leftPane.id}` : leftPane.type} className="h-full animate-fade-in">
+              <div key={leftPane.type === "investigation" ? `inv-${leftPane.id}` : leftPane.type === "service:detail" ? `svc-${leftPane.serviceName}` : leftPane.type} className="h-full animate-fade-in">
                 {leftPane.type === "services:manage" ? (
                   <ServicesManage
                     onRunDiscovery={() => {
@@ -284,14 +286,22 @@ export function App() {
                     }}
                     onBack={() => setLeftPane({ type: "services:manage" })}
                   />
+                ) : leftPane.type === "service:detail" ? (
+                  <ServiceDetail
+                    serviceName={leftPane.serviceName}
+                    ws={ws}
+                    onBack={() => setLeftPane({ type: "dashboard" })}
+                    onViewInvestigation={(id) => setLeftPane({ type: "investigation", id })}
+                    onViewService={(name) => setLeftPane({ type: "service:detail", serviceName: name })}
+                  />
                 ) : leftPane.type === "dashboard" ? (
                   <Dashboard
                     wsMessages={ws.messages}
                     onInvestigationClick={(id) =>
                       setLeftPane({ type: "investigation", id })
                     }
-                    onInvestigateService={(serviceName) => {
-                      ws.send({ type: "chat", message: `investigate ${serviceName}` });
+                    onViewService={(serviceName) => {
+                      setLeftPane({ type: "service:detail", serviceName });
                     }}
                     onManageServices={() => setLeftPane({ type: "services:manage" })}
                     onRunDiscovery={() => {
@@ -330,6 +340,7 @@ export function App() {
                 setLeftPane({ type: "investigation", id })
               }
               activeInvestigationId={leftPane.type === "investigation" ? leftPane.id : undefined}
+              serviceContext={leftPane.type === "service:detail" ? leftPane.serviceName : undefined}
             />
           </ResizablePanel>
         </ResizablePanelGroup>

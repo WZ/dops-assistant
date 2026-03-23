@@ -15,7 +15,7 @@ import type { ServerMessage } from "../../types/ws-types.js";
 interface DashboardProps {
   wsMessages: ServerMessage[];
   onInvestigationClick: (id: string) => void;
-  onInvestigateService: (serviceName: string) => void;
+  onViewService: (serviceName: string) => void;
   onManageServices: () => void;
   onRunDiscovery: () => void;
 }
@@ -31,7 +31,7 @@ interface ActiveInvestigation {
 
 type HealthStatus = "healthy" | "degraded" | "down" | "unknown";
 
-export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateService, onManageServices, onRunDiscovery }: DashboardProps) {
+export function Dashboard({ wsMessages, onInvestigationClick, onViewService, onManageServices, onRunDiscovery }: DashboardProps) {
   const [services, setServices] = useState<ServiceConfig[]>([]);
   const [investigations, setInvestigations] = useState<InvestigationSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -645,7 +645,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
                       <div key={svc.name} className={`animate-fade-up delay-${Math.min(i + 1, 8)}`}>
                         <ServiceCard
                           name={svc.name}
-                          onClick={() => onInvestigateService(svc.name)}
+                          onClick={() => onViewService(svc.name)}
                           lastInvestigation={serviceInvData.get(svc.name)?.lastInvestigation ?? null}
                           investigationCount={serviceInvData.get(svc.name)?.count ?? 0}
                           healthStatus={healthData[svc.name] as "healthy" | "degraded" | "down" | "unknown" | undefined}
