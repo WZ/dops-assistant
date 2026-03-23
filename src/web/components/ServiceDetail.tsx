@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { ServiceDetailHeader } from "./ServiceDetailHeader";
 import { ServiceMetrics } from "./ServiceMetrics.tsx";
 import { ServiceHistory } from "./ServiceHistory.tsx";
+import { ServiceDependencyGraph } from "./ServiceDependencyGraph.tsx";
 import type { useWebSocket } from "../hooks/useWebSocket";
 
 type TabId = "metrics" | "history" | "dependencies";
@@ -142,9 +143,7 @@ export function ServiceDetail({
           <ServiceHistory serviceName={serviceName} onViewInvestigation={onViewInvestigation} />
         )}
         {activeTab === "dependencies" && (
-          <div className="text-muted-foreground/50 font-mono text-[11px]">
-            Dependencies tab content
-          </div>
+          <ServiceDependencyGraph serviceName={serviceName} onViewService={onViewService} />
         )}
       </div>
     </div>
