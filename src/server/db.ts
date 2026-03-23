@@ -11,6 +11,14 @@ export interface InvestigationRow {
   total_input_tokens: number;
   total_output_tokens: number;
   total_duration_ms: number;
+  confidence_score: number | null;
+}
+
+export interface KpiStats {
+  investigations: { total: number; active: number; complete: number; failed: number };
+  successRate: number | null;
+  confidence: { avg: number | null; scored: number; lowConfidence: number };
+  mttr: { avg7d: number; completed7d: number; trend?: { direction: "up" | "down"; value: string; positive: boolean } };
 }
 
 export interface PhaseRow {
@@ -111,6 +119,7 @@ export class Database {
       );
     `);
     this.migrateServiceHealthChecks();
+    this.migrateHiddenServices();
   }
 
   createInvestigation(inv: { id: string; service: string; query: string; status: string }): void {
@@ -254,6 +263,67 @@ export class Database {
        WHERE service = ? AND checked_at >= ?
        ORDER BY checked_at ASC`
     ).all(service, cutoff) as Array<{ status: string; checked_at: string }>;
+  }
+
+  // ── Hidden services ──────────────────────────────────────────────────────
+
+  migrateHiddenServices(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS hidden_services (
+        service   TEXT PRIMARY KEY,
+        reason    TEXT,
+        hidden_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+  }
+
+  hideService(service: string, reason?: string): void {
+    this.db.prepare(
+      "INSERT OR REPLACE INTO hidden_services (service, reason) VALUES (?, ?)"
+    ).run(service, reason ?? null);
+  }
+
+  unhideService(service: string): void {
+    this.db.prepare("DELETE FROM hidden_services WHERE service = ?").run(service);
+  }
+
+  getHiddenServices(): Set<string> {
+    const rows = this.db.prepare("SELECT service FROM hidden_services").all() as Array<{ service: string }>;
+    return new Set(rows.map(r => r.service));
+  }
+
+  getHiddenServiceDetails(): Array<{ service: string; reason: string | null; hidden_at: string }> {
+    return this.db.prepare(
+      "SELECT service, reason, hidden_at FROM hidden_services ORDER BY hidden_at DESC"
+    ).all() as Array<{ service: string; reason: string | null; hidden_at: string }>;
+  }
+
+  hideServices(services: string[], reason?: string): void {
+    if (services.length === 0) return;
+    const stmt = this.db.prepare(
+      "INSERT OR REPLACE INTO hidden_services (service, reason) VALUES (?, ?)"
+    );
+    const tx = this.db.transaction((svcs: string[]) => {
+      for (const svc of svcs) stmt.run(svc, reason ?? null);
+    });
+    tx(services);
+  }
+
+  isServiceHidden(service: string): boolean {
+    const row = this.db.prepare("SELECT 1 FROM hidden_services WHERE service = ?").get(service);
+    return row !== undefined;
+  }
+
+  getStaleUnknownServices(days: number): string[] {
+    const cutoff = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
+    return (this.db.prepare(
+      `SELECT DISTINCT service FROM service_health_checks
+       WHERE service NOT IN (
+         SELECT DISTINCT service FROM service_health_checks
+         WHERE status != 'unknown' AND checked_at >= ?
+       )
+       AND service NOT IN (SELECT service FROM hidden_services)`
+    ).all(cutoff) as Array<{ service: string }>).map(r => r.service);
   }
 
   close(): void {

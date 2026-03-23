@@ -298,6 +298,64 @@ export function registerRoutes(
     });
   }
 
+  // ── Hidden Services REST API ──────────────────────────────────────────────
+
+  app.get("/api/services/hidden", (_req: Request, res: Response) => {
+    try {
+      res.json(db.getHiddenServiceDetails());
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : "Failed to fetch hidden services" });
+    }
+  });
+
+  app.post("/api/services/hidden", (req: Request, res: Response) => {
+    try {
+      const { service, reason } = req.body as { service?: string; reason?: string };
+      if (!service || typeof service !== "string" || service.trim() === "") {
+        res.status(400).json({ error: "service is required" });
+        return;
+      }
+      db.hideService(service.trim(), reason);
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : "Failed to hide service" });
+    }
+  });
+
+  app.post("/api/services/hidden/batch", (req: Request, res: Response) => {
+    try {
+      const { services: svcs, reason } = req.body as { services?: string[]; reason?: string };
+      if (!Array.isArray(svcs) || svcs.length === 0) {
+        res.status(400).json({ error: "services must be a non-empty array" });
+        return;
+      }
+      const trimmed = svcs.map(s => (typeof s === "string" ? s.trim() : "")).filter(s => s !== "");
+      db.hideServices(trimmed, reason);
+      res.json({ ok: true, count: trimmed.length });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : "Failed to hide services" });
+    }
+  });
+
+  app.delete("/api/services/hidden/:name", (req: Request, res: Response) => {
+    try {
+      const name = Array.isArray(req.params["name"]) ? req.params["name"][0]! : req.params["name"]!;
+      db.unhideService(decodeURIComponent(name));
+      res.status(204).end();
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : "Failed to unhide service" });
+    }
+  });
+
+  app.get("/api/services/stale-unknown", (req: Request, res: Response) => {
+    try {
+      const days = Math.max(1, Math.min(Number(req.query["days"]) || 7, 90));
+      res.json(db.getStaleUnknownServices(days));
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : "Failed to check stale services" });
+    }
+  });
+
   // ── Service Registry REST API ─────────────────────────────────────────────
   if (registryStore) {
     app.put("/api/services", (req: Request, res: Response) => {

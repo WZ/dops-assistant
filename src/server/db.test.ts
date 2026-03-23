@@ -72,4 +72,101 @@ describe("Database", () => {
       expect(msgs[0]!.content).toBe("first");
     });
   });
+
+  // ── Hidden services ──────────────────────────────────────────────────────
+
+  describe("hidden services", () => {
+    it("hideService inserts with reason", () => {
+      db.hideService("kafka", "decommissioned");
+      const details = db.getHiddenServiceDetails();
+      expect(details).toHaveLength(1);
+      expect(details[0]!.service).toBe("kafka");
+      expect(details[0]!.reason).toBe("decommissioned");
+      expect(details[0]!.hidden_at).toBeTruthy();
+    });
+
+    it("hideService is idempotent (INSERT OR REPLACE)", () => {
+      db.hideService("kafka", "reason-1");
+      db.hideService("kafka", "reason-2");
+      const details = db.getHiddenServiceDetails();
+      expect(details).toHaveLength(1);
+      expect(details[0]!.reason).toBe("reason-2");
+    });
+
+    it("hideService works without reason", () => {
+      db.hideService("kafka");
+      const details = db.getHiddenServiceDetails();
+      expect(details[0]!.reason).toBeNull();
+    });
+
+    it("unhideService removes existing", () => {
+      db.hideService("kafka");
+      db.unhideService("kafka");
+      expect(db.getHiddenServices().size).toBe(0);
+    });
+
+    it("unhideService is no-op on non-hidden service", () => {
+      db.unhideService("nonexistent");
+      expect(db.getHiddenServices().size).toBe(0);
+    });
+
+    it("getHiddenServices returns Set with entries", () => {
+      db.hideService("kafka");
+      db.hideService("redis");
+      const hidden = db.getHiddenServices();
+      expect(hidden).toBeInstanceOf(Set);
+      expect(hidden.size).toBe(2);
+      expect(hidden.has("kafka")).toBe(true);
+      expect(hidden.has("redis")).toBe(true);
+    });
+
+    it("getHiddenServices returns empty Set when none hidden", () => {
+      const hidden = db.getHiddenServices();
+      expect(hidden).toBeInstanceOf(Set);
+      expect(hidden.size).toBe(0);
+    });
+
+    it("getHiddenServiceDetails returns full rows", () => {
+      db.hideService("kafka", "old cluster");
+      db.hideService("redis");
+      const details = db.getHiddenServiceDetails();
+      expect(details).toHaveLength(2);
+      expect(details.every(d => d.hidden_at)).toBe(true);
+    });
+
+    it("hideServices batch inserts multiple", () => {
+      db.hideServices(["kafka", "redis", "postgres"], "cleanup");
+      const hidden = db.getHiddenServices();
+      expect(hidden.size).toBe(3);
+      const details = db.getHiddenServiceDetails();
+      expect(details.every(d => d.reason === "cleanup")).toBe(true);
+    });
+
+    it("hideServices with empty array is no-op", () => {
+      db.hideServices([]);
+      expect(db.getHiddenServices().size).toBe(0);
+    });
+
+    it("isServiceHidden returns correct boolean", () => {
+      db.hideService("kafka");
+      expect(db.isServiceHidden("kafka")).toBe(true);
+      expect(db.isServiceHidden("redis")).toBe(false);
+    });
+
+    it("getStaleUnknownServices returns services with only unknown checks", () => {
+      // Insert health checks: kafka has only unknown, redis has a healthy check
+      db.insertServiceHealthCheck("kafka", "unknown", new Date().toISOString());
+      db.insertServiceHealthCheck("redis", "healthy", new Date().toISOString());
+      const stale = db.getStaleUnknownServices(7);
+      expect(stale).toContain("kafka");
+      expect(stale).not.toContain("redis");
+    });
+
+    it("getStaleUnknownServices excludes already-hidden services", () => {
+      db.insertServiceHealthCheck("kafka", "unknown", new Date().toISOString());
+      db.hideService("kafka");
+      const stale = db.getStaleUnknownServices(7);
+      expect(stale).not.toContain("kafka");
+    });
+  });
 });
