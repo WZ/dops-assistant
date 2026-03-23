@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { ServiceDetailHeader } from "./ServiceDetailHeader";
+import { ServiceMetrics } from "./ServiceMetrics.tsx";
 import type { useWebSocket } from "../hooks/useWebSocket";
 
 type TabId = "metrics" | "history" | "dependencies";
@@ -135,11 +136,7 @@ export function ServiceDetail({
 
       {/* Tab content */}
       <div className="flex-1 overflow-y-auto p-6">
-        {activeTab === "metrics" && (
-          <div className="text-muted-foreground/50 font-mono text-[11px]">
-            Metrics tab content
-          </div>
-        )}
+        {activeTab === "metrics" && <ServiceMetrics serviceName={serviceName} />}
         {activeTab === "history" && (
           <div className="text-muted-foreground/50 font-mono text-[11px]">
             History tab content
