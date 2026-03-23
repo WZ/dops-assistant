@@ -501,18 +501,18 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
           <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
           <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">Overview</h2>
         </div>
-        <div className="grid grid-cols-2 gap-3 dashboard-kpi-grid">
+        <div className="grid grid-cols-3 gap-3 dashboard-kpi-grid">
           <StatCard
             label="Investigations"
-            value={kpiStats?.successRate != null ? `${kpiStats.investigations.total} \u00b7 ${Math.round(kpiStats.successRate)}%` : String(kpiStats?.investigations.total ?? 0)}
-            detail={`${kpiStats?.investigations.active ?? 0} active \u00b7 ${kpiStats?.investigations.complete ?? 0} complete \u00b7 ${kpiStats?.investigations.failed ?? 0} failed`}
+            value={String(kpiStats?.investigations.total ?? 0)}
+            detail={<>{kpiStats?.investigations.complete ?? 0} complete · {kpiStats?.investigations.failed ?? 0} failed · {kpiStats?.confidence.avg != null ? normalizeConfidence(kpiStats.confidence.avg) : "—"} confidence</>}
             loading={loading}
           />
           <StatCard
             label="Services Health"
             value={`${healthKpi.healthy}/${visibleServiceCount}`}
             variant={healthKpi.healthy === visibleServiceCount && visibleServiceCount > 0 ? "success" : "default"}
-            detail={`${healthKpi.down} down \u00b7 ${healthKpi.degraded} degraded \u00b7 ${healthKpi.unknown} unknown`}
+            detail={<>{healthKpi.down > 0 ? <span className="text-destructive/80">{healthKpi.down} down</span> : <>{healthKpi.down} down</>} · {healthKpi.degraded > 0 ? <span className="text-warning/80">{healthKpi.degraded} degraded</span> : <>{healthKpi.degraded} degraded</>} · {healthKpi.unknown} unknown</>}
             loading={loading}
           />
           <StatCard
@@ -520,13 +520,6 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
             value={kpiStats && kpiStats.mttr.completed7d > 0 ? formatDuration(kpiStats.mttr.avg7d) : "\u2014"}
             detail={kpiStats && kpiStats.mttr.completed7d > 0 ? `${kpiStats.mttr.completed7d} completed investigations` : "needs completed investigations"}
             trend={kpiStats?.mttr.trend}
-            loading={loading}
-          />
-          <StatCard
-            label="Avg Confidence"
-            value={kpiStats?.confidence.avg != null ? (normalizeConfidence(kpiStats.confidence.avg) || "\u2014") : "\u2014"}
-            variant={kpiStats?.confidence.avg != null ? (kpiStats.confidence.avg > 0.8 ? "success" : kpiStats.confidence.avg >= 0.5 ? "warning" : "default") : "default"}
-            detail={kpiStats ? `${kpiStats.confidence.scored} scored \u00b7 ${kpiStats.confidence.lowConfidence} low confidence` : "needs scored investigations"}
             loading={loading}
           />
         </div>

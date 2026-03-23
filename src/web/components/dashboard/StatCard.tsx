@@ -1,10 +1,10 @@
-import { memo } from "react";
+import { memo, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 interface StatCardProps {
   label: string;
   value: string;
-  detail?: string;
+  detail?: ReactNode;
   trend?: {
     direction: "up" | "down";
     value: string;
