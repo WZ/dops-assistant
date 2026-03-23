@@ -1,5 +1,6 @@
 import { memo } from "react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 interface ProviderCardProps {
@@ -60,7 +61,7 @@ export const ProviderCard = memo(function ProviderCard({
   const ariaLabel = `${name}: ${accessibilityStatus}, ${toolCount} tools`;
 
   const actionButtonClass =
-    "text-[10px] font-mono text-primary/70 hover:text-primary transition-colors py-3 px-2 min-h-[44px]";
+    "text-[10px] font-mono no-underline hover:no-underline h-auto py-3 px-2 min-h-[44px]";
 
   return (
     <div
@@ -125,30 +126,33 @@ export const ProviderCard = memo(function ProviderCard({
       {/* Action buttons */}
       <div className="mt-1 pl-[10px] flex items-center gap-0">
         {source === "gui" && onEdit && (
-          <button
+          <Button
+            variant="link"
             onClick={onEdit}
             aria-label={`Edit ${name}`}
-            className={actionButtonClass}
+            className={cn(actionButtonClass, "text-primary/70 hover:text-primary")}
           >
             Edit
-          </button>
+          </Button>
         )}
-        <button
+        <Button
+          variant="link"
           onClick={onTest}
           disabled={testing}
           aria-label={`Test connection for ${name}`}
-          className={cn(actionButtonClass, testing && "opacity-50 cursor-not-allowed")}
+          className={cn(actionButtonClass, "text-primary/70 hover:text-primary", testing && "opacity-50 cursor-not-allowed")}
         >
-          {testing ? "Testing…" : "Test"}
-        </button>
+          {testing ? "Testing\u2026" : "Test"}
+        </Button>
         {source === "gui" && onRemove && (
-          <button
+          <Button
+            variant="link"
             onClick={onRemove}
             aria-label={`Remove ${name}`}
             className={cn(actionButtonClass, "text-destructive/60 hover:text-destructive")}
           >
             Remove
-          </button>
+          </Button>
         )}
       </div>
     </div>

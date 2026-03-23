@@ -1,4 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { X } from "lucide-react";
 
 interface ToastItem {
   id: string;
@@ -64,15 +66,15 @@ function Toast({ toast, onDismiss, onClick }: { toast: ToastItem; onDismiss: () 
             Investigation {toast.status === "complete" ? "complete" : "failed"} — click to view
           </p>
         </div>
-        <button
+        <Button
+          variant="ghost"
+          size="icon"
           onClick={(e) => { e.stopPropagation(); setExiting(true); setTimeout(onDismiss, 250); }}
-          className="flex-shrink-0 text-muted-foreground/40 hover:text-muted-foreground/70 transition-colors p-1"
+          className="flex-shrink-0 h-auto w-auto p-1 text-muted-foreground/40 hover:text-muted-foreground/70 hover:bg-transparent"
           aria-label="Dismiss"
         >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
-          </svg>
-        </button>
+          <X size={12} className="!size-auto" />
+        </Button>
       </div>
     </div>
   );

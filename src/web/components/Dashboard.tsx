@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { ChevronDown } from "lucide-react";
 import { ServiceCard } from "./ServiceCard";
 import { FirstRunBanner } from "./FirstRunBanner";
 import { StatCard } from "./dashboard/StatCard";
@@ -363,12 +365,13 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
                 <p className="font-mono text-[10px] text-muted-foreground/50 truncate">{fetchError}</p>
               </div>
             </div>
-            <button
+            <Button
+              variant="ghost"
               onClick={() => { setFetchError(null); fetchData(); }}
-              className="flex-shrink-0 font-mono text-[10px] uppercase tracking-[0.1em] text-destructive hover:text-destructive/80 transition-colors py-2 px-3 min-h-[44px]"
+              className="flex-shrink-0 font-mono text-[10px] uppercase tracking-[0.1em] text-destructive hover:text-destructive/80 hover:bg-transparent py-2 px-3 min-h-[44px] h-auto"
             >
               Retry
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -458,9 +461,10 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
               { key: "unknown", label: "Unknown", services: serviceGroups.unknown, dotColor: "bg-muted-foreground/30", textColor: "text-muted-foreground/50" },
             ] as const).filter(g => g.services.length > 0).map((group) => (
               <div key={group.key} className="mb-4">
-                <button
+                <Button
+                  variant="ghost"
                   onClick={() => toggleGroup(group.key)}
-                  className="flex items-center gap-2 mb-2 py-2.5 px-2 -ml-2 rounded hover:bg-secondary/30 transition-colors w-full text-left min-h-[44px]"
+                  className="flex items-center gap-2 mb-2 py-2.5 px-2 -ml-2 rounded hover:bg-secondary/30 w-full justify-start min-h-[44px] h-auto"
                 >
                   <span className={`text-[9px] font-mono ${collapsedGroups[group.key] ? "text-muted-foreground/40" : "text-muted-foreground/60"}`}>
                     {collapsedGroups[group.key] ? "▸" : "▾"}
@@ -470,7 +474,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
                     {group.label}
                   </span>
                   <span className="text-[9px] font-mono text-muted-foreground/35">{group.services.length}</span>
-                </button>
+                </Button>
                 {!collapsedGroups[group.key] && (
                   <div className="grid grid-cols-3 gap-3 dashboard-services-grid">
                     {group.services.map((svc, i) => (
@@ -489,9 +493,9 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
               </div>
             ))}
             <div className="flex items-center gap-3 mt-1 pl-3">
-              <button onClick={onManageServices} className="py-3 px-2 min-h-[44px] text-[10px] font-mono text-primary/70 hover:text-primary transition-colors">Manage</button>
+              <Button variant="link" onClick={onManageServices} className="py-3 px-2 min-h-[44px] h-auto text-[10px] font-mono text-primary/70 hover:text-primary no-underline hover:no-underline">Manage</Button>
               <span className="text-muted-foreground/20">&middot;</span>
-              <button onClick={onRunDiscovery} className="text-[10px] font-mono text-primary/70 hover:text-primary transition-colors py-3 px-2 min-h-[44px]">Re-discover</button>
+              <Button variant="link" onClick={onRunDiscovery} className="text-[10px] font-mono text-primary/70 hover:text-primary py-3 px-2 min-h-[44px] h-auto no-underline hover:no-underline">Re-discover</Button>
             </div>
           </>
         )}
@@ -538,19 +542,18 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
       {/* Section F: Learned Patterns */}
       {patterns.length > 0 && (
         <section aria-label="Learned Patterns" className="mb-6">
-          <button
+          <Button
+            variant="ghost"
             aria-expanded={patternsExpanded}
             onClick={() => setPatternsExpanded(!patternsExpanded)}
-            className="flex items-center gap-2 mb-3 group cursor-pointer"
+            className="flex items-center gap-2 mb-3 group cursor-pointer h-auto px-0 py-0 hover:bg-transparent"
           >
             <div className="w-0.5 h-3.5 rounded-full bg-primary/40" />
             <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60 group-hover:text-muted-foreground/80 transition-colors">
               Learned Patterns ({patterns.length})
             </h2>
-            <svg className={`w-3 h-3 text-muted-foreground/40 transition-transform ${patternsExpanded ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="m6 9 6 6 6-6"/>
-            </svg>
-          </button>
+            <ChevronDown size={12} className={`!size-auto text-muted-foreground/40 transition-transform ${patternsExpanded ? "rotate-180" : ""}`} />
+          </Button>
           {patternsExpanded && (
             <div className="space-y-1.5 animate-fade-in">
               {patterns.map((p, i) => (
