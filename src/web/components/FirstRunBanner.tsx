@@ -1,3 +1,5 @@
+import { Button } from "@/components/ui/button";
+
 interface FirstRunBannerProps {
   onRunDiscovery: () => void;
   onDismiss: () => void;
@@ -13,18 +15,19 @@ export function FirstRunBanner({ onRunDiscovery, onDismiss }: FirstRunBannerProp
           Run service discovery to detect your monitored services, or add them manually.
         </p>
       </div>
-      <button
+      <Button
         onClick={onRunDiscovery}
-        className="px-4 py-2 text-xs font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90"
+        size="sm"
       >
         Run Discovery
-      </button>
-      <button
+      </Button>
+      <Button
         onClick={onDismiss}
-        className="px-4 py-2 text-xs font-medium rounded-md border border-border text-muted-foreground hover:bg-accent"
+        variant="outline"
+        size="sm"
       >
         Dismiss
-      </button>
+      </Button>
     </div>
   );
 }

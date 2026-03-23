@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils.js";
 
 export interface ProviderFormData {
@@ -351,34 +352,33 @@ export function ProviderForm({
 
       {/* Actions */}
       <div className="flex items-center gap-2 pt-1">
-        <button
-          type="button"
+        <Button
+          variant="ghost"
           onClick={handleTest}
           disabled={testing || saving}
-          className="text-[10px] font-mono text-primary/70 hover:text-primary py-3 px-2 min-h-[44px] disabled:opacity-50"
+          className="text-[10px] font-mono text-primary/70 hover:text-primary hover:bg-transparent h-auto py-3 px-2 min-h-[44px]"
         >
           {testing ? "Testing..." : "Test Connection"}
-        </button>
+        </Button>
 
         <span className="flex-1" />
 
-        <button
-          type="button"
+        <Button
+          variant="outline"
           onClick={onCancel}
           disabled={saving}
-          className="text-[10px] font-mono text-muted-foreground/70 hover:text-foreground py-3 px-2 min-h-[44px] disabled:opacity-50"
+          className="text-[10px] font-mono text-muted-foreground/70 hover:text-foreground h-auto py-3 px-2 min-h-[44px]"
         >
           Cancel
-        </button>
+        </Button>
 
-        <button
-          type="button"
+        <Button
           onClick={handleSave}
           disabled={saving}
-          className="rounded-md bg-primary text-primary-foreground px-4 py-2 font-mono text-xs font-medium min-h-[44px] disabled:opacity-50"
+          className="font-mono text-xs font-medium min-h-[44px]"
         >
           {saving ? "Saving..." : "Save"}
-        </button>
+        </Button>
       </div>
 
       {/* Test result */}

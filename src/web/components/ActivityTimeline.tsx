@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 
 export type TimelineEvent =
   | { type: "tool_call"; phase: string; tool: string; args: Record<string, unknown>; status: "calling" | "success" | "error"; result?: string; durationMs?: number; timestamp: number }
@@ -39,12 +40,13 @@ function ToolCallEvent({ event }: { event: Extract<TimelineEvent, { type: "tool_
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
-          <button
+          <Button
+            variant="ghost"
             onClick={() => setExpanded(!expanded)}
-            className="font-mono text-[11px] text-foreground/60 hover:text-primary transition-colors cursor-pointer"
+            className="font-mono text-[11px] text-foreground/60 hover:text-primary h-auto p-0 transition-colors cursor-pointer"
           >
             {event.tool}
-          </button>
+          </Button>
           {event.durationMs !== undefined && (
             <span className={`text-[9px] font-mono ${durationColor(event.durationMs)}`}>
               {formatDuration(event.durationMs)}
@@ -160,12 +162,13 @@ export function ActivityTimeline({ events }: { events: TimelineEvent[] }) {
         })}
       </div>
       {!autoScroll && (
-        <button
+        <Button
+          variant="ghost"
           onClick={() => { setAutoScroll(true); scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }}
-          className="absolute bottom-3 right-3 px-2.5 py-1 rounded-full bg-primary/15 border border-primary/25 text-[10px] font-mono text-primary/70 hover:bg-primary/25 transition-colors"
+          className="absolute bottom-3 right-3 px-2.5 py-1 h-auto rounded-full bg-primary/15 border border-primary/25 text-[10px] font-mono text-primary/70 hover:bg-primary/25 transition-colors"
         >
           scroll to bottom
-        </button>
+        </Button>
       )}
     </div>
   );

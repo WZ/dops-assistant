@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { stringify, parse } from "yaml";
+import { Button } from "@/components/ui/button";
 import { YamlEditor } from "./YamlEditor.js";
 import type { ValidatedServiceConfig } from "../../types/discovery-types.js";
 import type { ServiceConfig } from "../../config/schema.js";
@@ -45,7 +46,7 @@ export function DiscoveryReview({ services: initialServices, onAccept, onReject,
   return (
     <div className="h-full overflow-y-auto p-6">
       <div className="text-xs text-muted-foreground/50 mb-4">
-        <button onClick={onBack} className="text-primary hover:underline">Dashboard</button>
+        <Button variant="link" className="text-primary h-auto p-0 text-xs" onClick={onBack}>Dashboard</Button>
         <span className="mx-1.5">{"\u203A"}</span>
         <span>Services</span>
         <span className="mx-1.5">{"\u203A"}</span>
@@ -104,14 +105,15 @@ export function DiscoveryReview({ services: initialServices, onAccept, onReject,
       </div>
 
       <div className="rounded-lg border bg-card/40 overflow-hidden mb-4">
-        <button
+        <Button
+          variant="ghost"
           onClick={() => setShowEditor(!showEditor)}
-          className="flex items-center w-full px-4 py-2.5 text-left border-b hover:bg-accent/50"
+          className="flex items-center w-full px-4 py-2.5 h-auto text-left border-b rounded-none hover:bg-accent/50"
         >
           <span className="text-primary mr-2">{showEditor ? "\u25BE" : "\u25B8"}</span>
           <span className="text-sm flex-1">Edit YAML</span>
           <span className="text-[10px] text-muted-foreground/70">Click to expand and edit before accepting</span>
-        </button>
+        </Button>
         {showEditor && (
           <div className="max-h-80 overflow-y-auto">
             <YamlEditor value={yamlValue} onChange={setYamlValue} />
@@ -120,30 +122,32 @@ export function DiscoveryReview({ services: initialServices, onAccept, onReject,
       </div>
 
       <div className="flex gap-2">
-        <button
+        <Button
           onClick={handleAccept}
-          className="px-5 py-2 text-sm font-semibold rounded-md bg-success text-success-foreground hover:bg-success/80"
+          variant="success"
+          className="font-semibold"
         >
           Accept
-        </button>
-        <button
+        </Button>
+        <Button
           onClick={onReject}
-          className="px-5 py-2 text-sm rounded-md border border-border text-destructive hover:bg-accent"
+          variant="outline"
+          className="text-destructive"
         >
           Reject
-        </button>
-        <button
+        </Button>
+        <Button
           onClick={handleFilter}
-          className="px-5 py-2 text-sm rounded-md border border-border text-muted-foreground hover:bg-accent"
+          variant="outline"
         >
           Filter Unverified
-        </button>
-        <button
+        </Button>
+        <Button
           onClick={onRerun}
-          className="px-5 py-2 text-sm rounded-md border border-border text-muted-foreground hover:bg-accent"
+          variant="outline"
         >
           Re-run
-        </button>
+        </Button>
       </div>
     </div>
   );
