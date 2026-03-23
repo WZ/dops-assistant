@@ -39,6 +39,8 @@ export function ServiceDetail({
   const [metadata, setMetadata] = useState<ServiceMetadata | null>(null);
   const [healthStatus, setHealthStatus] = useState<HealthStatus>("unknown");
   const [investigationCount, setInvestigationCount] = useState(0);
+  const [aliasEditorOpen, setAliasEditorOpen] = useState(false);
+  const [tagEditorOpen, setTagEditorOpen] = useState(false);
 
   // Fetch metadata, health, and investigation count on mount / serviceName change
   useEffect(() => {
@@ -84,11 +86,21 @@ export function ServiceDetail({
   }, [ws, serviceName]);
 
   const handleEditAlias = useCallback(() => {
-    // TODO: Task 9 — open ServiceAliasEditor
+    setTagEditorOpen(false);
+    setAliasEditorOpen((prev) => !prev);
   }, []);
 
   const handleAddTag = useCallback(() => {
-    // TODO: Task 9 — open tag editor
+    setAliasEditorOpen(false);
+    setTagEditorOpen((prev) => !prev);
+  }, []);
+
+  const handleAliasSaved = useCallback((newAlias: string | null) => {
+    setMetadata((prev) => prev ? { ...prev, alias: newAlias } : { alias: newAlias, tags: [] });
+  }, []);
+
+  const handleTagsSaved = useCallback((newTags: string[]) => {
+    setMetadata((prev) => prev ? { ...prev, tags: newTags } : { alias: null, tags: newTags });
   }, []);
 
   const tabLabel = (tab: typeof TABS[number]) => {
@@ -106,10 +118,16 @@ export function ServiceDetail({
         alias={metadata?.alias}
         tags={metadata?.tags}
         investigationCount={investigationCount}
+        aliasEditorOpen={aliasEditorOpen}
+        tagEditorOpen={tagEditorOpen}
         onBack={onBack}
         onInvestigate={handleInvestigate}
         onEditAlias={handleEditAlias}
         onAddTag={handleAddTag}
+        onAliasSaved={handleAliasSaved}
+        onTagsSaved={handleTagsSaved}
+        onAliasEditorOpenChange={setAliasEditorOpen}
+        onTagEditorOpenChange={setTagEditorOpen}
       />
 
       {/* Tab navigation */}

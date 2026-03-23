@@ -1,5 +1,7 @@
+import { useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Search, ExternalLink, Pencil, Plus } from "lucide-react";
+import { AliasEditor, TagEditor } from "./ServiceAliasEditor";
 
 interface ServiceDetailHeaderProps {
   serviceName: string;
@@ -7,10 +9,16 @@ interface ServiceDetailHeaderProps {
   alias?: string | null;
   tags?: string[];
   investigationCount?: number;
+  aliasEditorOpen: boolean;
+  tagEditorOpen: boolean;
   onBack: () => void;
   onInvestigate: () => void;
   onEditAlias: () => void;
   onAddTag: () => void;
+  onAliasSaved: (newAlias: string | null) => void;
+  onTagsSaved: (newTags: string[]) => void;
+  onAliasEditorOpenChange: (open: boolean) => void;
+  onTagEditorOpenChange: (open: boolean) => void;
 }
 
 function healthDotClass(status?: string): string {
@@ -41,11 +49,19 @@ export function ServiceDetailHeader({
   alias,
   tags = [],
   investigationCount = 0,
+  aliasEditorOpen,
+  tagEditorOpen,
   onBack,
   onInvestigate,
   onEditAlias,
   onAddTag,
+  onAliasSaved,
+  onTagsSaved,
+  onAliasEditorOpenChange,
+  onTagEditorOpenChange,
 }: ServiceDetailHeaderProps) {
+  const aliasAnchorRef = useRef<HTMLDivElement>(null);
+  const tagAnchorRef = useRef<HTMLDivElement>(null);
   const displayName = alias || serviceName;
 
   return (
@@ -117,22 +133,44 @@ export function ServiceDetailHeader({
           <ExternalLink size={12} className="mr-1.5" />
           Open in Grafana
         </Button>
-        <Button
-          variant="ghost"
-          onClick={onEditAlias}
-          className="h-8 px-3 text-[11px] font-mono text-muted-foreground border border-border/50 hover:text-foreground/70 hover:bg-secondary/30 transition-colors"
-        >
-          <Pencil size={12} className="mr-1.5" />
-          Edit Name
-        </Button>
-        <Button
-          variant="ghost"
-          onClick={onAddTag}
-          className="h-8 px-3 text-[11px] font-mono text-muted-foreground border border-border/50 hover:text-foreground/70 hover:bg-secondary/30 transition-colors"
-        >
-          <Plus size={12} className="mr-1.5" />
-          Tag
-        </Button>
+
+        {/* Edit Name button + inline alias editor */}
+        <div ref={aliasAnchorRef} className="relative">
+          <Button
+            variant="ghost"
+            onClick={onEditAlias}
+            className="h-8 px-3 text-[11px] font-mono text-muted-foreground border border-border/50 hover:text-foreground/70 hover:bg-secondary/30 transition-colors"
+          >
+            <Pencil size={12} className="mr-1.5" />
+            Edit Name
+          </Button>
+          <AliasEditor
+            serviceName={serviceName}
+            currentAlias={alias ?? null}
+            onSaved={onAliasSaved}
+            open={aliasEditorOpen}
+            onOpenChange={onAliasEditorOpenChange}
+          />
+        </div>
+
+        {/* Add Tag button + inline tag editor */}
+        <div ref={tagAnchorRef} className="relative">
+          <Button
+            variant="ghost"
+            onClick={onAddTag}
+            className="h-8 px-3 text-[11px] font-mono text-muted-foreground border border-border/50 hover:text-foreground/70 hover:bg-secondary/30 transition-colors"
+          >
+            <Plus size={12} className="mr-1.5" />
+            Tag
+          </Button>
+          <TagEditor
+            serviceName={serviceName}
+            currentTags={tags}
+            onSaved={onTagsSaved}
+            open={tagEditorOpen}
+            onOpenChange={onTagEditorOpenChange}
+          />
+        </div>
       </div>
 
       {/* Meta line */}
