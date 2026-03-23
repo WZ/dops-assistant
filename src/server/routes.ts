@@ -23,7 +23,7 @@ export interface DependencyEdge {
 
 export interface RouteHandlers {
   getServices(): ServiceConfig[];
-  listInvestigations(limit: number, offset: number): InvestigationRow[];
+  listInvestigations(limit: number, offset: number, service?: string): InvestigationRow[];
   getInvestigation(id: string): { investigation: InvestigationRow; phases: PhaseRow[]; events: EventRow[] } | undefined;
   getDependencies(service: string): Promise<{ nodes: DependencyNode[]; edges: DependencyEdge[] }>;
   getKpiStats(): KpiStats;
@@ -78,7 +78,7 @@ function inferDependencyGraph(services: ServiceConfig[]): { nodes: DependencyNod
 export function buildHandlers(db: Database, services: ServiceConfig[]): RouteHandlers {
   return {
     getServices: () => services,
-    listInvestigations: (limit, offset) => db.listInvestigations(limit, offset),
+    listInvestigations: (limit, offset, service) => db.listInvestigations(limit, offset, service),
     getKpiStats: () => db.getKpiStats(),
     getInvestigation: (id) => {
       const investigation = db.getInvestigation(id);
@@ -115,13 +115,23 @@ export function registerRoutes(
   app.get("/api/services", (_req: Request, res: Response) => {
     // Merge config.yaml inline services with registry (services.yaml) entries.
     // Config services take precedence (dedup by name), then append registry-only services.
+    let allServices: ServiceConfig[];
     if (registryStore) {
       const configNames = new Set(services.map(s => s.name));
       const registryServices = registryStore.load().filter(s => !configNames.has(s.name));
-      res.json([...services, ...registryServices]);
+      allServices = [...services, ...registryServices];
     } else {
-      res.json(handlers.getServices());
+      allServices = handlers.getServices();
     }
+
+    // Merge service metadata (alias, tags) into each service object
+    const allMeta = db.getAllServiceMetadata();
+    const metaMap = new Map(allMeta.map(m => [m.service, m]));
+    const enriched = allServices.map(s => {
+      const meta = metaMap.get(s.name);
+      return meta ? { ...s, alias: meta.alias, tags: meta.tags } : s;
+    });
+    res.json(enriched);
   });
 
   app.get("/api/branding", (_req: Request, res: Response) => {
@@ -168,7 +178,8 @@ export function registerRoutes(
   app.get("/api/investigations", (req: Request, res: Response) => {
     const limit = Math.min(Number(req.query["limit"]) || 20, 100);
     const offset = Number(req.query["offset"]) || 0;
-    res.json(handlers.listInvestigations(limit, offset));
+    const service = req.query["service"] as string | undefined;
+    res.json(handlers.listInvestigations(limit, offset, service));
   });
 
   app.get("/api/investigations/:id", (req: Request, res: Response) => {
@@ -180,6 +191,27 @@ export function registerRoutes(
       return;
     }
     res.json(result);
+  });
+
+  // ── Service Metadata REST API ──────────────────────────────────────────
+  app.get("/api/services/:name/metadata", (req: Request, res: Response) => {
+    const name = req.params["name"] as string;
+    const meta = db.getServiceMetadata(name);
+    res.json(meta ?? { service: name, alias: null, tags: [] });
+  });
+
+  app.put("/api/services/:name/alias", (req: Request, res: Response) => {
+    const name = req.params["name"] as string;
+    const { alias } = req.body as { alias: string | null };
+    db.upsertServiceMetadata(name, { alias: alias || undefined });
+    res.json({ ok: true });
+  });
+
+  app.put("/api/services/:name/tags", (req: Request, res: Response) => {
+    const name = req.params["name"] as string;
+    const { tags } = req.body as { tags: string[] };
+    db.upsertServiceMetadata(name, { tags });
+    res.json({ ok: true });
   });
 
   app.get("/api/messages", (req: Request, res: Response) => {
