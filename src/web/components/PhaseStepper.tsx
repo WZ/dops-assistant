@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { ChevronRight } from "lucide-react";
 import type { PhaseStats } from "../../types/ws-types.js";
 import type { TimelineEvent } from "./ActivityTimeline";
 import { formatTokens } from "../lib/formatTokens.js";
@@ -44,12 +46,13 @@ function ToolCallRow({ tc }: { tc: Extract<TimelineEvent, { type: "tool_call" }>
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <button
+          <Button
+            variant="ghost"
             onClick={() => setExpanded(!expanded)}
-            className="font-mono text-[11px] text-foreground/55 hover:text-primary transition-colors cursor-pointer"
+            className="font-mono text-[11px] text-foreground/55 hover:text-primary hover:bg-transparent h-auto p-0"
           >
             {tc.tool}
-          </button>
+          </Button>
           {tc.durationMs !== undefined && (
             <span className={cn(
               "text-[9px] font-mono",
@@ -218,12 +221,10 @@ export function PhaseStepper({ phases, events = [], evidence = {}, isComplete = 
               {hasDetails && hasContent ? (
                 <Collapsible open={isOpen} onOpenChange={() => toggle(phase.name)}>
                   <CollapsibleTrigger className="flex items-center gap-2 group cursor-pointer w-full text-left">
-                    <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor" className={cn(
-                      "transition-transform duration-200 text-muted-foreground/60 shrink-0",
+                    <ChevronRight size={8} className={cn(
+                      "!size-auto transition-transform duration-200 text-muted-foreground/60 shrink-0",
                       isOpen && "rotate-90"
-                    )}>
-                      <path d="M8 5l8 7-8 7z"/>
-                    </svg>
+                    )} />
                     <p className={cn(
                       "text-sm font-body font-medium leading-7 transition-colors duration-300",
                       phase.status === "complete" && "text-foreground/70 group-hover:text-foreground/90",

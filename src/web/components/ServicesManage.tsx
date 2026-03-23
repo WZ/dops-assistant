@@ -1,5 +1,14 @@
 import { useState, useEffect } from "react";
 import { stringify, parse } from "yaml";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { YamlEditor } from "./YamlEditor.js";
 import type { ServiceConfig } from "../../config/schema.js";
 
@@ -14,6 +23,7 @@ export function ServicesManage({ onRunDiscovery, onViewHistory, onBack }: Servic
   const [yamlValue, setYamlValue] = useState("");
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [confirmDiscovery, setConfirmDiscovery] = useState(false);
 
   useEffect(() => {
     fetch("/api/services")
@@ -61,28 +71,25 @@ export function ServicesManage({ onRunDiscovery, onViewHistory, onBack }: Servic
   return (
     <div className="h-full overflow-y-auto p-6">
       <div className="text-xs text-muted-foreground/50 mb-4">
-        <button onClick={onBack} className="text-primary hover:underline">Dashboard</button>
+        <Button variant="link" className="text-primary h-auto p-0 text-xs" onClick={onBack}>Dashboard</Button>
         <span className="mx-1.5">{"\u203A"}</span>
         <span>Services</span>
       </div>
 
       <div className="flex items-center gap-2 mb-4">
-        <button
-          onClick={() => {
-            if (window.confirm("Run service discovery? This will replace your current service registry if you accept the results.")) {
-              onRunDiscovery();
-            }
-          }}
-          className="px-3 py-1.5 text-xs font-medium rounded bg-primary text-primary-foreground hover:bg-primary/90"
+        <Button
+          onClick={() => setConfirmDiscovery(true)}
+          size="sm"
         >
           Run Discovery
-        </button>
-        <button
+        </Button>
+        <Button
           onClick={onViewHistory}
-          className="px-3 py-1.5 text-xs rounded border border-border text-muted-foreground hover:bg-accent"
+          variant="outline"
+          size="sm"
         >
           Version History
-        </button>
+        </Button>
         <span className="flex-1" />
         <span className="text-xs text-muted-foreground/50">{services.length} services</span>
       </div>
@@ -92,24 +99,47 @@ export function ServicesManage({ onRunDiscovery, onViewHistory, onBack }: Servic
           <span className="text-muted-foreground/50 flex-1">services.yaml</span>
           {dirty && (
             <>
-              <button
+              <Button
                 onClick={handleSave}
                 disabled={saving}
-                className="px-2.5 py-1 rounded bg-success text-success-foreground text-[11px] mr-1.5 hover:bg-success/80 disabled:opacity-50"
+                variant="success"
+                size="sm"
+                className="text-[11px] mr-1.5"
               >
                 {saving ? "Saving..." : "Save"}
-              </button>
-              <button
+              </Button>
+              <Button
                 onClick={handleDiscard}
-                className="px-2.5 py-1 rounded border border-border text-muted-foreground text-[11px] hover:bg-accent"
+                variant="outline"
+                size="sm"
+                className="text-[11px]"
               >
                 Discard
-              </button>
+              </Button>
             </>
           )}
         </div>
         <YamlEditor value={yamlValue} onChange={handleChange} />
       </div>
+
+      <Dialog open={confirmDiscovery} onOpenChange={setConfirmDiscovery}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Run Service Discovery?</DialogTitle>
+            <DialogDescription>
+              This will replace your current service registry if you accept the results.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmDiscovery(false)}>
+              Cancel
+            </Button>
+            <Button onClick={() => { setConfirmDiscovery(false); onRunDiscovery(); }}>
+              Run Discovery
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

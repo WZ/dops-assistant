@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Button } from "@/components/ui/button";
 import type { ServiceRegistryVersion } from "../../types/discovery-types.js";
 
 interface VersionHistoryProps {
@@ -28,7 +29,7 @@ export function VersionHistory({ onBack }: VersionHistoryProps) {
       <div className="text-xs text-muted-foreground/50 mb-4">
         <span className="text-muted-foreground/70">Dashboard</span>
         <span className="mx-1.5">{"\u203A"}</span>
-        <button onClick={onBack} className="text-primary hover:underline">Services</button>
+        <Button variant="link" className="text-primary h-auto p-0 text-xs" onClick={onBack}>Services</Button>
         <span className="mx-1.5">{"\u203A"}</span>
         <span>History</span>
       </div>
@@ -55,12 +56,14 @@ export function VersionHistory({ onBack }: VersionHistoryProps) {
                 </div>
               </div>
               {i < versions.length - 1 && (
-                <button
+                <Button
                   onClick={() => handleRestore(v.id)}
-                  className="text-[11px] px-2.5 py-1 rounded border border-border text-warning hover:bg-accent"
+                  variant="outline"
+                  size="sm"
+                  className="text-[11px] text-warning"
                 >
                   Restore
-                </button>
+                </Button>
               )}
             </div>
           </div>

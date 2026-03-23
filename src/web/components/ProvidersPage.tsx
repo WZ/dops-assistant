@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { CirclePlus } from "lucide-react";
 import { ProviderCard } from "./providers/ProviderCard";
 import { ProviderForm, type ProviderFormData } from "./providers/ProviderForm";
 
@@ -153,20 +155,17 @@ export function ProvidersPage({ onRunDiscovery }: ProvidersPageProps) {
         ) : providers.length === 0 ? (
           /* Empty state */
           <div className="py-12 text-center">
-            <svg className="mx-auto mb-3 w-12 h-12 text-muted-foreground/15" viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <circle cx="24" cy="24" r="18" strokeDasharray="4 4" />
-              <path d="M16 24h16M24 16v16" />
-            </svg>
+            <CirclePlus size={48} strokeWidth={1.5} className="mx-auto mb-3 text-muted-foreground/15" />
             <p className="text-sm text-muted-foreground/70">No providers configured</p>
             <p className="text-xs font-mono text-muted-foreground/50 mt-1">
               Connect your Grafana, K8s, or GitLab to start investigating
             </p>
-            <button
+            <Button
               onClick={() => setShowForm(true)}
-              className="mt-4 rounded-md bg-primary text-primary-foreground px-4 py-2 font-mono text-xs font-medium min-h-[44px]"
+              className="mt-4 font-mono text-xs font-medium min-h-[44px]"
             >
               Add First Provider
-            </button>
+            </Button>
           </div>
         ) : (
           /* Provider cards */
@@ -190,22 +189,24 @@ export function ProvidersPage({ onRunDiscovery }: ProvidersPageProps) {
       {!loading && (
         <div className="flex items-center gap-3 mb-6">
           {!showForm && (
-            <button
+            <Button
+              variant="ghost"
               onClick={() => { setEditingProvider(null); setShowForm(true); }}
-              className="text-[10px] font-mono text-primary/70 hover:text-primary transition-colors py-3 px-2 min-h-[44px]"
+              className="text-[10px] font-mono text-primary/70 hover:text-primary hover:bg-transparent py-3 px-2 h-auto min-h-[44px]"
             >
               + Add Provider
-            </button>
+            </Button>
           )}
           {providers.length > 0 && (
             <>
               <span className="text-muted-foreground/20">&middot;</span>
-              <button
+              <Button
+                variant="ghost"
                 onClick={onRunDiscovery}
-                className="text-[10px] font-mono text-primary/70 hover:text-primary transition-colors py-3 px-2 min-h-[44px]"
+                className="text-[10px] font-mono text-primary/70 hover:text-primary hover:bg-transparent py-3 px-2 h-auto min-h-[44px]"
               >
                 Run Discovery
-              </button>
+              </Button>
             </>
           )}
         </div>

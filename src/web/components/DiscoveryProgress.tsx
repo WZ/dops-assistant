@@ -1,3 +1,4 @@
+import { Button } from "@/components/ui/button";
 import { formatTokens } from "../lib/formatTokens.js";
 import { useAutoScroll } from "../hooks/useAutoScroll.js";
 
@@ -28,7 +29,7 @@ export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, er
   return (
     <div className="h-full overflow-y-auto p-6">
       <div className="text-xs text-muted-foreground/50 mb-4">
-        <button onClick={onBack} className="text-primary hover:underline">Dashboard</button>
+        <Button variant="link" className="text-primary h-auto p-0 text-xs" onClick={onBack}>Dashboard</Button>
         <span className="mx-1.5">{"\u203A"}</span>
         <span>Services</span>
         <span className="mx-1.5">{"\u203A"}</span>
@@ -112,19 +113,20 @@ export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, er
           <p className="text-sm text-destructive mb-3">{error}</p>
           <div className="flex gap-2">
             {onRetry && (
-              <button
+              <Button
                 onClick={onRetry}
-                className="px-4 py-1.5 text-xs font-medium rounded bg-primary text-primary-foreground hover:bg-primary/90"
+                size="sm"
               >
                 Retry
-              </button>
+              </Button>
             )}
-            <button
+            <Button
               onClick={onBack}
-              className="px-4 py-1.5 text-xs rounded border border-border text-muted-foreground hover:bg-accent"
+              variant="outline"
+              size="sm"
             >
               Back
-            </button>
+            </Button>
           </div>
         </div>
       )}
