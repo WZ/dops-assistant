@@ -154,8 +154,11 @@ export function extractTimeRange(anomalySummary: string, userMessage?: string): 
  */
 export function resolveTimeRangeToAbsolute(range: { from: string; to: string }): { from: string; to: string } {
   const resolve = (expr: string): string => {
-    // Already absolute ISO
-    if (/^\d{4}-\d{2}-\d{2}/.test(expr)) return new Date(expr).toISOString();
+    // Already absolute ISO — validate before converting
+    if (/^\d{4}-\d{2}-\d{2}/.test(expr)) {
+      const d = new Date(expr);
+      return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+    }
     // Grafana-relative: "now", "now-1h", "now-7d", etc.
     const m = expr.match(/^now(?:-(\d+)([smhdw]))?/);
     if (m) {

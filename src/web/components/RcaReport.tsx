@@ -35,7 +35,7 @@ function formatTimeRange(from: string, to: string): string {
     return `${fromDate.toLocaleDateString(undefined, dateOpts)}, ${fromDate.toLocaleTimeString(undefined, timeOpts)} → ${toDate.toLocaleTimeString(undefined, timeOpts)}`;
   }
   const fullOpts: Intl.DateTimeFormatOptions = { ...dateOpts, hour: "numeric", minute: "2-digit" };
-  return `${fromDate.toLocaleDateString(undefined, fullOpts)} → ${toDate.toLocaleDateString(undefined, fullOpts)}`;
+  return `${fromDate.toLocaleString(undefined, fullOpts)} → ${toDate.toLocaleString(undefined, fullOpts)}`;
 }
 
 /** Strip leading number prefixes from action text.

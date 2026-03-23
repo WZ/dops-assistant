@@ -38,7 +38,7 @@ export function buildSynthesisStep(config: WorkflowConfig) {
       const changesFindings = inputData["changes-evidence"];
 
       // Extract timeRange pass-through from any evidence output (all carry the same value)
-      const timeRange = metricsFindings.timeRange ?? logsFindings?.timeRange ?? infraFindings?.timeRange;
+      const timeRange = metricsFindings.timeRange ?? logsFindings?.timeRange ?? infraFindings?.timeRange ?? changesFindings?.timeRange;
       debug("SYNTHESIS findings:", { metrics: !!metricsFindings, logs: !!logsFindings, infra: !!infraFindings, changes: !!changesFindings });
 
       // Build timeline from structured observations
