@@ -7,9 +7,8 @@ import { StatCard } from "./dashboard/StatCard";
 import { InvestigationRow } from "./dashboard/InvestigationRow";
 import { ToastContainer } from "./dashboard/ToastContainer";
 import type { ToastItem } from "./dashboard/ToastContainer";
-import { formatTokens } from "@/lib/formatTokens";
-import { formatDuration, severityVariant, computeKpiData } from "@/lib/dashboard-utils";
-import type { InvestigationSummary, Pattern } from "@/lib/dashboard-utils";
+import { formatDuration, severityVariant, normalizeConfidence } from "@/lib/dashboard-utils";
+import type { InvestigationSummary, Pattern, KpiStats } from "@/lib/dashboard-utils";
 import type { ServiceConfig } from "../../config/schema.js";
 import type { ServerMessage } from "../../types/ws-types.js";
 
@@ -49,6 +48,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
   const [searchQuery, setSearchQuery] = useState("");
   const [hiddenServices, setHiddenServices] = useState<Map<string, { reason: string | null; hidden_at: string }>>(new Map());
   const [staleServices, setStaleServices] = useState<Set<string>>(new Set());
+  const [kpiStats, setKpiStats] = useState<KpiStats | null>(null);
 
   const [hideTarget, setHideTarget] = useState<{ name: string; defaultReason?: string } | null>(null);
   const [bulkHideTarget, setBulkHideTarget] = useState<string[] | null>(null);
@@ -63,12 +63,13 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
   async function fetchData() {
     const seq = ++fetchSeqRef.current;
     try {
-      const [invRes, svcRes, healthRes, hiddenRes, staleRes] = await Promise.all([
+      const [invRes, svcRes, healthRes, hiddenRes, staleRes, kpiRes] = await Promise.all([
         fetch("/api/investigations?limit=100"),
         fetch("/api/services"),
         fetch("/api/services/health"),
         fetch("/api/services/hidden"),
         fetch("/api/services/stale-unknown?days=7"),
+        fetch("/api/stats/kpi"),
       ]);
       if (!invRes.ok || !svcRes.ok) {
         throw new Error(`Server error: ${!invRes.ok ? invRes.status : svcRes.status}`);
@@ -86,6 +87,9 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
       if (staleRes.ok) {
         const sData = await staleRes.json() as string[];
         setStaleServices(new Set(sData));
+      }
+      if (kpiRes.ok) {
+        setKpiStats(await kpiRes.json() as KpiStats);
       }
       setInvestigations(invData);
       setServices(svcData);
@@ -256,7 +260,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
   }, [investigations]);
 
   // KPI computations
-  const kpiData = useMemo(() => computeKpiData(investigations, services), [investigations, services]);
+  // KPI stats are fetched from server-side aggregation (no client-side computation)
 
   // Derive hidden set for quick lookup
   const hiddenSet = useMemo(() => new Set(hiddenServices.keys()), [hiddenServices]);
@@ -500,28 +504,29 @@ export function Dashboard({ wsMessages, onInvestigationClick, onInvestigateServi
         <div className="grid grid-cols-2 gap-3 dashboard-kpi-grid">
           <StatCard
             label="Investigations"
-            value={String(kpiData.total)}
-            detail={`${kpiData.active} active \u00b7 ${kpiData.complete} complete \u00b7 ${kpiData.failed} failed`}
+            value={kpiStats?.successRate != null ? `${kpiStats.investigations.total} \u00b7 ${Math.round(kpiStats.successRate)}%` : String(kpiStats?.investigations.total ?? 0)}
+            detail={`${kpiStats?.investigations.active ?? 0} active \u00b7 ${kpiStats?.investigations.complete ?? 0} complete \u00b7 ${kpiStats?.investigations.failed ?? 0} failed`}
             loading={loading}
           />
           <StatCard
-            label="Services Healthy"
-            value={`${kpiData.healthyCount}/${kpiData.totalServices}`}
-            variant={kpiData.healthyCount === kpiData.totalServices && kpiData.totalServices > 0 ? "success" : "default"}
-            detail={`${kpiData.criticalCount} critical \u00b7 ${kpiData.degradedCount} degraded`}
+            label="Services Health"
+            value={`${healthKpi.healthy}/${visibleServiceCount}`}
+            variant={healthKpi.healthy === visibleServiceCount && visibleServiceCount > 0 ? "success" : "default"}
+            detail={`${healthKpi.down} down \u00b7 ${healthKpi.degraded} degraded \u00b7 ${healthKpi.unknown} unknown`}
             loading={loading}
           />
           <StatCard
             label="Avg MTTR (7d)"
-            value={kpiData.completedLast7dCount > 0 ? formatDuration(kpiData.avgMttr7d) : "\u2014"}
-            detail={kpiData.completedLast7dCount > 0 ? `${kpiData.completedLast7dCount} completed investigations` : "needs completed investigations"}
-            trend={kpiData.mttrTrend}
+            value={kpiStats && kpiStats.mttr.completed7d > 0 ? formatDuration(kpiStats.mttr.avg7d) : "\u2014"}
+            detail={kpiStats && kpiStats.mttr.completed7d > 0 ? `${kpiStats.mttr.completed7d} completed investigations` : "needs completed investigations"}
+            trend={kpiStats?.mttr.trend}
             loading={loading}
           />
           <StatCard
-            label="Token Usage"
-            value={formatTokens(kpiData.totalTokens)}
-            detail={`${formatTokens(kpiData.totalInput)} input \u00b7 ${formatTokens(kpiData.totalOutput)} output`}
+            label="Avg Confidence"
+            value={kpiStats?.confidence.avg != null ? (normalizeConfidence(kpiStats.confidence.avg) || "\u2014") : "\u2014"}
+            variant={kpiStats?.confidence.avg != null ? (kpiStats.confidence.avg > 0.8 ? "success" : kpiStats.confidence.avg >= 0.5 ? "warning" : "default") : "default"}
+            detail={kpiStats ? `${kpiStats.confidence.scored} scored \u00b7 ${kpiStats.confidence.lowConfidence} low confidence` : "needs scored investigations"}
             loading={loading}
           />
         </div>
