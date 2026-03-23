@@ -3,10 +3,13 @@ import type { Database, InvestigationRow, PhaseRow, EventRow, KpiStats } from ".
 import type { ServiceConfig, BrandingConfig } from "../config/schema.js";
 import { ProviderSchema } from "../config/schema.js";
 import { createMcpProvider, listProviderTools } from "../mcp/provider.js";
+import type { MastraProvider } from "../mcp/provider.js";
 import type { SkillStore } from "../skills/store.js";
 import type { ServiceRegistryStore } from "../services/registry.js";
 import type { ProviderRegistry } from "../mcp/provider-registry.js";
 import type { ServiceHealthPoller } from "./service-health-poller.js";
+import { queryServiceMetrics } from "./prometheus-query.js";
+import type { MetricSeries } from "./prometheus-query.js";
 
 export interface DependencyNode {
   id: string;
@@ -109,8 +112,13 @@ export function registerRoutes(
   providerRegistry?: ProviderRegistry,
   branding?: BrandingConfig,
   healthPoller?: ServiceHealthPoller,
+  getProviders?: () => MastraProvider[],
 ): void {
   const handlers = buildHandlers(db, services);
+
+  // ── Metrics cache for /api/services/:name/metrics ───────────────────────
+  const metricsCache = new Map<string, { data: MetricSeries[]; fetchedAt: number }>();
+  const METRICS_CACHE_TTL = 60_000; // 60 seconds
 
   app.get("/api/services", (_req: Request, res: Response) => {
     // Merge config.yaml inline services with registry (services.yaml) entries.
@@ -212,6 +220,40 @@ export function registerRoutes(
     const { tags } = req.body as { tags: string[] };
     db.upsertServiceMetadata(name, { tags });
     res.json({ ok: true });
+  });
+
+  // ── Service Metrics REST API ────────────────────────────────────────────
+  app.get("/api/services/:name/metrics", async (req: Request, res: Response) => {
+    const name = req.params["name"] as string;
+    const range = (req.query["range"] as string) || "24h";
+    const cacheKey = `${name}:${range}`;
+
+    const cached = metricsCache.get(cacheKey);
+    if (cached && Date.now() - cached.fetchedAt < METRICS_CACHE_TTL) {
+      res.json({ metrics: cached.data, cached: true, fetchedAt: cached.fetchedAt });
+      return;
+    }
+
+    if (!getProviders) {
+      // No providers available — return empty metrics
+      res.json({ metrics: [], cached: false, fetchedAt: Date.now() });
+      return;
+    }
+
+    try {
+      const allServices = registryStore ? registryStore.load() : services;
+      const svc = allServices.find((s) => s.name === name);
+      const metrics = await queryServiceMetrics(name, range, getProviders(), svc?.metrics);
+      const fetchedAt = Date.now();
+      metricsCache.set(cacheKey, { data: metrics, fetchedAt });
+      res.json({ metrics, cached: false, fetchedAt });
+    } catch (err) {
+      if (cached) {
+        res.json({ metrics: cached.data, cached: true, fetchedAt: cached.fetchedAt, error: "Refresh failed" });
+      } else {
+        res.status(503).json({ error: "Prometheus unavailable", metrics: [] });
+      }
+    }
   });
 
   app.get("/api/messages", (req: Request, res: Response) => {
