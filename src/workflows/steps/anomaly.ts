@@ -160,6 +160,12 @@ Rules:
             abortSignal: controller.signal,
           });
           timeText = result.text;
+          if (result.usage && config.onTokenUsage) {
+            config.onTokenUsage({
+              inputTokens: result.usage.promptTokens ?? 0,
+              outputTokens: result.usage.completionTokens ?? 0,
+            });
+          }
         } finally {
           clearTimeout(timeout);
         }
@@ -193,11 +199,18 @@ Rules:
 
       // Fallback: resolve regex output to absolute UTC
       if (!timeRangeFrom || !timeRangeTo) {
-        const regexRange = extractTimeRange(inputData.userMessage);
-        const absolute = resolveTimeRangeToAbsolute(regexRange);
-        timeRangeFrom = absolute.from;
-        timeRangeTo = absolute.to;
-        debug("ANOMALY: using regex fallback (absolute):", { from: timeRangeFrom, to: timeRangeTo });
+        try {
+          const regexRange = extractTimeRange(inputData.userMessage);
+          const absolute = resolveTimeRangeToAbsolute(regexRange);
+          timeRangeFrom = absolute.from;
+          timeRangeTo = absolute.to;
+          debug("ANOMALY: using regex fallback (absolute):", { from: timeRangeFrom, to: timeRangeTo });
+        } catch (err) {
+          // Ultimate fallback: 8h window from now
+          timeRangeTo = new Date().toISOString();
+          timeRangeFrom = new Date(Date.now() - 8 * 3_600_000).toISOString();
+          debug("ANOMALY: regex fallback failed, using 8h default:", err);
+        }
       }
 
       const prefetchContext = {
