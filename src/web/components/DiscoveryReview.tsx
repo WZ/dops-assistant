@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { stringify, parse } from "yaml";
 import { Button } from "@/components/ui/button";
 import { YamlEditor } from "./YamlEditor.js";
@@ -20,6 +20,24 @@ export function DiscoveryReview({ services: initialServices, onAccept, onReject,
     const stripped = initialServices.map(({ confidence: _c, validationNotes: _v, ...s }) => s);
     return stringify(stripped, { indent: 2 });
   });
+
+  const [currentServices, setCurrentServices] = useState<ServiceConfig[]>([]);
+
+  useEffect(() => {
+    fetch("/api/services")
+      .then(r => r.ok ? r.json() : [])
+      .then(data => { if (Array.isArray(data)) setCurrentServices(data); })
+      .catch(() => {});
+  }, []);
+
+  const diff = useMemo(() => {
+    const currentNames = new Set(currentServices.map(s => s.name));
+    const discoveredNames = new Set(services.map(s => s.name));
+    const added = services.filter(s => !currentNames.has(s.name)).length;
+    const removed = currentServices.filter(s => !discoveredNames.has(s.name)).length;
+    const unchanged = services.filter(s => currentNames.has(s.name)).length;
+    return { added, removed, unchanged };
+  }, [services, currentServices]);
 
   const verified = services.filter((s) => s.confidence === "verified").length;
   const partial = services.filter((s) => s.confidence === "partial").length;
@@ -55,6 +73,14 @@ export function DiscoveryReview({ services: initialServices, onAccept, onReject,
 
       <div className="rounded-lg border bg-card/40 p-4 mb-4">
         <h3 className="font-semibold text-sm mb-3">Discovery Complete</h3>
+        {currentServices.length > 0 && (
+          <div className="flex items-center gap-3 mb-3 font-mono text-[11px]">
+            {diff.added > 0 && <span className="text-success/70">+{diff.added} new</span>}
+            {diff.removed > 0 && <span className="text-destructive/70">&minus;{diff.removed} removed</span>}
+            {diff.unchanged > 0 && <span className="text-muted-foreground/50">{diff.unchanged} unchanged</span>}
+            {diff.added === 0 && diff.removed === 0 && <span className="text-muted-foreground/50">no changes from current registry</span>}
+          </div>
+        )}
         <div className="flex gap-6 text-center">
           <div>
             <div className="text-2xl font-bold">{services.length}</div>

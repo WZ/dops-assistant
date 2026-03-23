@@ -140,7 +140,7 @@ The main dashboard ("Operations Desk") follows a two-panel layout: scrollable da
 **Dashboard column (top to bottom):**
 1. **Status Strip** — system health, uptime, MCP/DB probe status. Monospace stamp. Always visible.
 2. **Page title** — "Operations Desk" in Inter 700.
-3. **KPI Stat Cards** — 2x2 grid. Investigations (active/complete/failed), Services Healthy (N/Total), Avg MTTR 7d (with trend arrow), Token Usage. Mono-display numbers, Inter labels.
+3. **KPI Stat Cards** — 2x2 grid. Investigations (count · success rate%), Services Health (healthy/total from Prometheus), Avg MTTR 7d (with trend arrow), Avg Confidence (mean RCA confidence score). Mono-display numbers, Inter labels.
 4. **Active Investigations** — conditional coral-tinted section. Pulsing dots for running, red for failed. Collapses when nothing active.
 5. **Services Grid** — 2-3 col cards with health dot, investigation count, last investigation time. Manage/Re-discover links below.
 6. **Investigation Log** — compact table: status dot, service + severity badge, root cause, confidence, tokens, duration.
@@ -171,7 +171,8 @@ The main dashboard ("Operations Desk") follows a two-panel layout: scrollable da
 | 2026-03-18 | Restrained color approach | Most of the UI is typographic. Color is rare and meaningful. Differentiates from competitors who blast accent color everywhere. |
 | 2026-03-18 | Minimal-functional motion | Calm, precise product feel. No decorative animation. Matches the editorial aesthetic. |
 | 2026-03-18 | Dashboard layout: Status → KPIs → Active → Services → Log → Patterns | Status strip first (SRE glance bar), KPIs second (overall health), Active third (conditional fire detector). Information hierarchy matches incident response mental model. |
-| 2026-03-18 | KPIs: Investigations, Services Healthy, MTTR (7d trend), Token Usage | Four cards that answer: how many, how healthy, how fast, how much. MTTR trend arrow shows improvement/regression at a glance. |
+| 2026-03-18 | KPIs: Investigations, Services Healthy, MTTR (7d trend), Token Usage | Original four cards — Token Usage later replaced with Avg Confidence. |
+| 2026-03-23 | KPIs: Investigations (+ success rate), Services Health (real Prometheus data), MTTR (7d trend), Avg Confidence | Four cards answering: how many + how well, how healthy (real data), how fast, how good. Token Usage removed (not actionable). Services Health now uses real Prometheus health poller data instead of investigation-derived status. Success rate excludes stale-cleanup failures. Confidence uses json_valid-guarded extraction from RCA reports. |
 | 2026-03-18 | All card backgrounds use CSS variables, not hardcoded rgba | Light mode had muddy gray cards when using dark-theme rgba values. Theme-adaptive variables ensure both themes work independently. |
 | 2026-03-18 | Toast at bottom-right, not top-center | Top-center competes with the status strip and title. Bottom-right is out of the primary reading path — noticeable but not intrusive. Max 3 to prevent notification fatigue. |
 | 2026-03-18 | "Last updated" as inline text, not separate component | A dedicated "freshness bar" is over-designed for a single timestamp. Inline after service count keeps it discoverable without adding visual weight. Warning color at 2min signals staleness without alarm. |

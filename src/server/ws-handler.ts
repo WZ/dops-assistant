@@ -100,6 +100,7 @@ export interface WsDeps {
   discoveryConfig?: DiscoveryConfig;
   getPendingDiscovery?: () => ValidatedServiceConfig[] | null;
   clearPendingDiscovery?: () => void;
+  getHiddenServices?: () => Set<string>;
 }
 
 export function setupWebSocket(server: Server, deps: WsDeps): void {
@@ -389,13 +390,16 @@ export async function handleClientMessage(
   if (msg.type !== "chat") return;
 
   const { db, agent, investigationAgent, router, memory, services } = deps;
-  const serviceNames = services.map((s) => s.name);
+  // Filter hidden services from all resolution paths
+  const hidden = deps.getHiddenServices?.() ?? new Set<string>();
+  const visibleServices = hidden.size > 0 ? services.filter(s => !hidden.has(s.name)) : services;
+  const serviceNames = visibleServices.map((s) => s.name);
 
   db.createMessage({ id: `msg_${ulid()}`, role: "user", content: msg.message });
 
   // Context switch detection: compare service in current message vs conversation history
-  const mentionedService = deps.matchServiceFromText(msg.message, services);
-  const contextService = resolveServiceFromHistory(memory.get(threadId), services);
+  const mentionedService = deps.matchServiceFromText(msg.message, visibleServices);
+  const contextService = resolveServiceFromHistory(memory.get(threadId), visibleServices);
   if (mentionedService && contextService && mentionedService.name !== contextService.name) {
     send({ type: "context_switch", previousService: contextService.name, newService: mentionedService.name });
   }
@@ -404,10 +408,10 @@ export async function handleClientMessage(
 
   if (intent.intent === "investigation") {
     const service =
-      deps.matchServiceFromText(msg.message, services) ??
-      deps.validateLlmServiceMatch(intent.service, msg.message, services) ??
-      resolveServiceFromHistory(memory.get(threadId), services) ??
-      resolveServiceFromHistory(db.listRecentMessages(10), services);
+      deps.matchServiceFromText(msg.message, visibleServices) ??
+      deps.validateLlmServiceMatch(intent.service, msg.message, visibleServices) ??
+      resolveServiceFromHistory(memory.get(threadId), visibleServices) ??
+      resolveServiceFromHistory(db.listRecentMessages(10), visibleServices);
 
     if (!service) {
       send({ type: "chat", role: "assistant", content: "I couldn't identify which service to investigate. Could you specify the service name?" });
@@ -461,7 +465,7 @@ export async function handleClientMessage(
     const chatService =
       mentionedService ??
       contextService ??
-      resolveServiceFromHistory(db.listRecentMessages(10), services);
+      resolveServiceFromHistory(db.listRecentMessages(10), visibleServices);
 
     // Search for matching skills in conversational mode
     let chatSkillContext: string | undefined;

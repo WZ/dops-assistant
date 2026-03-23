@@ -6,13 +6,19 @@ import type { ServiceConfig } from "../config/schema.js";
 function mockDb() {
   return {
     listInvestigations: vi.fn().mockReturnValue([
-      { id: "inv_1", service: "payments-api", query: "errors", status: "complete", report: '{"rootCause":"OOM"}', created_at: "2026-03-08T10:00:00Z", completed_at: "2026-03-08T10:05:00Z" },
+      { id: "inv_1", service: "payments-api", query: "errors", status: "complete", report: '{"rootCause":"OOM"}', created_at: "2026-03-08T10:00:00Z", completed_at: "2026-03-08T10:05:00Z", confidence_score: 0.85 },
     ]),
     getInvestigation: vi.fn().mockReturnValue(
-      { id: "inv_1", service: "payments-api", query: "errors", status: "complete", report: '{"rootCause":"OOM"}', created_at: "2026-03-08T10:00:00Z", completed_at: "2026-03-08T10:05:00Z" },
+      { id: "inv_1", service: "payments-api", query: "errors", status: "complete", report: '{"rootCause":"OOM"}', created_at: "2026-03-08T10:00:00Z", completed_at: "2026-03-08T10:05:00Z", confidence_score: 0.85 },
     ),
     getPhases: vi.fn().mockReturnValue([]),
     getEvents: vi.fn().mockReturnValue([]),
+    getKpiStats: vi.fn().mockReturnValue({
+      investigations: { total: 1, active: 0, complete: 1, failed: 0 },
+      successRate: 100,
+      confidence: { avg: 0.85, scored: 1, lowConfidence: 0 },
+      mttr: { avg7d: 300_000, completed7d: 1 },
+    }),
   } as unknown as Database;
 }
 
@@ -42,6 +48,16 @@ describe("route handlers", () => {
     const result = handlers.getInvestigation("inv_1");
     expect(result).toBeDefined();
     expect(result!.investigation.id).toBe("inv_1");
+  });
+
+  it("getKpiStats delegates to db.getKpiStats", () => {
+    const db = mockDb();
+    const handlers = buildHandlers(db as Database, services);
+    const result = handlers.getKpiStats();
+    expect(result.investigations.total).toBe(1);
+    expect(result.successRate).toBe(100);
+    expect(result.confidence.avg).toBe(0.85);
+    expect(db.getKpiStats).toHaveBeenCalled();
   });
 
   it("getInvestigation returns undefined for missing id", () => {
