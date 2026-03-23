@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { ArrowLeft } from "lucide-react";
 import { renderMarkdown } from "../lib/renderMarkdown";
 
 interface SkillData {
@@ -38,9 +40,9 @@ function TagInput({ label, values, onChange }: { label: string; values: string[]
         {values.map((v) => (
           <span key={v} className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-mono rounded-full bg-secondary/60 text-foreground/70 border border-border/30">
             {v}
-            <button onClick={() => onChange(values.filter((x) => x !== v))} className="text-muted-foreground/70 hover:text-destructive transition-colors">
+            <Button variant="ghost" size="icon" onClick={() => onChange(values.filter((x) => x !== v))} className="h-auto w-auto p-0 text-muted-foreground/70 hover:text-destructive transition-colors">
               &times;
-            </button>
+            </Button>
           </span>
         ))}
       </div>
@@ -52,9 +54,9 @@ function TagInput({ label, values, onChange }: { label: string; values: string[]
           placeholder={`Add ${label.toLowerCase()}...`}
           className="flex-1 px-2.5 py-1.5 text-xs font-mono rounded-md border border-border/40 bg-secondary/20 text-foreground/80 placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary/30"
         />
-        <button onClick={addTag} className="px-2 py-1 text-[10px] font-mono rounded-md border border-border/30 text-muted-foreground/60 hover:text-foreground/70 hover:bg-secondary/40 transition-colors">
+        <Button variant="outline" onClick={addTag} className="px-2 py-1 h-auto text-[10px] font-mono border-border/30 text-muted-foreground/60 hover:text-foreground/70 hover:bg-secondary/40">
           Add
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -77,46 +79,47 @@ export function SkillEditor({ skill, isNew, onSave, onDelete, onCancel }: SkillE
     <div className="h-full flex flex-col overflow-hidden">
       {/* Header */}
       <div className="px-5 py-3 border-b border-border/40 flex items-center justify-between shrink-0">
-        <button
+        <Button
+          variant="ghost"
           onClick={onCancel}
-          className="flex items-center gap-1.5 text-xs font-mono text-muted-foreground/60 hover:text-primary transition-colors group"
+          className="h-auto px-0 py-0 text-xs font-mono text-muted-foreground/60 hover:text-primary hover:bg-transparent transition-colors group"
         >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="group-hover:-translate-x-0.5 transition-transform">
-            <path d="M19 12H5"/><path d="m12 19-7-7 7-7"/>
-          </svg>
+          <ArrowLeft size={12} className="!size-auto group-hover:-translate-x-0.5 transition-transform" />
           back to skills
-        </button>
+        </Button>
         <div className="flex items-center gap-2">
           {onDelete && (
             confirmDelete ? (
               <div className="flex items-center gap-1.5 animate-fade-in">
                 <span className="text-[10px] font-mono text-destructive/70">Delete?</span>
-                <button onClick={() => onDelete(skill.id)} className="px-2 py-1 text-[10px] font-mono rounded border border-destructive/30 text-destructive hover:bg-destructive/10 transition-colors">
+                <Button variant="destructive" onClick={() => onDelete(skill.id)} className="px-2 py-1 h-auto text-[10px] font-mono bg-transparent border border-destructive/30 text-destructive hover:bg-destructive/10">
                   Yes
-                </button>
-                <button onClick={() => setConfirmDelete(false)} className="px-2 py-1 text-[10px] font-mono rounded border border-border/30 text-muted-foreground/60 hover:bg-secondary/30 transition-colors">
+                </Button>
+                <Button variant="outline" onClick={() => setConfirmDelete(false)} className="px-2 py-1 h-auto text-[10px] font-mono border-border/30 text-muted-foreground/60 hover:bg-secondary/30">
                   No
-                </button>
+                </Button>
               </div>
             ) : (
-              <button onClick={() => setConfirmDelete(true)} className="px-2.5 py-1.5 text-[10px] font-mono rounded-md border border-destructive/20 text-destructive/60 hover:text-destructive hover:border-destructive/40 transition-colors">
+              <Button variant="destructive" onClick={() => setConfirmDelete(true)} className="px-2.5 py-1.5 h-auto text-[10px] font-mono bg-transparent border border-destructive/20 text-destructive/60 hover:text-destructive hover:border-destructive/40">
                 Delete
-              </button>
+              </Button>
             )
           )}
-          <button
+          <Button
+            variant="outline"
             onClick={() => setPreview(!preview)}
-            className={`px-2.5 py-1.5 text-[10px] font-mono rounded-md border transition-colors ${preview ? "border-primary/30 text-primary bg-primary/5" : "border-border/30 text-muted-foreground/60 hover:text-foreground/70 hover:bg-secondary/30"}`}
+            className={`px-2.5 py-1.5 h-auto text-[10px] font-mono ${preview ? "border-primary/30 text-primary bg-primary/5" : "border-border/30 text-muted-foreground/60 hover:text-foreground/70 hover:bg-secondary/30"}`}
           >
             {preview ? "Edit" : "Preview"}
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="outline"
             onClick={handleSave}
             disabled={!title.trim()}
-            className="px-3 py-1.5 text-[10px] font-mono rounded-md bg-primary/10 border border-primary/20 text-primary hover:bg-primary/15 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            className="px-3 py-1.5 h-auto text-[10px] font-mono bg-primary/10 border-primary/20 text-primary hover:bg-primary/15 disabled:opacity-30 disabled:cursor-not-allowed"
           >
             {isNew ? "Create" : "Save"}
-          </button>
+          </Button>
         </div>
       </div>
 

@@ -4,6 +4,9 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "@/components/ui/resizable";
+import { Button } from "@/components/ui/button";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { Sun, Moon } from "lucide-react";
 import { ChatPane } from "./components/ChatPane";
 import { Dashboard } from "./components/Dashboard";
 import { InvestigationPane } from "./components/InvestigationPane";
@@ -121,6 +124,7 @@ export function App() {
   }, [ws.messages]);
 
   return (
+    <TooltipProvider delayDuration={200}>
     <div className="h-screen flex flex-col bg-background text-foreground noise relative overflow-hidden">
       {/* ── Top bar ── */}
       <header className="h-11 flex items-center justify-between px-5 border-b border-border/50 bg-card/60 backdrop-blur-md shrink-0 relative z-10">
@@ -140,24 +144,27 @@ export function App() {
           </div>
           {/* Nav items */}
           <nav className="flex items-center gap-1 ml-4">
-            <button
+            <Button
+              variant="ghost"
               onClick={() => setLeftPane({ type: "dashboard" })}
-              className={`px-2.5 py-2 min-h-[44px] flex items-center text-[10px] font-mono rounded transition-colors ${leftPane.type === "dashboard" ? "text-primary bg-primary/8" : "text-muted-foreground/50 hover:text-foreground/70 hover:bg-secondary/30"}`}
+              className={`px-2.5 py-2 min-h-[44px] text-[10px] font-mono rounded transition-colors ${leftPane.type === "dashboard" ? "text-primary bg-primary/8" : "text-muted-foreground/50 hover:text-foreground/70 hover:bg-secondary/30"}`}
             >
               Dashboard
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="ghost"
               onClick={() => setLeftPane({ type: "providers" })}
-              className={`px-2.5 py-2 min-h-[44px] flex items-center text-[10px] font-mono rounded transition-colors ${leftPane.type === "providers" ? "text-primary bg-primary/8" : "text-muted-foreground/50 hover:text-foreground/70 hover:bg-secondary/30"}`}
+              className={`px-2.5 py-2 min-h-[44px] text-[10px] font-mono rounded transition-colors ${leftPane.type === "providers" ? "text-primary bg-primary/8" : "text-muted-foreground/50 hover:text-foreground/70 hover:bg-secondary/30"}`}
             >
               Providers
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="ghost"
               onClick={() => setLeftPane({ type: "skills" })}
-              className={`px-2.5 py-2 min-h-[44px] flex items-center text-[10px] font-mono rounded transition-colors ${leftPane.type === "skills" ? "text-primary bg-primary/8" : "text-muted-foreground/50 hover:text-foreground/70 hover:bg-secondary/30"}`}
+              className={`px-2.5 py-2 min-h-[44px] text-[10px] font-mono rounded transition-colors ${leftPane.type === "skills" ? "text-primary bg-primary/8" : "text-muted-foreground/50 hover:text-foreground/70 hover:bg-secondary/30"}`}
             >
               Skills
-            </button>
+            </Button>
           </nav>
         </div>
         <div className="flex items-center gap-3">
@@ -198,21 +205,20 @@ export function App() {
               {ws.status === "connected" ? "live" : ws.status}
             </span>
           </div>
-          <button
+          <Button
+            variant="ghost"
+            size="icon"
             onClick={theme.toggle}
-            className="p-2.5 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-md text-muted-foreground/70 hover:text-foreground/70 hover:bg-secondary/50 transition-all"
+            aria-label={theme.dark ? "Switch to light mode" : "Switch to dark mode"}
+            className="min-h-[44px] min-w-[44px] text-muted-foreground/70 hover:text-foreground/70 hover:bg-secondary/50"
             title={theme.dark ? "Switch to light" : "Switch to dark"}
           >
             {theme.dark ? (
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="5"/><path d="M12 1v2"/><path d="M12 21v2"/><path d="M4.22 4.22l1.42 1.42"/><path d="M18.36 18.36l1.42 1.42"/><path d="M1 12h2"/><path d="M21 12h2"/><path d="M4.22 19.78l1.42-1.42"/><path d="M18.36 5.64l1.42-1.42"/>
-              </svg>
+              <Sun size={13} className="!size-auto" />
             ) : (
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-              </svg>
+              <Moon size={13} className="!size-auto" />
             )}
-          </button>
+          </Button>
         </div>
       </header>
 
@@ -329,5 +335,6 @@ export function App() {
         </ResizablePanelGroup>
       </div>
     </div>
+    </TooltipProvider>
   );
 }
