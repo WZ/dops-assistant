@@ -145,16 +145,21 @@ ${timeContext}
 
 Return ONLY valid JSON: {"from": "RFC3339_UTC", "to": "RFC3339_UTC", "matchedText": "the time phrase you matched", "confidence": 0.0-1.0}
 
+CRITICAL — timezone handling:
+The user speaks in LOCAL TIME (see timezone in the time context above). You MUST convert local times to UTC before outputting.
+For example, if the timezone is America/Los_Angeles (UTC-7) and the user says "around 4PM", that means 16:00 local = 23:00 UTC.
+If the timezone is America/New_York (UTC-4) and the user says "around 4PM", that means 16:00 local = 20:00 UTC.
+ALWAYS apply the UTC offset from the time context when converting user-stated times.
+
 Rules:
-- "last Friday around 4PM" → the most recent Friday, 3PM-5PM (±1h around stated time)
-- "yesterday afternoon" → yesterday 12:00-18:00
-- "this morning" → today 06:00-12:00
-- "Monday night" → most recent Monday 18:00-23:59
-- "last night" → yesterday 21:00 to today 06:00
+- "around 4PM" → ±1h around 4PM LOCAL TIME, converted to UTC. If local is UTC-7: from=22:00Z, to=00:00Z next day
+- "yesterday afternoon" → yesterday 12:00-18:00 LOCAL, converted to UTC
+- "this morning" → today 06:00-12:00 LOCAL, converted to UTC
+- "Monday night" → most recent Monday 18:00-23:59 LOCAL, converted to UTC
+- "last night" → yesterday 21:00 LOCAL to today 06:00 LOCAL, converted to UTC
 - If no time reference found, use the current time to compute 8 hours ago as "from" and now as "to", return with confidence 0.0
-- Use the timezone from the time context above. Output all timestamps in UTC (Z suffix).
 - For vague times ("around", "about"), use a ±1 hour window around the stated time
-- For day-only references ("last Friday"), use the full day (00:00-23:59 in local tz, converted to UTC)`,
+- For day-only references ("last Friday"), use the full day (00:00-23:59 LOCAL, converted to UTC)`,
             prompt: inputData.userMessage,
             temperature: 0,
             abortSignal: controller.signal,
