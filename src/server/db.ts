@@ -31,6 +31,13 @@ export interface PhaseRow {
   completed_at: string | null;
 }
 
+export interface ServiceMetadataRow {
+  service: string;
+  alias: string | null;
+  tags: string[];
+  updated_at: string;
+}
+
 export interface EventRow {
   id: string;
   investigation_id: string;
@@ -55,6 +62,7 @@ export class Database {
     this.db = new BetterSqlite3(path);
     this.db.pragma("journal_mode = WAL");
     this.migrate();
+    this.migrateServiceMetadata();
   }
 
   private migrate(): void {
@@ -147,7 +155,12 @@ export class Database {
     ).get(id) as InvestigationRow | undefined;
   }
 
-  listInvestigations(limit: number, offset: number): InvestigationRow[] {
+  listInvestigations(limit: number, offset: number, service?: string): InvestigationRow[] {
+    if (service) {
+      return this.db.prepare(
+        "SELECT *, CASE WHEN json_valid(report) THEN json_extract(report, '$.confidenceScore') ELSE NULL END as confidence_score FROM investigations WHERE service = ? ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?"
+      ).all(service, limit, offset) as InvestigationRow[];
+    }
     return this.db.prepare(
       "SELECT *, CASE WHEN json_valid(report) THEN json_extract(report, '$.confidenceScore') ELSE NULL END as confidence_score FROM investigations ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?"
     ).all(limit, offset) as InvestigationRow[];
@@ -391,6 +404,62 @@ export class Database {
        )
        AND service NOT IN (SELECT service FROM hidden_services)`
     ).all(cutoff) as Array<{ service: string }>).map(r => r.service);
+  }
+
+  // ── Service metadata ────────────────────────────────────────────────────
+
+  /**
+   * Migrate service_metadata table and investigation index if they don't exist.
+   * Safe to call multiple times — uses CREATE TABLE/INDEX IF NOT EXISTS.
+   */
+  private migrateServiceMetadata(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS service_metadata (
+        service    TEXT PRIMARY KEY,
+        alias      TEXT,
+        tags       TEXT,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_inv_service_created ON investigations (service, created_at);
+    `);
+  }
+
+  getServiceMetadata(service: string): ServiceMetadataRow | null {
+    const row = this.db.prepare(
+      "SELECT service, alias, tags, updated_at FROM service_metadata WHERE service = ?"
+    ).get(service) as { service: string; alias: string | null; tags: string | null; updated_at: string } | undefined;
+    if (!row) return null;
+    return {
+      service: row.service,
+      alias: row.alias,
+      tags: row.tags ? JSON.parse(row.tags) : [],
+      updated_at: row.updated_at,
+    };
+  }
+
+  upsertServiceMetadata(service: string, updates: { alias?: string; tags?: string[] }): void {
+    const alias = updates.alias !== undefined ? updates.alias : null;
+    const tags = updates.tags !== undefined ? JSON.stringify(updates.tags) : null;
+    this.db.prepare(`
+      INSERT INTO service_metadata (service, alias, tags, updated_at)
+      VALUES (?, ?, ?, datetime('now'))
+      ON CONFLICT(service) DO UPDATE SET
+        alias      = CASE WHEN excluded.alias IS NOT NULL THEN excluded.alias ELSE alias END,
+        tags       = CASE WHEN excluded.tags  IS NOT NULL THEN excluded.tags  ELSE tags  END,
+        updated_at = datetime('now')
+    `).run(service, alias, tags);
+  }
+
+  getAllServiceMetadata(): ServiceMetadataRow[] {
+    const rows = this.db.prepare(
+      "SELECT service, alias, tags, updated_at FROM service_metadata ORDER BY service ASC"
+    ).all() as Array<{ service: string; alias: string | null; tags: string | null; updated_at: string }>;
+    return rows.map(row => ({
+      service: row.service,
+      alias: row.alias,
+      tags: row.tags ? JSON.parse(row.tags) : [],
+      updated_at: row.updated_at,
+    }));
   }
 
   close(): void {
