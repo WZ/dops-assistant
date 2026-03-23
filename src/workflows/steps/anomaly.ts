@@ -162,8 +162,8 @@ Rules:
           timeText = result.text;
           if (result.usage && config.onTokenUsage) {
             config.onTokenUsage({
-              inputTokens: result.usage.promptTokens ?? 0,
-              outputTokens: result.usage.completionTokens ?? 0,
+              inputTokens: result.usage.inputTokens ?? 0,
+              outputTokens: result.usage.outputTokens ?? 0,
             });
           }
         } finally {
