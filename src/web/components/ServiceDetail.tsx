@@ -50,7 +50,7 @@ export function ServiceDetail({
       const [metaRes, healthRes, invRes] = await Promise.all([
         fetch(`/api/services/${encodeURIComponent(serviceName)}/metadata`).catch(() => null),
         fetch("/api/services/health").catch(() => null),
-        fetch(`/api/investigations?service=${encodeURIComponent(serviceName)}&limit=1`).catch(() => null),
+        fetch(`/api/investigations?service=${encodeURIComponent(serviceName)}&limit=100`).catch(() => null),
       ]);
 
       if (cancelled) return;

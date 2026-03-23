@@ -117,6 +117,8 @@ export function registerRoutes(
   const handlers = buildHandlers(db, services);
 
   // ── Metrics cache for /api/services/:name/metrics ───────────────────────
+  const VALID_RANGES = new Set(["1h", "6h", "24h", "7d"]);
+  const MAX_CACHE_ENTRIES = 200;
   const metricsCache = new Map<string, { data: MetricSeries[]; fetchedAt: number }>();
   const METRICS_CACHE_TTL = 60_000; // 60 seconds
 
@@ -211,7 +213,7 @@ export function registerRoutes(
   app.put("/api/services/:name/alias", (req: Request, res: Response) => {
     const name = req.params["name"] as string;
     const { alias } = req.body as { alias: string | null };
-    db.upsertServiceMetadata(name, { alias: alias || undefined });
+    db.upsertServiceMetadata(name, { alias: alias === null || alias === "" ? "" : alias });
     res.json({ ok: true });
   });
 
@@ -225,8 +227,14 @@ export function registerRoutes(
   // ── Service Metrics REST API ────────────────────────────────────────────
   app.get("/api/services/:name/metrics", async (req: Request, res: Response) => {
     const name = req.params["name"] as string;
-    const range = (req.query["range"] as string) || "24h";
+    const rawRange = (req.query["range"] as string) || "24h";
+    const range = VALID_RANGES.has(rawRange) ? rawRange : "24h";
     const cacheKey = `${name}:${range}`;
+    // Evict old entries to prevent unbounded memory growth
+    if (metricsCache.size > MAX_CACHE_ENTRIES) {
+      const oldest = [...metricsCache.entries()].sort((a, b) => a[1].fetchedAt - b[1].fetchedAt);
+      for (let i = 0; i < oldest.length - MAX_CACHE_ENTRIES / 2; i++) metricsCache.delete(oldest[i][0]);
+    }
 
     const cached = metricsCache.get(cacheKey);
     if (cached && Date.now() - cached.fetchedAt < METRICS_CACHE_TTL) {

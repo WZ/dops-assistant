@@ -59,7 +59,7 @@ export function ServiceHistory({ serviceName, onViewInvestigation }: ServiceHist
         return res.json();
       })
       .then((data) => {
-        setInvestigations(data.investigations ?? []);
+        setInvestigations(Array.isArray(data) ? data : data.investigations ?? []);
       })
       .catch((err) => {
         if (err.name !== "AbortError") setInvestigations([]);
