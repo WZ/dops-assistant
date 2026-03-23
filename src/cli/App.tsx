@@ -65,6 +65,10 @@ export function formatRcaText(report: RcaReport): string {
     `${emoji} **Severity:** ${report.severity}  ·  ${confidenceEmoji[report.confidence] ?? "⬜"} **Confidence:** ${report.confidence}  ·  🕐 ${report.investigatedAt}`,
   ];
 
+  if (report.timeRange) {
+    lines.push(`📅 **Investigation window:** ${report.timeRange.from} → ${report.timeRange.to}`);
+  }
+
   // Impact
   if (report.impact) {
     lines.push(

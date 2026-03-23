@@ -60,6 +60,7 @@ export function buildPostSynthesisStep(config: WorkflowConfig) {
         confidenceScore: inputData.confidenceScore,
         savedToHistory,
         investigatedAt,
+        timeRange: inputData.timeRange,
       };
     },
   });

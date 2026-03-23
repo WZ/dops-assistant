@@ -18,6 +18,24 @@ interface RcaReportData {
   recommendedActions: string[];
   dashboardLinks: string[];
   skillsUsed?: string[];
+  timeRange?: { from: string; to: string };
+}
+
+/** Format a time range as human-readable local time. */
+function formatTimeRange(from: string, to: string): string {
+  const fromDate = new Date(from);
+  const toDate = new Date(to);
+  if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) return `${from} → ${to}`;
+
+  const sameDay = fromDate.toDateString() === toDate.toDateString();
+  const dateOpts: Intl.DateTimeFormatOptions = { weekday: "short", month: "short", day: "numeric" };
+  const timeOpts: Intl.DateTimeFormatOptions = { hour: "numeric", minute: "2-digit" };
+
+  if (sameDay) {
+    return `${fromDate.toLocaleDateString(undefined, dateOpts)}, ${fromDate.toLocaleTimeString(undefined, timeOpts)} → ${toDate.toLocaleTimeString(undefined, timeOpts)}`;
+  }
+  const fullOpts: Intl.DateTimeFormatOptions = { ...dateOpts, hour: "numeric", minute: "2-digit" };
+  return `${fromDate.toLocaleDateString(undefined, fullOpts)} → ${toDate.toLocaleDateString(undefined, fullOpts)}`;
 }
 
 /** Strip leading number prefixes from action text.
@@ -89,6 +107,11 @@ export function RcaReport({ report }: { report: RcaReportData }) {
             </span>
           </div>
         </div>
+        {report.timeRange && (
+          <div className="text-[10px] font-mono text-muted-foreground mt-1.5">
+            Investigated: <time dateTime={report.timeRange.from}>{formatTimeRange(report.timeRange.from, report.timeRange.to)}</time>
+          </div>
+        )}
         {report.summary && (
           <p className="text-xs font-body text-muted-foreground leading-relaxed mt-2">
             {renderInline(report.summary)}

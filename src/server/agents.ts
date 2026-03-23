@@ -295,6 +295,7 @@ export class MastraInvestigationAdapter {
       confidenceScore: number;
       savedToHistory: boolean;
       investigatedAt: string;
+      timeRange?: { from: string; to: string };
     } | undefined;
 
     // createRun() returns a Promise<Run>, then we call .start() on the Run
@@ -330,6 +331,7 @@ export class MastraInvestigationAdapter {
       confidence: output?.confidence ?? "low",
       confidenceScore: output?.confidenceScore ?? 0.5,
       investigatedAt,
+      timeRange: output?.timeRange,
     };
 
     return report;

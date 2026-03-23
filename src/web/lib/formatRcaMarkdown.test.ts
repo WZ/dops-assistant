@@ -45,6 +45,19 @@ describe("formatRcaMarkdown", () => {
     expect(md).toContain("1. Set memory limits");
   });
 
+  it("includes investigation window when timeRange is present", () => {
+    const report: RcaReport = { ...FULL_REPORT, timeRange: { from: "2026-03-20T15:00:00Z", to: "2026-03-20T17:00:00Z" } };
+    const md = formatRcaMarkdown(report);
+    expect(md).toContain("**Investigation window:**");
+    expect(md).toContain("2026-03-20T15:00:00Z");
+    expect(md).toContain("2026-03-20T17:00:00Z");
+  });
+
+  it("omits investigation window when timeRange is absent", () => {
+    const md = formatRcaMarkdown(FULL_REPORT);
+    expect(md).not.toContain("Investigation window");
+  });
+
   it("handles minimal report", () => {
     const minimal: RcaReport = {
       service: "test",

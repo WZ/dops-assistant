@@ -7,6 +7,7 @@
  */
 
 import { createStep } from "@mastra/core/workflows";
+import { generateText } from "ai";
 import type { WorkflowConfig } from "../investigation.js";
 import { PrefetchOutputSchema, AnomalyOutputSchema } from "../schemas.js";
 import { getToolsByRole } from "../../mcp/provider.js";
@@ -14,6 +15,7 @@ import { wrapToolsWithCallbacks, selectToolsBySuffix, debug, ANOMALY_TOOLS } fro
 import { getTimeContext } from "../../agents/shared/time-context.js";
 import { safeJsonParse } from "../../agents/shared/processors.js";
 import { createAnomalyDetectorAgent } from "../../agents/anomaly-detector.js";
+import { extractTimeRange, resolveTimeRangeToAbsolute } from "../helpers.js";
 
 /**
  * Build an anomaly detection step using the anomaly detector agent.
@@ -119,7 +121,79 @@ export function buildAnomalyStep(config: WorkflowConfig) {
           summary = anomalyParsed.summary ?? inputData.userMessage;
         }
       } else {
-        debug("ANOMALY: user-reported issue, skipping agent — extracting time range only");
+        debug("ANOMALY: user-reported issue, skipping agent — extracting time range via LLM");
+      }
+
+      // ── LLM-based time range extraction ─────────────────────────────────
+      // Runs for ALL investigations (userMessage is always present).
+      // Fallback chain: LLM → regex (resolved to absolute UTC) → 8h default (absolute UTC).
+      let timeRangeFrom: string | undefined;
+      let timeRangeTo: string | undefined;
+
+      try {
+        const timeContext = getTimeContext();
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10_000);
+
+        const { text: timeText } = await generateText({
+          model: config.model,
+          system: `You are a time range extractor. Given a user message about a system issue and the current time context, extract the time window the user is asking about.
+
+${timeContext}
+
+Return ONLY valid JSON: {"from": "RFC3339_UTC", "to": "RFC3339_UTC", "matchedText": "the time phrase you matched", "confidence": 0.0-1.0}
+
+Rules:
+- "last Friday around 4PM" → the most recent Friday, 3PM-5PM (±1h around stated time)
+- "yesterday afternoon" → yesterday 12:00-18:00
+- "this morning" → today 06:00-12:00
+- "Monday night" → most recent Monday 18:00-23:59
+- "last night" → yesterday 21:00 to today 06:00
+- If no time reference found, use the current time to compute 8 hours ago as "from" and now as "to", return with confidence 0.0
+- Use the timezone from the time context above. Output all timestamps in UTC (Z suffix).
+- For vague times ("around", "about"), use a ±1 hour window around the stated time
+- For day-only references ("last Friday"), use the full day (00:00-23:59 in local tz, converted to UTC)`,
+          prompt: inputData.userMessage,
+          temperature: 0,
+          abortSignal: controller.signal,
+        });
+
+        clearTimeout(timeout);
+
+        const parsed = safeJsonParse(timeText);
+        if (parsed?.from && parsed?.to) {
+          const fromDate = new Date(parsed.from);
+          const toDate = new Date(parsed.to);
+          const now = Date.now();
+          const thirtyDaysAgo = now - 30 * 86_400_000;
+
+          // Validate: both must be valid dates, from <= to, not in future, not > 30d ago
+          if (
+            !isNaN(fromDate.getTime()) && !isNaN(toDate.getTime()) &&
+            fromDate.getTime() <= toDate.getTime() &&
+            toDate.getTime() <= now + 60_000 && // allow 1 min clock skew
+            fromDate.getTime() >= thirtyDaysAgo
+          ) {
+            timeRangeFrom = fromDate.toISOString();
+            timeRangeTo = toDate.toISOString();
+            debug("ANOMALY: LLM time extraction succeeded:", { from: timeRangeFrom, to: timeRangeTo, matchedText: parsed.matchedText, confidence: parsed.confidence });
+          } else {
+            debug("ANOMALY: LLM returned invalid date range, falling back to regex", { from: parsed.from, to: parsed.to });
+          }
+        } else {
+          debug("ANOMALY: LLM time parse failed, falling back to regex");
+        }
+      } catch (err) {
+        debug("ANOMALY: LLM time extraction error, falling back to regex:", err);
+      }
+
+      // Fallback: resolve regex output to absolute UTC
+      if (!timeRangeFrom || !timeRangeTo) {
+        const regexRange = extractTimeRange(inputData.userMessage);
+        const absolute = resolveTimeRangeToAbsolute(regexRange);
+        timeRangeFrom = absolute.from;
+        timeRangeTo = absolute.to;
+        debug("ANOMALY: using regex fallback (absolute):", { from: timeRangeFrom, to: timeRangeTo });
       }
 
       const prefetchContext = {
@@ -135,6 +209,8 @@ export function buildAnomalyStep(config: WorkflowConfig) {
         severity,
         summary,
         affectedServices: inputData.serviceName ? [inputData.serviceName] : [],
+        timeRangeFrom,
+        timeRangeTo,
         prefetchContext,
         userMessage: inputData.userMessage,
         serviceName: inputData.serviceName,

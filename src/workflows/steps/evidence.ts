@@ -168,15 +168,21 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
       const parsed = safeJsonParse(agentText);
       debug(`${phaseName.toUpperCase()} parsed:`, parsed ? "OK" : "FAILED");
 
-      // 7. Return findings or empty fallback
+      // 7. Build timeRange pass-through from anomaly context
+      const ac = inputData.anomalyContext;
+      const timeRange = ac?.timeRangeFrom && ac?.timeRangeTo
+        ? { from: ac.timeRangeFrom, to: ac.timeRangeTo }
+        : undefined;
+
+      // 8. Return findings or empty fallback
       if (parsed) {
         return {
           summary: parsed.summary ?? fallbackMessage,
           observations: parsed.observations ?? [],
-          ...(parsed.anomalyWindow !== undefined ? { anomalyWindow: parsed.anomalyWindow } : {}),
+          timeRange,
         };
       }
-      return { summary: fallbackMessage, observations: [] };
+      return { summary: fallbackMessage, observations: [], timeRange };
     },
   });
 }
@@ -197,7 +203,8 @@ export function buildMetricsStep(config: WorkflowConfig) {
     createAgent: createMetricsAgent,
     buildPrompt: (inputData, workflowConfig) => {
       const { anomalyContext } = inputData;
-      const timeWindowHint = buildTimeWindowHint(anomalyContext.summary, anomalyContext.userMessage);
+      const resolvedRange = anomalyContext.timeRangeFrom && anomalyContext.timeRangeTo ? { from: anomalyContext.timeRangeFrom, to: anomalyContext.timeRangeTo } : undefined;
+      const timeWindowHint = buildTimeWindowHint(anomalyContext.summary, anomalyContext.userMessage, resolvedRange);
       const { metricsHint } = buildServiceContextHint(workflowConfig.services, anomalyContext.serviceName);
 
       return [
@@ -235,7 +242,8 @@ export function buildLogsStep(config: WorkflowConfig) {
     buildPrompt: (inputData, workflowConfig) => {
       const { anomalyContext } = inputData;
       const { prefetchContext } = anomalyContext;
-      const timeWindowHint = buildTimeWindowHint(anomalyContext.summary, anomalyContext.userMessage);
+      const resolvedRange = anomalyContext.timeRangeFrom && anomalyContext.timeRangeTo ? { from: anomalyContext.timeRangeFrom, to: anomalyContext.timeRangeTo } : undefined;
+      const timeWindowHint = buildTimeWindowHint(anomalyContext.summary, anomalyContext.userMessage, resolvedRange);
       const { logLabelsHint } = buildServiceContextHint(workflowConfig.services, anomalyContext.serviceName);
       const selectorHint = prefetchContext.workingLogSelectors.length > 0
         ? `VALIDATED LOG SELECTOR (pre-tested, returns real logs — use this as your primary selector):\n  ${prefetchContext.workingLogSelectors[0]}\nThe configured logLabels may NOT return results. Use the validated selector above as your FIRST query.`
@@ -276,7 +284,8 @@ export function buildInfraStep(config: WorkflowConfig) {
     createAgent: createInfraAgent,
     buildPrompt: (inputData, workflowConfig) => {
       const { anomalyContext } = inputData;
-      const timeWindowHint = buildTimeWindowHint(anomalyContext.summary, anomalyContext.userMessage);
+      const resolvedRange = anomalyContext.timeRangeFrom && anomalyContext.timeRangeTo ? { from: anomalyContext.timeRangeFrom, to: anomalyContext.timeRangeTo } : undefined;
+      const timeWindowHint = buildTimeWindowHint(anomalyContext.summary, anomalyContext.userMessage, resolvedRange);
 
       return [
         anomalyContext.prefetchContext.datasourceHints,
@@ -312,7 +321,8 @@ export function buildChangesStep(config: WorkflowConfig) {
     createAgent: createChangesAgent,
     buildPrompt: (inputData, workflowConfig) => {
       const { anomalyContext } = inputData;
-      const timeWindowHint = buildTimeWindowHint(anomalyContext.summary, anomalyContext.userMessage);
+      const resolvedRange = anomalyContext.timeRangeFrom && anomalyContext.timeRangeTo ? { from: anomalyContext.timeRangeFrom, to: anomalyContext.timeRangeTo } : undefined;
+      const timeWindowHint = buildTimeWindowHint(anomalyContext.summary, anomalyContext.userMessage, resolvedRange);
 
       return [
         timeWindowHint,
