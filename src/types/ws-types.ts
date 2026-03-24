@@ -3,7 +3,7 @@ import type { ValidatedServiceConfig } from "./discovery-types.js";
 
 // Client to Server
 export type ClientMessage =
-  | { type: "chat"; message: string }
+  | { type: "chat"; message: string; serviceContext?: string }
   | { type: "deep_investigate"; investigationId: string; message: string }
   | { type: "new_session" }
   | { type: "discover" }

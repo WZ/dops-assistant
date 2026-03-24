@@ -20,5 +20,5 @@
     "jsx": "react-jsx"
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", ".worktrees", "src/**/*.test.ts"]
+  "exclude": ["node_modules", "dist", ".worktrees", "src/**/*.test.ts", "src/**/*.test.tsx"]
 }

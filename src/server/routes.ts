@@ -3,10 +3,13 @@ import type { Database, InvestigationRow, PhaseRow, EventRow, KpiStats } from ".
 import type { ServiceConfig, BrandingConfig } from "../config/schema.js";
 import { ProviderSchema } from "../config/schema.js";
 import { createMcpProvider, listProviderTools } from "../mcp/provider.js";
+import type { MastraProvider } from "../mcp/provider.js";
 import type { SkillStore } from "../skills/store.js";
 import type { ServiceRegistryStore } from "../services/registry.js";
 import type { ProviderRegistry } from "../mcp/provider-registry.js";
 import type { ServiceHealthPoller } from "./service-health-poller.js";
+import { queryServiceMetrics } from "./prometheus-query.js";
+import type { MetricSeries } from "./prometheus-query.js";
 
 export interface DependencyNode {
   id: string;
@@ -23,7 +26,7 @@ export interface DependencyEdge {
 
 export interface RouteHandlers {
   getServices(): ServiceConfig[];
-  listInvestigations(limit: number, offset: number): InvestigationRow[];
+  listInvestigations(limit: number, offset: number, service?: string): InvestigationRow[];
   getInvestigation(id: string): { investigation: InvestigationRow; phases: PhaseRow[]; events: EventRow[] } | undefined;
   getDependencies(service: string): Promise<{ nodes: DependencyNode[]; edges: DependencyEdge[] }>;
   getKpiStats(): KpiStats;
@@ -78,7 +81,7 @@ function inferDependencyGraph(services: ServiceConfig[]): { nodes: DependencyNod
 export function buildHandlers(db: Database, services: ServiceConfig[]): RouteHandlers {
   return {
     getServices: () => services,
-    listInvestigations: (limit, offset) => db.listInvestigations(limit, offset),
+    listInvestigations: (limit, offset, service) => db.listInvestigations(limit, offset, service),
     getKpiStats: () => db.getKpiStats(),
     getInvestigation: (id) => {
       const investigation = db.getInvestigation(id);
@@ -109,19 +112,36 @@ export function registerRoutes(
   providerRegistry?: ProviderRegistry,
   branding?: BrandingConfig,
   healthPoller?: ServiceHealthPoller,
+  getProviders?: () => MastraProvider[],
 ): void {
   const handlers = buildHandlers(db, services);
+
+  // ── Metrics cache for /api/services/:name/metrics ───────────────────────
+  const VALID_RANGES = new Set(["1h", "6h", "24h", "7d"]);
+  const MAX_CACHE_ENTRIES = 200;
+  const metricsCache = new Map<string, { data: MetricSeries[]; fetchedAt: number }>();
+  const METRICS_CACHE_TTL = 60_000; // 60 seconds
 
   app.get("/api/services", (_req: Request, res: Response) => {
     // Merge config.yaml inline services with registry (services.yaml) entries.
     // Config services take precedence (dedup by name), then append registry-only services.
+    let allServices: ServiceConfig[];
     if (registryStore) {
       const configNames = new Set(services.map(s => s.name));
       const registryServices = registryStore.load().filter(s => !configNames.has(s.name));
-      res.json([...services, ...registryServices]);
+      allServices = [...services, ...registryServices];
     } else {
-      res.json(handlers.getServices());
+      allServices = handlers.getServices();
     }
+
+    // Merge service metadata (alias, tags) into each service object
+    const allMeta = db.getAllServiceMetadata();
+    const metaMap = new Map(allMeta.map(m => [m.service, m]));
+    const enriched = allServices.map(s => {
+      const meta = metaMap.get(s.name);
+      return meta ? { ...s, alias: meta.alias, tags: meta.tags } : s;
+    });
+    res.json(enriched);
   });
 
   app.get("/api/branding", (_req: Request, res: Response) => {
@@ -168,7 +188,8 @@ export function registerRoutes(
   app.get("/api/investigations", (req: Request, res: Response) => {
     const limit = Math.min(Number(req.query["limit"]) || 20, 100);
     const offset = Number(req.query["offset"]) || 0;
-    res.json(handlers.listInvestigations(limit, offset));
+    const service = req.query["service"] as string | undefined;
+    res.json(handlers.listInvestigations(limit, offset, service));
   });
 
   app.get("/api/investigations/:id", (req: Request, res: Response) => {
@@ -180,6 +201,67 @@ export function registerRoutes(
       return;
     }
     res.json(result);
+  });
+
+  // ── Service Metadata REST API ──────────────────────────────────────────
+  app.get("/api/services/:name/metadata", (req: Request, res: Response) => {
+    const name = req.params["name"] as string;
+    const meta = db.getServiceMetadata(name);
+    res.json(meta ?? { service: name, alias: null, tags: [] });
+  });
+
+  app.put("/api/services/:name/alias", (req: Request, res: Response) => {
+    const name = req.params["name"] as string;
+    const { alias } = req.body as { alias: string | null };
+    db.upsertServiceMetadata(name, { alias: alias === null || alias === "" ? "" : alias });
+    res.json({ ok: true });
+  });
+
+  app.put("/api/services/:name/tags", (req: Request, res: Response) => {
+    const name = req.params["name"] as string;
+    const { tags } = req.body as { tags: string[] };
+    db.upsertServiceMetadata(name, { tags });
+    res.json({ ok: true });
+  });
+
+  // ── Service Metrics REST API ────────────────────────────────────────────
+  app.get("/api/services/:name/metrics", async (req: Request, res: Response) => {
+    const name = req.params["name"] as string;
+    const rawRange = (req.query["range"] as string) || "24h";
+    const range = VALID_RANGES.has(rawRange) ? rawRange : "24h";
+    const cacheKey = `${name}:${range}`;
+    // Evict old entries to prevent unbounded memory growth
+    if (metricsCache.size > MAX_CACHE_ENTRIES) {
+      const oldest = [...metricsCache.entries()].sort((a, b) => a[1].fetchedAt - b[1].fetchedAt);
+      for (let i = 0; i < oldest.length - MAX_CACHE_ENTRIES / 2; i++) metricsCache.delete(oldest[i][0]);
+    }
+
+    const cached = metricsCache.get(cacheKey);
+    if (cached && Date.now() - cached.fetchedAt < METRICS_CACHE_TTL) {
+      res.json({ metrics: cached.data, cached: true, fetchedAt: cached.fetchedAt });
+      return;
+    }
+
+    if (!getProviders) {
+      // No providers available — return empty metrics
+      res.json({ metrics: [], cached: false, fetchedAt: Date.now() });
+      return;
+    }
+
+    try {
+      const allServices = registryStore ? registryStore.load() : services;
+      const svc = allServices.find((s) => s.name === name);
+      const metrics = await queryServiceMetrics(name, range, getProviders(), svc?.metrics);
+      const fetchedAt = Date.now();
+      metricsCache.set(cacheKey, { data: metrics, fetchedAt });
+      res.json({ metrics, cached: false, fetchedAt });
+    } catch (err) {
+      if (cached) {
+        res.json({ metrics: cached.data, cached: true, fetchedAt: cached.fetchedAt, error: "Refresh failed" });
+      } else {
+        res.status(503).json({ error: "Prometheus unavailable", metrics: [] });
+      }
+    }
   });
 
   app.get("/api/messages", (req: Request, res: Response) => {

@@ -36,6 +36,7 @@ interface ChatPaneProps {
   onInvestigationStarted: (id: string) => void;
   onViewInvestigation: (id: string) => void;
   activeInvestigationId?: string;
+  serviceContext?: string;
 }
 
 const DEEP_DIVE_PROMPTS = [
@@ -58,7 +59,7 @@ function toTimeSeries(c: ChartSeries): TimeSeriesData {
   };
 }
 
-export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, activeInvestigationId }: ChatPaneProps) {
+export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, activeInvestigationId, serviceContext }: ChatPaneProps) {
   const { status, messages: wsMessages, send } = ws;
   const [input, setInput] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -288,7 +289,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
       setDeepLoading(true);
     } else {
       setChatMessages((prev) => [...prev, { role: "user", content: trimmed }]);
-      send({ type: "chat", message: trimmed });
+      send({ type: "chat", message: trimmed, ...(serviceContext ? { serviceContext } : {}) });
       setChatLoading(true);
       setActiveTool(null);
     }
@@ -313,6 +314,11 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
               <span className="font-display text-[11px] font-semibold tracking-[0.12em] uppercase text-muted-foreground/50">
                 Console
               </span>
+              {serviceContext && (
+                <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
+                  {serviceContext}
+                </span>
+              )}
             </>
           )}
         </div>

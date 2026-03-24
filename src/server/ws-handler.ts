@@ -389,18 +389,26 @@ export async function handleClientMessage(
 
   if (msg.type !== "chat") return;
 
+  const serviceContext = msg.serviceContext;
+
   const { db, agent, investigationAgent, router, memory, services } = deps;
   // Filter hidden services from all resolution paths
   const hidden = deps.getHiddenServices?.() ?? new Set<string>();
   const visibleServices = hidden.size > 0 ? services.filter(s => !hidden.has(s.name)) : services;
   const serviceNames = visibleServices.map((s) => s.name);
 
+  // If a serviceContext is provided, resolve it authoritatively and skip text/LLM matching
+  const pinnedService = serviceContext
+    ? visibleServices.find(s => s.name === serviceContext)
+    : undefined;
+
   db.createMessage({ id: `msg_${ulid()}`, role: "user", content: msg.message });
 
   // Context switch detection: compare service in current message vs conversation history
-  const mentionedService = deps.matchServiceFromText(msg.message, visibleServices);
+  // Skip when we have a pinned serviceContext — no ambiguity to detect
+  const mentionedService = pinnedService ?? deps.matchServiceFromText(msg.message, visibleServices);
   const contextService = resolveServiceFromHistory(memory.get(threadId), visibleServices);
-  if (mentionedService && contextService && mentionedService.name !== contextService.name) {
+  if (!pinnedService && mentionedService && contextService && mentionedService.name !== contextService.name) {
     send({ type: "context_switch", previousService: contextService.name, newService: mentionedService.name });
   }
 
@@ -408,6 +416,7 @@ export async function handleClientMessage(
 
   if (intent.intent === "investigation") {
     const service =
+      pinnedService ??
       deps.matchServiceFromText(msg.message, visibleServices) ??
       deps.validateLlmServiceMatch(intent.service, msg.message, visibleServices) ??
       resolveServiceFromHistory(memory.get(threadId), visibleServices) ??
@@ -463,6 +472,7 @@ export async function handleClientMessage(
     const history = memory.get(threadId);
     const chartData: ChartSeries[] = [];
     const chatService =
+      pinnedService ??
       mentionedService ??
       contextService ??
       resolveServiceFromHistory(db.listRecentMessages(10), visibleServices);
