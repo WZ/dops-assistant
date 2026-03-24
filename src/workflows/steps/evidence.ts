@@ -18,15 +18,10 @@ import type { WorkflowConfig } from "../investigation.js";
 import { getToolsByRole } from "../../mcp/provider.js";
 import type { ProviderRole } from "../../config/schema.js";
 import {
-  selectToolsBySuffix,
   wrapToolsWithCallbacks,
   buildTimeWindowHint,
   buildServiceContextHint,
   debug,
-  METRICS_TOOLS,
-  LOGS_TOOLS,
-  INFRA_TOOLS,
-  CHANGES_TOOLS,
 } from "../tool-utils.js";
 import { PlanningOutputSchema, EvidenceOutputSchema } from "../schemas.js";
 import { safeJsonParse } from "../../agents/shared/processors.js";
@@ -46,8 +41,6 @@ interface EvidenceStepConfig {
   iterationStart: number;
   /** MCP provider role(s) to fetch tools from. Array merges tools from multiple roles. */
   toolRole: ProviderRole | ProviderRole[];
-  /** Tool name suffixes to filter from the provider tool set */
-  toolAllowlist: string[];
   /** Factory that creates the specialized agent for this phase */
   createAgent: (opts: { model: any; tools: Record<string, any>; useQuirkHandling?: boolean }) => any;
   /** Build the prompt string from the planning step's inputData */
@@ -70,7 +63,6 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
     phaseName,
     iterationStart,
     toolRole,
-    toolAllowlist,
     createAgent,
     buildPrompt,
     extractorSchema,
@@ -87,14 +79,14 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
       workflowConfig.onPhase?.("Analyzing metrics, logs & infrastructure");
       workflowConfig.onIteration?.(phaseName, iterationStart, 6, `Analyzing ${phaseName}`);
 
-      // 1. Get tools by role(s) → filter by suffix → wrap with callbacks
+      // 1. Get tools by role(s) → wrap with callbacks
+      // Tool scoping is provider-agnostic: role routing + provider enabledTools config
       const roles = Array.isArray(toolRole) ? toolRole : [toolRole];
       const toolMaps = await Promise.all(roles.map(r => getToolsByRole(workflowConfig.providers, r).catch(() => ({}))));
       const rawTools: Record<string, any> = {};
       for (const m of toolMaps) Object.assign(rawTools, m);
-      const filteredTools = selectToolsBySuffix(rawTools, toolAllowlist);
-      debug(`${phaseName.toUpperCase()} tools:`, Object.keys(filteredTools));
-      const tools = wrapToolsWithCallbacks(filteredTools, workflowConfig.onToolCall, phaseName);
+      debug(`${phaseName.toUpperCase()} tools:`, Object.keys(rawTools));
+      const tools = wrapToolsWithCallbacks(rawTools, workflowConfig.onToolCall, phaseName);
 
       // 2. Create specialized agent
       const agent = createAgent({
@@ -199,7 +191,6 @@ export function buildMetricsStep(config: WorkflowConfig) {
     phaseName: "metrics",
     iterationStart: 2,
     toolRole: "metrics",
-    toolAllowlist: METRICS_TOOLS,
     createAgent: createMetricsAgent,
     buildPrompt: (inputData, workflowConfig) => {
       const { anomalyContext } = inputData;
@@ -237,7 +228,6 @@ export function buildLogsStep(config: WorkflowConfig) {
     phaseName: "logs",
     iterationStart: 3,
     toolRole: "logs",
-    toolAllowlist: LOGS_TOOLS,
     createAgent: createLogsAgent,
     buildPrompt: (inputData, workflowConfig) => {
       const { anomalyContext } = inputData;
@@ -279,8 +269,7 @@ export function buildInfraStep(config: WorkflowConfig) {
     id: "infra-evidence",
     phaseName: "infra",
     iterationStart: 4,
-    toolRole: ["metrics", "infrastructure"],
-    toolAllowlist: INFRA_TOOLS,
+    toolRole: "infrastructure",
     createAgent: createInfraAgent,
     buildPrompt: (inputData, workflowConfig) => {
       const { anomalyContext } = inputData;
@@ -317,7 +306,6 @@ export function buildChangesStep(config: WorkflowConfig) {
     phaseName: "changes",
     iterationStart: 5,
     toolRole: "changes",
-    toolAllowlist: CHANGES_TOOLS,
     createAgent: createChangesAgent,
     buildPrompt: (inputData, workflowConfig) => {
       const { anomalyContext } = inputData;
