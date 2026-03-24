@@ -57,6 +57,11 @@ function buildDefaultQueries(serviceName: string): { name: string; query: string
       unit: "%",
     },
     {
+      name: "Latency P99",
+      query: `histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{service=~".*${safe}.*"}[5m])) by (le)) * 1000`,
+      unit: "ms",
+    },
+    {
       name: "Pod Replicas",
       query: `kube_deployment_status_replicas{deployment=~".*${safe}.*"}`,
       unit: "",
@@ -242,15 +247,19 @@ export async function queryServiceMetrics(
   // Find the Prometheus datasource UID
   const datasourceUid = await findPrometheusDatasourceUid(tools);
 
-  // Build query list: use registry metrics if available, otherwise defaults
-  const queries =
-    registryMetrics && registryMetrics.length > 0
-      ? registryMetrics.map((m) => ({
-          name: m.description || inferMetricName(m.query),
-          query: m.query,
-          unit: inferUnit(m.query),
-        }))
-      : buildDefaultQueries(serviceName);
+  // Build query list: always include defaults, then add registry-specific metrics
+  const defaults = buildDefaultQueries(serviceName);
+  const defaultQuerySet = new Set(defaults.map((d) => d.query));
+
+  const registryExtras = (registryMetrics ?? [])
+    .filter((m) => !defaultQuerySet.has(m.query))
+    .map((m) => ({
+      name: m.description || inferMetricName(m.query),
+      query: m.query,
+      unit: inferUnit(m.query),
+    }));
+
+  const queries = [...defaults, ...registryExtras];
 
   // Execute all queries in parallel
   const fetchedAt = Date.now();

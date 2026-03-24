@@ -59,11 +59,12 @@ describe("prometheus-query", () => {
 
       const result = await queryServiceMetrics("payments-api", "1h", []);
 
-      // Should produce 3 default queries: Request Rate, Error Rate, Pod Replicas
-      expect(result).toHaveLength(3);
+      // Should produce 4 default queries: Request Rate, Error Rate, Latency P99, Pod Replicas
+      expect(result).toHaveLength(4);
       expect(result[0]!.name).toBe("Request Rate");
       expect(result[1]!.name).toBe("Error Rate");
-      expect(result[2]!.name).toBe("Pod Replicas");
+      expect(result[2]!.name).toBe("Latency P99");
+      expect(result[3]!.name).toBe("Pod Replicas");
 
       // Each should have parsed values
       expect(result[0]!.values.length).toBe(5);
@@ -84,9 +85,10 @@ describe("prometheus-query", () => {
 
       const result = await queryServiceMetrics("payments-api", "24h", [], registryMetrics);
 
-      expect(result).toHaveLength(1);
-      expect(result[0]!.name).toBe("Custom Rate");
-      expect(result[0]!.unit).toBe("req/s"); // inferred from rate()
+      // 4 defaults + 1 registry-specific = 5
+      expect(result).toHaveLength(5);
+      expect(result[4]!.name).toBe("Custom Rate");
+      expect(result[4]!.unit).toBe("req/s"); // inferred from rate()
     });
 
     it("infers metric name when registry description is empty", async () => {
@@ -100,9 +102,10 @@ describe("prometheus-query", () => {
 
       const result = await queryServiceMetrics("payments-api", "1h", [], registryMetrics);
 
-      expect(result).toHaveLength(1);
+      // 4 defaults + 1 registry-specific = 5
+      expect(result).toHaveLength(5);
       // inferMetricName should extract "up" from the query
-      expect(result[0]!.name).toBe("up");
+      expect(result[4]!.name).toBe("up");
     });
   });
 
@@ -167,7 +170,7 @@ describe("prometheus-query", () => {
       const result = await queryServiceMetrics("svc", "1h", []);
 
       // Should still return 3 entries (default queries), each with empty values
-      expect(result).toHaveLength(3);
+      expect(result).toHaveLength(4);
       for (const m of result) {
         expect(m.values).toEqual([]);
         expect(m.current).toBe(0);
@@ -181,7 +184,7 @@ describe("prometheus-query", () => {
 
       const result = await queryServiceMetrics("svc", "1h", []);
 
-      expect(result).toHaveLength(3);
+      expect(result).toHaveLength(4);
       for (const m of result) {
         expect(m.values).toEqual([]);
         expect(m.current).toBe(0);
@@ -210,9 +213,9 @@ describe("prometheus-query", () => {
 
       const result = await queryServiceMetrics("svc", "1h", []);
 
-      expect(result).toHaveLength(3);
+      expect(result).toHaveLength(4);
       // Each metric should have called execute twice (range + instant fallback)
-      expect(queryTool.execute).toHaveBeenCalledTimes(6); // 3 queries × 2 attempts
+      expect(queryTool.execute).toHaveBeenCalledTimes(8); // 4 queries × 2 attempts
       // Each metric should have a valid current value from the instant fallback
       for (const m of result) {
         expect(m.current).toBeCloseTo(42.5);
@@ -384,7 +387,7 @@ describe("prometheus-query", () => {
 
       // Should use the tool matching _query_prometheus suffix
       expect(queryTool.execute).toHaveBeenCalled();
-      expect(result).toHaveLength(3);
+      expect(result).toHaveLength(4);
     });
   });
 });
