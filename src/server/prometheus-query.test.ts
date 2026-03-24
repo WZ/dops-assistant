@@ -303,7 +303,7 @@ describe("prometheus-query", () => {
       await queryServiceMetrics("svc", "1h", []);
 
       const args = queryTool.execute.mock.calls[0]![0] as Record<string, unknown>;
-      expect(args.step).toBe("30s"); // Math.max(15, floor(3600/120)) = 30
+      expect(args.stepSeconds).toBe(30); // Math.max(15, floor(3600/120)) = 30
     });
 
     it("uses correct step for 7d range (~5040s)", async () => {
@@ -314,7 +314,7 @@ describe("prometheus-query", () => {
       await queryServiceMetrics("svc", "7d", []);
 
       const args = queryTool.execute.mock.calls[0]![0] as Record<string, unknown>;
-      expect(args.step).toBe("5040s"); // Math.max(15, floor(604800/120)) = 5040
+      expect(args.stepSeconds).toBe(5040); // Math.max(15, floor(604800/120)) = 5040
     });
 
     it("defaults to 24h for unknown range string", async () => {
@@ -326,7 +326,7 @@ describe("prometheus-query", () => {
 
       const args = queryTool.execute.mock.calls[0]![0] as Record<string, unknown>;
       // 86400 / 120 = 720
-      expect(args.step).toBe("720s");
+      expect(args.stepSeconds).toBe(720);
     });
   });
 

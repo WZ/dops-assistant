@@ -157,7 +157,7 @@ async function executeQuery(
     queryType: "range",
     startTime,
     endTime,
-    step: `${stepSeconds}s`,
+    stepSeconds,
   };
   if (datasourceUid) args.datasourceUid = datasourceUid;
 
