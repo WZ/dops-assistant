@@ -75,7 +75,7 @@ export function ServiceHistory({ serviceName, onViewInvestigation }: ServiceHist
         {[1, 2, 3].map((i) => (
           <div
             key={i}
-            className="h-14 rounded-lg border border-border/25 bg-card/40 animate-pulse"
+            className="h-14 rounded-lg border border-border/25 bg-card/40 shimmer-skeleton"
           />
         ))}
       </div>

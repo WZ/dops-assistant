@@ -57,7 +57,7 @@ export function ServiceDependencyGraph({ serviceName, onViewService }: ServiceDe
 
   if (loading) {
     return (
-      <div className="rounded-lg border border-border/25 bg-card/40 overflow-hidden animate-pulse" style={{ height: 400 }}>
+      <div className="rounded-lg border border-border/25 bg-card/40 overflow-hidden shimmer-skeleton" style={{ height: 400 }}>
         <div className="h-full w-full bg-muted/30" />
       </div>
     );

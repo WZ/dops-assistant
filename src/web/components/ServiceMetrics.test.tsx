@@ -58,8 +58,8 @@ describe("ServiceMetrics", () => {
     // fetch never resolves — stays loading
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
     render(<ServiceMetrics serviceName={TEST_SERVICE} />);
-    // Loading state renders 4 shimmer divs with animate-pulse
-    const shimmers = document.querySelectorAll(".animate-pulse");
+    // Loading state renders 4 shimmer divs with shimmer-skeleton
+    const shimmers = document.querySelectorAll(".shimmer-skeleton");
     expect(shimmers.length).toBe(4);
   });
 

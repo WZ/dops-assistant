@@ -114,7 +114,7 @@ export function ServiceMetrics({ serviceName }: ServiceMetricsProps) {
       {loading && (
         <div className="grid grid-cols-2 gap-4">
           {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="h-40 rounded-lg bg-muted/30 animate-pulse" />
+            <div key={i} className="h-40 rounded-lg bg-muted/30 shimmer-skeleton" />
           ))}
         </div>
       )}
