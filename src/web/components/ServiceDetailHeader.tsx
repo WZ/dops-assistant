@@ -124,10 +124,9 @@ export function ServiceDetailHeader({
         </Button>
         <Button
           variant="outline"
-          className="min-h-[44px] px-3 text-[11px] font-mono bg-secondary border-border text-foreground/70 hover:text-foreground/90 hover:bg-secondary/80 transition-colors"
-          onClick={() => {
-            // TODO: Wire to Grafana dashboard URL from provider config
-          }}
+          disabled
+          title="Grafana deep-link coming soon"
+          className="min-h-[44px] px-3 text-[11px] font-mono bg-secondary border-border text-foreground/70 hover:text-foreground/90 hover:bg-secondary/80 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <ExternalLink size={12} className="mr-1.5" />
           Open in Grafana
