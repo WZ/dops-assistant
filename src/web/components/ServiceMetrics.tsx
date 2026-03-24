@@ -119,14 +119,20 @@ export function ServiceMetrics({ serviceName }: ServiceMetricsProps) {
         </div>
       )}
 
-      {/* Metric cards grid */}
-      {!loading && !error && metrics.length > 0 && (
+      {/* Metric cards grid — only show metrics that have data */}
+      {!loading && !error && metrics.length > 0 && (() => {
+        const withData = metrics.filter((s) => {
+          const cd = seriesToChartData(s);
+          return cd.values.length >= 2 || (s.current != null && s.current !== 0);
+        });
+        if (withData.length === 0) return null;
+        return (
         <div className="grid grid-cols-2 gap-4">
-          {metrics.map((series) => {
+          {withData.map((series) => {
             const chartData = seriesToChartData(series);
             const hasChart = chartData.values.length >= 2;
             return (
-              <div key={series.name} className="rounded-lg border border-border/25 bg-card/40 overflow-hidden">
+              <div key={series.name} className="rounded-lg border border-border/25 bg-card/40 overflow-hidden flex flex-col">
                 {/* Card header: metric name left, current value right */}
                 <div className="flex items-baseline justify-between px-4 pt-3 pb-1">
                   <span className="text-[12px] font-body text-foreground/70 font-medium">
@@ -139,13 +145,15 @@ export function ServiceMetrics({ serviceName }: ServiceMetricsProps) {
                     </span>
                   </span>
                 </div>
-                {/* Chart or empty area */}
+                {/* Chart */}
                 {hasChart ? (
-                  <MetricChart series={chartData} bare />
+                  <div className="flex-1">
+                    <MetricChart series={chartData} bare />
+                  </div>
                 ) : (
-                  <div className="h-[100px] flex items-center justify-center">
-                    <span className="text-[10px] text-muted-foreground/30 font-mono">
-                      no time series data
+                  <div className="flex-1 min-h-[80px] flex items-center justify-center">
+                    <span className="font-mono text-[28px] font-semibold tabular-nums text-foreground/80">
+                      {series.current != null ? formatMetricValue(series.current) : "—"}
                     </span>
                   </div>
                 )}
@@ -153,7 +161,8 @@ export function ServiceMetrics({ serviceName }: ServiceMetricsProps) {
             );
           })}
         </div>
-      )}
+        );
+      })()}
 
       {/* Empty state */}
       {!loading && !error && metrics.length === 0 && (
