@@ -39,7 +39,7 @@ describe("route handlers", () => {
     const handlers = buildHandlers(db as Database, services);
     const result = handlers.listInvestigations(20, 0);
     expect(result).toHaveLength(1);
-    expect(db.listInvestigations).toHaveBeenCalledWith(20, 0);
+    expect(db.listInvestigations).toHaveBeenCalledWith(20, 0, undefined);
   });
 
   it("getInvestigation returns investigation with phases", () => {

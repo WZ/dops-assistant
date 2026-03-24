@@ -65,7 +65,7 @@ const CHART_H = 130;
 const CHART_W = 360;
 const PAD = { top: 10, right: 28, bottom: 28, left: 48 };
 
-export function MetricChart({ series }: { series: TimeSeriesData }) {
+export function MetricChart({ series, bare }: { series: TimeSeriesData; bare?: boolean }) {
   const [hover, setHover] = useState<number | null>(null);
   const uid = useId().replace(/:/g, "");
 
@@ -119,25 +119,8 @@ export function MetricChart({ series }: { series: TimeSeriesData }) {
   const cFg = "hsl(var(--foreground) / 0.8)";
   const cBorderSolid = "hsl(var(--border))";
 
-  return (
-    <div className="rounded-lg border border-border/25 bg-card/40 overflow-hidden animate-fade-up card-lift">
-      {/* Title bar */}
-      <div className="flex items-center justify-between px-3.5 py-2 border-b border-border/15">
-        <div className="flex items-center gap-2 min-w-0">
-          <div className="w-1.5 h-1.5 rounded-full bg-primary/60 shrink-0" />
-          <span className="font-mono text-[10px] text-foreground/65 truncate">{title}</span>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {series.instance && (
-            <span className="text-[8px] font-mono text-muted-foreground/65 px-1.5 py-0.5 rounded bg-secondary/30 border border-border/15">
-              {series.instance}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Chart area */}
-      <div className="px-2 pt-1 pb-1">
+  const chartSvg = (
+      <div className={bare ? "" : "px-2 pt-1 pb-1"}>
         <svg
           viewBox={`0 0 ${CHART_W} ${CHART_H}`}
           className="w-full h-auto select-none"
@@ -282,33 +265,56 @@ export function MetricChart({ series }: { series: TimeSeriesData }) {
           )}
         </svg>
       </div>
+  );
 
-      {/* Stats footer */}
-      {(series.min !== undefined || series.avg !== undefined || series.max !== undefined) && (
-        <div className="flex items-center gap-4 px-3.5 py-1.5 border-t border-border/10 bg-secondary/10">
-          {series.min !== undefined && (
-            <div className="flex items-center gap-1.5">
-              <span className="text-[8px] font-mono text-muted-foreground/65 uppercase">min</span>
-              <span className="text-[9px] font-mono text-foreground/55">{formatValue(series.min)}</span>
-            </div>
-          )}
-          {series.avg !== undefined && (
-            <div className="flex items-center gap-1.5">
-              <span className="text-[8px] font-mono text-muted-foreground/65 uppercase">avg</span>
-              <span className="text-[9px] font-mono text-primary/70">{formatValue(series.avg)}</span>
-            </div>
-          )}
-          {series.max !== undefined && (
-            <div className="flex items-center gap-1.5">
-              <span className="text-[8px] font-mono text-muted-foreground/65 uppercase">max</span>
-              <span className="text-[9px] font-mono text-foreground/55">{formatValue(series.max)}</span>
-            </div>
-          )}
-          <div className="ml-auto">
-            <span className="text-[8px] font-mono text-muted-foreground/55">{series.values.length} pts</span>
-          </div>
+  const statsFooter = (series.min !== undefined || series.avg !== undefined || series.max !== undefined) ? (
+    <div className="flex items-center gap-4 px-3.5 py-1.5 border-t border-border/10 bg-secondary/10">
+      {series.min !== undefined && (
+        <div className="flex items-center gap-1.5">
+          <span className="text-[8px] font-mono text-muted-foreground/65 uppercase">min</span>
+          <span className="text-[9px] font-mono text-foreground/55">{formatValue(series.min)}</span>
         </div>
       )}
+      {series.avg !== undefined && (
+        <div className="flex items-center gap-1.5">
+          <span className="text-[8px] font-mono text-muted-foreground/65 uppercase">avg</span>
+          <span className="text-[9px] font-mono text-primary/70">{formatValue(series.avg)}</span>
+        </div>
+      )}
+      {series.max !== undefined && (
+        <div className="flex items-center gap-1.5">
+          <span className="text-[8px] font-mono text-muted-foreground/65 uppercase">max</span>
+          <span className="text-[9px] font-mono text-foreground/55">{formatValue(series.max)}</span>
+        </div>
+      )}
+      <div className="ml-auto">
+        <span className="text-[8px] font-mono text-muted-foreground/55">{series.values.length} pts</span>
+      </div>
+    </div>
+  ) : null;
+
+  if (bare) {
+    return <>{chartSvg}{statsFooter}</>;
+  }
+
+  return (
+    <div className="rounded-lg border border-border/25 bg-card/40 overflow-hidden animate-fade-up card-lift">
+      {/* Title bar */}
+      <div className="flex items-center justify-between px-3.5 py-2 border-b border-border/15">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="w-1.5 h-1.5 rounded-full bg-primary/60 shrink-0" />
+          <span className="font-mono text-[10px] text-foreground/65 truncate">{title}</span>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {series.instance && (
+            <span className="text-[8px] font-mono text-muted-foreground/65 px-1.5 py-0.5 rounded bg-secondary/30 border border-border/15">
+              {series.instance}
+            </span>
+          )}
+        </div>
+      </div>
+      {chartSvg}
+      {statsFooter}
     </div>
   );
 }

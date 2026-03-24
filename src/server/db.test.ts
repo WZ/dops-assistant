@@ -300,4 +300,97 @@ describe("Database", () => {
       expect(stats.mttr.completed7d).toBe(2);
     });
   });
+
+  // ── Service metadata ──────────────────────────────────────────────────
+
+  describe("service metadata", () => {
+    it("upsertServiceMetadata creates and getServiceMetadata retrieves", () => {
+      db.upsertServiceMetadata("payments-api", { alias: "Payments", tags: ["critical", "backend"] });
+      const meta = db.getServiceMetadata("payments-api");
+      expect(meta).toBeDefined();
+      expect(meta!.service).toBe("payments-api");
+      expect(meta!.alias).toBe("Payments");
+      expect(meta!.tags).toEqual(["critical", "backend"]);
+      expect(meta!.updated_at).toBeTruthy();
+    });
+
+    it("returns null for unknown service", () => {
+      const meta = db.getServiceMetadata("nonexistent");
+      expect(meta).toBeNull();
+    });
+
+    it("updates alias without clearing tags", () => {
+      db.upsertServiceMetadata("payments-api", { alias: "Payments", tags: ["critical"] });
+      db.upsertServiceMetadata("payments-api", { alias: "Payments V2" });
+      const meta = db.getServiceMetadata("payments-api");
+      expect(meta!.alias).toBe("Payments V2");
+      expect(meta!.tags).toEqual(["critical"]);
+    });
+
+    it("updates tags without clearing alias", () => {
+      db.upsertServiceMetadata("payments-api", { alias: "Payments", tags: ["critical"] });
+      db.upsertServiceMetadata("payments-api", { tags: ["critical", "tier-1"] });
+      const meta = db.getServiceMetadata("payments-api");
+      expect(meta!.alias).toBe("Payments");
+      expect(meta!.tags).toEqual(["critical", "tier-1"]);
+    });
+
+    it("getAllServiceMetadata returns all entries", () => {
+      db.upsertServiceMetadata("svc-a", { alias: "Service A" });
+      db.upsertServiceMetadata("svc-b", { tags: ["backend"] });
+      const all = db.getAllServiceMetadata();
+      expect(all).toHaveLength(2);
+      const names = all.map(m => m.service);
+      expect(names).toContain("svc-a");
+      expect(names).toContain("svc-b");
+    });
+
+    it("getAllServiceMetadata returns empty array when no metadata exists", () => {
+      const all = db.getAllServiceMetadata();
+      expect(all).toEqual([]);
+    });
+
+    it("upsertServiceMetadata with empty update on new service creates with nulls", () => {
+      db.upsertServiceMetadata("svc-new", {});
+      const meta = db.getServiceMetadata("svc-new");
+      expect(meta).toBeDefined();
+      expect(meta!.alias).toBeNull();
+      expect(meta!.tags).toEqual([]);
+    });
+  });
+
+  // ── listInvestigations with service filter ────────────────────────────
+
+  describe("listInvestigations with service filter", () => {
+    beforeEach(() => {
+      db.createInvestigation({ id: "inv_1", service: "payments-api", query: "high latency", status: "complete" });
+      db.createInvestigation({ id: "inv_2", service: "auth-service", query: "login failures", status: "complete" });
+      db.createInvestigation({ id: "inv_3", service: "payments-api", query: "error spike", status: "running" });
+      db.createInvestigation({ id: "inv_4", service: "redis", query: "memory", status: "complete" });
+    });
+
+    it("filters by service when param provided", () => {
+      const list = db.listInvestigations(10, 0, "payments-api");
+      expect(list).toHaveLength(2);
+      expect(list.every(inv => inv.service === "payments-api")).toBe(true);
+    });
+
+    it("returns all when no service filter", () => {
+      const list = db.listInvestigations(10, 0);
+      expect(list).toHaveLength(4);
+    });
+
+    it("returns empty array when service has no investigations", () => {
+      const list = db.listInvestigations(10, 0, "nonexistent-service");
+      expect(list).toEqual([]);
+    });
+
+    it("respects limit and offset with service filter", () => {
+      // Add more investigations for payments-api
+      db.createInvestigation({ id: "inv_5", service: "payments-api", query: "q5", status: "complete" });
+      const page = db.listInvestigations(1, 1, "payments-api");
+      expect(page).toHaveLength(1);
+      expect(page[0]!.service).toBe("payments-api");
+    });
+  });
 });

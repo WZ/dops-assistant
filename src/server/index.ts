@@ -134,7 +134,7 @@ async function main() {
   });
   healthPoller.start();
 
-  registerRoutes(app, db, config.services, undefined, skillStore, registryStore, registry, config.branding, healthPoller);
+  registerRoutes(app, db, config.services, undefined, skillStore, registryStore, registry, config.branding, healthPoller, getProviders);
 
   // Health check endpoint with background monitoring
   startHealthMonitor({ providers: getProviders, db });

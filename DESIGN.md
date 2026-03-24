@@ -92,18 +92,39 @@ Dark mode uses deep charcoal backgrounds (225° hue, cool undertone) rather than
 | 3xl | 64px | Page-level vertical rhythm |
 
 ## Layout
-- **Approach:** Grid-disciplined dashboard
-- **Grid:** Three-column: sidebar/main/chat via `ResizablePanelGroup`. Proportions: ~25% / ~45% / ~30% (user-adjustable).
+- **Approach:** Grid-disciplined dashboard with vertical sidebar navigation
+- **Shell structure:** `sidebar (48px) | content (60%) | chat (40%)` via flex + `ResizablePanelGroup` for the content/chat split.
+- **Sidebar:** 48px icon-only rail, always visible. Active indicator: 3px × 16px teal bar on left edge. Theme toggle pinned to sidebar bottom.
+- **Top bar:** 40px. Left: branding dots + "DOPS ASSISTANT". Right: health status cluster (dot + HEALTHY + uptime + mcp:ok + db:ok). No navigation items in the top bar.
+- **Content/Chat split:** `ResizablePanelGroup` horizontal. Content panel default 60%, chat panel default 40%, both user-resizable.
 - **Max content width:** No hard max — fills available viewport. Report text maxes at 640px for readable line length.
 - **Border radius:**
 
 | Token | Value | Usage |
 |-------|-------|-------|
 | sm | 4px | Badges, inline tags, code snippets |
-| md | 8px | Buttons, inputs, small cards, stat cards |
+| md | 8px | Buttons, inputs, small cards, stat cards, sidebar buttons |
 | lg | 10px | Cards, panels, modals (default `--radius`) |
 | xl | 14px | Large containers, mockup frames, popovers |
 | full | 9999px | Pills, status dots, circular indicators |
+
+### Navigation
+
+Three sidebar items:
+
+| Icon | Page | Content |
+|------|------|---------|
+| Layout grid | **Dashboard** | KPIs, active investigations, health strip, investigation log |
+| Server stack | **Services** | Full service card grid (grouped by health), search, hide/unhide, manage, discover |
+| Gear | **Settings** | Tabbed: Providers + Skills |
+
+**Sidebar behavior:**
+- 36px icon buttons with 8px border-radius
+- Active state: `primary/8` background + `primary` icon color + left-edge bar
+- Inactive: `muted-foreground` icon, hover → `secondary` background
+- Tooltip on hover: `JetBrains Mono 10px`, slides out 8px to the right, `fg` background / `bg` text
+
+**Page transitions:** Switching pages does not change the chat panel — the console persists across all pages. The chat panel's "investigate" command automatically navigates the left panel to the investigation detail view regardless of current page.
 
 ## Motion
 - **Approach:** Minimal-functional — every animation aids comprehension. No motion for decoration. The product should feel calm and precise, not bouncy.
@@ -134,19 +155,28 @@ Dark mode uses deep charcoal backgrounds (225° hue, cool undertone) rather than
 - **Horizontal rules:** Clean 1px borders as section dividers. No heavy card borders or shadow-heavy elevation. Let typography create hierarchy.
 - **Monospace stamps:** Section labels use JetBrains Mono uppercase with wide letter-spacing (0.1–0.12em). Creates a "case file classification" aesthetic.
 
-## Dashboard Layout
-The main dashboard ("Operations Desk") follows a two-panel layout: scrollable dashboard (left) + resizable console/chat (right).
+## Page: Dashboard
 
-**Dashboard column (top to bottom):**
-1. **Status Strip** — system health, uptime, MCP/DB probe status. Monospace stamp. Always visible.
-2. **Page title** — "Operations Desk" in Inter 700.
-3. **KPI Stat Cards** — 2x2 grid. Investigations (count · success rate%), Services Health (healthy/total from Prometheus), Avg MTTR 7d (with trend arrow), Avg Confidence (mean RCA confidence score). Mono-display numbers, Inter labels.
-4. **Active Investigations** — conditional coral-tinted section. Pulsing dots for running, red for failed. Collapses when nothing active.
-5. **Services Grid** — 2-3 col cards with health dot, investigation count, last investigation time. Manage/Re-discover links below.
-6. **Investigation Log** — compact table: status dot, service + severity badge, root cause, confidence, tokens, duration.
-7. **Learned Patterns** — collapsed by default. Severity badge + service + symptom/root cause.
+The main dashboard ("Operations Desk") is a read-only monitoring view. No management actions — just status and history.
 
-**Console panel (right):** Existing ChatPane, resizable 240-500px.
+**Dashboard sections (top to bottom):**
+1. **Page title** — "Operations Desk" in Inter 700 + subtitle showing service count and last-updated timestamp.
+2. **KPI Stat Cards** — 3-column grid. Investigations (count + complete/failed + confidence), Services Health (healthy/total, colored by status), Avg MTTR 7d (with trend arrow). Mono-display numbers, Inter labels.
+3. **Active Investigations** — conditional coral-tinted section. Pulsing dots for running, red for failed. Collapses when nothing active.
+4. **Health Strip** — compact chip layout replacing the full service card grid. Each service rendered as a `dot + name` chip (JetBrains Mono 10px) in a wrapping flex container. Chips sorted: degraded/down first, then healthy, then unknown. Clicking a chip navigates to the Services page. "View all →" link at the end navigates to Services.
+5. **Investigation Log** — compact table: status dot, service + severity badge, root cause, confidence, timestamp.
+6. **Learned Patterns** — collapsed by default. Severity badge + service + symptom/root cause.
+
+### Health Strip Design
+
+The health strip is a single card container (`bg-card`, `border`, `border-radius: lg`, `padding: 12px 16px`) with wrapping flex layout (`gap: 6px`). Each chip:
+- `padding: 4px 10px`, `border-radius: 6px`, `background: secondary/50`
+- Dot: `5px` circle, colored by health status (success/warning/destructive/muted-foreground)
+- Name: `JetBrains Mono 10px 500`, `foreground/75`
+- Hover: `background: secondary`
+- Clicking a chip navigates to the Services page (not an inline expansion)
+
+**Rationale:** The health strip communicates the same information as the full card grid (which service is in what state) in ~1/5th the vertical space. On a monitoring dashboard, you only need to *identify* unhealthy services at a glance — the details belong on the Services page.
 
 ### Dashboard Interaction States
 
@@ -154,11 +184,43 @@ The main dashboard ("Operations Desk") follows a two-panel layout: scrollable da
 
 **Toast notifications** — bottom-right, 24px from edges, max-width 320px. Card background with border + shadow (0 8px 24px foreground/08). Status dot (success/destructive) + service name (body 13px semibold) + status text (mono 10px). Slide-in-right entrance (350ms), fade-out exit (250ms). Auto-dismiss 8s, hover pauses. Max 3 stacked, 8px gap. Click navigates to investigation.
 
-**"Last updated" timestamp** — right-aligned in title row after services count. JetBrains Mono 9px, muted-foreground/50, tracking-wide. Format: "Updated HH:MM:SS" (24h, tabular-nums). Shifts to warning/60 after 2 minutes stale.
+**"Last updated" timestamp** — inline in page subtitle after services count. JetBrains Mono 9px, muted-foreground/50, tracking-wide. Format: "Updated HH:MM:SS" (24h, tabular-nums). Shifts to warning/60 after 2 minutes stale.
 
-**Auto-refresh indicator** — full-width 2px hairline below status strip. Reuses progress-bar-track/fill pattern. Linear fill over 60 seconds (not eased — progress should feel steady). Instant reset on fetch. Indeterminate animation during manual retry.
+**Auto-refresh indicator** — full-width 2px hairline at top of content area. Breathing animation (primary/30 opacity pulse). Resets on fetch.
 
 **Empty state illustrations** — monochrome line art (stroke: muted-foreground/15, 1.5px, no fill). 64px viewBox rendered at 48px. Investigations: magnifying glass over blank page. Services: compass with dotted sweep lines. Text below: body 13px muted-foreground/70, mono 10px subtext. Centered, 12px gap.
+
+## Page: Services
+
+Full service management page. Contains all service cards, health monitoring, and management actions that were previously on the Dashboard.
+
+**Services page sections:**
+1. **Page title** — "Services" in Inter 700 + subtitle with total count and health breakdown.
+2. **Toolbar** — search input (JetBrains Mono 10px, 180px→220px on focus) + action buttons: Select (toggle bulk mode), Manage (navigate to manage sub-view), Re-discover (primary button, triggers AI discovery).
+3. **Service groups** — cards grouped by health status (Degraded/Down → Healthy → Unknown → Hidden). Each group has a collapsible header with arrow + colored dot + label + count.
+4. **Service cards** — 3-column grid. Each card: health dot (8px with ring), service name, health status label, 24h sparkline (DotTimeline), investigation count + last investigation time. Hide button on hover. Full card is clickable → triggers investigation via chat.
+
+**Management actions** (all moved from Dashboard):
+- Hide/unhide individual services
+- Bulk select mode with "Hide N selected" action bar
+- "hide all" link on Unknown group header
+- Manage and Re-discover toolbar buttons
+
+**Sub-views** (navigate within Services page, not separate pages):
+- `services:manage` — ServicesManage component
+- `services:history` — VersionHistory component
+- `services:discovery` — DiscoveryProgress component
+- `services:review` — DiscoveryReview component
+
+## Page: Settings
+
+Combined Providers + Skills page with tab navigation.
+
+**Settings page structure:**
+1. **Page title** — "Settings" in Inter 700 + subtitle "Providers, skills, and configuration".
+2. **Tab bar** — horizontal tabs at top: "Providers" (default), "Skills". Tab style: JetBrains Mono 10px 500, 2px bottom border for active tab (primary color), border-bottom 1px separator.
+3. **Providers tab** — existing ProvidersPage content (provider cards with name, transport, connection status badge, role badges).
+4. **Skills tab** — existing SkillsPage content (skill editor with YAML).
 
 ## Decisions Log
 | Date | Decision | Rationale |
@@ -178,3 +240,9 @@ The main dashboard ("Operations Desk") follows a two-panel layout: scrollable da
 | 2026-03-18 | "Last updated" as inline text, not separate component | A dedicated "freshness bar" is over-designed for a single timestamp. Inline after service count keeps it discoverable without adding visual weight. Warning color at 2min signals staleness without alarm. |
 | 2026-03-18 | Empty states use monochrome line art, not filled illustrations | Colored illustrations would fight the restrained palette. Line art at 15% opacity stays subordinate to the content hierarchy — visible enough to humanize, light enough not to distract. |
 | 2026-03-18 | Auto-refresh uses linear easing, not ease-out | Progress bars with eased motion feel deceptive — they appear to speed up or slow down when the refresh interval is constant. Linear communicates honest, predictable behavior. |
+| 2026-03-24 | Switched from horizontal top nav to 48px vertical icon sidebar | Product has grown to enough pages that horizontal nav was running out of space. Vertical sidebar matches observability tool conventions (Grafana, Datadog, incident.io) and scales to future pages. |
+| 2026-03-24 | Reorganized into 3 pages: Dashboard, Services, Settings | Dashboard was trying to be monitoring overview + service management + investigation history all at once. Split into: Dashboard (read-only monitoring), Services (full management), Settings (providers + skills combined). |
+| 2026-03-24 | Replaced full service card grid on Dashboard with compact health strip | Full card grid with management UI was the primary source of dashboard clutter. Health strip (dot + name chips) communicates service status in ~1/5th the vertical space. Details and management moved to dedicated Services page. |
+| 2026-03-24 | Combined Providers and Skills into Settings page with tabs | Both are configuration concerns. Separating them into two top-level nav items isn't justified — they're visited infrequently. Tabs keep both discoverable without adding nav depth. |
+| 2026-03-24 | Theme toggle moved from top bar to sidebar bottom | Declutters the top bar (now just branding + health status). Theme toggle is a low-frequency action that doesn't need prime top-bar real estate. Sidebar bottom is the convention (VS Code, Linear, Notion). |
+| 2026-03-24 | KPI grid changed from 4 columns to 3 | Dropped Avg Confidence as a standalone KPI card. Confidence value is now shown inline in the Investigations card detail text. Three cards answer: how many + how well, how healthy, how fast. |
