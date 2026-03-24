@@ -10,6 +10,12 @@ import { PrefetchedContextSchema } from "../types/workflow-state.js";
 
 export { PrefetchedContextSchema };
 
+/** Reusable time range schema for investigation window metadata. */
+export const TimeRangeSchema = z.object({
+  from: z.string(),
+  to: z.string(),
+});
+
 export const WorkflowInputSchema = z.object({
   userMessage: z.string(),
   alertName: z.string().optional(),
@@ -53,7 +59,8 @@ export const PlanningOutputSchema = z.object({
 export const EvidenceOutputSchema = z.object({
   summary: z.string(),
   observations: z.array(z.unknown()).optional(),
-  // Generic evidence output from metrics/logs/infra agents
+  // Pass-through: injected by buildEvidenceStep factory, not produced by agents
+  timeRange: TimeRangeSchema.optional(),
 });
 
 export const ParallelEvidenceSchema = z.object({
@@ -88,6 +95,7 @@ export const SynthesisOutputSchema = z.object({
   recommendedActions: z.array(z.string()).default([]),
   confidence: z.enum(["low", "medium", "high"]).default("low"),
   confidenceScore: z.number().default(0.5),
+  timeRange: TimeRangeSchema.optional(),
 });
 
 export const PostSynthesisOutputSchema = z.object({
@@ -116,4 +124,5 @@ export const PostSynthesisOutputSchema = z.object({
   confidenceScore: z.number(),
   savedToHistory: z.boolean(),
   investigatedAt: z.string(),
+  timeRange: TimeRangeSchema.optional(),
 });

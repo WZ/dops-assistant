@@ -146,6 +146,42 @@ export function extractTimeRange(anomalySummary: string, userMessage?: string): 
   return { from: "now-8h", to: "now" };
 }
 
+/**
+ * Resolve a time range to absolute UTC ISO strings.
+ * Handles both absolute ISO dates (pass-through) and Grafana-relative expressions
+ * ("now-7d", "now"). Use this when persisting time ranges to report metadata —
+ * relative strings are meaningless after the investigation completes.
+ */
+export function resolveTimeRangeToAbsolute(range: { from: string; to: string }): { from: string; to: string } {
+  const resolve = (expr: string): string => {
+    // Already absolute ISO — validate before converting
+    if (/^\d{4}-\d{2}-\d{2}/.test(expr)) {
+      const d = new Date(expr);
+      return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+    }
+    // Grafana-relative: "now", "now-1h", "now-7d", etc.
+    const m = expr.match(/^now(?:-(\d+)([smhdw]))?/);
+    if (m) {
+      const d = new Date();
+      if (m[1] && m[2]) {
+        const n = parseInt(m[1], 10);
+        const multipliers: Record<string, () => void> = {
+          s: () => d.setSeconds(d.getSeconds() - n),
+          m: () => d.setMinutes(d.getMinutes() - n),
+          h: () => d.setHours(d.getHours() - n),
+          d: () => d.setDate(d.getDate() - n),
+          w: () => d.setDate(d.getDate() - n * 7),
+        };
+        multipliers[m[2]]?.();
+      }
+      return d.toISOString();
+    }
+    // Unknown format — return as-is (shouldn't happen)
+    return expr;
+  };
+  return { from: resolve(range.from), to: resolve(range.to) };
+}
+
 /** Suggest step size for Prometheus range queries. Aims for ~100 data points. */
 export function suggestStepSeconds(window: { from: string; to: string }): number {
   try {
