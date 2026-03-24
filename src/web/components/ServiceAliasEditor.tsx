@@ -83,7 +83,7 @@ export function AliasEditor({
   if (!open) return null;
 
   return (
-    <div className="absolute z-50 mt-1 min-w-[240px] bg-card border border-border rounded-xl shadow-lg p-3 flex flex-col gap-2">
+    <div className="absolute z-50 mt-1 min-w-[240px] bg-card border border-border rounded-lg shadow-lg p-3 flex flex-col gap-2">
       <div className="text-[10px] font-mono uppercase tracking-[0.1em] text-muted-foreground/60 mb-0.5">
         Display Name
       </div>
@@ -241,7 +241,7 @@ export function TagEditor({
   if (!open) return null;
 
   return (
-    <div className="absolute z-50 mt-1 min-w-[280px] bg-card border border-border rounded-xl shadow-lg p-3 flex flex-col gap-2">
+    <div className="absolute z-50 mt-1 min-w-[280px] bg-card border border-border rounded-lg shadow-lg p-3 flex flex-col gap-2">
       <div className="text-[10px] font-mono uppercase tracking-[0.1em] text-muted-foreground/60 mb-0.5">
         Tags
       </div>
