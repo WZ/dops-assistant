@@ -105,7 +105,7 @@ export function AliasEditor({
           size="sm"
           onClick={() => onOpenChange(false)}
           disabled={saving}
-          className="h-7 px-2 text-[11px] font-mono text-muted-foreground hover:text-foreground"
+          className="min-h-[36px] px-2 text-[11px] font-mono text-muted-foreground hover:text-foreground"
         >
           <X size={12} className="mr-1" />
           Cancel
@@ -114,7 +114,7 @@ export function AliasEditor({
           size="sm"
           onClick={handleSave}
           disabled={saving}
-          className="h-7 px-2 text-[11px] font-mono bg-primary text-primary-foreground hover:bg-primary/90"
+          className="min-h-[36px] px-2 text-[11px] font-mono bg-primary text-primary-foreground hover:bg-primary/90"
         >
           <Check size={12} className="mr-1" />
           {saving ? "Saving…" : "Save"}
@@ -283,7 +283,7 @@ export function TagEditor({
           size="sm"
           onClick={addTag}
           disabled={saving || !input.trim()}
-          className="h-8 px-2 text-[11px] font-mono bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          className="min-h-[36px] px-2 text-[11px] font-mono bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         >
           Add
         </Button>

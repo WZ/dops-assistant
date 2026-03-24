@@ -67,7 +67,8 @@ export function ServiceDetailHeader({
       <div className="flex items-center gap-1.5 mb-3">
         <button
           onClick={onBack}
-          className="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground/60 hover:text-primary transition-colors"
+          className="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground/60 hover:text-primary transition-colors min-h-[44px] flex items-center"
+          aria-label="Back to dashboard"
         >
           Dashboard
         </button>
@@ -79,13 +80,14 @@ export function ServiceDetailHeader({
 
       {/* Title row */}
       <div className="flex items-center gap-3 mb-2">
-        <button
+        <Button
+          variant="ghost"
           onClick={onBack}
-          className="p-1 -ml-1 text-muted-foreground/50 hover:text-foreground/70 transition-colors"
+          className="min-h-[44px] min-w-[44px] p-2 -ml-2 text-muted-foreground/50 hover:text-foreground/70 transition-colors"
           aria-label="Back to dashboard"
         >
           <ArrowLeft size={16} />
-        </button>
+        </Button>
         <div className={healthDotClass(healthStatus)} />
         <h1 className="font-display text-[22px] font-semibold text-foreground/90 leading-tight">
           {displayName}
@@ -115,14 +117,14 @@ export function ServiceDetailHeader({
       <div className="flex items-center gap-2 ml-9 mb-2">
         <Button
           onClick={onInvestigate}
-          className="h-8 px-3 text-[11px] font-mono bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+          className="min-h-[44px] px-3 text-[11px] font-mono bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
         >
           <Search size={12} className="mr-1.5" />
           Investigate
         </Button>
         <Button
           variant="outline"
-          className="h-8 px-3 text-[11px] font-mono bg-secondary border-border text-foreground/70 hover:text-foreground/90 hover:bg-secondary/80 transition-colors"
+          className="min-h-[44px] px-3 text-[11px] font-mono bg-secondary border-border text-foreground/70 hover:text-foreground/90 hover:bg-secondary/80 transition-colors"
           onClick={() => {
             // TODO: Wire to Grafana dashboard URL from provider config
           }}
@@ -136,7 +138,7 @@ export function ServiceDetailHeader({
           <Button
             variant="ghost"
             onClick={onEditAlias}
-            className="h-8 px-3 text-[11px] font-mono text-muted-foreground border border-border/50 hover:text-foreground/70 hover:bg-secondary/30 transition-colors"
+            className="min-h-[44px] px-3 text-[11px] font-mono text-muted-foreground border border-border/50 hover:text-foreground/70 hover:bg-secondary/30 transition-colors"
           >
             <Pencil size={12} className="mr-1.5" />
             Edit Name
@@ -155,7 +157,7 @@ export function ServiceDetailHeader({
           <Button
             variant="ghost"
             onClick={onAddTag}
-            className="h-8 px-3 text-[11px] font-mono text-muted-foreground border border-border/50 hover:text-foreground/70 hover:bg-secondary/30 transition-colors"
+            className="min-h-[44px] px-3 text-[11px] font-mono text-muted-foreground border border-border/50 hover:text-foreground/70 hover:bg-secondary/30 transition-colors"
           >
             <Plus size={12} className="mr-1.5" />
             Tag
