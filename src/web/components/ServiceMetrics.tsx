@@ -124,37 +124,31 @@ export function ServiceMetrics({ serviceName }: ServiceMetricsProps) {
         <div className="grid grid-cols-2 gap-4">
           {metrics.map((series) => {
             const chartData = seriesToChartData(series);
-            if (chartData.values.length < 2) {
-              // Single data point — show as stat card instead of empty chart
-              return (
-                <div key={series.name} className="space-y-2">
-                  <span className="text-[12px] font-body text-muted-foreground font-medium">{series.name}</span>
-                  <div className="h-[130px] rounded-lg border border-border/25 bg-card/40 flex flex-col items-center justify-center gap-1">
-                    <span className="font-mono text-[28px] font-semibold tabular-nums">
-                      {series.current != null ? formatMetricValue(series.current) : "—"}
-                    </span>
-                    {series.unit && (
-                      <span className="text-[11px] text-muted-foreground/50 font-mono">{series.unit}</span>
-                    )}
-                    <span className="text-[10px] text-muted-foreground/30 font-mono">current value</span>
-                  </div>
-                </div>
-              );
-            }
+            const hasChart = chartData.values.length >= 2;
             return (
-              <div key={series.name} className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[12px] text-muted-foreground font-medium">
+              <div key={series.name} className="rounded-lg border border-border/25 bg-card/40 overflow-hidden">
+                {/* Card header: metric name left, current value right */}
+                <div className="flex items-baseline justify-between px-4 pt-3 pb-1">
+                  <span className="text-[12px] font-body text-muted-foreground font-medium">
                     {series.name}
                   </span>
-                  <span className="font-mono text-lg font-semibold tabular-nums">
-                    {series.current != null ? formatMetricValue(series.current) : "—"}{" "}
-                    <span className="text-[11px] text-muted-foreground font-normal">
+                  <span className="font-mono text-[22px] font-semibold tabular-nums leading-none">
+                    {series.current != null ? formatMetricValue(series.current) : "—"}
+                    <span className="text-[11px] text-muted-foreground/60 font-normal ml-1">
                       {series.unit}
                     </span>
                   </span>
                 </div>
-                <MetricChart series={chartData} />
+                {/* Chart or empty area */}
+                {hasChart ? (
+                  <MetricChart series={chartData} bare />
+                ) : (
+                  <div className="h-[100px] flex items-center justify-center">
+                    <span className="text-[10px] text-muted-foreground/30 font-mono">
+                      no time series data
+                    </span>
+                  </div>
+                )}
               </div>
             );
           })}
