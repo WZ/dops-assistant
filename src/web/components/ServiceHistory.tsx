@@ -102,10 +102,10 @@ export function ServiceHistory({ serviceName, onViewInvestigation }: ServiceHist
           <span
             className={`w-2 h-2 rounded-full shrink-0 ${
               inv.status === "complete"
-                ? "bg-green-500"
+                ? "bg-success"
                 : inv.status === "failed"
-                  ? "bg-red-500"
-                  : "bg-blue-500 animate-pulse"
+                  ? "bg-destructive"
+                  : "bg-info animate-status-pulse"
             }`}
           />
 
