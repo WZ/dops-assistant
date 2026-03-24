@@ -157,7 +157,7 @@ export function ServicesPage({
   // ── Discovery state → sub-view transitions ────────────────────────
   // Track previous values to detect *transitions*, not react to initial state
   const prevDiscoveryStatusRef = useRef(discoveryState.status);
-  const prevResultsLenRef = useRef(discoveryState.results.length);
+  const prevResultsRef = useRef(discoveryState.results);
 
   useEffect(() => {
     // Only switch to discovery view on a transition TO running (not on mount)
@@ -168,11 +168,11 @@ export function ServicesPage({
   }, [discoveryState.status]);
 
   useEffect(() => {
-    // When discover:complete fires (results array grows), switch to review
-    if (discoveryState.results.length > 0 && discoveryState.results.length !== prevResultsLenRef.current) {
+    // When discover:complete fires (results array reference changes), switch to review
+    if (discoveryState.results.length > 0 && discoveryState.results !== prevResultsRef.current) {
       setSubView({ type: "review" });
     }
-    prevResultsLenRef.current = discoveryState.results.length;
+    prevResultsRef.current = discoveryState.results;
   }, [discoveryState.results]);
 
   // ── Keyboard shortcuts: / to focus search, Escape to clear ────────
@@ -316,25 +316,18 @@ export function ServicesPage({
     setToasts(prev => prev.filter(t => t.id !== id));
   };
 
-  const handleDiscoveryAccept = useCallback(async (accepted: ServiceConfig[]) => {
-    try {
-      const res = await fetch("/api/services", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(accepted),
-      });
-      if (res.ok) {
-        onResetDiscovery();
-        fetchData();
-        setSubView({ type: "grid" });
-      }
-    } catch { /* ignore */ }
-  }, [onResetDiscovery, fetchData]);
+  const handleDiscoveryAccept = useCallback((accepted: ServiceConfig[]) => {
+    ws.send({ type: "discover:accept", services: accepted });
+    onResetDiscovery();
+    fetchData();
+    setSubView({ type: "grid" });
+  }, [ws, onResetDiscovery, fetchData]);
 
   const handleDiscoveryReject = useCallback(() => {
+    ws.send({ type: "discover:reject" });
     onResetDiscovery();
     setSubView({ type: "grid" });
-  }, [onResetDiscovery]);
+  }, [ws, onResetDiscovery]);
 
   // ── Sub-view routing ──────────────────────────────────────────────
 
