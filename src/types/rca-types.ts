@@ -80,6 +80,7 @@ export type RcaReport = {
   confidenceScore: number;
   investigatedAt: string;
   skillsUsed?: string[];
+  timeRange?: { from: string; to: string };
 };
 
 export type InvestigationIntent =

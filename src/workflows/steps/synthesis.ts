@@ -36,6 +36,9 @@ export function buildSynthesisStep(config: WorkflowConfig) {
       const logsFindings = inputData["logs-evidence"] ?? { summary: "Log analysis not run", observations: [] };
       const infraFindings = inputData["infra-evidence"] ?? { summary: "Infrastructure analysis not run", observations: [] };
       const changesFindings = inputData["changes-evidence"];
+
+      // Extract timeRange pass-through from any evidence output (all carry the same value)
+      const timeRange = metricsFindings.timeRange ?? logsFindings?.timeRange ?? infraFindings?.timeRange ?? changesFindings?.timeRange;
       debug("SYNTHESIS findings:", { metrics: !!metricsFindings, logs: !!logsFindings, infra: !!infraFindings, changes: !!changesFindings });
 
       // Build timeline from structured observations
@@ -174,6 +177,7 @@ export function buildSynthesisStep(config: WorkflowConfig) {
         recommendedActions,
         confidence,
         confidenceScore,
+        timeRange,
       };
     },
   });

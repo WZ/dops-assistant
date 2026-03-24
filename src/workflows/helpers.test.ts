@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildTimeline, validateSeverity, extractTimeRange, suggestStepSeconds, toRfc3339Window } from "./helpers.js";
+import { buildTimeline, validateSeverity, extractTimeRange, suggestStepSeconds, toRfc3339Window, resolveTimeRangeToAbsolute } from "./helpers.js";
 import type { MetricFindings, LogFindings, InfraFindings } from "../types/rca-types.js";
 
 describe("buildTimeline", () => {
@@ -307,5 +307,44 @@ describe("toRfc3339Window", () => {
     const start = new Date(result.startRfc3339);
     const sevenDaysAgoMs = Date.now() - 7 * 86400000;
     expect(Math.abs(start.getTime() - sevenDaysAgoMs)).toBeLessThan(5000);
+  });
+});
+
+describe("resolveTimeRangeToAbsolute", () => {
+  it("passes through absolute ISO dates unchanged", () => {
+    const result = resolveTimeRangeToAbsolute({ from: "2026-03-20T15:00:00Z", to: "2026-03-20T17:00:00Z" });
+    expect(result.from).toMatch(/^2026-03-20T15:00:00/);
+    expect(result.to).toMatch(/^2026-03-20T17:00:00/);
+  });
+
+  it("resolves 'now' to current time", () => {
+    const before = Date.now();
+    const result = resolveTimeRangeToAbsolute({ from: "now-8h", to: "now" });
+    const after = Date.now();
+    const toMs = new Date(result.to).getTime();
+    expect(toMs).toBeGreaterThanOrEqual(before - 1000);
+    expect(toMs).toBeLessThanOrEqual(after + 1000);
+  });
+
+  it("resolves 'now-8h' to ~8 hours ago", () => {
+    const result = resolveTimeRangeToAbsolute({ from: "now-8h", to: "now" });
+    const fromMs = new Date(result.from).getTime();
+    const toMs = new Date(result.to).getTime();
+    const diffHours = (toMs - fromMs) / 3600000;
+    expect(diffHours).toBeCloseTo(8, 0);
+  });
+
+  it("resolves 'now-7d' to ~7 days ago", () => {
+    const result = resolveTimeRangeToAbsolute({ from: "now-7d", to: "now" });
+    const fromMs = new Date(result.from).getTime();
+    const toMs = new Date(result.to).getTime();
+    const diffDays = (toMs - fromMs) / 86400000;
+    expect(diffDays).toBeCloseTo(7, 0);
+  });
+
+  it("returns valid ISO strings for all outputs", () => {
+    const result = resolveTimeRangeToAbsolute({ from: "now-1d", to: "now" });
+    expect(new Date(result.from).toISOString()).toBe(result.from);
+    expect(new Date(result.to).toISOString()).toBe(result.to);
   });
 });
