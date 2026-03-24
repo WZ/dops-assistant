@@ -95,15 +95,15 @@ describe("ServiceHistory", () => {
       expect(screen.getByText("High error rate on payment-service")).toBeTruthy();
     });
 
-    // Status dots: green for complete, red for failed, blue for running
+    // Status dots: semantic tokens for complete, failed, running
     const dots = container.querySelectorAll(".rounded-full");
     expect(dots.length).toBe(3);
 
-    // Verify CSS classes map correctly to statuses
+    // Verify CSS classes use semantic design tokens
     const dotClasses = Array.from(dots).map((el) => el.className);
-    expect(dotClasses.some((c) => c.includes("bg-green-500"))).toBe(true); // complete
-    expect(dotClasses.some((c) => c.includes("bg-red-500"))).toBe(true); // failed
-    expect(dotClasses.some((c) => c.includes("bg-blue-500"))).toBe(true); // running
+    expect(dotClasses.some((c) => c.includes("bg-success"))).toBe(true); // complete
+    expect(dotClasses.some((c) => c.includes("bg-destructive"))).toBe(true); // failed
+    expect(dotClasses.some((c) => c.includes("bg-info"))).toBe(true); // running
   });
 
   it("click calls onViewInvestigation with correct ID", async () => {

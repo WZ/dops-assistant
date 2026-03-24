@@ -68,7 +68,6 @@ export function ServiceDetailHeader({
         <button
           onClick={onBack}
           className="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground/60 hover:text-primary transition-colors min-h-[44px] flex items-center"
-          aria-label="Back to dashboard"
         >
           Dashboard
         </button>
