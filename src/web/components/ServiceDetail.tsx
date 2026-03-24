@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, lazy, Suspense } from "react";
 import { ServiceDetailHeader } from "./ServiceDetailHeader";
 import { ServiceMetrics } from "./ServiceMetrics";
 import { ServiceHistory } from "./ServiceHistory";
-import { ServiceDependencyGraph } from "./ServiceDependencyGraph";
+const ServiceDependencyGraph = lazy(() => import("./ServiceDependencyGraph").then(m => ({ default: m.ServiceDependencyGraph })));
 import type { useWebSocket } from "../hooks/useWebSocket";
 
 type TabId = "metrics" | "history" | "dependencies";
@@ -161,7 +161,9 @@ export function ServiceDetail({
           <ServiceHistory serviceName={serviceName} onViewInvestigation={onViewInvestigation} />
         )}
         {activeTab === "dependencies" && (
-          <ServiceDependencyGraph serviceName={serviceName} onViewService={onViewService} />
+          <Suspense fallback={<div className="h-40 rounded-lg bg-muted/30 animate-pulse" />}>
+            <ServiceDependencyGraph serviceName={serviceName} onViewService={onViewService} />
+          </Suspense>
         )}
       </div>
     </div>

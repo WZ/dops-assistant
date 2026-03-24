@@ -28,10 +28,14 @@ function formatMetricValue(v: number): string {
 }
 
 function seriesToChartData(series: MetricSeries): TimeSeriesData {
+  // Guard: ensure values is always a valid array of [string, number] tuples
+  const values = (series.values ?? []).filter(
+    (v): v is [string, number] => Array.isArray(v) && v.length >= 2
+  );
   return {
     metric: series.name,
     query: series.query,
-    values: series.values,
+    values,
     min: series.min,
     max: series.max,
     avg: series.avg,
@@ -120,6 +124,23 @@ export function ServiceMetrics({ serviceName }: ServiceMetricsProps) {
         <div className="grid grid-cols-2 gap-4">
           {metrics.map((series) => {
             const chartData = seriesToChartData(series);
+            if (chartData.values.length < 2) {
+              // MetricChart requires at least 2 data points — show placeholder
+              return (
+                <div key={series.name} className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[12px] text-muted-foreground font-medium">{series.name}</span>
+                    <span className="font-mono text-lg font-semibold tabular-nums">
+                      {series.current != null ? formatMetricValue(series.current) : "—"}{" "}
+                      <span className="text-[11px] text-muted-foreground font-normal">{series.unit}</span>
+                    </span>
+                  </div>
+                  <div className="h-[130px] rounded-lg border border-border/25 bg-card/40 flex items-center justify-center">
+                    <span className="text-[11px] text-muted-foreground/40 font-mono">Insufficient data points</span>
+                  </div>
+                </div>
+              );
+            }
             return (
               <div key={series.name} className="space-y-2">
                 <div className="flex items-center justify-between">
