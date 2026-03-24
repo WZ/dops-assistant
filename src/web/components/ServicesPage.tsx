@@ -155,16 +155,20 @@ export function ServicesPage({
   }, [initialService, services, onInitialServiceConsumed]);
 
   // ── Discovery state → sub-view transitions ────────────────────────
+  // Track previous values to detect *transitions*, not react to initial state
+  const prevDiscoveryStatusRef = useRef(discoveryState.status);
   const prevResultsLenRef = useRef(discoveryState.results.length);
-  useEffect(() => {
-    // When discovery starts (phase changes to non-empty and status is running), switch to discovery view
-    if (discoveryState.status === "running" && discoveryState.phase) {
-      setSubView({ type: "discovery" });
-    }
-  }, [discoveryState.status, discoveryState.phase]);
 
   useEffect(() => {
-    // When discover:complete fires (results array changes), switch to review
+    // Only switch to discovery view on a transition TO running (not on mount)
+    if (discoveryState.status === "running" && prevDiscoveryStatusRef.current !== "running") {
+      setSubView({ type: "discovery" });
+    }
+    prevDiscoveryStatusRef.current = discoveryState.status;
+  }, [discoveryState.status]);
+
+  useEffect(() => {
+    // When discover:complete fires (results array grows), switch to review
     if (discoveryState.results.length > 0 && discoveryState.results.length !== prevResultsLenRef.current) {
       setSubView({ type: "review" });
     }

@@ -59,8 +59,8 @@ export function App() {
   }, []);
 
   const [discoveryState, setDiscoveryState] = useState({
-    phase: "discovery",
-    status: "running" as "running" | "complete",
+    phase: "",
+    status: "complete" as "running" | "complete",
     iteration: { current: 0, max: 0, description: "" },
     toolCalls: [] as Array<{ timestamp: string; tool: string; status: "calling" | "success" | "error"; args?: Record<string, unknown> }>,
     results: [] as ValidatedServiceConfig[],
