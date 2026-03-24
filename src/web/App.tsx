@@ -191,11 +191,7 @@ export function App() {
                       wsMessages={ws.messages}
                       onInvestigationClick={(id) => setLeftPane({ type: "investigation", id })}
                       onViewService={(name) => setLeftPane({ type: "services", initialService: name })}
-                      onManageServices={() => setLeftPane({ type: "services" })}
-                      onRunDiscovery={() => {
-                        ws.send({ type: "discover" });
-                        setLeftPane({ type: "services" });
-                      }}
+                      onViewAllServices={() => setLeftPane({ type: "services" })}
                     />
                   ) : leftPane.type === "investigation" ? (
                     <InvestigationPane
