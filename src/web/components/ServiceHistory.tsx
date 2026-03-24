@@ -116,7 +116,7 @@ export function ServiceHistory({ serviceName, onViewInvestigation }: ServiceHist
           <div className="text-right shrink-0">
             {inv.confidence_score != null && (
               <div className="text-[11px] font-mono text-primary">
-                {inv.confidence_score}% confidence
+                {inv.confidence_score <= 1 ? Math.round(inv.confidence_score * 100) : Math.round(inv.confidence_score)}% confidence
               </div>
             )}
             <div className="text-[11px] font-mono text-muted-foreground">

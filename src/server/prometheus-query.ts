@@ -53,7 +53,7 @@ function buildDefaultQueries(serviceName: string): { name: string; query: string
     },
     {
       name: "Error Rate",
-      query: `sum(rate(http_requests_total{service=~".*${serviceName}.*",code=~"5.."}[5m])) / sum(rate(http_requests_total{service=~".*${safe}.*"}[5m])) * 100`,
+      query: `sum(rate(http_requests_total{service=~".*${safe}.*",code=~"5.."}[5m])) / sum(rate(http_requests_total{service=~".*${safe}.*"}[5m])) * 100`,
       unit: "%",
     },
     {

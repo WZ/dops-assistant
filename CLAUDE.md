@@ -54,6 +54,9 @@ npx tsc --noEmit         # Type check
 | Alert webhook | `src/server/webhook-handler.ts` — Alertmanager payloads → headless investigations |
 | Health monitor | `src/server/health-monitor.ts` — background MCP/DB probes, `GET /api/health` |
 | Service health poller | `src/server/service-health-poller.ts` — Prometheus polling, auto-investigate on transitions |
+| Prometheus queries | `src/server/prometheus-query.ts` — shared PromQL execution via MCP, used by metrics API |
+| Service detail page | `src/web/components/ServiceDetail.tsx` — tabbed service view (metrics, history, dependencies) |
+| Service metadata | `src/server/routes.ts` — GET/PUT `/api/services/:name/metadata`, alias, tags endpoints |
 | Investigation dedup | `src/server/investigation-dedup.ts` — shared dedup + concurrency guard |
 | Provider registry | `src/mcp/provider-registry.ts` — config + GUI providers, CRUD, `providers.yaml` persistence |
 | RCA eval harness | `src/eval/rca-eval.ts` — scores RCA reports on 5 quality dimensions, baselines in `src/eval/baselines/` |
@@ -68,7 +71,7 @@ npx tsc --noEmit         # Type check
 - **Run all**: `npx vitest run`
 - **Run one**: `npx vitest run src/agents/chat.test.ts`
 - **Watch mode**: `npx vitest` (alias: `npm run test:watch`)
-- **45 test files** across agents, CLI commands, server, workflows, config, eval, and web utils
+- **49 test files** across agents, CLI commands, server, workflows, config, eval, and web components
 
 ## Dev Setup
 

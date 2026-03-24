@@ -408,6 +408,15 @@ export class Database {
 
   // ── Service metadata ────────────────────────────────────────────────────
 
+  private static parseTags(raw: string): string[] {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
   /**
    * Migrate service_metadata table and investigation index if they don't exist.
    * Safe to call multiple times — uses CREATE TABLE/INDEX IF NOT EXISTS.
@@ -432,7 +441,7 @@ export class Database {
     return {
       service: row.service,
       alias: row.alias,
-      tags: row.tags ? JSON.parse(row.tags) : [],
+      tags: row.tags ? Database.parseTags(row.tags) : [],
       updated_at: row.updated_at,
     };
   }
@@ -457,7 +466,7 @@ export class Database {
     return rows.map(row => ({
       service: row.service,
       alias: row.alias,
-      tags: row.tags ? JSON.parse(row.tags) : [],
+      tags: row.tags ? Database.parseTags(row.tags) : [],
       updated_at: row.updated_at,
     }));
   }

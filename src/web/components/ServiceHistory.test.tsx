@@ -11,7 +11,7 @@ const SAMPLE_INVESTIGATIONS = [
     service: TEST_SERVICE,
     query: "High error rate on payment-service",
     status: "complete" as const,
-    confidence_score: 87,
+    confidence_score: 0.87,
     created_at: new Date(Date.now() - 3600_000).toISOString(), // 1h ago
     completed_at: new Date(Date.now() - 3500_000).toISOString(),
     total_duration_ms: 100_000,
