@@ -141,10 +141,10 @@ export function ServiceDetail({
               aria-selected={activeTab === tab.id}
               aria-controls={`tabpanel-${tab.id}`}
               onClick={() => setActiveTab(tab.id)}
-              className={`px-3 py-2 min-h-[44px] text-[11px] font-mono rounded-t transition-colors relative ${
+              className={`px-4 py-2 text-[13px] font-body font-medium rounded-t transition-colors relative ${
                 activeTab === tab.id
-                  ? "text-primary bg-primary/8"
-                  : "text-muted-foreground/50 hover:text-foreground/70 hover:bg-secondary/30"
+                  ? "text-primary"
+                  : "text-muted-foreground/50 hover:text-foreground/70"
               }`}
             >
               {tabLabel(tab)}

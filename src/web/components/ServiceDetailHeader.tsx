@@ -67,7 +67,7 @@ export function ServiceDetailHeader({
       <div className="flex items-center gap-1.5 mb-3">
         <button
           onClick={onBack}
-          className="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground/60 hover:text-primary transition-colors min-h-[44px] flex items-center"
+          className="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground/60 hover:text-primary transition-colors"
         >
           Dashboard
         </button>
@@ -77,101 +77,96 @@ export function ServiceDetailHeader({
         </span>
       </div>
 
-      {/* Title row */}
-      <div className="flex items-center gap-3 mb-2">
-        <Button
-          variant="ghost"
-          onClick={onBack}
-          className="min-h-[44px] min-w-[44px] p-2 -ml-2 text-muted-foreground/50 hover:text-foreground/70 transition-colors"
-          aria-label="Back to dashboard"
-        >
-          <ArrowLeft size={16} />
-        </Button>
-        <div className={healthDotClass(healthStatus)} />
-        <h1 className="font-display text-[28px] font-bold text-foreground/90 leading-tight text-pretty">
-          {displayName}
-        </h1>
-        {alias && (
-          <span className="font-mono text-[11px] text-muted-foreground/40">
-            {serviceName}
-          </span>
-        )}
-      </div>
-
-      {/* Tags */}
-      {tags.length > 0 && (
-        <div className="flex items-center gap-1.5 mb-3 ml-9">
+      {/* Title row: name left, actions right */}
+      <div className="flex items-center justify-between gap-4 mb-2">
+        <div className="flex items-center gap-3 min-w-0">
+          <Button
+            variant="ghost"
+            onClick={onBack}
+            className="h-8 w-8 p-0 -ml-1 text-muted-foreground/50 hover:text-foreground/70 transition-colors shrink-0"
+            aria-label="Back to dashboard"
+          >
+            <ArrowLeft size={16} />
+          </Button>
+          <div className={healthDotClass(healthStatus)} />
+          <h1 className="font-display text-[28px] font-bold text-foreground/90 leading-tight text-pretty truncate">
+            {displayName}
+          </h1>
+          {alias && (
+            <span className="font-mono text-[11px] text-muted-foreground/40 shrink-0">
+              {serviceName}
+            </span>
+          )}
           {tags.map((tag) => (
             <span
               key={tag}
-              className="font-mono text-[11px] bg-secondary/50 text-muted-foreground/70 rounded px-1.5 py-0.5"
+              className="font-mono text-[11px] bg-secondary/50 text-muted-foreground/70 rounded px-1.5 py-0.5 shrink-0"
             >
               {tag}
             </span>
           ))}
         </div>
-      )}
 
-      {/* Actions row */}
-      <div className="flex items-center gap-2 ml-9 mb-2">
-        <Button
-          onClick={onInvestigate}
-          className="min-h-[44px] px-3 text-[11px] font-mono bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-        >
-          <Search size={12} className="mr-1.5" />
-          Investigate
-        </Button>
-        <Button
-          variant="outline"
-          disabled
-          title="Grafana deep-link coming soon"
-          className="min-h-[44px] px-3 text-[11px] font-mono bg-secondary border-border text-foreground/70 hover:text-foreground/90 hover:bg-secondary/80 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          <ExternalLink size={12} className="mr-1.5" />
-          Open in Grafana
-        </Button>
+        {/* Action buttons — right aligned */}
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="relative">
+            <Button
+              variant="ghost"
+              onClick={onEditAlias}
+              className="h-9 px-4 text-[12px] font-mono text-muted-foreground border border-border/50 rounded-lg hover:text-foreground/70 hover:bg-secondary/30 transition-colors"
+            >
+              <Pencil size={13} className="mr-1.5" />
+              Edit Name
+            </Button>
+            <AliasEditor
+              serviceName={serviceName}
+              currentAlias={alias ?? null}
+              onSaved={onAliasSaved}
+              open={aliasEditorOpen}
+              onOpenChange={onAliasEditorOpenChange}
+            />
+          </div>
 
-        {/* Edit Name button + inline alias editor */}
-        <div className="relative">
+          <div className="relative">
+            <Button
+              variant="ghost"
+              onClick={onAddTag}
+              className="h-9 px-4 text-[12px] font-mono text-muted-foreground border border-border/50 rounded-lg hover:text-foreground/70 hover:bg-secondary/30 transition-colors"
+            >
+              <Plus size={13} className="mr-1.5" />
+              Tag
+            </Button>
+            <TagEditor
+              serviceName={serviceName}
+              currentTags={tags}
+              onSaved={onTagsSaved}
+              open={tagEditorOpen}
+              onOpenChange={onTagEditorOpenChange}
+            />
+          </div>
+
           <Button
-            variant="ghost"
-            onClick={onEditAlias}
-            className="min-h-[44px] px-3 text-[11px] font-mono text-muted-foreground border border-border/50 hover:text-foreground/70 hover:bg-secondary/30 transition-colors"
+            variant="outline"
+            disabled
+            title="Grafana deep-link coming soon"
+            className="h-9 px-4 text-[12px] font-mono bg-secondary border-border rounded-lg text-foreground/70 hover:text-foreground/90 hover:bg-secondary/80 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            <Pencil size={12} className="mr-1.5" />
-            Edit Name
+            <ExternalLink size={13} className="mr-1.5" />
+            Open in Grafana
           </Button>
-          <AliasEditor
-            serviceName={serviceName}
-            currentAlias={alias ?? null}
-            onSaved={onAliasSaved}
-            open={aliasEditorOpen}
-            onOpenChange={onAliasEditorOpenChange}
-          />
-        </div>
 
-        {/* Add Tag button + inline tag editor */}
-        <div className="relative">
           <Button
-            variant="ghost"
-            onClick={onAddTag}
-            className="min-h-[44px] px-3 text-[11px] font-mono text-muted-foreground border border-border/50 hover:text-foreground/70 hover:bg-secondary/30 transition-colors"
+            onClick={onInvestigate}
+            className="h-9 px-5 text-[12px] font-mono bg-primary text-primary-foreground rounded-full hover:bg-primary/90 transition-colors"
           >
-            <Plus size={12} className="mr-1.5" />
-            Tag
+            <Search size={13} className="mr-1.5" />
+            Investigate
           </Button>
-          <TagEditor
-            serviceName={serviceName}
-            currentTags={tags}
-            onSaved={onTagsSaved}
-            open={tagEditorOpen}
-            onOpenChange={onTagEditorOpenChange}
-          />
         </div>
       </div>
 
       {/* Meta line */}
-      <div className="ml-9 text-[11px] text-muted-foreground/50 font-mono">
+      <div className="ml-11 text-[11px] text-muted-foreground/50 font-mono">
         {healthLabel(healthStatus)} &middot; {investigationCount} investigation{investigationCount !== 1 ? "s" : ""}
       </div>
     </div>
