@@ -129,12 +129,12 @@ export function ServiceMetrics({ serviceName }: ServiceMetricsProps) {
               <div key={series.name} className="rounded-lg border border-border/25 bg-card/40 overflow-hidden">
                 {/* Card header: metric name left, current value right */}
                 <div className="flex items-baseline justify-between px-4 pt-3 pb-1">
-                  <span className="text-[12px] font-body text-muted-foreground font-medium">
+                  <span className="text-[12px] font-body text-foreground/70 font-medium">
                     {series.name}
                   </span>
-                  <span className="font-mono text-[22px] font-semibold tabular-nums leading-none">
+                  <span className="font-mono text-[22px] font-semibold tabular-nums leading-none text-foreground">
                     {series.current != null ? formatMetricValue(series.current) : "—"}
-                    <span className="text-[11px] text-muted-foreground/60 font-normal ml-1">
+                    <span className="text-[11px] text-muted-foreground font-normal ml-1">
                       {series.unit}
                     </span>
                   </span>
