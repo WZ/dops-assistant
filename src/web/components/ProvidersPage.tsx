@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { CirclePlus } from "lucide-react";
-import { ProviderCard } from "./providers/ProviderCard";
+import { ProviderCard, type TestResult } from "./providers/ProviderCard";
 import { ProviderForm, type ProviderFormData } from "./providers/ProviderForm";
 
 interface ProviderData {
@@ -28,6 +28,8 @@ export function ProvidersPage({ onRunDiscovery }: ProvidersPageProps) {
   const [editingProvider, setEditingProvider] = useState<ProviderFormData | null>(null);
   const [saving, setSaving] = useState(false);
   const [testingName, setTestingName] = useState<string | null>(null);
+  const [testResults, setTestResults] = useState<Record<string, TestResult>>({});
+  const pollRef = useRef<ReturnType<typeof setInterval>>(undefined);
 
   const fetchProviders = useCallback(async () => {
     try {
@@ -38,7 +40,12 @@ export function ProvidersPage({ onRunDiscovery }: ProvidersPageProps) {
     setLoading(false);
   }, []);
 
-  useEffect(() => { fetchProviders(); }, [fetchProviders]);
+  // Initial fetch + periodic polling every 30s
+  useEffect(() => {
+    fetchProviders();
+    pollRef.current = setInterval(fetchProviders, 30_000);
+    return () => clearInterval(pollRef.current);
+  }, [fetchProviders]);
 
   // Add or update provider
   const handleSave = async (data: ProviderFormData) => {
@@ -84,10 +91,16 @@ export function ProvidersPage({ onRunDiscovery }: ProvidersPageProps) {
   // Test existing provider (from card)
   const handleTest = async (name: string) => {
     setTestingName(name);
+    // Clear previous result for this provider
+    setTestResults((prev) => { const next = { ...prev }; delete next[name]; return next; });
     try {
-      await fetch(`/api/providers/${encodeURIComponent(name)}/test`, { method: "POST" });
+      const res = await fetch(`/api/providers/${encodeURIComponent(name)}/test`, { method: "POST" });
+      const result: TestResult = await res.json();
+      setTestResults((prev) => ({ ...prev, [name]: result }));
       await fetchProviders();
-    } catch { /* ignore */ }
+    } catch {
+      setTestResults((prev) => ({ ...prev, [name]: { status: "error", toolCount: 0, error: "Network error" } }));
+    }
     setTestingName(null);
   };
 
@@ -178,6 +191,7 @@ export function ProvidersPage({ onRunDiscovery }: ProvidersPageProps) {
                   onEdit={p.source === "gui" ? () => handleEdit(p.name) : undefined}
                   onRemove={p.source === "gui" ? () => handleRemove(p.name) : undefined}
                   testing={testingName === p.name}
+                  testResult={testResults[p.name] ?? null}
                 />
               </div>
             ))}
