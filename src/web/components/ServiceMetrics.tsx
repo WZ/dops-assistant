@@ -125,18 +125,18 @@ export function ServiceMetrics({ serviceName }: ServiceMetricsProps) {
           {metrics.map((series) => {
             const chartData = seriesToChartData(series);
             if (chartData.values.length < 2) {
-              // MetricChart requires at least 2 data points — show placeholder
+              // Single data point — show as stat card instead of empty chart
               return (
                 <div key={series.name} className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[12px] text-muted-foreground font-medium">{series.name}</span>
-                    <span className="font-mono text-lg font-semibold tabular-nums">
-                      {series.current != null ? formatMetricValue(series.current) : "—"}{" "}
-                      <span className="text-[11px] text-muted-foreground font-normal">{series.unit}</span>
+                  <span className="text-[12px] font-body text-muted-foreground font-medium">{series.name}</span>
+                  <div className="h-[130px] rounded-lg border border-border/25 bg-card/40 flex flex-col items-center justify-center gap-1">
+                    <span className="font-mono text-[28px] font-semibold tabular-nums">
+                      {series.current != null ? formatMetricValue(series.current) : "—"}
                     </span>
-                  </div>
-                  <div className="h-[130px] rounded-lg border border-border/25 bg-card/40 flex items-center justify-center">
-                    <span className="text-[11px] text-muted-foreground/40 font-mono">Insufficient data points</span>
+                    {series.unit && (
+                      <span className="text-[11px] text-muted-foreground/50 font-mono">{series.unit}</span>
+                    )}
+                    <span className="text-[10px] text-muted-foreground/30 font-mono">current value</span>
                   </div>
                 </div>
               );
