@@ -87,6 +87,14 @@ export function ServiceDependencyGraph({ serviceName, onViewService }: ServiceDe
     );
   }
 
+  const cs = getComputedStyle(document.documentElement);
+  const varVal = (name: string) => `hsl(${cs.getPropertyValue(name).trim()})`;
+  const primary = varVal("--primary");
+  const secondary = varVal("--secondary");
+  const border = varVal("--border");
+  const fg = varVal("--foreground");
+  const mutedFg = varVal("--muted-foreground");
+
   const nodes: Node[] = data.nodes.map((n, i) => ({
     id: n.id,
     position: { x: 150 * (i % 4), y: 120 * Math.floor(i / 4) },
@@ -94,18 +102,18 @@ export function ServiceDependencyGraph({ serviceName, onViewService }: ServiceDe
     style:
       n.name === serviceName
         ? {
-            background: "hsl(160 67% 50% / 0.15)",
-            border: "1px solid hsl(160, 67%, 50%)",
-            color: "hsl(160, 67%, 50%)",
+            background: `color-mix(in srgb, ${primary} 15%, transparent)`,
+            border: `1px solid ${primary}`,
+            color: primary,
             borderRadius: 8,
             padding: "6px 14px",
             fontSize: 11,
             fontFamily: "var(--font-mono)",
           }
         : {
-            background: "hsl(222, 13%, 17%)",
-            border: "1px solid hsl(220, 14%, 19%)",
-            color: "hsl(216, 12%, 90%)",
+            background: secondary,
+            border: `1px solid ${border}`,
+            color: fg,
             borderRadius: 8,
             padding: "6px 14px",
             fontSize: 11,
@@ -118,8 +126,8 @@ export function ServiceDependencyGraph({ serviceName, onViewService }: ServiceDe
     source: e.source,
     target: e.target,
     label: e.label,
-    style: { stroke: "hsl(220, 14%, 19%)" },
-    labelStyle: { fontSize: 9, fill: "hsl(216, 5%, 57%)" },
+    style: { stroke: border },
+    labelStyle: { fontSize: 9, fill: mutedFg },
   }));
 
   return (
@@ -133,7 +141,7 @@ export function ServiceDependencyGraph({ serviceName, onViewService }: ServiceDe
         onNodeClick={(_, node) => onViewService(node.data.label as string)}
         fitView
       >
-        <Background color="hsl(220, 14%, 19%)" gap={16} />
+        <Background color={border} gap={16} />
         <Controls />
       </ReactFlow>
     </div>
