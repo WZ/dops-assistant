@@ -136,10 +136,12 @@ export function ServiceDetail({
           {TABS.map((tab) => (
             <button
               key={tab.id}
+              id={`tab-${tab.id}`}
               role="tab"
               aria-selected={activeTab === tab.id}
+              aria-controls={`tabpanel-${tab.id}`}
               onClick={() => setActiveTab(tab.id)}
-              className={`px-3 py-2 text-[11px] font-mono rounded-t transition-colors relative ${
+              className={`px-3 py-2 min-h-[44px] text-[11px] font-mono rounded-t transition-colors relative ${
                 activeTab === tab.id
                   ? "text-primary bg-primary/8"
                   : "text-muted-foreground/50 hover:text-foreground/70 hover:bg-secondary/30"
@@ -155,13 +157,18 @@ export function ServiceDetail({
       </div>
 
       {/* Tab content */}
-      <div className="flex-1 overflow-y-auto p-6">
+      <div
+        id={`tabpanel-${activeTab}`}
+        role="tabpanel"
+        aria-labelledby={`tab-${activeTab}`}
+        className="flex-1 overflow-y-auto p-6"
+      >
         {activeTab === "metrics" && <ServiceMetrics serviceName={serviceName} />}
         {activeTab === "history" && (
           <ServiceHistory serviceName={serviceName} onViewInvestigation={onViewInvestigation} />
         )}
         {activeTab === "dependencies" && (
-          <Suspense fallback={<div className="h-40 rounded-lg bg-muted/30 animate-pulse" />}>
+          <Suspense fallback={<div className="h-40 rounded-lg bg-muted/30 shimmer-skeleton" />}>
             <ServiceDependencyGraph serviceName={serviceName} onViewService={onViewService} />
           </Suspense>
         )}
