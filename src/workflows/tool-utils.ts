@@ -143,11 +143,12 @@ export function selectToolsBySuffix(tools: Record<string, any>, allowedSuffixes:
 
 /**
  * Build a time window hint string for evidence agent prompts.
- * Uses extractTimeRange from the anomaly summary to derive the investigation window.
+ * When resolvedTimeRange is provided (from LLM extraction), uses it directly.
+ * Otherwise falls back to regex-based extractTimeRange.
  */
-export function buildTimeWindowHint(anomalySummary: string, userMessage?: string): string {
+export function buildTimeWindowHint(anomalySummary: string, userMessage?: string, resolvedTimeRange?: { from: string; to: string }): string {
   const timeContext = getTimeContext();
-  const timeRange = extractTimeRange(anomalySummary, userMessage);
+  const timeRange = resolvedTimeRange ?? extractTimeRange(anomalySummary, userMessage);
   const stepSeconds = suggestStepSeconds(timeRange);
   const rfc3339 = toRfc3339Window(timeRange);
 

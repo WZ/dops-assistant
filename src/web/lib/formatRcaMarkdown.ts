@@ -12,6 +12,9 @@ export function formatRcaMarkdown(report: RcaReport): string {
   lines.push("");
   lines.push(`**Severity:** ${report.severity} | **Confidence:** ${report.confidence} (${Math.round(report.confidenceScore * 100)}%)`);
   lines.push(`**Investigated:** ${report.investigatedAt}`);
+  if (report.timeRange) {
+    lines.push(`**Investigation window:** ${report.timeRange.from} → ${report.timeRange.to}`);
+  }
   lines.push("");
 
   lines.push("## Summary");

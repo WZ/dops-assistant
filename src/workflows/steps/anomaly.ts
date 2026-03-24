@@ -7,6 +7,7 @@
  */
 
 import { createStep } from "@mastra/core/workflows";
+import { generateText } from "ai";
 import type { WorkflowConfig } from "../investigation.js";
 import { PrefetchOutputSchema, AnomalyOutputSchema } from "../schemas.js";
 import { getToolsByRole } from "../../mcp/provider.js";
@@ -14,6 +15,7 @@ import { wrapToolsWithCallbacks, selectToolsBySuffix, debug, ANOMALY_TOOLS } fro
 import { getTimeContext } from "../../agents/shared/time-context.js";
 import { safeJsonParse } from "../../agents/shared/processors.js";
 import { createAnomalyDetectorAgent } from "../../agents/anomaly-detector.js";
+import { extractTimeRange, resolveTimeRangeToAbsolute } from "../helpers.js";
 
 /**
  * Build an anomaly detection step using the anomaly detector agent.
@@ -119,7 +121,101 @@ export function buildAnomalyStep(config: WorkflowConfig) {
           summary = anomalyParsed.summary ?? inputData.userMessage;
         }
       } else {
-        debug("ANOMALY: user-reported issue, skipping agent — extracting time range only");
+        debug("ANOMALY: user-reported issue, skipping agent — extracting time range via LLM");
+      }
+
+      // ── LLM-based time range extraction ─────────────────────────────────
+      // Runs for ALL investigations (userMessage is always present).
+      // Fallback chain: LLM → regex (resolved to absolute UTC) → 8h default (absolute UTC).
+      let timeRangeFrom: string | undefined;
+      let timeRangeTo: string | undefined;
+
+      try {
+        const timeContext = getTimeContext();
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10_000);
+
+        let timeText = "";
+        try {
+          const result = await generateText({
+            model: config.model,
+            system: `You are a time range extractor. Given a user message about a system issue and the current time context, extract the time window the user is asking about.
+
+${timeContext}
+
+Return ONLY valid JSON: {"from": "RFC3339_UTC", "to": "RFC3339_UTC", "matchedText": "the time phrase you matched", "confidence": 0.0-1.0}
+
+CRITICAL — timezone handling:
+The user speaks in LOCAL TIME (see timezone in the time context above). You MUST convert local times to UTC before outputting.
+For example, if the timezone is America/Los_Angeles (UTC-7) and the user says "around 4PM", that means 16:00 local = 23:00 UTC.
+If the timezone is America/New_York (UTC-4) and the user says "around 4PM", that means 16:00 local = 20:00 UTC.
+ALWAYS apply the UTC offset from the time context when converting user-stated times.
+
+Rules:
+- "around 4PM" → ±1h around 4PM LOCAL TIME, converted to UTC. If local is UTC-7: from=22:00Z, to=00:00Z next day
+- "yesterday afternoon" → yesterday 12:00-18:00 LOCAL, converted to UTC
+- "this morning" → today 06:00-12:00 LOCAL, converted to UTC
+- "Monday night" → most recent Monday 18:00-23:59 LOCAL, converted to UTC
+- "last night" → yesterday 21:00 LOCAL to today 06:00 LOCAL, converted to UTC
+- If no time reference found, use the current time to compute 8 hours ago as "from" and now as "to", return with confidence 0.0
+- For vague times ("around", "about"), use a ±1 hour window around the stated time
+- For day-only references ("last Friday"), use the full day (00:00-23:59 LOCAL, converted to UTC)`,
+            prompt: inputData.userMessage,
+            temperature: 0,
+            abortSignal: controller.signal,
+          });
+          timeText = result.text;
+          if (result.usage && config.onTokenUsage) {
+            config.onTokenUsage({
+              inputTokens: result.usage.inputTokens ?? 0,
+              outputTokens: result.usage.outputTokens ?? 0,
+            });
+          }
+        } finally {
+          clearTimeout(timeout);
+        }
+
+        const parsed = safeJsonParse(timeText);
+        if (parsed?.from && parsed?.to) {
+          const fromDate = new Date(parsed.from);
+          const toDate = new Date(parsed.to);
+          const now = Date.now();
+          const thirtyDaysAgo = now - 30 * 86_400_000;
+
+          // Validate: both must be valid dates, from <= to, not in future, not > 30d ago
+          if (
+            !isNaN(fromDate.getTime()) && !isNaN(toDate.getTime()) &&
+            fromDate.getTime() <= toDate.getTime() &&
+            toDate.getTime() <= now + 60_000 && // allow 1 min clock skew
+            fromDate.getTime() >= thirtyDaysAgo
+          ) {
+            timeRangeFrom = fromDate.toISOString();
+            timeRangeTo = toDate.toISOString();
+            debug("ANOMALY: LLM time extraction succeeded:", { from: timeRangeFrom, to: timeRangeTo, matchedText: parsed.matchedText, confidence: parsed.confidence });
+          } else {
+            debug("ANOMALY: LLM returned invalid date range, falling back to regex", { from: parsed.from, to: parsed.to });
+          }
+        } else {
+          debug("ANOMALY: LLM time parse failed, falling back to regex");
+        }
+      } catch (err) {
+        debug("ANOMALY: LLM time extraction error, falling back to regex:", err);
+      }
+
+      // Fallback: resolve regex output to absolute UTC
+      if (!timeRangeFrom || !timeRangeTo) {
+        try {
+          const regexRange = extractTimeRange(inputData.userMessage);
+          const absolute = resolveTimeRangeToAbsolute(regexRange);
+          timeRangeFrom = absolute.from;
+          timeRangeTo = absolute.to;
+          debug("ANOMALY: using regex fallback (absolute):", { from: timeRangeFrom, to: timeRangeTo });
+        } catch (err) {
+          // Ultimate fallback: 8h window from now
+          timeRangeTo = new Date().toISOString();
+          timeRangeFrom = new Date(Date.now() - 8 * 3_600_000).toISOString();
+          debug("ANOMALY: regex fallback failed, using 8h default:", err);
+        }
       }
 
       const prefetchContext = {
@@ -135,6 +231,8 @@ export function buildAnomalyStep(config: WorkflowConfig) {
         severity,
         summary,
         affectedServices: inputData.serviceName ? [inputData.serviceName] : [],
+        timeRangeFrom,
+        timeRangeTo,
         prefetchContext,
         userMessage: inputData.userMessage,
         serviceName: inputData.serviceName,
