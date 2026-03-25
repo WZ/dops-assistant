@@ -5,7 +5,7 @@ import type { LanguageModel } from "ai";
 
 vi.mock("../mcp/provider.js", () => ({
   getAllTools: vi.fn().mockResolvedValue({ grafana_query_prometheus: {} }),
-  getToolsByRole: vi.fn().mockResolvedValue({}),
+  getToolsByRole: vi.fn().mockResolvedValue({ grafana_query_prometheus: {} }),
   listProviderTools: vi.fn().mockResolvedValue({}),
 }));
 
@@ -33,7 +33,7 @@ describe("runDiscovery", () => {
     const config: DiscoveryWorkflowConfig = {
       model: fakeModel,
       providers: [],
-      discoveryConfig: { autoRefresh: false, excludeServices: [], maxIterations: 5 },
+      discoveryConfig: { autoRefresh: false, excludeServices: [], maxIterations: 5, discoveryRecipes: [] },
     };
     const result = await runDiscovery(config);
     expect(result).toHaveLength(1);
@@ -47,7 +47,7 @@ describe("runDiscovery", () => {
     const config: DiscoveryWorkflowConfig = {
       model: fakeModel,
       providers: [],
-      discoveryConfig: { autoRefresh: false, excludeServices: [], maxIterations: 5 },
+      discoveryConfig: { autoRefresh: false, excludeServices: [], maxIterations: 5, discoveryRecipes: [] },
       onPhase: (phase) => phases.push(phase),
     };
     await runDiscovery(config);

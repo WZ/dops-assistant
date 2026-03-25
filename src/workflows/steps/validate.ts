@@ -1,6 +1,6 @@
 import { getToolsByRole } from "../../mcp/provider.js";
 import type { MastraProvider } from "../../mcp/provider.js";
-import type { ServiceConfig } from "../../config/schema.js";
+import type { ServiceConfig, DiscoveryRecipe } from "../../config/schema.js";
 import type { ValidatedServiceConfig } from "../../types/discovery-types.js";
 import type { OnToolCallEnriched, OnIteration } from "../../types/agent-interfaces.js";
 import type { Tool } from "@mastra/core/tools";
@@ -8,6 +8,7 @@ import type { Tool } from "@mastra/core/tools";
 export interface ValidateStepConfig {
   providers: MastraProvider[];
   services: ServiceConfig[];
+  discoveryRecipes?: DiscoveryRecipe[];
   onToolCall?: OnToolCallEnriched;
   onIteration?: OnIteration;
   onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
@@ -24,6 +25,21 @@ const SERVICE_LABEL_KEYS = [
   "chart",
   "release",
 ];
+
+/**
+ * Compute effective label keys from discovery recipes.
+ * If recipes provide labelKeys, merge and deduplicate them (preserving order).
+ * Otherwise fall back to the hardcoded SERVICE_LABEL_KEYS.
+ */
+function computeEffectiveLabelKeys(recipes?: DiscoveryRecipe[]): string[] {
+  if (!recipes || recipes.length === 0) return SERVICE_LABEL_KEYS;
+
+  const recipeKeys = recipes.flatMap((r) => r.labelKeys);
+  if (recipeKeys.length === 0) return SERVICE_LABEL_KEYS;
+
+  // Deduplicate while preserving order
+  return [...new Set(recipeKeys)];
+}
 
 /**
  * Unwrap an MCP tool result to its parsed JSON payload.
@@ -80,8 +96,11 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
     ?? findToolBySuffix(metricsTools, "list_datasources");
   const lokiDsUid = await findLokiDatasourceUid(listDsTool, config);
 
+  // Compute effective label keys: merge recipe labelKeys (if any) with defaults
+  const effectiveLabelKeys = computeEffectiveLabelKeys(config.discoveryRecipes);
+
   // Phase 1: Enrich log labels by matching service names against Loki label values
-  const labelMap = await buildLabelMap(lokiLabelNamesTool, lokiLabelValuesTool, lokiDsUid, config);
+  const labelMap = await buildLabelMap(lokiLabelNamesTool, lokiLabelValuesTool, lokiDsUid, config, effectiveLabelKeys);
   const enriched = enrichLogLabels(config.services, labelMap);
 
   // Phase 2: Validate metrics and logs for each service
@@ -202,6 +221,7 @@ async function buildLabelMap(
   labelValuesTool: [string, any] | undefined,
   lokiDsUid: string | undefined,
   config: ValidateStepConfig,
+  labelKeys: string[] = SERVICE_LABEL_KEYS,
 ): Promise<Map<string, Map<string, string>>> {
   const map = new Map<string, Map<string, string>>();
   if (!labelNamesTool || !labelValuesTool || !lokiDsUid) return map;
@@ -218,7 +238,7 @@ async function buildLabelMap(
     console.error(`[VALIDATE] Available label names (${allNames.length}): ${allNames.slice(0, 30).join(", ")}`);
 
     const available = allNames.filter(
-      (k: string) => SERVICE_LABEL_KEYS.some((p) => k === p || k.toLowerCase().includes(p)),
+      (k: string) => labelKeys.some((p) => k === p || k.toLowerCase().includes(p)),
     );
     console.error(`[VALIDATE] Found ${available.length} matching label keys: ${available.join(", ")}`);
 

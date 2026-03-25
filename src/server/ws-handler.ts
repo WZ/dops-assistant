@@ -313,7 +313,7 @@ export async function handleClientMessage(
 
     try {
       const services = await deps.discoverAgent.discover(
-        deps.discoveryConfig ?? { autoRefresh: false, excludeServices: [], maxIterations: 40 },
+        deps.discoveryConfig ?? { autoRefresh: false, excludeServices: [], maxIterations: 40, discoveryRecipes: [] },
         (phase) => {
           // Emit usage for the phase that just ended
           if (phaseTokens.inputTokens > 0 || phaseTokens.outputTokens > 0) {
