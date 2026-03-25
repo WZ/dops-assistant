@@ -279,9 +279,10 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
         }
       }
       if (msg.type === "chat:stream_end") {
-        // Skip messages that belong to an investigation
-        if (msg.investigationId) {
-          // Still clean up streaming state
+        // Skip investigation messages ONLY when NOT in deep investigation mode
+        // When in deep mode, investigation messages should be added to deepMessages
+        if (msg.investigationId && !isDeepMode) {
+          // Clean up streaming state but don't add to chatMessages
           if (rafRef.current !== null) {
             cancelAnimationFrame(rafRef.current);
             rafRef.current = null;
