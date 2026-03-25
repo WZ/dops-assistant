@@ -111,13 +111,32 @@ const READ_PREFIXES = [
   "fetch_", "lookup_", "count_", "show_",
 ];
 
+// Keywords for tools that use entity_verb naming (e.g., pods_list, nodes_log, resources_get)
+// Matched as _keyword_ or _keyword at end of name
+const READ_KEYWORDS = [
+  "get", "list", "log", "logs", "view",
+  "show", "stats", "summary", "top",
+  "search", "query", "describe", "check",
+];
+
+// Full names that are read-only but don't match prefix/suffix patterns
+const READ_EXACT = new Set([
+  "configuration_view",
+]);
+
 /**
- * Classify a tool as read-only or write based on its name prefix.
- * Unknown prefixes default to "write" (safe default).
+ * Classify a tool as read-only or write based on its name.
+ * Checks prefixes (list_pods), suffixes (pods_list), and exact matches.
+ * Unknown patterns default to "write" (safe default).
  */
 export function classifyToolAccess(toolName: string): "read" | "write" {
   const lower = toolName.toLowerCase();
-  return READ_PREFIXES.some(p => lower.startsWith(p)) ? "read" : "write";
+  if (READ_EXACT.has(lower)) return "read";
+  if (READ_PREFIXES.some(p => lower.startsWith(p))) return "read";
+  // Check for read keywords as segments: _keyword_ or _keyword at end
+  const segments = lower.split("_");
+  if (segments.some(s => READ_KEYWORDS.includes(s))) return "read";
+  return "write";
 }
 
 /**

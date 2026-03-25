@@ -310,4 +310,29 @@ describe("classifyToolAccess", () => {
     expect(classifyToolAccess("GET_dashboard")).toBe("read");
     expect(classifyToolAccess("Query_Prometheus")).toBe("read");
   });
+
+  // K8s MCP uses entity_verb naming (pods_list, nodes_log, etc.)
+  it("classifies _list suffixed tools as read", () => {
+    expect(classifyToolAccess("pods_list")).toBe("read");
+    expect(classifyToolAccess("events_list")).toBe("read");
+    expect(classifyToolAccess("namespaces_list")).toBe("read");
+    expect(classifyToolAccess("resources_list")).toBe("read");
+    expect(classifyToolAccess("pods_list_in_namespace")).toBe("read");
+  });
+  it("classifies _get suffixed tools as read", () => {
+    expect(classifyToolAccess("pods_get")).toBe("read");
+    expect(classifyToolAccess("resources_get")).toBe("read");
+  });
+  it("classifies _log/_logs suffixed tools as read", () => {
+    expect(classifyToolAccess("pods_log")).toBe("read");
+    expect(classifyToolAccess("nodes_log")).toBe("read");
+  });
+  it("classifies _top/_stats/_summary suffixed tools as read", () => {
+    expect(classifyToolAccess("pods_top")).toBe("read");
+    expect(classifyToolAccess("nodes_top")).toBe("read");
+    expect(classifyToolAccess("nodes_stats_summary")).toBe("read");
+  });
+  it("classifies configuration_view as read (exact match)", () => {
+    expect(classifyToolAccess("configuration_view")).toBe("read");
+  });
 });
