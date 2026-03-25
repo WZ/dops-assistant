@@ -104,9 +104,11 @@ function findMetricQueryTool(tools: Record<string, unknown>): ToolExecutor | nul
       return tool as ToolExecutor;
     }
   }
-  // Broaden: any tool with "query" or "metric" in its name
+  // Broaden: any tool with "query" or "metric" in its name, excluding log/loki/metadata tools
   for (const [name, tool] of Object.entries(tools)) {
-    if (name.includes("query") || name.includes("metric")) {
+    const lower = name.toLowerCase();
+    if ((lower.includes("query") || lower.includes("metric")) &&
+        !lower.includes("loki") && !lower.includes("log") && !lower.includes("metadata")) {
       return tool as ToolExecutor;
     }
   }
