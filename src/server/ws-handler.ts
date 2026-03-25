@@ -459,12 +459,22 @@ export async function handleClientMessage(
         send({ type: "investigation:complete", id: investigationId, report });
         const summary = `**Root Cause:** ${report.rootCause}\n**Confidence:** ${report.confidence}\n**Trigger:** ${report.trigger}`;
         memory.append(threadId, { role: "assistant", content: `Investigation of ${service.name}: ${summary}` });
-        send({ type: "chat", role: "assistant", content: summary, investigationId, report });
+        // Store full summary scoped to investigation (for Deep Investigation panel)
         db.createMessage({ id: `msg_${ulid()}`, role: "assistant", content: summary, investigationId });
+        // Store console-visible completion notice (no investigationId → shows in main console)
+        const completionNotice = `Investigation of **${service.name}** completed — **${report.confidence}** confidence. [View results →](#investigation/${investigationId})`;
+        const completionMsgId = `msg_${ulid()}`;
+        const completionTime = new Date().toISOString();
+        send({ type: "chat", role: "assistant", content: completionNotice, id: completionMsgId, createdAt: completionTime } as ServerMessage);
+        db.createMessage({ id: completionMsgId, role: "assistant", content: completionNotice });
       },
       onFailed: (investigationId, error) => {
         send({ type: "investigation:failed", id: investigationId, error });
-        send({ type: "chat", role: "assistant", content: `Investigation failed: ${error}` });
+        const failNotice = `Investigation of **${service.name}** failed: ${error}`;
+        const failMsgId = `msg_${ulid()}`;
+        const failTime = new Date().toISOString();
+        send({ type: "chat", role: "assistant", content: failNotice, id: failMsgId, createdAt: failTime } as ServerMessage);
+        db.createMessage({ id: failMsgId, role: "assistant", content: failNotice });
       },
     };
 

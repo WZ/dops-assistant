@@ -546,7 +546,20 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                   ))}
                 </div>
               )}
-              <div className="px-3.5 py-2.5 rounded-xl rounded-bl-sm bg-secondary/50 border border-border/40 text-sm font-body">
+              <div
+                className="px-3.5 py-2.5 rounded-xl rounded-bl-sm bg-secondary/50 border border-border/40 text-sm font-body"
+                onClick={(e) => {
+                  const target = e.target as HTMLElement;
+                  if (target.tagName === "A") {
+                    const href = target.getAttribute("href") || "";
+                    const invMatch = href.match(/#investigation\/(.+)/);
+                    if (invMatch) {
+                      e.preventDefault();
+                      onViewInvestigation(invMatch[1]!);
+                    }
+                  }
+                }}
+              >
                 {renderMarkdown(msg.content)}
               </div>
               {msg.chartData && msg.chartData.length > 0 && (
