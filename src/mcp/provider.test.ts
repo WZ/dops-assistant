@@ -18,7 +18,7 @@ vi.mock("@mastra/mcp", () => {
   return { MCPClient };
 });
 
-import { createMcpProvider, getToolsByRole, getAllTools, listProviderTools } from "./provider.js";
+import { createMcpProvider, getToolsByRole, getAllTools, listProviderTools, classifyToolAccess } from "./provider.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -278,5 +278,36 @@ describe("getAllTools", () => {
     expect(result).toEqual({
       grafana_query_prometheus: queryTool,
     });
+  });
+});
+
+describe("classifyToolAccess", () => {
+  it("classifies get_ prefixed tools as read", () => {
+    expect(classifyToolAccess("get_dashboard_by_uid")).toBe("read");
+  });
+  it("classifies list_ prefixed tools as read", () => {
+    expect(classifyToolAccess("list_datasources")).toBe("read");
+  });
+  it("classifies query_ prefixed tools as read", () => {
+    expect(classifyToolAccess("query_prometheus")).toBe("read");
+  });
+  it("classifies search_ prefixed tools as read", () => {
+    expect(classifyToolAccess("search_dashboards")).toBe("read");
+  });
+  it("classifies create_ prefixed tools as write", () => {
+    expect(classifyToolAccess("create_dashboard")).toBe("write");
+  });
+  it("classifies update_ prefixed tools as write", () => {
+    expect(classifyToolAccess("update_alert_rule")).toBe("write");
+  });
+  it("classifies delete_ prefixed tools as write", () => {
+    expect(classifyToolAccess("delete_dashboard")).toBe("write");
+  });
+  it("classifies unknown prefixes as write (safe default)", () => {
+    expect(classifyToolAccess("run_migration")).toBe("write");
+  });
+  it("is case-insensitive", () => {
+    expect(classifyToolAccess("GET_dashboard")).toBe("read");
+    expect(classifyToolAccess("Query_Prometheus")).toBe("read");
   });
 });

@@ -101,3 +101,72 @@ export async function getAllTools(providers: MastraProvider[]): Promise<Record<s
   }
   return merged;
 }
+
+// ── Tool Classification ──────────────────────────────────────────────────────
+
+const READ_PREFIXES = [
+  "get_", "list_", "search_", "query_",
+  "read_", "find_", "describe_", "check_",
+  "fetch_", "lookup_", "count_", "show_",
+];
+
+/**
+ * Classify a tool as read-only or write based on its name prefix.
+ * Unknown prefixes default to "write" (safe default).
+ */
+export function classifyToolAccess(toolName: string): "read" | "write" {
+  const lower = toolName.toLowerCase();
+  return READ_PREFIXES.some(p => lower.startsWith(p)) ? "read" : "write";
+}
+
+/**
+ * List ALL tools from a provider without applying enabledTools filter.
+ * Used by the tool management UI to show the complete tool inventory.
+ */
+export async function listAllProviderTools(provider: MastraProvider): Promise<Record<string, Tool>> {
+  return provider.client.listTools();
+}
+
+export interface ToolInfo {
+  name: string;
+  description: string;
+  readOnly: boolean;
+  enabled: boolean;
+}
+
+/**
+ * Get tools with metadata (classification + enabled status) for a provider.
+ */
+export async function getToolsWithMetadata(provider: MastraProvider): Promise<ToolInfo[]> {
+  const allTools = await listAllProviderTools(provider);
+  const enabledSet = provider.enabledTools?.length
+    ? new Set(provider.enabledTools)
+    : null;
+
+  return Object.entries(allTools).map(([namespacedName, tool]) => {
+    const rawName = namespacedName.startsWith(`${provider.name}_`)
+      ? namespacedName.slice(provider.name.length + 1)
+      : namespacedName;
+
+    const readOnly = classifyToolAccess(rawName) === "read";
+    const enabled = enabledSet === null
+      ? true
+      : enabledSet.has(rawName) || enabledSet.has(namespacedName);
+
+    return {
+      name: rawName,
+      description: (tool as any).description ?? "",
+      readOnly,
+      enabled,
+    };
+  });
+}
+
+/**
+ * Compute default enabledTools list: all read-only tools.
+ */
+export function computeDefaultEnabledTools(tools: Record<string, Tool>, providerName: string): string[] {
+  return Object.keys(tools)
+    .map(name => name.startsWith(`${providerName}_`) ? name.slice(providerName.length + 1) : name)
+    .filter(name => classifyToolAccess(name) === "read");
+}
