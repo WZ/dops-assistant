@@ -2,7 +2,7 @@
  * Shared evidence step builder for the investigation workflow.
  *
  * All three evidence phases (metrics, logs, infra) follow the same pattern:
- *   1. Get tools by role → filter by suffix → wrap with callbacks
+ *   1. Get tools by role → wrap with callbacks
  *   2. Create specialized agent
  *   3. Build prompt from anomaly context
  *   4. Run agent.generate() with onStepFinish to collect tool data
