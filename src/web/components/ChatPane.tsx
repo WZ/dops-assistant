@@ -243,10 +243,13 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
       if (msg.type === "chat") {
         // Skip messages that belong to an investigation (deep investigation panel)
         if (msg.investigationId) continue;
+        const chatEvt = msg as Record<string, unknown>;
         setChatMessages((prev) => [...prev, {
           role: msg.role,
           content: msg.content,
-          investigationId: msg.investigationId,
+          ...(chatEvt.id ? { id: chatEvt.id as string } : {}),
+          ...(chatEvt.createdAt ? { createdAt: chatEvt.createdAt as string } : {}),
+          ...(chatEvt.viewInvestigationId ? { investigationId: chatEvt.viewInvestigationId as string } : {}),
           report: msg.report as RcaReportSummary | undefined,
           chartData: msg.chartData,
         }]);

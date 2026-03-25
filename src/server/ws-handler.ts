@@ -462,10 +462,11 @@ export async function handleClientMessage(
         // Store full summary scoped to investigation (for Deep Investigation panel)
         db.createMessage({ id: `msg_${ulid()}`, role: "assistant", content: summary, investigationId });
         // Store console-visible completion notice (no investigationId → shows in main console)
-        const completionNotice = `Investigation of **${service.name}** completed — **${report.confidence}** confidence. [View results →](#investigation/${investigationId})`;
+        const completionNotice = `Investigation of **${service.name}** completed — **${report.confidence}** confidence.`;
         const completionMsgId = `msg_${ulid()}`;
         const completionTime = new Date().toISOString();
-        send({ type: "chat", role: "assistant", content: completionNotice, id: completionMsgId, createdAt: completionTime } as ServerMessage);
+        // Send with viewInvestigationId so the UI can render a clickable link (but NOT investigationId which would filter it out)
+        send({ type: "chat", role: "assistant", content: completionNotice, id: completionMsgId, createdAt: completionTime, viewInvestigationId: investigationId } as ServerMessage);
         db.createMessage({ id: completionMsgId, role: "assistant", content: completionNotice });
       },
       onFailed: (investigationId, error) => {
