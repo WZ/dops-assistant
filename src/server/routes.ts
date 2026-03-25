@@ -535,6 +535,43 @@ export function registerRoutes(
     res.json(db.findSimilarPatterns(service));
   });
 
+  // ── Metric Extraction (smart chart backfill) ─────────────────────
+  app.post("/api/metrics/extract", async (req: Request, res: Response) => {
+    const { text, service, timeRange } = req.body as {
+      text: string;
+      service: string;
+      timeRange?: { from: string; to: string };
+    };
+
+    if (!text || !service) {
+      res.status(400).json({ error: "text and service are required" });
+      return;
+    }
+
+    try {
+      const providers = providerRegistry
+        ? providerRegistry.getProviders()
+        : getProviders ? getProviders() : [];
+      const { extractMetricsFromText } = await import("./metric-extraction.js");
+      const series = await extractMetricsFromText(text, service, providers, timeRange);
+
+      res.json({
+        series: series
+          .filter(s => s.values.length > 0)
+          .map(s => ({
+            metric: s.name,
+            query: s.query,
+            values: s.values,
+            min: s.min,
+            max: s.max,
+            avg: s.avg,
+          })),
+      });
+    } catch (err) {
+      res.json({ series: [], error: err instanceof Error ? err.message : "Extraction failed" });
+    }
+  });
+
   // ── Provider Management REST API ──────────────────────────────────────
   if (providerRegistry) {
     // GET /api/providers — list all with connection status
