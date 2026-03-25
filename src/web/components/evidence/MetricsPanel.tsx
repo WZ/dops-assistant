@@ -64,7 +64,16 @@ export function MetricsPanel({ timeSeries, textObservations, structuredObservati
   }, [textObservations, service, timeRange]);
 
   const extractedSeries = extractions.flatMap(e => e.series);
-  const allSeries = [...timeSeries, ...extractedSeries];
+  // Deduplicate series by query — a single query_prometheus call can return multiple
+  // series (one per instance/CPU core). Show one chart per unique query.
+  const rawSeries = [...timeSeries, ...extractedSeries];
+  const seenQueries = new Set<string>();
+  const allSeries = rawSeries.filter(ts => {
+    const key = ts.query || ts.metric || JSON.stringify(ts.values.slice(0, 2));
+    if (seenQueries.has(key)) return false;
+    seenQueries.add(key);
+    return true;
+  });
   const failedTexts = extractions.filter(e => !e.loading && e.series.length === 0).map(e => e.text);
   const overflowTexts = textObservations.slice(MAX_EXTRACTIONS);
   const remainingTexts = [...failedTexts, ...overflowTexts];

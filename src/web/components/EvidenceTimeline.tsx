@@ -73,18 +73,28 @@ function tryParseTimestamp(ts: string | undefined): number {
 }
 
 export function EvidenceTimeline({ evidence, timeSeries, service, timeRange }: EvidenceTimelineProps) {
-  // Collect string observations from metrics for smart extraction
-  const textMetricObs = useMemo<string[]>(() => {
-    if (!evidence.metrics?.observations) return [];
-    return evidence.metrics.observations.filter((obs): obs is string => typeof obs === "string");
-  }, [evidence.metrics]);
+  // Parse metric observations — objects stay as structured, strings get parsed if they match
+  // the pattern "metric_name (instance) = value (baseline value) – severity"
+  const METRIC_TEXT_RE = /^(.+?)\s*\(([^)]+)\)\s*=\s*([^\s]+)\s*\(baseline\s+([^)]+)\)\s*[–-]\s*(\w+)$/;
 
-  // Also check for structured metric observations (objects with metric/currentValue)
-  const structuredMetricObs = useMemo(() => {
-    if (!evidence.metrics?.observations) return [];
-    return evidence.metrics.observations.filter((obs): obs is Record<string, unknown> =>
-      typeof obs === "object" && obs !== null && "metric" in obs
-    );
+  const { textMetricObs, structuredMetricObs } = useMemo(() => {
+    const texts: string[] = [];
+    const structured: Array<{ metric: string; currentValue: string; baselineValue: string; severity?: string }> = [];
+
+    for (const obs of evidence.metrics?.observations ?? []) {
+      if (typeof obs === "object" && obs !== null && "metric" in obs) {
+        structured.push(obs as any);
+      } else if (typeof obs === "string") {
+        const m = obs.match(METRIC_TEXT_RE);
+        if (m) {
+          structured.push({ metric: `${m[1]!.trim()} (${m[2]!.trim()})`, currentValue: m[3]!, baselineValue: m[4]!, severity: m[5] });
+        } else {
+          texts.push(obs);
+        }
+      }
+    }
+
+    return { textMetricObs: texts, structuredMetricObs: structured };
   }, [evidence.metrics]);
 
   const hasMetricData = timeSeries.length > 0 || textMetricObs.length > 0 || structuredMetricObs.length > 0;
