@@ -22,6 +22,8 @@ CLASSIFY AS "investigation" when the user:
 - Uses words like: investigate, check, diagnose, troubleshoot, look into, what's wrong, why is
 
 CLASSIFY AS "question" when the user:
+- Sends a greeting or casual message ("hi", "hello", "hey", "thanks", "good morning")
+- Sends a short non-technical message with no mention of services, errors, or symptoms
 - Asks for information without implying a problem ("what dashboards do we have?", "list services")
 - Asks how something works ("how does ingestion work?")
 - Asks for general status without concern ("show me the current metrics")
@@ -35,8 +37,13 @@ EXAMPLES:
 - "check CPU usage across all nodes" → investigation, service: ""
 - "what dashboards do we have available?" → question, service: ""
 - "how does the ingestion pipeline work?" → question, service: ""
+- "hi" → question, service: ""
+- "hello" → question, service: ""
+- "hey there" → question, service: ""
+- "thanks" → question, service: ""
+- "good morning" → question, service: ""
 
-When in doubt, classify as "investigation" — it is better to investigate and find nothing than to miss a real issue.
+Only classify as "investigation" when the message contains a clear technical concern — a symptom, error, or explicit request to investigate. Greetings, casual messages, and non-technical conversation should always be "question".
 ${serviceList}
 Extract the service name if mentioned. Respond with JSON: {"intent": "investigation"|"question", "service": "<name or empty>"}`;
 }
