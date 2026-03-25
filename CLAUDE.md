@@ -43,7 +43,7 @@ npx tsc --noEmit         # Type check
 | Investigation workflow | `src/workflows/investigation.ts` → step factories in `src/workflows/steps/` |
 | Add/modify a specialized agent | `src/agents/` — anomaly-detector, planner, metrics, logs, infra, synthesis, discover, changes |
 | Intent classification | `src/agents/intent.ts` (AI SDK `generateText`) |
-| MCP tool routing | `src/mcp/provider.ts` — role-based routing via `@mastra/mcp` |
+| MCP tool routing | `src/mcp/provider.ts` — role-based routing via `@mastra/mcp`, tool classification (`classifyToolAccess`) |
 | Config schema | `src/config/schema.ts` — Zod schema, validated at startup |
 | Service discovery | `src/agents/discover.ts` + `src/workflows/discovery.ts` → writes `services.yaml` |
 | Service registry | `src/services/registry.ts` — loads `services.yaml`, static overrides in `config.yaml` take precedence |
@@ -59,6 +59,9 @@ npx tsc --noEmit         # Type check
 | Service metadata | `src/server/routes.ts` — GET/PUT `/api/services/:name/metadata`, alias, tags endpoints |
 | Investigation dedup | `src/server/investigation-dedup.ts` — shared dedup + concurrency guard |
 | Provider registry | `src/mcp/provider-registry.ts` — config + GUI providers, CRUD, `providers.yaml` persistence |
+| Provider tool management | `src/web/components/providers/ProviderToolList.tsx` — per-tool toggles, read/write badges |
+| Evidence timeline | `src/web/components/EvidenceTimeline.tsx` — Metrics/Timeline tabbed evidence view |
+| Smart metric extraction | `src/server/metric-extraction.ts` — backfill charts from text observations via Prometheus |
 | RCA eval harness | `src/eval/rca-eval.ts` — scores RCA reports on 5 quality dimensions, baselines in `src/eval/baselines/` |
 | LLM quirk workarounds | `src/agents/shared/prepare-step.ts` (`prepareStep` hook) |
 | Shared types | `src/types/` — RCA report, agent interfaces, LLM types, WebSocket protocol |
@@ -71,7 +74,7 @@ npx tsc --noEmit         # Type check
 - **Run all**: `npx vitest run`
 - **Run one**: `npx vitest run src/agents/chat.test.ts`
 - **Watch mode**: `npx vitest` (alias: `npm run test:watch`)
-- **49 test files** across agents, CLI commands, server, workflows, config, eval, and web components
+- **59 test files** across agents, CLI commands, server, workflows, config, eval, and web components
 
 ## Dev Setup
 
@@ -97,6 +100,7 @@ npx tsc --noEmit         # Type check
 - **Investigation templates**: `quick` (metrics only), `standard` (metrics+logs), `full` (all phases + changes). Configured via `config.yaml` webhook section or GUI. See `src/workflows/investigation.ts`.
 - **Alert webhook**: `POST /api/webhook/alert` receives Alertmanager payloads, validates bearer token, dedup window, and runs headless investigations. See `src/server/webhook-handler.ts`.
 - **Changes evidence**: GitLab MCP provider with `"changes"` role feeds a 4th parallel evidence stream (deployments, MRs, pipelines) into investigations. See `src/agents/changes.ts`.
+- **Tool classification**: `classifyToolAccess()` in `src/mcp/provider.ts` classifies MCP tools as read-only or write via name-prefix + keyword-segment heuristic. Read-only tools enabled by default; write tools require explicit opt-in. Supports both `list_pods` and `pods_list` naming conventions.
 
 ## Design System
 
