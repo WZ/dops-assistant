@@ -208,7 +208,7 @@ export function App() {
                       onInitialServiceConsumed={() => setLeftPane((prev) => prev.type === "services" ? { ...prev, initialService: undefined } : prev)}
                       discoveryState={discoveryState}
                       onStartDiscovery={() => { ws.send({ type: "discover" }); }}
-                      onResetDiscovery={() => setDiscoveryState({ phase: "discovery", status: "running", iteration: { current: 0, max: 0, description: "" }, toolCalls: [], results: [], error: null, phaseTokens: {}, totalUsage: null })}
+                      onResetDiscovery={() => setDiscoveryState({ phase: "", status: "complete", iteration: { current: 0, max: 0, description: "" }, toolCalls: [], results: [], error: null, phaseTokens: {}, totalUsage: null })}
                     />
                   ) : leftPane.type === "settings" ? (
                     <SettingsPage
