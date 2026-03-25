@@ -11,10 +11,16 @@ import type { MastraProvider } from "./provider.js";
 // ---------------------------------------------------------------------------
 const mockCreateMcpProvider = vi.fn();
 const mockListProviderTools = vi.fn();
+const mockListAllProviderTools = vi.fn();
+const mockGetToolsWithMetadata = vi.fn();
+const mockComputeDefaultEnabledTools = vi.fn();
 
 vi.mock("./provider.js", () => ({
   createMcpProvider: (...args: unknown[]) => mockCreateMcpProvider(...args),
   listProviderTools: (...args: unknown[]) => mockListProviderTools(...args),
+  listAllProviderTools: (...args: unknown[]) => mockListAllProviderTools(...args),
+  getToolsWithMetadata: (...args: unknown[]) => mockGetToolsWithMetadata(...args),
+  computeDefaultEnabledTools: (...args: unknown[]) => mockComputeDefaultEnabledTools(...args),
 }));
 
 import { ProviderRegistry } from "./provider-registry.js";
@@ -56,6 +62,9 @@ describe("ProviderRegistry", () => {
     // Default mocks: createMcpProvider returns a fake, listProviderTools returns empty tools
     mockCreateMcpProvider.mockImplementation((config: ProviderConfig) => makeFakeProvider(config));
     mockListProviderTools.mockResolvedValue({});
+    mockListAllProviderTools.mockResolvedValue({});
+    mockGetToolsWithMetadata.mockResolvedValue([]);
+    mockComputeDefaultEnabledTools.mockReturnValue([]);
   });
 
   afterEach(() => {

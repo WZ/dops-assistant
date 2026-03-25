@@ -102,3 +102,92 @@ export async function getAllTools(providers: MastraProvider[]): Promise<Record<s
   }
   return merged;
 }
+
+// ── Tool Classification ──────────────────────────────────────────────────────
+
+const READ_PREFIXES = [
+  "get_", "list_", "search_", "query_",
+  "read_", "find_", "describe_", "check_",
+  "fetch_", "lookup_", "count_", "show_",
+];
+
+// Keywords for tools that use entity_verb naming (e.g., pods_list, nodes_log, resources_get)
+// Matched as _keyword_ or _keyword at end of name
+const READ_KEYWORDS = [
+  "get", "list", "log", "logs", "view",
+  "show", "stats", "summary", "top",
+  "search", "query", "describe", "check",
+];
+
+// Full names that are read-only but don't match prefix/suffix patterns
+const READ_EXACT = new Set([
+  "configuration_view",
+]);
+
+/**
+ * Classify a tool as read-only or write based on its name.
+ * Checks prefixes (list_pods), suffixes (pods_list), and exact matches.
+ * Unknown patterns default to "write" (safe default).
+ */
+export function classifyToolAccess(toolName: string): "read" | "write" {
+  const lower = toolName.toLowerCase();
+  if (READ_EXACT.has(lower)) return "read";
+  if (READ_PREFIXES.some(p => lower.startsWith(p))) return "read";
+  // Check for read keywords as segments: _keyword_ or _keyword at end
+  const segments = lower.split("_");
+  if (segments.some(s => READ_KEYWORDS.includes(s))) return "read";
+  return "write";
+}
+
+/**
+ * List ALL tools from a provider without applying enabledTools filter.
+ * Used by the tool management UI to show the complete tool inventory.
+ */
+export async function listAllProviderTools(provider: MastraProvider): Promise<Record<string, Tool>> {
+  return provider.client.listTools();
+}
+
+export interface ToolInfo {
+  name: string;
+  description: string;
+  readOnly: boolean;
+  enabled: boolean;
+}
+
+/**
+ * Get tools with metadata (classification + enabled status) for a provider.
+ */
+export async function getToolsWithMetadata(provider: MastraProvider): Promise<ToolInfo[]> {
+  const allTools = await listAllProviderTools(provider);
+  // undefined = no config (all enabled), [] = explicit empty (all disabled), [...] = specific tools enabled
+  const enabledSet = provider.enabledTools === undefined
+    ? null
+    : new Set(provider.enabledTools);
+
+  return Object.entries(allTools).map(([namespacedName, tool]) => {
+    const rawName = namespacedName.startsWith(`${provider.name}_`)
+      ? namespacedName.slice(provider.name.length + 1)
+      : namespacedName;
+
+    const readOnly = classifyToolAccess(rawName) === "read";
+    const enabled = enabledSet === null
+      ? true
+      : enabledSet.has(rawName) || enabledSet.has(namespacedName);
+
+    return {
+      name: rawName,
+      description: (tool as any).description ?? "",
+      readOnly,
+      enabled,
+    };
+  });
+}
+
+/**
+ * Compute default enabledTools list: all read-only tools.
+ */
+export function computeDefaultEnabledTools(tools: Record<string, Tool>, providerName: string): string[] {
+  return Object.keys(tools)
+    .map(name => name.startsWith(`${providerName}_`) ? name.slice(providerName.length + 1) : name)
+    .filter(name => classifyToolAccess(name) === "read");
+}

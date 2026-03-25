@@ -14,6 +14,7 @@ interface ProviderData {
   source: "config" | "gui";
   status: "connected" | "error" | "unknown";
   toolCount: number;
+  enabledToolCount?: number;
   error?: string;
 }
 
