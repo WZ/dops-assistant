@@ -1,8 +1,9 @@
-import { getAllTools } from "../../mcp/provider.js";
+import { getToolsByRole } from "../../mcp/provider.js";
 import type { MastraProvider } from "../../mcp/provider.js";
 import type { ServiceConfig } from "../../config/schema.js";
 import type { ValidatedServiceConfig } from "../../types/discovery-types.js";
 import type { OnToolCallEnriched, OnIteration } from "../../types/agent-interfaces.js";
+import type { Tool } from "@mastra/core/tools";
 
 export interface ValidateStepConfig {
   providers: MastraProvider[];
@@ -41,6 +42,15 @@ function unwrapMcpJson(result: unknown): any {
 }
 
 /**
+ * Find a tool by name suffix within a role's tool set.
+ * Returns [toolName, tool] tuple or undefined if not found.
+ */
+function findToolBySuffix(tools: Record<string, Tool>, suffix: string): [string, Tool] | undefined {
+  const entry = Object.entries(tools).find(([name]) => name.endsWith(suffix));
+  return entry as [string, Tool] | undefined;
+}
+
+/**
  * Deterministic validation + log label enrichment.
  *
  * 1. Verify each service's Prometheus metric query returns data
@@ -48,18 +58,26 @@ function unwrapMcpJson(result: unknown): any {
  * 3. Verify matched log labels return data
  */
 export async function runValidateStep(config: ValidateStepConfig): Promise<ValidatedServiceConfig[]> {
-  const rawTools = await getAllTools(config.providers).catch(() => ({}));
+  // Resolve tools by role instead of scanning all providers
+  const [metricsTools, logsTools, dashboardsTools] = await Promise.all([
+    getToolsByRole(config.providers, "metrics").catch(() => ({})),
+    getToolsByRole(config.providers, "logs").catch(() => ({})),
+    getToolsByRole(config.providers, "dashboards").catch(() => ({})),
+  ]);
 
-  const promTool = Object.entries(rawTools).find(([name]) => name.endsWith("query_prometheus"));
-  const lokiLabelNamesTool = Object.entries(rawTools).find(([name]) => name.endsWith("list_loki_label_names"));
-  const lokiLabelValuesTool = Object.entries(rawTools).find(([name]) => name.endsWith("list_loki_label_values"));
-  const lokiTool = Object.entries(rawTools).find(([name]) => name.endsWith("query_loki_logs"));
+  const promTool = findToolBySuffix(metricsTools, "query_prometheus");
+  const lokiLabelNamesTool = findToolBySuffix(logsTools, "list_loki_label_names");
+  const lokiLabelValuesTool = findToolBySuffix(logsTools, "list_loki_label_values");
+  const lokiTool = findToolBySuffix(logsTools, "query_loki_logs");
 
   console.error(`[VALIDATE] Starting validation of ${config.services.length} services`);
-  console.error(`[VALIDATE] Available tools: ${Object.keys(rawTools).join(", ")}`);
+  console.error(`[VALIDATE] Metrics tools: ${Object.keys(metricsTools).join(", ") || "(none)"}`);
+  console.error(`[VALIDATE] Logs tools: ${Object.keys(logsTools).join(", ") || "(none)"}`);
+  console.error(`[VALIDATE] Dashboards tools: ${Object.keys(dashboardsTools).join(", ") || "(none)"}`);
 
-  // Find Loki datasource UID (required for label queries)
-  const listDsTool = Object.entries(rawTools).find(([name]) => name.endsWith("list_datasources"));
+  // Find datasource listing tool — try dashboards role first, fall back to metrics role
+  const listDsTool = findToolBySuffix(dashboardsTools, "list_datasources")
+    ?? findToolBySuffix(metricsTools, "list_datasources");
   const lokiDsUid = await findLokiDatasourceUid(listDsTool, config);
 
   // Phase 1: Enrich log labels by matching service names against Loki label values
@@ -148,7 +166,7 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
  * Find the Loki datasource UID by querying list_datasources.
  */
 async function findLokiDatasourceUid(
-  listDsTool: [string, any] | undefined,
+  listDsTool: [string, Tool] | undefined,
   config: ValidateStepConfig,
 ): Promise<string | undefined> {
   if (!listDsTool) return undefined;
