@@ -1,7 +1,13 @@
-import { memo } from "react";
+import { memo, useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+
+export interface TestResult {
+  status: "ok" | "error";
+  toolCount: number;
+  error?: string;
+}
 
 interface ProviderCardProps {
   name: string;
@@ -18,6 +24,7 @@ interface ProviderCardProps {
   onEdit?: () => void;
   onRemove?: () => void;
   testing?: boolean;
+  testResult?: TestResult | null;
 }
 
 export const ProviderCard = memo(function ProviderCard({
@@ -35,14 +42,23 @@ export const ProviderCard = memo(function ProviderCard({
   onEdit,
   onRemove,
   testing = false,
+  testResult = null,
 }: ProviderCardProps) {
+  // Auto-dismiss test result after 6s
+  const [visibleResult, setVisibleResult] = useState<TestResult | null>(null);
+  useEffect(() => {
+    if (!testResult) { setVisibleResult(null); return; }
+    setVisibleResult(testResult);
+    const t = setTimeout(() => setVisibleResult(null), 6000);
+    return () => clearTimeout(t);
+  }, [testResult]);
   const statusDotClass = testing
-    ? "w-2 h-2 rounded-full bg-primary/80 animate-status-pulse"
+    ? "w-2 h-2 rounded-full bg-primary animate-status-pulse"
     : status === "connected"
-      ? "w-2 h-2 rounded-full bg-success/80 ring-2 ring-success/15"
+      ? "w-2 h-2 rounded-full bg-success ring-2 ring-success/25"
       : status === "error"
-        ? "w-2 h-2 rounded-full bg-destructive/80 ring-2 ring-destructive/15"
-        : "w-2 h-2 rounded-full bg-muted-foreground/30";
+        ? "w-2 h-2 rounded-full bg-destructive ring-2 ring-destructive/25"
+        : "w-2 h-2 rounded-full bg-muted-foreground/40";
 
   const transportLabel = command
     ? `${command} (${transport})`
@@ -73,7 +89,7 @@ export const ProviderCard = memo(function ProviderCard({
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2.5 min-w-0">
           <div className={cn("shrink-0 mt-[3px]", statusDotClass)} />
-          <span className="font-body text-sm font-medium text-foreground/80 truncate">
+          <span className="font-body text-sm font-medium text-foreground/90 truncate">
             {name}
           </span>
         </div>
@@ -109,10 +125,25 @@ export const ProviderCard = memo(function ProviderCard({
         </span>
       </div>
 
-      {/* Error message */}
-      {status === "error" && error && (
+      {/* Error message (persistent, from registry status) */}
+      {status === "error" && error && !visibleResult && (
         <div className="mt-0.5 pl-[18px]">
           <span className="text-xs text-destructive/70">{error}</span>
+        </div>
+      )}
+
+      {/* Test result (transient, auto-dismisses after 6s) */}
+      {visibleResult && (
+        <div className="mt-1 pl-[18px]">
+          {visibleResult.status === "ok" ? (
+            <span className="font-mono text-[10px] text-success font-medium">
+              OK &mdash; {visibleResult.toolCount} tools available
+            </span>
+          ) : (
+            <span className="font-mono text-[10px] text-destructive/80 font-medium">
+              FAILED{visibleResult.error ? ` — ${visibleResult.error}` : ""}
+            </span>
+          )}
         </div>
       )}
 

@@ -61,7 +61,7 @@ export const InvestigationRow = memo(function InvestigationRow({
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <div className={`flex-shrink-0 w-1.5 h-1.5 rounded-full ${statusColor}`} />
-          <span className="font-body text-sm font-medium text-foreground/80 group-hover:text-foreground/95 transition-colors truncate">
+          <span className="font-body text-sm font-medium text-foreground/90 group-hover:text-foreground transition-colors truncate">
             {inv.service}
           </span>
           {severity && (
@@ -77,7 +77,7 @@ export const InvestigationRow = memo(function InvestigationRow({
         {/* Right-aligned metrics */}
         <div className="flex items-center gap-2 flex-shrink-0">
           {confidenceDisplay && (
-            <span className="font-mono text-[10px] text-foreground/60">
+            <span className="font-mono text-[10px] text-foreground/75">
               {confidenceDisplay}
             </span>
           )}
@@ -99,7 +99,7 @@ export const InvestigationRow = memo(function InvestigationRow({
 
       {/* Line 2: root cause (indented under service name) */}
       {rootCause && (
-        <p className="text-xs text-muted-foreground/50 truncate pl-3.5 mt-0.5 font-body">
+        <p className="text-xs text-muted-foreground/70 truncate pl-3.5 mt-0.5 font-body">
           {rootCause}
         </p>
       )}
