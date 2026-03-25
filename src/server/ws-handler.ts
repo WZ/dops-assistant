@@ -267,8 +267,10 @@ async function handleDeepInvestigate(
     memory.append(memoryKey, { role: "user", content: msg.message });
     memory.append(memoryKey, { role: "assistant", content: result.response });
     db.createMessage({ id: `msg_${ulid()}`, role: "user", content: msg.message, investigationId: msg.investigationId });
-    db.createMessage({ id: `msg_${ulid()}`, role: "assistant", content: result.response, investigationId: msg.investigationId });
-    send({ type: "chat:stream_end", content: result.response || "No response generated." });
+    const deepMsgId = `msg_${ulid()}`;
+    const deepMsgTime = new Date().toISOString();
+    db.createMessage({ id: deepMsgId, role: "assistant", content: result.response, investigationId: msg.investigationId });
+    send({ type: "chat:stream_end", content: result.response || "No response generated.", id: deepMsgId, createdAt: deepMsgTime, investigationId: msg.investigationId });
     send({
       type: "chat:usage",
       inputTokens: chatTokens.inputTokens,
@@ -531,11 +533,15 @@ export async function handleClientMessage(
       const content = result.response || "No response generated.";
       // Extract skill names from chatSkillContext for UI badges
       const usedSkillNames = chatSkillContext?.match(/### Skill: (.+)/g)?.map(m => m.replace("### Skill: ", ""));
+      const chatMsgId = `msg_${ulid()}`;
+      const chatMsgTime = new Date().toISOString();
       send({
         type: "chat:stream_end",
         content,
         ...(chartData.length > 0 ? { chartData } : {}),
         ...(usedSkillNames?.length ? { skillsUsed: usedSkillNames } : {}),
+        id: chatMsgId,
+        createdAt: chatMsgTime,
       });
       send({
         type: "chat:usage",
@@ -544,7 +550,7 @@ export async function handleClientMessage(
         durationMs: Date.now() - chatStartMs,
       });
       db.createMessage({
-        id: `msg_${ulid()}`, role: "assistant", content,
+        id: chatMsgId, role: "assistant", content,
         ...(chartData.length > 0 ? { chartData: JSON.stringify(chartData) } : {}),
       });
     } catch (err) {
