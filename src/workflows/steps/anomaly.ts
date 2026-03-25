@@ -11,7 +11,7 @@ import { generateText } from "ai";
 import type { WorkflowConfig } from "../investigation.js";
 import { PrefetchOutputSchema, AnomalyOutputSchema } from "../schemas.js";
 import { getToolsByRole } from "../../mcp/provider.js";
-import { wrapToolsWithCallbacks, selectToolsBySuffix, debug, ANOMALY_TOOLS } from "../tool-utils.js";
+import { wrapToolsWithCallbacks, debug } from "../tool-utils.js";
 import { getTimeContext } from "../../agents/shared/time-context.js";
 import { safeJsonParse } from "../../agents/shared/processors.js";
 import { createAnomalyDetectorAgent } from "../../agents/anomaly-detector.js";
@@ -41,8 +41,7 @@ export function buildAnomalyStep(config: WorkflowConfig) {
 
       if (!isUserReported) {
         // Proactive mode: run anomaly detection agent
-        const allTools = await getToolsByRole(config.providers, "metrics").catch(() => ({}));
-        const rawTools = selectToolsBySuffix(allTools, ANOMALY_TOOLS);
+        const rawTools = await getToolsByRole(config.providers, "metrics").catch(() => ({}));
         const tools = wrapToolsWithCallbacks(rawTools, config.onToolCall);
 
         const agent = createAnomalyDetectorAgent({
