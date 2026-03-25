@@ -51,7 +51,8 @@ export function createMcpProvider(config: ProviderConfig): MastraProvider {
 }
 
 function filterToolsForProvider(provider: MastraProvider, tools: Record<string, Tool>): Record<string, Tool> {
-  if (!provider.enabledTools?.length) return tools;
+  if (provider.enabledTools === undefined) return tools;
+  if (provider.enabledTools.length === 0) return {};
 
   const enabled = new Set(provider.enabledTools);
   const filtered: Record<string, Tool> = {};
@@ -139,9 +140,10 @@ export interface ToolInfo {
  */
 export async function getToolsWithMetadata(provider: MastraProvider): Promise<ToolInfo[]> {
   const allTools = await listAllProviderTools(provider);
-  const enabledSet = provider.enabledTools?.length
-    ? new Set(provider.enabledTools)
-    : null;
+  // undefined = no config (all enabled), [] = explicit empty (all disabled), [...] = specific tools enabled
+  const enabledSet = provider.enabledTools === undefined
+    ? null
+    : new Set(provider.enabledTools);
 
   return Object.entries(allTools).map(([namespacedName, tool]) => {
     const rawName = namespacedName.startsWith(`${provider.name}_`)

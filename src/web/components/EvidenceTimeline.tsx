@@ -79,7 +79,15 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange }: E
     return evidence.metrics.observations.filter((obs): obs is string => typeof obs === "string");
   }, [evidence.metrics]);
 
-  const hasMetricData = timeSeries.length > 0 || textMetricObs.length > 0;
+  // Also check for structured metric observations (objects with metric/currentValue)
+  const structuredMetricObs = useMemo(() => {
+    if (!evidence.metrics?.observations) return [];
+    return evidence.metrics.observations.filter((obs): obs is Record<string, unknown> =>
+      typeof obs === "object" && obs !== null && "metric" in obs
+    );
+  }, [evidence.metrics]);
+
+  const hasMetricData = timeSeries.length > 0 || textMetricObs.length > 0 || structuredMetricObs.length > 0;
 
   // Build chronological timeline entries from logs + infra
   const timelineEntries = useMemo<TimelineEntryData[]>(() => {
@@ -93,7 +101,7 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange }: E
         entries.push({
           id: `log-${idCounter++}`,
           type: "log",
-          timestamp: obs.firstSeen ?? new Date(0).toISOString(),
+          timestamp: obs.firstSeen ?? "",
           timestampEnd: obs.lastSeen,
           entity: extractEntity(obs.pattern),
           summary: obs.pattern,
@@ -104,7 +112,7 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange }: E
         entries.push({
           id: `log-${idCounter++}`,
           type: "log",
-          timestamp: new Date(0).toISOString(),
+          timestamp: "",
           entity: service || "unknown",
           summary: obs,
         });
@@ -127,7 +135,7 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange }: E
         entries.push({
           id: `infra-${idCounter++}`,
           type: "infra",
-          timestamp: new Date(0).toISOString(),
+          timestamp: "",
           entity: service || "unknown",
           summary: obs,
         });
@@ -160,6 +168,7 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange }: E
           <MetricsPanel
             timeSeries={timeSeries}
             textObservations={textMetricObs}
+            structuredObservations={structuredMetricObs as any}
             service={service}
             timeRange={timeRange}
           />

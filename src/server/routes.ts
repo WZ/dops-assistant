@@ -557,7 +557,7 @@ export function registerRoutes(
 
       res.json({
         series: series
-          .filter(s => s.values.length > 0)
+          .filter(s => s.values.length >= 2)
           .map(s => ({
             metric: s.name,
             query: s.query,

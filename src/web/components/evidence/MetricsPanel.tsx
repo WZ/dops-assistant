@@ -1,10 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import { MetricChart, type TimeSeriesData } from "../MetricChart";
+import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+
+export interface StructuredMetricObs {
+  metric: string;
+  currentValue: string;
+  baselineValue: string;
+  severity?: string;
+}
 
 interface MetricsPanelProps {
   timeSeries: TimeSeriesData[];
   textObservations: string[];
+  structuredObservations?: StructuredMetricObs[];
   service: string;
   timeRange?: { from: string; to: string };
 }
@@ -18,7 +27,7 @@ interface ExtractionResult {
 
 const MAX_EXTRACTIONS = 5;
 
-export function MetricsPanel({ timeSeries, textObservations, service, timeRange }: MetricsPanelProps) {
+export function MetricsPanel({ timeSeries, textObservations, structuredObservations, service, timeRange }: MetricsPanelProps) {
   const [extractions, setExtractions] = useState<ExtractionResult[]>([]);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -61,7 +70,9 @@ export function MetricsPanel({ timeSeries, textObservations, service, timeRange 
   const remainingTexts = [...failedTexts, ...overflowTexts];
   const isExtracting = extractions.some(e => e.loading);
 
-  if (allSeries.length === 0 && !isExtracting && remainingTexts.length === 0) {
+  const hasStructured = (structuredObservations?.length ?? 0) > 0;
+
+  if (allSeries.length === 0 && !isExtracting && remainingTexts.length === 0 && !hasStructured) {
     return <p className="text-xs text-muted-foreground/65 py-4 text-center font-mono">No metric data collected</p>;
   }
 
@@ -82,6 +93,21 @@ export function MetricsPanel({ timeSeries, textObservations, service, timeRange 
           ))}
         </div>
       )}
+
+      {/* Structured metric observation cards */}
+      {structuredObservations?.map((obs, i) => (
+        <div key={`struct-${i}`} className="rounded-lg border border-border/25 bg-card/30 px-3.5 py-2.5">
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-xs text-foreground/70">{obs.metric}</span>
+            {obs.severity && <Badge variant={obs.severity === "critical" ? "destructive" : "secondary"} className="text-[10px]">{obs.severity}</Badge>}
+          </div>
+          <div className="flex items-center gap-3 mt-1.5">
+            <span className="text-[11px] font-mono text-primary/70">{obs.currentValue}</span>
+            <span className="text-[10px] text-muted-foreground/60">/</span>
+            <span className="text-[11px] font-mono text-muted-foreground/70">baseline {obs.baselineValue}</span>
+          </div>
+        </div>
+      ))}
 
       {remainingTexts.map((text, i) => (
         <div key={`text-${i}`} className="rounded-lg border border-border/25 bg-card/30 px-3.5 py-2.5">
