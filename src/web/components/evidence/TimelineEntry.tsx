@@ -17,7 +17,7 @@ function formatTime(iso: string): string {
   try {
     const d = new Date(iso);
     if (isNaN(d.getTime())) return "";
-    return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+    return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}:${String(d.getUTCSeconds()).padStart(2, "0")}`;
   } catch {
     return "";
   }

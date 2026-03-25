@@ -49,6 +49,15 @@ function isStructuredInfra(obs: Observation): obs is StructuredInfra {
   return typeof obs === "object" && obs !== null && "resource" in obs;
 }
 
+// Parse raw log lines: "2026-03-25T13:13:16.394712758+00:00 stderr F <message>"
+const RAW_LOG_RE = /^(\d{4}-\d{2}-\d{2}T[\d:.]+(?:[+-]\d{2}:\d{2}|Z)?)\s+(?:std(?:err|out)\s+[A-Z]\s+)?(.+)/s;
+
+function parseRawLogLine(line: string): { timestamp: string; message: string } | null {
+  const m = line.match(RAW_LOG_RE);
+  if (!m) return null;
+  return { timestamp: m[1]!, message: m[2]!.trim() };
+}
+
 function extractEntity(text: string): string {
   // Try to extract service/pod names from patterns
   // Match pod/service-name patterns
@@ -129,12 +138,13 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange }: E
           expandedContent: obs.sampleLines?.join("\n") ?? obs.sample,
         });
       } else if (typeof obs === "string") {
+        const parsed = parseRawLogLine(obs);
         entries.push({
           id: `log-${idCounter++}`,
           type: "log",
-          timestamp: "",
-          entity: service || "unknown",
-          summary: obs,
+          timestamp: parsed?.timestamp ?? "",
+          entity: extractEntity(parsed?.message ?? obs),
+          summary: parsed?.message ?? obs,
         });
       }
     }
