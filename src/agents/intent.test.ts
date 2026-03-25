@@ -451,6 +451,41 @@ describe("IntentRouter", () => {
     expect(mockGenerateText).toHaveBeenCalled();
   });
 
+  // --- Casual/greeting message tests (routed via LLM, not fast-path) ---
+
+  it("LLM classifies 'hi' as question", async () => {
+    mockLlmResponse(JSON.stringify({ intent: "question", service: "" }));
+    const router = new IntentRouter(dummyModel);
+    const result = await router.route("hi", ["kube-proxy", "ingestion-server"]);
+    expect(result.intent).toBe("question");
+    expect(mockGenerateText).toHaveBeenCalled();
+  });
+
+  it("LLM classifies 'hello' as question", async () => {
+    mockLlmResponse(JSON.stringify({ intent: "question", service: "" }));
+    const router = new IntentRouter(dummyModel);
+    const result = await router.route("hello");
+    expect(result.intent).toBe("question");
+    expect(mockGenerateText).toHaveBeenCalled();
+  });
+
+  it("LLM classifies 'thanks' as question", async () => {
+    mockLlmResponse(JSON.stringify({ intent: "question", service: "" }));
+    const router = new IntentRouter(dummyModel);
+    const result = await router.route("thanks");
+    expect(result.intent).toBe("question");
+    expect(mockGenerateText).toHaveBeenCalled();
+  });
+
+  it("LLM prompt includes greeting examples", async () => {
+    mockLlmResponse(JSON.stringify({ intent: "question", service: "" }));
+    const router = new IntentRouter(dummyModel);
+    await router.route("hey there");
+    const callArgs = mockGenerateText.mock.calls[0]![0] as any;
+    expect(callArgs.system).toContain('"hi" → question');
+    expect(callArgs.system).toContain("greeting");
+  });
+
   // --- LLM classification tests (no fast-path keywords) ---
 
   it("classifies investigation intent via LLM when no keyword match", async () => {
