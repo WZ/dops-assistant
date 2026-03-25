@@ -159,7 +159,7 @@ export function App() {
                 ? "bg-destructive"
                 : "bg-muted-foreground/30"
             }`} />
-            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/60">
+            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/75">
               {health.connectionState === "connected" && health.health?.status === "healthy"
                 ? "HEALTHY"
                 : health.health?.status === "degraded"
@@ -168,13 +168,13 @@ export function App() {
                 ? "UNREACHABLE"
                 : "UNKNOWN"}
             </span>
-            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/60">
+            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/75">
               {health.health ? formatUptime(health.health.uptime) : "—"}
             </span>
-            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/60">
+            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/75">
               {health.health ? (health.health.probes.mcp.status === "ok" ? "mcp:ok" : "mcp:—") : "mcp:—"}
             </span>
-            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/60">
+            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/75">
               {health.health ? (health.health.probes.db.status === "ok" ? "db:ok" : "db:—") : "db:—"}
             </span>
           </div>
