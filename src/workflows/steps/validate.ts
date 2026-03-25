@@ -1,12 +1,14 @@
-import { getAllTools } from "../../mcp/provider.js";
+import { getToolsByRole } from "../../mcp/provider.js";
 import type { MastraProvider } from "../../mcp/provider.js";
-import type { ServiceConfig } from "../../config/schema.js";
+import type { ServiceConfig, DiscoveryRecipe } from "../../config/schema.js";
 import type { ValidatedServiceConfig } from "../../types/discovery-types.js";
 import type { OnToolCallEnriched, OnIteration } from "../../types/agent-interfaces.js";
+import type { Tool } from "@mastra/core/tools";
 
 export interface ValidateStepConfig {
   providers: MastraProvider[];
   services: ServiceConfig[];
+  discoveryRecipes?: DiscoveryRecipe[];
   onToolCall?: OnToolCallEnriched;
   onIteration?: OnIteration;
   onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
@@ -25,6 +27,21 @@ const SERVICE_LABEL_KEYS = [
 ];
 
 /**
+ * Compute effective label keys from discovery recipes.
+ * If recipes provide labelKeys, merge and deduplicate them (preserving order).
+ * Otherwise fall back to the hardcoded SERVICE_LABEL_KEYS.
+ */
+function computeEffectiveLabelKeys(recipes?: DiscoveryRecipe[]): string[] {
+  if (!recipes || recipes.length === 0) return SERVICE_LABEL_KEYS;
+
+  const recipeKeys = recipes.flatMap((r) => r.labelKeys);
+  if (recipeKeys.length === 0) return SERVICE_LABEL_KEYS;
+
+  // Deduplicate while preserving order
+  return [...new Set(recipeKeys)];
+}
+
+/**
  * Unwrap an MCP tool result to its parsed JSON payload.
  * MCP results may be raw JSON, a JSON string, or wrapped in {"content": [{"text": "..."}]}.
  */
@@ -41,6 +58,15 @@ function unwrapMcpJson(result: unknown): any {
 }
 
 /**
+ * Find a tool by name suffix within a role's tool set.
+ * Returns [toolName, tool] tuple or undefined if not found.
+ */
+function findToolBySuffix(tools: Record<string, Tool>, suffix: string): [string, Tool] | undefined {
+  const entry = Object.entries(tools).find(([name]) => name.endsWith(suffix));
+  return entry as [string, Tool] | undefined;
+}
+
+/**
  * Deterministic validation + log label enrichment.
  *
  * 1. Verify each service's Prometheus metric query returns data
@@ -48,22 +74,33 @@ function unwrapMcpJson(result: unknown): any {
  * 3. Verify matched log labels return data
  */
 export async function runValidateStep(config: ValidateStepConfig): Promise<ValidatedServiceConfig[]> {
-  const rawTools = await getAllTools(config.providers).catch(() => ({}));
+  // Resolve tools by role instead of scanning all providers
+  const [metricsTools, logsTools, dashboardsTools] = await Promise.all([
+    getToolsByRole(config.providers, "metrics").catch(() => ({})),
+    getToolsByRole(config.providers, "logs").catch(() => ({})),
+    getToolsByRole(config.providers, "dashboards").catch(() => ({})),
+  ]);
 
-  const promTool = Object.entries(rawTools).find(([name]) => name.endsWith("query_prometheus"));
-  const lokiLabelNamesTool = Object.entries(rawTools).find(([name]) => name.endsWith("list_loki_label_names"));
-  const lokiLabelValuesTool = Object.entries(rawTools).find(([name]) => name.endsWith("list_loki_label_values"));
-  const lokiTool = Object.entries(rawTools).find(([name]) => name.endsWith("query_loki_logs"));
+  const promTool = findToolBySuffix(metricsTools, "query_prometheus");
+  const lokiLabelNamesTool = findToolBySuffix(logsTools, "list_loki_label_names");
+  const lokiLabelValuesTool = findToolBySuffix(logsTools, "list_loki_label_values");
+  const lokiTool = findToolBySuffix(logsTools, "query_loki_logs");
 
   console.error(`[VALIDATE] Starting validation of ${config.services.length} services`);
-  console.error(`[VALIDATE] Available tools: ${Object.keys(rawTools).join(", ")}`);
+  console.error(`[VALIDATE] Metrics tools: ${Object.keys(metricsTools).join(", ") || "(none)"}`);
+  console.error(`[VALIDATE] Logs tools: ${Object.keys(logsTools).join(", ") || "(none)"}`);
+  console.error(`[VALIDATE] Dashboards tools: ${Object.keys(dashboardsTools).join(", ") || "(none)"}`);
 
-  // Find Loki datasource UID (required for label queries)
-  const listDsTool = Object.entries(rawTools).find(([name]) => name.endsWith("list_datasources"));
+  // Find datasource listing tool — try dashboards role first, fall back to metrics role
+  const listDsTool = findToolBySuffix(dashboardsTools, "list_datasources")
+    ?? findToolBySuffix(metricsTools, "list_datasources");
   const lokiDsUid = await findLokiDatasourceUid(listDsTool, config);
 
+  // Compute effective label keys: merge recipe labelKeys (if any) with defaults
+  const effectiveLabelKeys = computeEffectiveLabelKeys(config.discoveryRecipes);
+
   // Phase 1: Enrich log labels by matching service names against Loki label values
-  const labelMap = await buildLabelMap(lokiLabelNamesTool, lokiLabelValuesTool, lokiDsUid, config);
+  const labelMap = await buildLabelMap(lokiLabelNamesTool, lokiLabelValuesTool, lokiDsUid, config, effectiveLabelKeys);
   const enriched = enrichLogLabels(config.services, labelMap);
 
   // Phase 2: Validate metrics and logs for each service
@@ -148,7 +185,7 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
  * Find the Loki datasource UID by querying list_datasources.
  */
 async function findLokiDatasourceUid(
-  listDsTool: [string, any] | undefined,
+  listDsTool: [string, Tool] | undefined,
   config: ValidateStepConfig,
 ): Promise<string | undefined> {
   if (!listDsTool) return undefined;
@@ -184,6 +221,7 @@ async function buildLabelMap(
   labelValuesTool: [string, any] | undefined,
   lokiDsUid: string | undefined,
   config: ValidateStepConfig,
+  labelKeys: string[] = SERVICE_LABEL_KEYS,
 ): Promise<Map<string, Map<string, string>>> {
   const map = new Map<string, Map<string, string>>();
   if (!labelNamesTool || !labelValuesTool || !lokiDsUid) return map;
@@ -200,7 +238,7 @@ async function buildLabelMap(
     console.error(`[VALIDATE] Available label names (${allNames.length}): ${allNames.slice(0, 30).join(", ")}`);
 
     const available = allNames.filter(
-      (k: string) => SERVICE_LABEL_KEYS.some((p) => k === p || k.toLowerCase().includes(p)),
+      (k: string) => labelKeys.some((p) => k === p || k.toLowerCase().includes(p)),
     );
     console.error(`[VALIDATE] Found ${available.length} matching label keys: ${available.join(", ")}`);
 

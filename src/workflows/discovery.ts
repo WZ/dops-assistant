@@ -33,6 +33,7 @@ export async function runDiscovery(config: DiscoveryWorkflowConfig): Promise<Val
   const validated = await runValidateStep({
     providers: config.providers,
     services: discovered,
+    discoveryRecipes: config.discoveryConfig.discoveryRecipes,
     onToolCall: config.onToolCall,
     onIteration: config.onIteration,
     onTokenUsage: config.onTokenUsage,

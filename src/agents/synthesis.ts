@@ -32,7 +32,7 @@ Confidence calibration:
 - medium: 2 evidence types, or timestamps don't perfectly align
 - low: 1 evidence type, speculative causation, or contradictory evidence
 
-Extract any Grafana dashboard URLs found in the metric findings observations and include them in dashboardLinks.
+Extract any dashboard or visualization URLs found in the metric findings observations and include them in dashboardLinks.
 
 TIMELINE: Include 3-8 events in chronological order. Each: timestamp + 1-sentence description. Start with first anomalous signal, end with resolution or current state.
 
