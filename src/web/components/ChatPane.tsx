@@ -414,7 +414,8 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                   <div className={`rounded-xl border bg-card/50 overflow-hidden transition-all group-hover:border-primary/40 group-hover:shadow-md ${
                     msg.report.severity === "critical" ? "border-destructive/30 glow-red" :
                     msg.report.severity === "high" ? "border-accent/25 glow-coral" :
-                    "border-primary/20 glow-teal"
+                    msg.report.severity === "medium" ? "border-info/25" :
+                    "border-primary/20"
                   }`}>
                     <div className="px-3.5 py-2.5 border-b border-border/20">
                       <div className="flex items-center justify-between mb-1">
@@ -422,7 +423,12 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                           Root Cause Analysis
                         </span>
                         <div className="flex items-center gap-1.5">
-                          <Badge variant={msg.report.severity === "critical" ? "destructive" : "secondary"} className="text-[8px] uppercase tracking-wider">
+                          <Badge variant={
+                            msg.report.severity === "critical" ? "destructive" :
+                            msg.report.severity === "high" ? "warning" :
+                            msg.report.severity === "medium" ? "info" :
+                            "secondary"
+                          } className="text-[8px] uppercase tracking-wider">
                             {msg.report.severity}
                           </Badge>
                           <span className="text-[8px] font-mono text-muted-foreground/50">{msg.report.confidence}{msg.report.confidenceScore != null ? ` (${msg.report.confidenceScore.toFixed(2)})` : ""}</span>
