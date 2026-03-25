@@ -2,7 +2,7 @@
  * Shared evidence step builder for the investigation workflow.
  *
  * All three evidence phases (metrics, logs, infra) follow the same pattern:
- *   1. Get tools by role → filter by suffix → wrap with callbacks
+ *   1. Get tools by role → wrap with callbacks
  *   2. Create specialized agent
  *   3. Build prompt from anomaly context
  *   4. Run agent.generate() with onStepFinish to collect tool data
@@ -41,6 +41,7 @@ interface EvidenceStepConfig {
   iterationStart: number;
   /** MCP provider role(s) to fetch tools from. Array merges tools from multiple roles. */
   toolRole: ProviderRole | ProviderRole[];
+  // toolAllowlist removed — agents now get all tools for their role (provider-agnostic)
   /** Factory that creates the specialized agent for this phase */
   createAgent: (opts: { model: any; tools: Record<string, any>; useQuirkHandling?: boolean }) => any;
   /** Build the prompt string from the planning step's inputData */
@@ -79,8 +80,7 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
       workflowConfig.onPhase?.("Analyzing metrics, logs & infrastructure");
       workflowConfig.onIteration?.(phaseName, iterationStart, 6, `Analyzing ${phaseName}`);
 
-      // 1. Get tools by role(s) → wrap with callbacks
-      // Tool scoping is provider-agnostic: role routing + provider enabledTools config
+      // 1. Get all tools for this role → wrap with callbacks (provider-agnostic)
       const roles = Array.isArray(toolRole) ? toolRole : [toolRole];
       const toolMaps = await Promise.all(roles.map(r => getToolsByRole(workflowConfig.providers, r).catch(() => ({}))));
       const rawTools: Record<string, any> = {};

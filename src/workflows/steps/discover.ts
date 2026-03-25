@@ -1,10 +1,10 @@
 import { createDiscoverAgent } from "../../agents/discover.js";
 import { safeJsonParse } from "../../agents/shared/processors.js";
-import { getAllTools } from "../../mcp/provider.js";
+import { getToolsByRole } from "../../mcp/provider.js";
 import { wrapToolsWithCallbacks } from "../tool-utils.js";
 import type { LanguageModel } from "ai";
 import type { MastraProvider } from "../../mcp/provider.js";
-import type { ServiceConfig, DiscoveryConfig } from "../../config/schema.js";
+import type { ServiceConfig, DiscoveryConfig, DiscoveryRecipe } from "../../config/schema.js";
 import type { OnToolCallEnriched, OnIteration } from "../../types/agent-interfaces.js";
 
 export interface DiscoverStepConfig {
@@ -18,32 +18,60 @@ export interface DiscoverStepConfig {
 
 const MAX_RETRIES = 3;
 
-// Only give the discover agent Prometheus/metrics tools — no Loki/log tools.
-// Log labels are populated deterministically in the validation step.
-const LOKI_TOOL_PATTERNS = ["loki", "log_label", "log_pattern", "log_stats"];
+const DEFAULT_PROMETHEUS_RECIPE: DiscoveryRecipe = {
+  providerType: "prometheus-k8s",
+  serviceQueries: [
+    'count by (deployment) (kube_deployment_status_replicas)',
+    'count by (statefulset) (kube_statefulset_status_replicas)',
+    'count by (daemonset) (kube_daemonset_status_desired_number_scheduled)',
+    'count by (container) (kube_pod_container_info{container!="POD",container!=""})',
+    'count by (app) (kube_pod_info)',
+    'count by (job) (up)',
+  ],
+  labelKeys: ["app", "container_name", "job", "component", "name", "service", "chart", "release"],
+};
 
-function filterOutLokiTools(tools: Record<string, any>): Record<string, any> {
-  const filtered: Record<string, any> = {};
-  for (const [name, tool] of Object.entries(tools)) {
-    if (!LOKI_TOOL_PATTERNS.some((p) => name.toLowerCase().includes(p))) {
-      filtered[name] = tool;
+/**
+ * Format discovery recipes into a prompt-friendly string.
+ */
+function formatRecipeHints(recipes: DiscoveryRecipe[]): string {
+  return recipes.map((recipe) => {
+    const lines: string[] = [`### ${recipe.providerType}`];
+    if (recipe.serviceQueries.length > 0) {
+      lines.push("Suggested queries:");
+      for (const q of recipe.serviceQueries) {
+        lines.push(`- ${q}`);
+      }
     }
-  }
-  return filtered;
+    if (recipe.labelKeys.length > 0) {
+      lines.push(`Service label keys: ${recipe.labelKeys.join(", ")}`);
+    }
+    return lines.join("\n");
+  }).join("\n\n");
 }
 
 export async function runDiscoverStep(config: DiscoverStepConfig): Promise<ServiceConfig[]> {
-  let rawTools: Record<string, any>;
+  let discoveryTools: Record<string, any>;
   try {
-    rawTools = await getAllTools(config.providers);
+    const [metrics, infra] = await Promise.all([
+      getToolsByRole(config.providers, "metrics").catch(() => ({})),
+      getToolsByRole(config.providers, "infrastructure").catch(() => ({})),
+    ]);
+    discoveryTools = { ...metrics, ...infra };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`MCP connection failed — cannot reach monitoring providers. ${msg}`);
   }
-  if (Object.keys(rawTools).length === 0) {
-    throw new Error("No MCP tools available — check that your Grafana MCP server is running and reachable.");
+  if (Object.keys(discoveryTools).length === 0) {
+    throw new Error("No MCP tools available — check that your monitoring MCP server is running and has the 'metrics' or 'infrastructure' role.");
   }
-  const metricsOnly = filterOutLokiTools(rawTools);
+
+  // Build recipe hints for the discover agent prompt
+  const configuredRecipes = config.discoveryConfig.discoveryRecipes ?? [];
+  const effectiveRecipes = configuredRecipes.length > 0
+    ? configuredRecipes
+    : [DEFAULT_PROMETHEUS_RECIPE];
+  const recipeHints = formatRecipeHints(effectiveRecipes);
 
   // Keep maxSteps capped so the quirk wind-down (which disables tools to
   // force JSON output) fires before the model exhausts all iterations.
@@ -62,8 +90,8 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
     : undefined;
 
   const tools = wrappedOnToolCall
-    ? wrapToolsWithCallbacks(metricsOnly, wrappedOnToolCall, "discovery")
-    : metricsOnly;
+    ? wrapToolsWithCallbacks(discoveryTools, wrappedOnToolCall, "discovery")
+    : discoveryTools;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     const agent = createDiscoverAgent({
@@ -72,6 +100,7 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
       maxSteps,
       excludeServices: config.discoveryConfig.excludeServices,
       useQuirkHandling: true,
+      discoveryRecipes: recipeHints,
     });
 
     const toolCount = Object.keys(tools).length;

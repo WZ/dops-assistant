@@ -185,9 +185,7 @@ export class MastraChatAgentAdapter {
           const result = p.result ?? "";
           const resultStr = unwrapToolText(result);
           collectedImages.push(...extractToolImages(toolName, result));
-          if (toolName === "query_prometheus") {
-            console.error(`[MASTRA_CHAT] tool-result: ${toolName} resultLen=${resultStr.length} first200=${resultStr.slice(0, 200)}`);
-          }
+          console.error(`[MASTRA_CHAT] tool-result: ${toolName} resultLen=${resultStr.length}`);
           task.onToolCall?.(toolName, p.args ?? {}, resultStr);
         }
       }
@@ -397,10 +395,17 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
   const model = createModel(config.llm);
 
   // Web chat renders charts inline from metrics data. CLI still needs panel-image tools.
+  // Exclude tools whose descriptions indicate they produce images/screenshots/rendered panels.
   const allTools = await getAllTools(providers).catch(() => ({}));
   const inlineChartTools: Record<string, any> = {};
   for (const [name, tool] of Object.entries(allTools)) {
-    if (!name.endsWith("get_panel_image")) inlineChartTools[name] = tool;
+    const desc = ((tool as any).description ?? "").toLowerCase();
+    const isImageTool =
+      desc.includes("image") &&
+      (desc.includes("panel") ||
+        desc.includes("render") ||
+        desc.includes("screenshot"));
+    if (!isImageTool) inlineChartTools[name] = tool;
   }
 
   const chatAgent = new MastraChatAgentAdapter(

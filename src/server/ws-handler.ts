@@ -25,7 +25,7 @@ function isFlatSeries(values: [string, number][]): boolean {
   return values.every(([, v]) => v === first);
 }
 
-/** Extract chart-renderable time-series from a raw query_prometheus tool result */
+/** Extract chart-renderable time-series from a raw metric tool result */
 function extractChartSeries(rawResult: string, args: Record<string, unknown>): ChartSeries[] {
   const series: ChartSeries[] = [];
   try {
@@ -101,6 +101,7 @@ export interface WsDeps {
   getPendingDiscovery?: () => ValidatedServiceConfig[] | null;
   clearPendingDiscovery?: () => void;
   getHiddenServices?: () => Set<string>;
+  metricsToolNames?: Set<string>;
 }
 
 export function setupWebSocket(server: Server, deps: WsDeps): void {
@@ -312,7 +313,7 @@ export async function handleClientMessage(
 
     try {
       const services = await deps.discoverAgent.discover(
-        deps.discoveryConfig ?? { autoRefresh: false, excludeServices: [], maxIterations: 40 },
+        deps.discoveryConfig ?? { autoRefresh: false, excludeServices: [], maxIterations: 40, discoveryRecipes: [] },
         (phase) => {
           // Emit usage for the phase that just ended
           if (phaseTokens.inputTokens > 0 || phaseTokens.outputTokens > 0) {
@@ -509,7 +510,7 @@ export async function handleClientMessage(
             send({ type: "chat:tool_call", tool: name, status: "calling" });
           } else {
             send({ type: "chat:tool_call", tool: name, status: "complete" });
-            if (name === "query_prometheus") {
+            if (deps.metricsToolNames?.has(name) ?? name === "query_prometheus") {
               chartData.push(...extractChartSeries(rawResult, args));
             }
           }

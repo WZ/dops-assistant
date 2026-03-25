@@ -134,16 +134,16 @@ export function buildTimeWindowHint(anomalySummary: string, userMessage?: string
   return [
     timeContext,
     `INVESTIGATION TIME WINDOW: from="${timeRange.from}" to="${timeRange.to}"`,
-    `You MUST query this full window using a RANGE query as your FIRST tool call:`,
-    `  queryType="range", startTime="${timeRange.from}", endTime="${timeRange.to}", stepSeconds=${stepSeconds}`,
-    `Do NOT only check the current instant value — past anomalies are invisible to instant queries.`,
-    `For Loki log queries, use RFC3339: startRfc3339="${rfc3339.startRfc3339}", endRfc3339="${rfc3339.endRfc3339}"`,
+    `You MUST query this full window as your FIRST tool call to see trends over time.`,
+    `Suggested parameters: start="${timeRange.from}", end="${timeRange.to}", step/interval=${stepSeconds}s`,
+    `Do NOT only check the current instant value — past anomalies are invisible to point-in-time queries.`,
+    `Time window in RFC3339: start="${rfc3339.startRfc3339}", end="${rfc3339.endRfc3339}"`,
   ].join("\n");
 }
 
 /**
  * Build a service context hint for evidence agent prompts.
- * Injects configured PromQL queries and log labels from the matching service config.
+ * Injects configured metric queries and log search parameters from the matching service config.
  */
 export function buildServiceContextHint(services: ServiceConfig[], serviceName?: string): { metricsHint: string; logLabelsHint: string } {
   if (!serviceName) return { metricsHint: "", logLabelsHint: "" };
