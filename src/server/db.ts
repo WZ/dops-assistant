@@ -200,7 +200,7 @@ export class Database {
 
   listRecentMessages(limit: number): MessageRow[] {
     return this.db.prepare(
-      "SELECT * FROM (SELECT * FROM messages ORDER BY created_at DESC LIMIT ?) ORDER BY created_at ASC"
+      "SELECT * FROM (SELECT * FROM messages WHERE investigation_id IS NULL ORDER BY created_at DESC LIMIT ?) ORDER BY created_at ASC"
     ).all(limit) as MessageRow[];
   }
 
@@ -208,7 +208,19 @@ export class Database {
     if (investigationId) {
       return this.db.prepare("SELECT * FROM messages WHERE investigation_id = ? ORDER BY created_at ASC LIMIT ?").all(investigationId, limit) as MessageRow[];
     }
-    return this.db.prepare("SELECT * FROM messages ORDER BY created_at ASC LIMIT ?").all(limit) as MessageRow[];
+    return this.db.prepare(
+      "SELECT * FROM (SELECT * FROM messages WHERE investigation_id IS NULL ORDER BY created_at DESC LIMIT ?) ORDER BY created_at ASC"
+    ).all(limit) as MessageRow[];
+  }
+
+  deleteMessage(id: string): boolean {
+    const result = this.db.prepare("DELETE FROM messages WHERE id = ? AND investigation_id IS NULL").run(id);
+    return result.changes > 0;
+  }
+
+  clearConsoleMessages(): number {
+    const result = this.db.prepare("DELETE FROM messages WHERE investigation_id IS NULL").run();
+    return result.changes;
   }
 
   /**
