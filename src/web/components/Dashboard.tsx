@@ -328,7 +328,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onViewService, onV
             label="Services Health"
             value={`${healthKpi.healthy}/${visibleServiceCount}`}
             variant={healthKpi.healthy === visibleServiceCount && visibleServiceCount > 0 ? "success" : "default"}
-            detail={<>{healthKpi.down > 0 ? <span className="text-destructive/80">{healthKpi.down} down</span> : <>{healthKpi.down} down</>} · {healthKpi.degraded > 0 ? <span className="text-warning/80">{healthKpi.degraded} degraded</span> : <>{healthKpi.degraded} degraded</>} · {healthKpi.unknown} unknown</>}
+            detail={<>{healthKpi.down > 0 ? <span className="text-destructive">{healthKpi.down} down</span> : <>{healthKpi.down} down</>} · {healthKpi.degraded > 0 ? <span className="text-warning">{healthKpi.degraded} degraded</span> : <>{healthKpi.degraded} degraded</>} · {healthKpi.unknown} unknown</>}
             loading={loading}
           />
           <StatCard
