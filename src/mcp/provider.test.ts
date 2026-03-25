@@ -280,3 +280,59 @@ describe("getAllTools", () => {
     });
   });
 });
+
+describe("classifyToolAccess", () => {
+  it("classifies get_ prefixed tools as read", () => {
+    expect(classifyToolAccess("get_dashboard_by_uid")).toBe("read");
+  });
+  it("classifies list_ prefixed tools as read", () => {
+    expect(classifyToolAccess("list_datasources")).toBe("read");
+  });
+  it("classifies query_ prefixed tools as read", () => {
+    expect(classifyToolAccess("query_prometheus")).toBe("read");
+  });
+  it("classifies search_ prefixed tools as read", () => {
+    expect(classifyToolAccess("search_dashboards")).toBe("read");
+  });
+  it("classifies create_ prefixed tools as write", () => {
+    expect(classifyToolAccess("create_dashboard")).toBe("write");
+  });
+  it("classifies update_ prefixed tools as write", () => {
+    expect(classifyToolAccess("update_alert_rule")).toBe("write");
+  });
+  it("classifies delete_ prefixed tools as write", () => {
+    expect(classifyToolAccess("delete_dashboard")).toBe("write");
+  });
+  it("classifies unknown prefixes as write (safe default)", () => {
+    expect(classifyToolAccess("run_migration")).toBe("write");
+  });
+  it("is case-insensitive", () => {
+    expect(classifyToolAccess("GET_dashboard")).toBe("read");
+    expect(classifyToolAccess("Query_Prometheus")).toBe("read");
+  });
+
+  // K8s MCP uses entity_verb naming (pods_list, nodes_log, etc.)
+  it("classifies _list suffixed tools as read", () => {
+    expect(classifyToolAccess("pods_list")).toBe("read");
+    expect(classifyToolAccess("events_list")).toBe("read");
+    expect(classifyToolAccess("namespaces_list")).toBe("read");
+    expect(classifyToolAccess("resources_list")).toBe("read");
+    expect(classifyToolAccess("pods_list_in_namespace")).toBe("read");
+  });
+  it("classifies _get suffixed tools as read", () => {
+    expect(classifyToolAccess("pods_get")).toBe("read");
+    expect(classifyToolAccess("resources_get")).toBe("read");
+  });
+  it("classifies _log/_logs suffixed tools as read", () => {
+    expect(classifyToolAccess("pods_log")).toBe("read");
+    expect(classifyToolAccess("nodes_log")).toBe("read");
+  });
+  it("classifies _top/_stats/_summary suffixed tools as read", () => {
+    expect(classifyToolAccess("pods_top")).toBe("read");
+    expect(classifyToolAccess("nodes_top")).toBe("read");
+    expect(classifyToolAccess("nodes_stats_summary")).toBe("read");
+  });
+  it("classifies configuration_view as read (exact match)", () => {
+    expect(classifyToolAccess("configuration_view")).toBe("read");
+  });
+});
