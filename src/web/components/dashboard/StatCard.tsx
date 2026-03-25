@@ -84,7 +84,7 @@ export const StatCard = memo(function StatCard({
 
       {/* Detail — mono-xs */}
       {detail && (
-        <div className="mt-1 font-mono text-[9px] text-muted-foreground/60 leading-snug">
+        <div className="mt-1 font-mono text-[9px] text-muted-foreground/75 leading-snug">
           {detail}
         </div>
       )}
