@@ -117,14 +117,13 @@ function findMetricQueryTool(tools: Record<string, unknown>): ToolExecutor | nul
 
 /**
  * Find the Prometheus datasource UID via a datasource listing tool.
- * Looks for tools with "datasource" or "list" in the name from the
- * metrics-role tools.
+ * Looks for tools with "datasource" in the name from the metrics-role tools.
  */
 async function findPrometheusDatasourceUid(
   tools: Record<string, unknown>,
 ): Promise<string | undefined> {
   const listDsTool = Object.entries(tools).find(
-    ([name]) => name.includes("datasource") || (name.includes("list") && !name.includes("query")),
+    ([name]) => name.includes("datasource"),
   );
   if (!listDsTool) return undefined;
   try {

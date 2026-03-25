@@ -152,9 +152,41 @@ const statusIcons: Record<PhaseStatus, string> = {
   pending: "\u25CB",
 };
 
+/** Live elapsed timer for running phases — updates every second */
+function ElapsedTimer({ startTime }: { startTime: number }) {
+  const [elapsed, setElapsed] = useState(Math.floor((Date.now() - startTime) / 1000));
+  useEffect(() => {
+    const id = setInterval(() => setElapsed(Math.floor((Date.now() - startTime) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [startTime]);
+  const mins = Math.floor(elapsed / 60);
+  const secs = elapsed % 60;
+  const label = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+  return (
+    <span className={cn(
+      "text-[9px] font-mono tabular-nums",
+      elapsed < 30 ? "text-primary/50" : elapsed < 60 ? "text-accent/60" : "text-destructive/60",
+    )}>
+      {label} elapsed{elapsed >= 30 && " — waiting for LLM"}
+    </span>
+  );
+}
+
 export function PhaseStepper({ phases, events = [], evidence = {}, isComplete = false, phaseTokens }: PhaseStepperProps) {
   const [openPhases, setOpenPhases] = useState<Set<string>>(new Set());
   const prevCompleteRef = useRef(isComplete);
+  const phaseStartTimes = useRef<Record<string, number>>({});
+
+  // Track when each phase starts running
+  useEffect(() => {
+    for (const phase of phases) {
+      if (phase.status === "running" && !phaseStartTimes.current[phase.name]) {
+        phaseStartTimes.current[phase.name] = Date.now();
+      } else if (phase.status !== "running") {
+        delete phaseStartTimes.current[phase.name];
+      }
+    }
+  }, [phases]);
 
   // Auto-open running phases, auto-close all when investigation completes
   useEffect(() => {
@@ -253,10 +285,17 @@ export function PhaseStepper({ phases, events = [], evidence = {}, isComplete = 
                       </div>
                     )}
                   </CollapsibleTrigger>
-                  {phase.substatus && (
-                    <p className="text-[10px] font-mono text-muted-foreground/70 mt-0.5 ml-5 animate-fade-in">
-                      {phase.substatus}
-                    </p>
+                  {(phase.substatus || (phase.status === "running" && phaseStartTimes.current[phase.name])) && (
+                    <div className="flex items-center gap-2 mt-0.5 ml-5 animate-fade-in">
+                      {phase.substatus && (
+                        <p className="text-[10px] font-mono text-muted-foreground/70">
+                          {phase.substatus}
+                        </p>
+                      )}
+                      {phase.status === "running" && phaseStartTimes.current[phase.name] && (
+                        <ElapsedTimer startTime={phaseStartTimes.current[phase.name]} />
+                      )}
+                    </div>
                   )}
                   <CollapsibleContent className="ml-5">
                     <PhaseDetails phase={phase} events={events} evidence={phaseEvidence} />
@@ -273,10 +312,17 @@ export function PhaseStepper({ phases, events = [], evidence = {}, isComplete = 
                   )}>
                     {phase.label}
                   </p>
-                  {phase.substatus && (
-                    <p className="text-[10px] font-mono text-muted-foreground/70 mt-0.5 animate-fade-in">
-                      {phase.substatus}
-                    </p>
+                  {(phase.substatus || (phase.status === "running" && phaseStartTimes.current[phase.name])) && (
+                    <div className="flex items-center gap-2 mt-0.5 animate-fade-in">
+                      {phase.substatus && (
+                        <p className="text-[10px] font-mono text-muted-foreground/70">
+                          {phase.substatus}
+                        </p>
+                      )}
+                      {phase.status === "running" && phaseStartTimes.current[phase.name] && (
+                        <ElapsedTimer startTime={phaseStartTimes.current[phase.name]} />
+                      )}
+                    </div>
                   )}
                 </>
               )}
