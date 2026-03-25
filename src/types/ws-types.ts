@@ -46,7 +46,7 @@ export type ServerMessage =
   | { type: "services:health"; data: unknown[] }
   | { type: "chat:stream_start" }
   | { type: "chat:stream_delta"; content: string; reasoning?: boolean }
-  | { type: "chat:stream_end"; content: string; chartData?: ChartSeries[]; skillsUsed?: string[] }
+  | { type: "chat:stream_end"; content: string; chartData?: ChartSeries[]; skillsUsed?: string[]; id?: string; createdAt?: string; investigationId?: string }
   | { type: "investigation:phase_usage"; investigationId: string; phase: string; inputTokens: number; outputTokens: number; durationMs: number }
   | { type: "investigation:total_usage"; investigationId: string; inputTokens: number; outputTokens: number; durationMs: number }
   | { type: "chat:usage"; inputTokens: number; outputTokens: number; durationMs: number }
