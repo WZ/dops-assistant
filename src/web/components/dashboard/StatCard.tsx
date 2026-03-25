@@ -23,7 +23,7 @@ export const StatCard = memo(function StatCard({
   loading = false,
 }: StatCardProps) {
   const valueColor = {
-    default: "text-foreground/90",
+    default: "text-foreground",
     success: "text-success",
     warning: "text-warning",
     danger: "text-destructive",

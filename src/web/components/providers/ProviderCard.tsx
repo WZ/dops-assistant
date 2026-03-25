@@ -53,12 +53,12 @@ export const ProviderCard = memo(function ProviderCard({
     return () => clearTimeout(t);
   }, [testResult]);
   const statusDotClass = testing
-    ? "w-2 h-2 rounded-full bg-primary/80 animate-status-pulse"
+    ? "w-2 h-2 rounded-full bg-primary animate-status-pulse"
     : status === "connected"
-      ? "w-2 h-2 rounded-full bg-success/80 ring-2 ring-success/15"
+      ? "w-2 h-2 rounded-full bg-success ring-2 ring-success/25"
       : status === "error"
-        ? "w-2 h-2 rounded-full bg-destructive/80 ring-2 ring-destructive/15"
-        : "w-2 h-2 rounded-full bg-muted-foreground/30";
+        ? "w-2 h-2 rounded-full bg-destructive ring-2 ring-destructive/25"
+        : "w-2 h-2 rounded-full bg-muted-foreground/40";
 
   const transportLabel = command
     ? `${command} (${transport})`
@@ -89,7 +89,7 @@ export const ProviderCard = memo(function ProviderCard({
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2.5 min-w-0">
           <div className={cn("shrink-0 mt-[3px]", statusDotClass)} />
-          <span className="font-body text-sm font-medium text-foreground/80 truncate">
+          <span className="font-body text-sm font-medium text-foreground/90 truncate">
             {name}
           </span>
         </div>

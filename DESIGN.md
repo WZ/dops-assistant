@@ -52,8 +52,8 @@ Papyrus, Comic Sans, Lobster, Impact, Jokerman, Bleeding Cowboys, Permanent Mark
 |------|-------|------|-----------|----------|-------|
 | Primary (Teal) | #0D7C66 | #2DD4A8 | 166, 80%, 27% | 160, 67%, 50% | Links, active states, focus rings, primary buttons, phase indicators |
 | Accent (Coral) | #C2533D | #E0785A | 10, 55%, 50% | 14, 65%, 60% | Emphasis, discovery highlights, secondary CTAs, hotspots |
-| Success | #2E9B6E | #3DAF7E | 152, 55%, 39% | 152, 55%, 46% | Healthy services, completed phases, positive deltas |
-| Destructive | #C93B3B | #E04848 | 0, 55%, 51% | 0, 70%, 58% | Errors, critical services, failed phases |
+| Success | #1E9458 | #4EDB94 | 152, 72%, 34% | 152, 70%, 55% | Healthy services, completed phases, positive deltas |
+| Destructive | #C93434 | #F75A5A | 0, 72%, 46% | 0, 90%, 68% | Errors, critical services, failed phases |
 | Warning | #B88A1E | #D4A826 | 42, 73%, 42% | 42, 73%, 49% | Degraded services, caution states |
 | Info | #3178B8 | #4A8FD6 | 210, 58%, 46% | 215, 62%, 56% | Informational notices, in-progress states |
 | Background | #FAFAF7 | #0F1115 | 40, 15%, 97% | 225, 18%, 7% | Page background (warm stone / deep charcoal) |
@@ -61,11 +61,11 @@ Papyrus, Comic Sans, Lobster, Impact, Jokerman, Bleeding Cowboys, Permanent Mark
 | Secondary | #EDEBE6 | #252830 | 36, 16%, 92% | 222, 13%, 17% | Secondary buttons, code blocks, hover states |
 | Muted | #F3F1EC | #1E2128 | 36, 19%, 94% | 222, 13%, 13% | Muted backgrounds, skeleton loaders |
 | Border | #E2DFD9 | #2A2E36 | 33, 12%, 87% | 220, 14%, 19% | All borders, dividers, horizontal rules |
-| Foreground | #1C1E21 | #E2E4E8 | 216, 8%, 12% | 216, 12%, 90% | Primary text |
-| Muted FG | #6B6E73 | #8B8F96 | 216, 4%, 44% | 216, 5%, 57% | Secondary text, placeholders, timestamps |
+| Foreground | #131517 | #EEEFF2 | 216, 10%, 8% | 216, 10%, 95% | Primary text |
+| Muted FG | #585D63 | #9DA1A8 | 216, 6%, 38% | 216, 5%, 65% | Secondary text, placeholders, timestamps |
 
 ### Dark Mode Strategy
-Dark mode uses deep charcoal backgrounds (225° hue, cool undertone) rather than pure black. Primary teal shifts brighter (#2DD4A8) to maintain vibrancy against dark surfaces. Coral accent warms slightly. Background and card surfaces have subtle blue undertone for depth.
+Dark mode uses deep charcoal backgrounds (225° hue, cool undertone) rather than pure black. Primary teal shifts brighter (#2DD4A8) to maintain vibrancy against dark surfaces. Coral accent warms slightly. Background and card surfaces have subtle blue undertone for depth. Status colors (success, destructive) are pushed to high saturation + lightness so dots and sparklines pop against dark cards — green at 70% sat / 55% L, red at 90% sat / 68% L. Foreground text is near-white (95% lightness) for maximum readability.
 
 ### AI Slop Anti-Patterns (never use)
 - Purple/violet gradients as default accent
@@ -172,7 +172,7 @@ The main dashboard ("Operations Desk") is a read-only monitoring view. No manage
 The health strip is a single card container (`bg-card`, `border`, `border-radius: lg`, `padding: 12px 16px`) with wrapping flex layout (`gap: 6px`). Each chip:
 - `padding: 4px 10px`, `border-radius: 6px`, `background: secondary/50`
 - Dot: `5px` circle, colored by health status (success/warning/destructive/muted-foreground)
-- Name: `JetBrains Mono 10px 500`, `foreground/75`
+- Name: `JetBrains Mono 10px 500`, `foreground/90`
 - Hover: `background: secondary`
 - Clicking a chip navigates to the Services page (not an inline expansion)
 
@@ -246,3 +246,4 @@ Combined Providers + Skills page with tab navigation.
 | 2026-03-24 | Combined Providers and Skills into Settings page with tabs | Both are configuration concerns. Separating them into two top-level nav items isn't justified — they're visited infrequently. Tabs keep both discoverable without adding nav depth. |
 | 2026-03-24 | Theme toggle moved from top bar to sidebar bottom | Declutters the top bar (now just branding + health status). Theme toggle is a low-frequency action that doesn't need prime top-bar real estate. Sidebar bottom is the convention (VS Code, Linear, Notion). |
 | 2026-03-24 | KPI grid changed from 4 columns to 3 | Dropped Avg Confidence as a standalone KPI card. Confidence value is now shown inline in the Investigations card detail text. Three cards answer: how many + how well, how healthy, how fast. |
+| 2026-03-24 | Brightness pass — both themes | Dark mode: foreground 90%→95% L, muted-fg 57%→65% L, success 55%/46%→70%/55%, destructive 70%/58%→90%/68%. Light mode: foreground 12%→8% L (darker), muted-fg 44%→38% L, success 55%/39%→72%/34%, destructive 55%/51%→72%/46%. DotTimeline opacity: healthy 0.45→0.75, down 0.7→1.0. Status dots: removed /80 damping, ring glow /15→/25. Rationale: status indicators and text were too dim in both themes — monitoring dashboards need at-a-glance readability. |

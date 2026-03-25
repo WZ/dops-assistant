@@ -279,7 +279,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onViewService, onV
       </div>
       {/* Section A: Title */}
       <div className="mb-6 animate-fade-up">
-        <h1 className="font-display text-xl font-bold tracking-tight text-foreground/90">Operations Desk</h1>
+        <h1 className="font-display text-xl font-bold tracking-tight text-foreground">Operations Desk</h1>
         <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">
           {services.filter(s => !hiddenSet.has(s.name)).length} services monitored
           {lastUpdated && (

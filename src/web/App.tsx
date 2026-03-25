@@ -140,7 +140,7 @@ export function App() {
               <div className="w-1.5 h-1.5 rounded-full bg-primary/25" />
             </div>
             <div className="flex items-baseline gap-1.5">
-              <span className="font-display font-bold text-sm tracking-wide text-foreground/90 uppercase">
+              <span className="font-display font-bold text-sm tracking-wide text-foreground uppercase">
                 {branding.title}
               </span>
               <span className="text-[9px] font-mono text-muted-foreground/70 tracking-[0.2em] uppercase">

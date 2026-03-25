@@ -40,7 +40,7 @@ export function HealthStrip({ services, onClickService, onViewAll }: HealthStrip
           className="flex items-center gap-[5px] px-2.5 py-1 rounded-md bg-secondary/50 hover:bg-secondary transition-colors"
         >
           <span className={`w-[5px] h-[5px] rounded-full ${DOT_COLORS[svc.health]}`} />
-          <span className="font-mono text-[10px] font-medium text-foreground/75">{svc.name}</span>
+          <span className="font-mono text-[10px] font-medium text-foreground/90">{svc.name}</span>
         </button>
       ))}
       <button
