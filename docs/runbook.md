@@ -38,10 +38,11 @@ llm:
   # baseURL: "https://your-provider.example.com/v1"
 
 # MCP providers. Each provider connects to an MCP server and declares
-# which roles it fulfills (metrics, logs, dependencies).
+# which roles it fulfills.
+# Available roles: metrics, logs, dashboards, dependencies, infrastructure, changes
 providers:
   - name: grafana
-    roles: [metrics, logs]
+    roles: [metrics, logs, dashboards]
     mcpServer:
       transport: stdio
       command: "npx"
@@ -49,6 +50,8 @@ providers:
       env:
         GRAFANA_URL: "${GRAFANA_URL}"
         GRAFANA_API_KEY: "${GRAFANA_API_KEY}"
+      # Optional: restrict which tools are available (read-only tools enabled by default)
+      # enabledTools: [query_prometheus, list_datasources, search_dashboards]
 
 # Services to monitor. Each service defines PromQL metrics and Loki log labels
 # for the investigation agents to query.

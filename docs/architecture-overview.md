@@ -52,12 +52,14 @@ The investigation workflow (`src/workflows/investigation.ts`) is a 6-phase Mastr
 
 ### Phase 1: Prefetch Context
 
-**File**: `src/workflows/steps/prefetch.ts`
+**Directory**: `src/workflows/steps/prefetch/`
 
 Before any agent runs, the prefetch step discovers the monitoring environment:
 - Datasource UIDs (which metric and log backends are available)
 - Dashboard list with panel queries (scored by relevance to the user's message)
 - Working log selectors (probes candidate selectors to find ones that return real data)
+
+The prefetch logic is provider-agnostic — `index.ts` dispatches to provider-specific implementations (`grafana.ts` for Grafana MCP, `generic.ts` as fallback). Type definitions live in `types.ts`.
 
 This is critical — without prefetching, agents waste iterations calling discovery tools instead of investigating.
 
@@ -81,17 +83,18 @@ Output: focus areas for each evidence agent (which metrics to check, which log p
 
 **File**: `src/workflows/steps/evidence.ts`
 
-Three agents run concurrently, each with a focused tool subset:
+Up to four agents run concurrently, each with a focused tool subset:
 
 | Agent | Role | Tools | Output |
 |-------|------|-------|--------|
 | **Metrics** | Deep-dive metric analysis | Metric query tools | Anomalous values, baselines, timestamps |
 | **Logs** | Log pattern correlation | Log query, stats, pattern tools | Error patterns, counts, sample lines |
-| **Infra** | Infrastructure health | Metric query, alert rule tools | Resource status, pod restarts, OOM events |
+| **Infra** | Infrastructure health | Metric + K8s tools | Resource status, pod restarts, OOM events |
+| **Changes** | Change correlation | GitLab/deployment tools | Recent deployments, MRs, pipeline status |
 
-All three use a shared `buildEvidenceStep()` abstraction that handles the common pattern: get tools by role → filter by allowlist → wrap with callbacks → run agent → extract JSON → return findings with graceful fallback.
+All four use a shared `buildEvidenceStep()` abstraction that handles the common pattern: get tools by role → filter by allowlist → wrap with callbacks → run agent → extract JSON → return findings with graceful fallback.
 
-Each agent gets only the tools relevant to its role. This is essential — providing all 50+ tools causes the LLM to skip tool use entirely or call irrelevant discovery tools.
+Each agent gets only the tools relevant to its role. This is essential — providing all 50+ tools causes the LLM to skip tool use entirely or call irrelevant discovery tools. The changes agent only runs when a provider with the `"changes"` role is configured.
 
 ### Phase 5: Synthesis
 
@@ -125,9 +128,13 @@ Saves the incident to the local history store so future investigations can refer
 
 MCP integration via `@mastra/mcp`. The system is MCP-agnostic — any MCP-compatible server can be plugged in via configuration.
 
-Each provider declares **roles** (`metrics`, `logs`, `dependencies`) and tools are filtered per-agent by role. This prevents the LLM from being overwhelmed with irrelevant tools and ensures each agent has a focused, manageable tool set.
+Each provider declares **roles** (`metrics`, `logs`, `dashboards`, `dependencies`, `infrastructure`, `changes`) and tools are filtered per-agent by role. This prevents the LLM from being overwhelmed with irrelevant tools and ensures each agent has a focused, manageable tool set.
 
 Multiple providers can be configured simultaneously. Tools are namespaced by provider to avoid collisions.
+
+**Tool classification**: `classifyToolAccess()` automatically classifies each tool as read-only or write based on its name (prefix heuristic + keyword-segment matching). Read-only tools are enabled by default; write tools require explicit opt-in via the provider settings UI. This prevents accidental infrastructure modifications.
+
+**Provider registry** (`src/mcp/provider-registry.ts`): Manages both config-file providers (read-only) and GUI-added providers (CRUD + persistence to `providers.yaml`). Tracks connection status, tool count, and enabled tool count per provider.
 
 ```yaml
 providers:
@@ -150,7 +157,7 @@ providers:
 
 **Directory**: `src/agents/`
 
-Seven Mastra agents, each with a focused system prompt and tool subset:
+Nine Mastra agents, each with a focused system prompt and tool subset:
 
 | Agent | File | Tools | Purpose |
 |-------|------|-------|---------|
@@ -159,8 +166,10 @@ Seven Mastra agents, each with a focused system prompt and tool subset:
 | Planner | `planner.ts` | None | Generate hypotheses |
 | Metrics | `metrics.ts` | Metric queries, histograms | Deep-dive metrics |
 | Logs | `logs.ts` | Log queries, stats, patterns | Log correlation |
-| Infra | `infra.ts` | Metric queries, alert rules | Infrastructure health |
+| Infra | `infra.ts` | Metric + K8s tools | Infrastructure health |
+| Changes | `changes.ts` | GitLab/deployment tools | Change correlation |
 | Synthesis | `synthesis.ts` | None | Combine evidence into RCA |
+| Discover | `discover.ts` | Metric queries | AI service discovery |
 
 **Shared utilities** (`agents/shared/`):
 - `prepare-step.ts` — LLM quirk handling (hallucinated tool calls, wind-down forcing). Removable when switching to a model without these issues.
@@ -186,3 +195,7 @@ Seven Mastra agents, each with a focused system prompt and tool subset:
 **Incident history** — Past investigations are saved to disk and injected into the planning step. This gives the agent memory across sessions — "this service had the same issue 3 days ago, the root cause was X."
 
 **Duck-typed adapter pattern** — The server and CLI don't depend on Mastra directly. They call `agent.chat()` and `investigationAgent.investigate()` through interfaces (`IChatAgent`, `IInvestigationAgent`). The adapter layer translates.
+
+**Read-only by default tool safety** — MCP tools are auto-classified as read-only or write via `classifyToolAccess()`. Read-only tools are enabled by default when a provider connects; write tools require explicit user opt-in through the provider settings UI. This prevents accidental modifications to monitoring infrastructure.
+
+**Provider-agnostic prompts** — Agent system prompts reference roles and capabilities, not specific provider names. The same investigation workflow works with Grafana, Datadog, or any other MCP-compatible backend without prompt changes.
