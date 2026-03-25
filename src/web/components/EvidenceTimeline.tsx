@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MetricsPanel } from "./evidence/MetricsPanel";
 import { TimelineEntry, type TimelineEntryData } from "./evidence/TimelineEntry";
 import type { TimeSeriesData } from "./MetricChart";
@@ -97,6 +98,15 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange }: E
     return { textMetricObs: texts, structuredMetricObs: structured };
   }, [evidence.metrics]);
 
+  // Count deduplicated timeSeries for the tab label
+  const seenQueries = new Set<string>();
+  const allSeriesCount = timeSeries.filter(ts => {
+    const key = ts.query || ts.metric || "";
+    if (seenQueries.has(key)) return false;
+    seenQueries.add(key);
+    return true;
+  }).length;
+
   const hasMetricData = timeSeries.length > 0 || textMetricObs.length > 0 || structuredMetricObs.length > 0;
 
   // Build chronological timeline entries from logs + infra
@@ -164,17 +174,26 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange }: E
     return null;
   }
 
+  const metricsCount = allSeriesCount + structuredMetricObs.length + textMetricObs.length;
+  const defaultTab = hasMetricData ? "metrics" : "timeline";
+
   return (
-    <div className="space-y-6">
-      {/* Metrics Panel */}
+    <Tabs defaultValue={defaultTab} className="w-full">
+      <TabsList className="w-full bg-secondary/20 border border-border/25 rounded-lg p-0.5">
+        {hasMetricData && (
+          <TabsTrigger value="metrics" className="flex-1 text-[10px] font-mono uppercase tracking-wider">
+            Metrics ({metricsCount})
+          </TabsTrigger>
+        )}
+        {hasTimeline && (
+          <TabsTrigger value="timeline" className="flex-1 text-[10px] font-mono uppercase tracking-wider">
+            Timeline ({timelineEntries.length})
+          </TabsTrigger>
+        )}
+      </TabsList>
+
       {hasMetricData && (
-        <div>
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-0.5 h-4 bg-primary rounded-full" />
-            <h4 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/50">
-              Metrics
-            </h4>
-          </div>
+        <TabsContent value="metrics" className="mt-3">
           <MetricsPanel
             timeSeries={timeSeries}
             textObservations={textMetricObs}
@@ -182,21 +201,11 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange }: E
             service={service}
             timeRange={timeRange}
           />
-        </div>
+        </TabsContent>
       )}
 
-      {/* Timeline */}
       {hasTimeline && (
-        <div>
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-0.5 h-4 bg-primary rounded-full" />
-            <h4 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/50">
-              Timeline
-            </h4>
-            <span className="font-mono text-[9px] text-muted-foreground/40">
-              {timelineEntries.length}
-            </span>
-          </div>
+        <TabsContent value="timeline" className="mt-3">
           <div
             role="list"
             className="relative border-l border-border/30 ml-1 pl-1"
@@ -205,8 +214,8 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange }: E
               <TimelineEntry key={entry.id} entry={entry} />
             ))}
           </div>
-        </div>
+        </TabsContent>
       )}
-    </div>
+    </Tabs>
   );
 }

@@ -139,9 +139,8 @@ describe("EvidenceTimeline", () => {
         service="payments-api"
       />,
     );
-    // Should show "2" entries in the timeline header (the count span)
-    const countSpans = screen.getAllByText("2");
-    expect(countSpans.length).toBeGreaterThan(0);
+    // Count is shown in tab trigger as "Timeline (2)"
+    expect(screen.getByText(/Timeline \(2\)/)).toBeDefined();
   });
 
   it("hides timeline when no log/infra evidence", () => {
