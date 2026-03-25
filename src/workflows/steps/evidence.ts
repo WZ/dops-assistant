@@ -41,6 +41,7 @@ interface EvidenceStepConfig {
   iterationStart: number;
   /** MCP provider role(s) to fetch tools from. Array merges tools from multiple roles. */
   toolRole: ProviderRole | ProviderRole[];
+  // toolAllowlist removed — agents now get all tools for their role (provider-agnostic)
   /** Factory that creates the specialized agent for this phase */
   createAgent: (opts: { model: any; tools: Record<string, any>; useQuirkHandling?: boolean }) => any;
   /** Build the prompt string from the planning step's inputData */
@@ -79,8 +80,12 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
       workflowConfig.onPhase?.("Analyzing metrics, logs & infrastructure");
       workflowConfig.onIteration?.(phaseName, iterationStart, 6, `Analyzing ${phaseName}`);
 
+<<<<<<< HEAD
       // 1. Get tools by role(s) → wrap with callbacks
       // Tool scoping is provider-agnostic: role routing + provider enabledTools config
+=======
+      // 1. Get all tools for this role → wrap with callbacks (provider-agnostic)
+>>>>>>> 6731aa8 (refactor: remove tool suffix allowlists, add prompt regression test)
       const roles = Array.isArray(toolRole) ? toolRole : [toolRole];
       const toolMaps = await Promise.all(roles.map(r => getToolsByRole(workflowConfig.providers, r).catch(() => ({}))));
       const rawTools: Record<string, any> = {};
@@ -269,7 +274,11 @@ export function buildInfraStep(config: WorkflowConfig) {
     id: "infra-evidence",
     phaseName: "infra",
     iterationStart: 4,
+<<<<<<< HEAD
     toolRole: "infrastructure",
+=======
+    toolRole: ["metrics", "infrastructure"],
+>>>>>>> 6731aa8 (refactor: remove tool suffix allowlists, add prompt regression test)
     createAgent: createInfraAgent,
     buildPrompt: (inputData, workflowConfig) => {
       const { anomalyContext } = inputData;

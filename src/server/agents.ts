@@ -185,9 +185,7 @@ export class MastraChatAgentAdapter {
           const result = p.result ?? "";
           const resultStr = unwrapToolText(result);
           collectedImages.push(...extractToolImages(toolName, result));
-          if (toolName === "query_prometheus") {
-            console.error(`[MASTRA_CHAT] tool-result: ${toolName} resultLen=${resultStr.length} first200=${resultStr.slice(0, 200)}`);
-          }
+          console.error(`[MASTRA_CHAT] tool-result: ${toolName} resultLen=${resultStr.length}`);
           task.onToolCall?.(toolName, p.args ?? {}, resultStr);
         }
       }
