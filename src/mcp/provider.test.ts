@@ -18,7 +18,7 @@ vi.mock("@mastra/mcp", () => {
   return { MCPClient };
 });
 
-import { createMcpProvider, getToolsByRole, getAllTools, listProviderTools } from "./provider.js";
+import { createMcpProvider, getToolsByRole, getAllTools, listProviderTools, classifyToolAccess } from "./provider.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
