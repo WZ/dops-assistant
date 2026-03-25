@@ -369,11 +369,9 @@ export class ServiceHealthPoller {
         return tool as { execute: (args: unknown) => Promise<unknown> };
       }
     }
-    // Broaden: any tool with "query" or "metric" in its name, excluding log/loki/metadata tools
+    // Broaden: any tool with "query" or "metric" in its name
     for (const [name, tool] of Object.entries(tools)) {
-      const lower = name.toLowerCase();
-      if ((lower.includes("query") || lower.includes("metric")) &&
-          !lower.includes("loki") && !lower.includes("log") && !lower.includes("metadata")) {
+      if (name.includes("query") || name.includes("metric")) {
         return tool as { execute: (args: unknown) => Promise<unknown> };
       }
     }
