@@ -1,9 +1,9 @@
 /**
- * Shared Prometheus query module — queries service metrics via MCP tools.
+ * Shared metric query module — queries service metrics via MCP tools.
  *
  * Reuses the same MCP tool calling pattern as service-health-poller.ts:
  *   1. Find providers with "metrics" role
- *   2. Get query_prometheus + list_datasources tools
+ *   2. Get metric query + datasource listing tools via role-based resolution
  *   3. Execute PromQL queries and parse Prometheus response format
  *
  * The parsePrometheusResult function from service-health-poller is reused
@@ -93,12 +93,20 @@ function inferUnit(query: string): string {
 type ToolExecutor = { execute: (args: unknown) => Promise<unknown> };
 
 /**
- * Find the query_prometheus tool from a tools record.
- * Mirrors the pattern in ServiceHealthPoller.findQueryPrometheusTool.
+ * Find a metric query tool from the metrics-role tools.
+ * Prefers known suffixes (query_prometheus, get_metrics), then any tool
+ * with "query" or "metric" in its name.
  */
-function findQueryPrometheusTool(tools: Record<string, unknown>): ToolExecutor | null {
+function findMetricQueryTool(tools: Record<string, unknown>): ToolExecutor | null {
+  // Prefer known metric query tools by suffix
   for (const [name, tool] of Object.entries(tools)) {
-    if (name === "query_prometheus" || name.endsWith("_query_prometheus")) {
+    if (name.endsWith("query_prometheus") || name.endsWith("get_metrics")) {
+      return tool as ToolExecutor;
+    }
+  }
+  // Broaden: any tool with "query" or "metric" in its name
+  for (const [name, tool] of Object.entries(tools)) {
+    if (name.includes("query") || name.includes("metric")) {
       return tool as ToolExecutor;
     }
   }
@@ -106,13 +114,16 @@ function findQueryPrometheusTool(tools: Record<string, unknown>): ToolExecutor |
 }
 
 /**
- * Find the Prometheus datasource UID via MCP list_datasources tool.
- * Mirrors the pattern in ServiceHealthPoller.findPrometheusDatasourceUid.
+ * Find the Prometheus datasource UID via a datasource listing tool.
+ * Looks for tools with "datasource" or "list" in the name from the
+ * metrics-role tools.
  */
 async function findPrometheusDatasourceUid(
   tools: Record<string, unknown>,
 ): Promise<string | undefined> {
-  const listDsTool = Object.entries(tools).find(([name]) => name.endsWith("list_datasources"));
+  const listDsTool = Object.entries(tools).find(
+    ([name]) => name.includes("datasource") || (name.includes("list") && !name.includes("query")),
+  );
   if (!listDsTool) return undefined;
   try {
     const result = await (listDsTool[1] as ToolExecutor).execute({});
@@ -238,9 +249,9 @@ export async function queryServiceMetrics(
     return [];
   }
 
-  const queryTool = findQueryPrometheusTool(tools);
+  const queryTool = findMetricQueryTool(tools);
   if (!queryTool) {
-    logger.warn("prometheus-query: query_prometheus tool not found");
+    logger.warn("prometheus-query: metric query tool not found");
     return [];
   }
 

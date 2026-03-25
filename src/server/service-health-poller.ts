@@ -1,12 +1,12 @@
 /**
- * ServiceHealthPoller — background service that polls Prometheus every 60s
- * via MCP `query_prometheus` tool and tracks health status per service.
+ * ServiceHealthPoller — background service that polls metrics every 60s
+ * via MCP metric query tools and tracks health status per service.
  *
  * Health states:
  *   "healthy"  — service found with replicas/targets up
  *   "degraded" — partial results (some replicas/targets up but not all)
  *   "down"     — service found but no replicas/targets up
- *   "unknown"  — service not found in any Prometheus query result
+ *   "unknown"  — service not found in any metric query result
  *
  * Follows the health-monitor.ts pattern: timer + cached results + start/stop.
  */
@@ -15,7 +15,7 @@ import pino from "pino";
 import type { MastraProvider } from "../mcp/provider.js";
 import type { ServiceRegistryStore } from "../services/registry.js";
 import type { Database } from "./db.js";
-import { getAllTools } from "../mcp/provider.js";
+import { getToolsByRole } from "../mcp/provider.js";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
 
@@ -227,18 +227,18 @@ export class ServiceHealthPoller {
         return;
       }
 
-      // Find query_prometheus tool
+      // Find metric query tool via role-based resolution
       let tools: Record<string, unknown>;
       try {
-        tools = await getAllTools(this.resolveProviders()) as Record<string, unknown>;
+        tools = await getToolsByRole(this.resolveProviders(), "metrics") as Record<string, unknown>;
       } catch (err) {
         logger.warn({ err }, "ServiceHealthPoller: failed to get MCP tools, skipping poll");
         return;
       }
 
-      const queryTool = this.findQueryPrometheusTool(tools);
+      const queryTool = this.findMetricQueryTool(tools);
       if (!queryTool) {
-        logger.warn("ServiceHealthPoller: query_prometheus tool not found, skipping poll");
+        logger.warn("ServiceHealthPoller: metric query tool not found, skipping poll");
         return;
       }
 
@@ -326,10 +326,16 @@ export class ServiceHealthPoller {
 
   // ── Private helpers ─────────────────────────────────────────────────────
 
+  /**
+   * Find a datasource listing tool from the metrics-role tools.
+   * Prefers tools with "datasource" or "list" in the name.
+   */
   private async findPrometheusDatasourceUid(
     tools: Record<string, unknown>,
   ): Promise<string | undefined> {
-    const listDsTool = Object.entries(tools).find(([name]) => name.endsWith("list_datasources"));
+    const listDsTool = Object.entries(tools).find(
+      ([name]) => name.includes("datasource") || (name.includes("list") && !name.includes("query")),
+    );
     if (!listDsTool) return undefined;
     try {
       const result = await (listDsTool[1] as { execute: (args: unknown) => Promise<unknown> }).execute({});
@@ -349,11 +355,23 @@ export class ServiceHealthPoller {
     return undefined;
   }
 
-  private findQueryPrometheusTool(
+  /**
+   * Find a metric query tool from the metrics-role tools.
+   * Prefers known suffixes (query_prometheus, get_metrics), then any tool
+   * with "query" or "metric" in its name.
+   */
+  private findMetricQueryTool(
     tools: Record<string, unknown>,
   ): { execute: (args: unknown) => Promise<unknown> } | null {
+    // Prefer known metric query tools by suffix
     for (const [name, tool] of Object.entries(tools)) {
-      if (name === "query_prometheus" || name.endsWith("_query_prometheus")) {
+      if (name.endsWith("query_prometheus") || name.endsWith("get_metrics")) {
+        return tool as { execute: (args: unknown) => Promise<unknown> };
+      }
+    }
+    // Broaden: any tool with "query" or "metric" in its name
+    for (const [name, tool] of Object.entries(tools)) {
+      if (name.includes("query") || name.includes("metric")) {
         return tool as { execute: (args: unknown) => Promise<unknown> };
       }
     }
