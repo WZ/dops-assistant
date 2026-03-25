@@ -587,6 +587,7 @@ export function registerRoutes(
         source: p.source,
         status: p.status,
         toolCount: p.toolCount,
+        enabledToolCount: p.enabledToolCount,
         error: p.error,
       })));
     });
@@ -675,6 +676,49 @@ export function registerRoutes(
         const name = Array.isArray(req.params["name"]) ? req.params["name"][0]! : req.params["name"]!;
         const result = await providerRegistry.test(name);
         res.json(result);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("not found")) res.status(404).json({ error: msg });
+        else res.status(500).json({ error: msg });
+      }
+    });
+
+    // GET /api/providers/:name/tools — list tools with metadata
+    app.get("/api/providers/:name/tools", async (req: Request, res: Response) => {
+      try {
+        const name = Array.isArray(req.params["name"]) ? req.params["name"][0]! : req.params["name"]!;
+        const tools = await providerRegistry.getToolsForProvider(name);
+        // Sort: read-only first (alphabetical), then write (alphabetical)
+        tools.sort((a, b) => {
+          if (a.readOnly !== b.readOnly) return a.readOnly ? -1 : 1;
+          return a.name.localeCompare(b.name);
+        });
+        res.json(tools);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("not found")) res.status(404).json({ error: msg });
+        else res.status(500).json({ error: msg });
+      }
+    });
+
+    // PUT /api/providers/:name/tools — update enabled tools
+    app.put("/api/providers/:name/tools", async (req: Request, res: Response) => {
+      try {
+        const name = Array.isArray(req.params["name"]) ? req.params["name"][0]! : req.params["name"]!;
+        const { enabledTools } = req.body as { enabledTools: string[] };
+        if (!Array.isArray(enabledTools)) {
+          res.status(400).json({ error: "enabledTools must be an array of strings" });
+          return;
+        }
+        await providerRegistry.updateEnabledTools(name, enabledTools);
+        const entry = providerRegistry.getAll().find(p => p.config.name === name);
+        res.json({
+          ok: true,
+          enabledToolCount: entry?.enabledToolCount ?? enabledTools.length,
+          configWarning: entry?.source === "config"
+            ? "Changes to system providers are in-memory only. Update config.yaml to persist."
+            : undefined,
+        });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes("not found")) res.status(404).json({ error: msg });
