@@ -53,8 +53,8 @@ const STRONG_INVESTIGATION_RE = /\b(investigate|investigation|diagnose|diagnosis
 /**
  * Display/visualization requests — "show me", "display", etc. indicate the user
  * wants to SEE data, not investigate an incident. When present without symptom
- * words, we fast-path to the conversation agent (which can call query_prometheus
- * and render inline charts).
+ * words, we fast-path to the conversation agent (which can call metric query
+ * tools and render inline charts).
  */
 const DISPLAY_REQUEST_RE = /\b(show\s+me|show\s+the|display|visualize|plot\b|graph\b)\b/i;
 

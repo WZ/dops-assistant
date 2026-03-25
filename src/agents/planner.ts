@@ -17,10 +17,10 @@ If recent incidents are provided, consider whether the current anomaly is a recu
 
 The user message will contain:
 - Anomaly summary and severity
-- Service name and its configured PromQL metrics and log labels
+- Service name and its configured metric queries and log search parameters
 - Recent incident history (if available)
 
-Use this context to generate targeted focus areas. The metricFocus should reference specific PromQL expressions or metric names when available. The logFocus should reference specific log patterns or labels to search for.
+Use this context to generate targeted focus areas. The metricFocus should reference specific metric names or query expressions when available. The logFocus should reference specific log patterns or search terms to look for.
 
 You MUST respond with a JSON object matching this exact schema (no trailing text after the JSON):
 {"hypotheses": [{"hypothesis": "string", "evidenceNeeded": "string"}], "metricFocus": ["string"], "logFocus": ["string"], "infraFocus": ["string"]}`,
