@@ -54,8 +54,10 @@ function stripLeadingNumber(text: string): string {
 function severityColor(severity: string): string {
   switch (severity) {
     case "critical": return "destructive";
-    case "high": return "default";
-    default: return "secondary";
+    case "high": return "warning";
+    case "medium": return "info";
+    case "low": return "secondary";
+    default: return "outline";
   }
 }
 

@@ -31,13 +31,15 @@ export interface Pattern {
   sourceInvestigationId: string;
 }
 
-export function severityVariant(severity: string): "destructive" | "warning" | "secondary" | "outline" {
+export function severityVariant(severity: string): "destructive" | "warning" | "info" | "secondary" | "outline" {
   switch (severity?.toLowerCase()) {
     case "critical":
       return "destructive";
     case "high":
       return "warning";
     case "medium":
+      return "info";
+    case "low":
       return "secondary";
     default:
       return "outline";

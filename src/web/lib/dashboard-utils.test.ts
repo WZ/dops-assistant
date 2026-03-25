@@ -12,12 +12,12 @@ describe("severityVariant", () => {
     expect(severityVariant("high")).toBe("warning");
   });
 
-  it("maps medium to secondary", () => {
-    expect(severityVariant("medium")).toBe("secondary");
+  it("maps medium to info", () => {
+    expect(severityVariant("medium")).toBe("info");
   });
 
-  it("maps low and unknown to outline", () => {
-    expect(severityVariant("low")).toBe("outline");
+  it("maps low to secondary, unknown to outline", () => {
+    expect(severityVariant("low")).toBe("secondary");
     expect(severityVariant("unknown")).toBe("outline");
     expect(severityVariant("")).toBe("outline");
   });
