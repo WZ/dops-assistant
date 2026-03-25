@@ -51,15 +51,19 @@ function formatRecipeHints(recipes: DiscoveryRecipe[]): string {
 }
 
 export async function runDiscoverStep(config: DiscoverStepConfig): Promise<ServiceConfig[]> {
-  let metricsTools: Record<string, any>;
+  let discoveryTools: Record<string, any>;
   try {
-    metricsTools = await getToolsByRole(config.providers, "metrics");
+    const [metrics, infra] = await Promise.all([
+      getToolsByRole(config.providers, "metrics").catch(() => ({})),
+      getToolsByRole(config.providers, "infrastructure").catch(() => ({})),
+    ]);
+    discoveryTools = { ...metrics, ...infra };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`MCP connection failed — cannot reach monitoring providers. ${msg}`);
   }
-  if (Object.keys(metricsTools).length === 0) {
-    throw new Error("No MCP tools available — check that your monitoring MCP server is running and has the 'metrics' role.");
+  if (Object.keys(discoveryTools).length === 0) {
+    throw new Error("No MCP tools available — check that your monitoring MCP server is running and has the 'metrics' or 'infrastructure' role.");
   }
 
   // Build recipe hints for the discover agent prompt
@@ -86,8 +90,8 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
     : undefined;
 
   const tools = wrappedOnToolCall
-    ? wrapToolsWithCallbacks(metricsTools, wrappedOnToolCall, "discovery")
-    : metricsTools;
+    ? wrapToolsWithCallbacks(discoveryTools, wrappedOnToolCall, "discovery")
+    : discoveryTools;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     const agent = createDiscoverAgent({

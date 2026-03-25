@@ -333,8 +333,9 @@ export class ServiceHealthPoller {
   private async findPrometheusDatasourceUid(
     tools: Record<string, unknown>,
   ): Promise<string | undefined> {
+    // Prefer tools with "datasource" in the name; don't fall back to generic "list" tools
     const listDsTool = Object.entries(tools).find(
-      ([name]) => name.includes("datasource") || (name.includes("list") && !name.includes("query")),
+      ([name]) => name.includes("datasource"),
     );
     if (!listDsTool) return undefined;
     try {
@@ -350,7 +351,7 @@ export class ServiceHealthPoller {
         return prom.uid as string;
       }
     } catch (err) {
-      logger.warn({ err }, "ServiceHealthPoller: failed to find Prometheus datasource UID");
+      logger.warn({ err, toolName: listDsTool?.[0] }, "ServiceHealthPoller: failed to find Prometheus datasource UID");
     }
     return undefined;
   }
