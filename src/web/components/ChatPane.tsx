@@ -170,11 +170,26 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
     setHistoryLoading(true);
     fetch("/api/messages?limit=50")
       .then((r) => r.ok ? r.json() : [])
-      .then((msgs: Array<{ id: string; role: string; content: string; investigation_id?: string | null; chart_data?: string | null; created_at?: string }>) => {
+      .then(async (msgs: Array<{ id: string; role: string; content: string; investigation_id?: string | null; chart_data?: string | null; created_at?: string }>) => {
         if (msgs.length === 0) {
           setHistoryLoading(false);
           return;
         }
+
+        // Enrich messages that have investigation_id with their RCA reports (for RCA cards)
+        const invIds = [...new Set(msgs.map((m) => m.investigation_id).filter(Boolean))] as string[];
+        const reports = new Map<string, RcaReportSummary>();
+        await Promise.all(invIds.map(async (id) => {
+          try {
+            const res = await fetch(`/api/investigations/${id}`);
+            if (!res.ok) return;
+            const data = await res.json();
+            if (data.investigation?.report) {
+              const rpt = JSON.parse(data.investigation.report);
+              reports.set(id, rpt);
+            }
+          } catch { /* ignore */ }
+        }));
 
         setChatMessages(msgs.map((m) => {
           const msg: ChatMessage = {
@@ -183,6 +198,10 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
             role: m.role as ChatMessage["role"],
             content: m.content,
           };
+          if (m.investigation_id && reports.has(m.investigation_id)) {
+            msg.investigationId = m.investigation_id;
+            msg.report = reports.get(m.investigation_id);
+          }
           if (m.chart_data) {
             try { msg.chartData = JSON.parse(m.chart_data); } catch { /* ignore */ }
           }
@@ -241,15 +260,13 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
 
     for (const msg of newMessages) {
       if (msg.type === "chat") {
-        // Skip messages that belong to an investigation (deep investigation panel)
-        if (msg.investigationId) continue;
-        const chatEvt = msg as Record<string, unknown>;
+        // Skip investigation follow-up Q&A (has investigationId but no report).
+        // KEEP investigation completion summaries (has investigationId AND report) — these render as RCA cards.
+        if (msg.investigationId && !msg.report) continue;
         setChatMessages((prev) => [...prev, {
           role: msg.role,
           content: msg.content,
-          ...(chatEvt.id ? { id: chatEvt.id as string } : {}),
-          ...(chatEvt.createdAt ? { createdAt: chatEvt.createdAt as string } : {}),
-          ...(chatEvt.viewInvestigationId ? { investigationId: chatEvt.viewInvestigationId as string } : {}),
+          investigationId: msg.investigationId,
           report: msg.report as RcaReportSummary | undefined,
           chartData: msg.chartData,
         }]);
@@ -549,20 +566,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                   ))}
                 </div>
               )}
-              <div
-                className="px-3.5 py-2.5 rounded-xl rounded-bl-sm bg-secondary/50 border border-border/40 text-sm font-body"
-                onClick={(e) => {
-                  const target = e.target as HTMLElement;
-                  if (target.tagName === "A") {
-                    const href = target.getAttribute("href") || "";
-                    const invMatch = href.match(/#investigation\/(.+)/);
-                    if (invMatch) {
-                      e.preventDefault();
-                      onViewInvestigation(invMatch[1]!);
-                    }
-                  }
-                }}
-              >
+              <div className="px-3.5 py-2.5 rounded-xl rounded-bl-sm bg-secondary/50 border border-border/40 text-sm font-body">
                 {renderMarkdown(msg.content)}
               </div>
               {msg.chartData && msg.chartData.length > 0 && (

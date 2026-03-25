@@ -73,13 +73,15 @@ describe("Database", () => {
       expect(msgs[0]!.content).toBe("first");
     });
 
-    it("listMessages excludes investigation messages", () => {
+    it("listMessages excludes investigation follow-up Q&A but keeps RCA completion summaries", () => {
       db.createMessage({ id: "msg_1", role: "user", content: "console 1" });
       db.createMessage({ id: "msg_2", role: "user", content: "console 2" });
-      db.createMessage({ id: "msg_3", role: "assistant", content: "inv msg", investigationId: "inv_1" });
+      db.createMessage({ id: "msg_3", role: "assistant", content: "follow-up answer", investigationId: "inv_1" });
+      db.createMessage({ id: "msg_4", role: "assistant", content: "**Root Cause:** something broke\n**Confidence:** high", investigationId: "inv_1" });
       const msgs = db.listMessages(50);
-      expect(msgs).toHaveLength(2);
-      expect(msgs.every(m => m.investigation_id === null)).toBe(true);
+      expect(msgs).toHaveLength(3); // 2 console + 1 RCA summary
+      expect(msgs.some(m => m.content.startsWith("**Root Cause:**"))).toBe(true);
+      expect(msgs.every(m => m.content !== "follow-up answer")).toBe(true);
     });
 
     it("listMessages with investigationId still returns scoped messages", () => {
