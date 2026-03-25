@@ -95,8 +95,8 @@ export function MetricChart({ series, bare }: { series: TimeSeriesData; bare?: b
     const labelCount = Math.min(4, vals.length);
     const labels: string[] = [];
     for (let i = 0; i < labelCount; i++) {
-      const idx = Math.round((i / (labelCount - 1)) * (vals.length - 1));
-      labels.push(formatTime(vals[idx][0]));
+      const idx = labelCount <= 1 ? 0 : Math.round((i / (labelCount - 1)) * (vals.length - 1));
+      if (vals[idx]) labels.push(formatTime(vals[idx][0]));
     }
 
     return { points: pts, yMin: lo, yMax: hi, xLabels: labels, plotW: pw, plotH: ph };

@@ -51,7 +51,8 @@ export function createMcpProvider(config: ProviderConfig): MastraProvider {
 }
 
 function filterToolsForProvider(provider: MastraProvider, tools: Record<string, Tool>): Record<string, Tool> {
-  if (!provider.enabledTools?.length) return tools;
+  if (provider.enabledTools === undefined) return tools;
+  if (provider.enabledTools.length === 0) return {};
 
   const enabled = new Set(provider.enabledTools);
   const filtered: Record<string, Tool> = {};
