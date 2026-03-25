@@ -27,7 +27,7 @@ function DotTimeline({ data }: { data: Array<{ status: string }> }) {
               : d.status === "down"
               ? "var(--color-destructive)"
               : "var(--color-muted-foreground)",
-            opacity: d.status === "down" ? 0.7 : d.status === "healthy" ? 0.45 : 0.2,
+            opacity: d.status === "down" ? 1 : d.status === "healthy" ? 0.75 : 0.35,
           }}
         />
       ))}
@@ -84,19 +84,19 @@ export const ServiceCard = memo(function ServiceCard({
 
   switch (healthStatus) {
     case "healthy":
-      dotClass = "w-2 h-2 rounded-full bg-success/80 ring-2 ring-success/15";
+      dotClass = "w-2 h-2 rounded-full bg-success ring-2 ring-success/25";
       healthLabel = "healthy";
       break;
     case "degraded":
-      dotClass = "w-2 h-2 rounded-full bg-warning/80 ring-2 ring-warning/15";
+      dotClass = "w-2 h-2 rounded-full bg-warning ring-2 ring-warning/25";
       healthLabel = "degraded";
       break;
     case "down":
-      dotClass = "w-2 h-2 rounded-full bg-destructive/80 ring-2 ring-destructive/15 animate-status-pulse";
+      dotClass = "w-2 h-2 rounded-full bg-destructive ring-2 ring-destructive/25 animate-status-pulse";
       healthLabel = "down";
       break;
     default:
-      dotClass = "w-2 h-2 rounded-full bg-muted-foreground/30";
+      dotClass = "w-2 h-2 rounded-full bg-muted-foreground/40";
       healthLabel = "\u2014";
       break;
   }
@@ -147,7 +147,7 @@ export const ServiceCard = memo(function ServiceCard({
             aria-label={`Service ${name}: status ${healthStatus ?? "unknown"}`}
           />
           <span className={`font-body text-sm font-medium transition-colors ${
-            isHidden ? "text-foreground/50" : "text-foreground/75 group-hover:text-foreground/95"
+            isHidden ? "text-foreground/50" : "text-foreground/90 group-hover:text-foreground"
           }`}>
             {name}
           </span>
@@ -219,17 +219,17 @@ export const ServiceCard = memo(function ServiceCard({
           <div className="flex-1 min-w-0">
             <DotTimeline data={historyData} />
           </div>
-          <span className="text-[8px] font-mono text-muted-foreground/30 flex-shrink-0">24h</span>
+          <span className="text-[8px] font-mono text-muted-foreground/45 flex-shrink-0">24h</span>
         </div>
         {(investigationCount !== undefined && investigationCount > 0 || lastInvestigation) && (
           <div className="mt-1.5 flex items-center gap-2">
             {investigationCount !== undefined && investigationCount > 0 && (
-              <span className="text-[9px] font-mono text-muted-foreground/40">
+              <span className="text-[9px] font-mono text-muted-foreground/55">
                 {investigationCount} investigations
               </span>
             )}
             {lastInvestigation && (
-              <span className="text-[9px] font-mono text-muted-foreground/40">
+              <span className="text-[9px] font-mono text-muted-foreground/55">
                 {timeAgo(lastInvestigation.created_at)}
               </span>
             )}

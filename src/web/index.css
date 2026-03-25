@@ -6,26 +6,26 @@
   :root {
     /* Investigator's Desk — Light */
     --background: 40 15% 97%;
-    --foreground: 216 8% 12%;
+    --foreground: 216 10% 8%;
     --card: 0 0% 100%;
-    --card-foreground: 216 8% 12%;
+    --card-foreground: 216 10% 8%;
     --popover: 0 0% 100%;
-    --popover-foreground: 216 8% 12%;
+    --popover-foreground: 216 10% 8%;
     --primary: 166 80% 27%;
     --primary-foreground: 0 0% 100%;
     --secondary: 36 16% 92%;
-    --secondary-foreground: 216 8% 32%;
+    --secondary-foreground: 216 8% 28%;
     --muted: 36 19% 94%;
-    --muted-foreground: 216 4% 44%;
+    --muted-foreground: 216 6% 38%;
     --accent: 10 55% 50%;
     --accent-foreground: 0 0% 100%;
-    --destructive: 0 55% 51%;
+    --destructive: 0 72% 46%;
     --destructive-foreground: 0 0% 98%;
     --border: 33 12% 87%;
     --input: 33 12% 87%;
     --ring: 166 80% 27%;
     --radius: 0.625rem;
-    --success: 152 55% 39%;
+    --success: 152 72% 34%;
     --success-foreground: 0 0% 100%;
     --warning: 42 73% 42%;
     --warning-foreground: 30 40% 12%;
@@ -33,8 +33,8 @@
     --info-foreground: 0 0% 100%;
     --glow-teal: 0 0 10px hsl(166 80% 27% / 0.12);
     --glow-coral: 0 0 10px hsl(10 55% 50% / 0.12);
-    --glow-green: 0 0 10px hsl(152 55% 39% / 0.12);
-    --glow-red: 0 0 10px hsl(0 55% 51% / 0.10);
+    --glow-green: 0 0 10px hsl(152 72% 34% / 0.15);
+    --glow-red: 0 0 10px hsl(0 72% 46% / 0.15);
     --glow-warning: 0 0 10px hsl(42 73% 42% / 0.12);
     --glow-info: 0 0 10px hsl(210 58% 46% / 0.10);
   }
@@ -42,26 +42,26 @@
   .dark {
     /* Deep Charcoal — Dark */
     --background: 225 18% 7%;
-    --foreground: 216 12% 90%;
+    --foreground: 216 10% 95%;
     --card: 224 16% 11%;
-    --card-foreground: 216 12% 90%;
+    --card-foreground: 216 10% 95%;
     --popover: 224 16% 13%;
-    --popover-foreground: 216 12% 90%;
+    --popover-foreground: 216 10% 95%;
     --primary: 160 67% 50%;
     --primary-foreground: 225 18% 7%;
     --secondary: 222 13% 17%;
     --secondary-foreground: 216 8% 67%;
     --muted: 222 13% 13%;
-    --muted-foreground: 216 5% 57%;
+    --muted-foreground: 216 5% 65%;
     --accent: 14 65% 60%;
     --accent-foreground: 225 18% 7%;
-    --destructive: 0 70% 58%;
+    --destructive: 0 90% 68%;
     --destructive-foreground: 0 0% 98%;
     --border: 220 14% 19%;
     --input: 220 14% 19%;
     --ring: 160 67% 50%;
     --radius: 0.625rem;
-    --success: 152 55% 46%;
+    --success: 152 70% 55%;
     --success-foreground: 225 18% 7%;
     --warning: 42 73% 49%;
     --warning-foreground: 0 0% 98%;
@@ -69,8 +69,8 @@
     --info-foreground: 0 0% 98%;
     --glow-teal: 0 0 14px hsl(160 67% 50% / 0.25);
     --glow-coral: 0 0 14px hsl(14 65% 60% / 0.22);
-    --glow-green: 0 0 14px hsl(152 55% 46% / 0.25);
-    --glow-red: 0 0 12px hsl(0 70% 58% / 0.22);
+    --glow-green: 0 0 14px hsl(152 70% 55% / 0.25);
+    --glow-red: 0 0 12px hsl(0 90% 68% / 0.28);
     --glow-warning: 0 0 14px hsl(42 73% 49% / 0.25);
     --glow-info: 0 0 14px hsl(215 62% 56% / 0.25);
   }

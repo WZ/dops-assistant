@@ -140,7 +140,7 @@ export function App() {
               <div className="w-1.5 h-1.5 rounded-full bg-primary/25" />
             </div>
             <div className="flex items-baseline gap-1.5">
-              <span className="font-display font-bold text-sm tracking-wide text-foreground/90 uppercase">
+              <span className="font-display font-bold text-sm tracking-wide text-foreground uppercase">
                 {branding.title}
               </span>
               <span className="text-[9px] font-mono text-muted-foreground/70 tracking-[0.2em] uppercase">
@@ -159,7 +159,7 @@ export function App() {
                 ? "bg-destructive"
                 : "bg-muted-foreground/30"
             }`} />
-            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/60">
+            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/75">
               {health.connectionState === "connected" && health.health?.status === "healthy"
                 ? "HEALTHY"
                 : health.health?.status === "degraded"
@@ -168,13 +168,13 @@ export function App() {
                 ? "UNREACHABLE"
                 : "UNKNOWN"}
             </span>
-            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/60">
+            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/75">
               {health.health ? formatUptime(health.health.uptime) : "—"}
             </span>
-            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/60">
+            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/75">
               {health.health ? (health.health.probes.mcp.status === "ok" ? "mcp:ok" : "mcp:—") : "mcp:—"}
             </span>
-            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/60">
+            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/75">
               {health.health ? (health.health.probes.db.status === "ok" ? "db:ok" : "db:—") : "db:—"}
             </span>
           </div>

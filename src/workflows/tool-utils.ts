@@ -3,10 +3,8 @@
  *
  * Exports:
  *   - wrapToolsWithCallbacks — wrap tool execute functions with onToolCall callbacks
- *   - selectToolsBySuffix — filter tools by allowed name suffixes
  *   - buildTimeWindowHint — build a time window hint string for evidence agent prompts
  *   - buildServiceContextHint — build a service context hint for evidence agent prompts
- *   - ANOMALY_TOOLS, METRICS_TOOLS, LOGS_TOOLS, INFRA_TOOLS — tool allowlists by agent role
  *   - debug — conditional debug logger
  */
 
@@ -117,29 +115,10 @@ export function wrapToolsWithCallbacks(
   return wrapped;
 }
 
-// ── Tool selection for agents ─────────────────────────────────────────────────
-// Each agent type gets ONLY the tools it needs. Providing all 50+ Grafana tools
-// causes the LLM to skip tool use entirely or call irrelevant discovery tools.
-// Allowlists use suffixes to handle MCP provider prefixing (e.g. "grafana_query_prometheus").
-
-export const ANOMALY_TOOLS = ["query_prometheus"];
-export const METRICS_TOOLS = ["query_prometheus", "query_prometheus_histogram"];
-export const LOGS_TOOLS = ["query_loki_logs", "query_loki_stats", "query_loki_patterns", "find_error_pattern_logs"];
-export const INFRA_TOOLS = ["query_prometheus", "query_prometheus_histogram", "list_alert_rules", "get_alert_rule_by_uid"];
-/** Changes tools: accept ALL tools from the "changes" role (GitLab MCP provides its own) */
-export const CHANGES_TOOLS: string[] = [];
-
-export function selectToolsBySuffix(tools: Record<string, any>, allowedSuffixes: string[]): Record<string, any> {
-  // Empty allowlist = pass all tools through (used by changes step for GitLab MCP)
-  if (allowedSuffixes.length === 0) return tools;
-  const filtered: Record<string, any> = {};
-  for (const [name, tool] of Object.entries(tools)) {
-    if (allowedSuffixes.some((suffix) => name.endsWith(suffix))) {
-      filtered[name] = tool;
-    }
-  }
-  return filtered;
-}
+// ── Tool selection ───────────────────────────────────────────────────────────
+// Tool scoping is provider-agnostic: role-based routing (getToolsByRole) selects
+// which providers contribute tools, and the provider-level `enabledTools` config
+// filters which tools each MCP server exposes. No hardcoded tool-name allowlists.
 
 /**
  * Build a time window hint string for evidence agent prompts.
