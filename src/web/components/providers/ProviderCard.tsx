@@ -1,7 +1,9 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useState, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ProviderToolList, type ToolInfo } from "./ProviderToolList";
 
 export interface TestResult {
   status: "ok" | "error";
@@ -19,6 +21,7 @@ interface ProviderCardProps {
   source: "config" | "gui";
   status: "connected" | "error" | "unknown";
   toolCount: number;
+  enabledToolCount?: number;
   error?: string;
   onTest: () => void;
   onEdit?: () => void;
@@ -37,6 +40,7 @@ export const ProviderCard = memo(function ProviderCard({
   source,
   status,
   toolCount,
+  enabledToolCount,
   error,
   onTest,
   onEdit,
@@ -121,7 +125,7 @@ export const ProviderCard = memo(function ProviderCard({
       {/* Tool count */}
       <div className="mt-0.5 pl-[18px]">
         <span className="font-mono text-[10px] text-muted-foreground/50">
-          {toolCount} tools available
+          {toolCount} tools{enabledToolCount != null ? ` (${enabledToolCount} enabled)` : ""}
         </span>
       </div>
 
@@ -186,6 +190,61 @@ export const ProviderCard = memo(function ProviderCard({
           </Button>
         )}
       </div>
+      <ToolsSection name={name} source={source} toolCount={toolCount} />
     </div>
   );
 });
+
+function ToolsSection({ name, source, toolCount }: { name: string; source: "config" | "gui"; toolCount: number }) {
+  const [expanded, setExpanded] = useState(false);
+  const [tools, setTools] = useState<ToolInfo[] | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  const handleExpand = useCallback(async () => {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && !loaded) {
+      try {
+        const res = await fetch(`/api/providers/${encodeURIComponent(name)}/tools`);
+        if (res.ok) setTools(await res.json());
+        else setTools([]);
+      } catch { setTools([]); }
+      setLoaded(true);
+    }
+  }, [expanded, loaded, name]);
+
+  const handleUpdate = useCallback(async (enabledTools: string[]) => {
+    const res = await fetch(`/api/providers/${encodeURIComponent(name)}/tools`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabledTools }),
+    });
+    if (!res.ok) throw new Error("Save failed");
+    const refreshRes = await fetch(`/api/providers/${encodeURIComponent(name)}/tools`);
+    if (refreshRes.ok) setTools(await refreshRes.json());
+  }, [name]);
+
+  if (toolCount === 0) return null;
+
+  return (
+    <div className="mt-2 pt-2 border-t border-border/20">
+      <button
+        onClick={handleExpand}
+        className="flex items-center gap-2 w-full text-left"
+        aria-expanded={expanded}
+      >
+        <div className="w-0.5 h-3 bg-primary rounded-full" />
+        <span className="text-[9px] font-mono font-semibold uppercase tracking-[0.12em] text-muted-foreground/50 flex-1">
+          Tools
+        </span>
+        <ChevronDown
+          size={12}
+          className={`text-muted-foreground/40 transition-transform ${expanded ? "rotate-180" : ""}`}
+        />
+      </button>
+      {expanded && (
+        <ProviderToolList tools={tools} providerName={name} source={source} onUpdate={handleUpdate} />
+      )}
+    </div>
+  );
+}

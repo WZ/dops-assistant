@@ -1,7 +1,15 @@
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { parse, stringify } from "yaml";
 import { ProviderSchema, type ProviderConfig, type ProviderRole } from "../config/schema.js";
-import { createMcpProvider, listProviderTools, type MastraProvider } from "./provider.js";
+import {
+  createMcpProvider,
+  listProviderTools,
+  listAllProviderTools,
+  getToolsWithMetadata,
+  computeDefaultEnabledTools,
+  type MastraProvider,
+  type ToolInfo,
+} from "./provider.js";
 import { z } from "zod";
 
 export interface ProviderInfo {
@@ -10,6 +18,7 @@ export interface ProviderInfo {
   source: "config" | "gui";
   status: "connected" | "error" | "unknown";
   toolCount: number;
+  enabledToolCount: number;
   error?: string;
 }
 
@@ -151,6 +160,35 @@ export class ProviderRegistry {
   }
 
   /**
+   * Return all tools with metadata (classification + enabled status) for a named provider.
+   */
+  async getToolsForProvider(name: string): Promise<ToolInfo[]> {
+    const entry = this.entries.get(name);
+    if (!entry) throw new Error("Provider not found");
+    return getToolsWithMetadata(entry.provider);
+  }
+
+  /**
+   * Update the enabled tools list for a named provider.
+   * Only persists to providers.yaml for GUI providers.
+   */
+  async updateEnabledTools(name: string, enabledTools: string[]): Promise<void> {
+    const entry = this.entries.get(name);
+    if (!entry) throw new Error("Provider not found");
+
+    entry.provider.enabledTools = enabledTools;
+    entry.config = {
+      ...entry.config,
+      mcpServer: { ...entry.config.mcpServer, enabledTools },
+    };
+    entry.enabledToolCount = enabledTools.length;
+
+    if (entry.source === "gui") {
+      this.saveGuiProviders();
+    }
+  }
+
+  /**
    * Load GUI providers from providers.yaml.
    * Returns empty array if file doesn't exist or is invalid.
    */
@@ -203,6 +241,7 @@ export class ProviderRegistry {
         source,
         status: "error",
         toolCount: 0,
+        enabledToolCount: 0,
         error: message,
       };
       this.entries.set(config.name, info);
@@ -218,12 +257,20 @@ export class ProviderRegistry {
       error = err instanceof Error ? err.message : String(err);
     }
 
+    // Auto-compute default enabledTools if not configured
+    if (!provider.enabledTools?.length && toolCount > 0) {
+      const allRawTools = await listAllProviderTools(provider);
+      const defaults = computeDefaultEnabledTools(allRawTools, config.name);
+      provider.enabledTools = defaults;
+    }
+
     const info: ProviderInfo = {
       provider,
       config,
       source,
       status,
       toolCount,
+      enabledToolCount: provider.enabledTools?.length ?? toolCount,
       error,
     };
 
