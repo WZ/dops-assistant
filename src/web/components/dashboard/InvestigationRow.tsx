@@ -99,7 +99,7 @@ export const InvestigationRow = memo(function InvestigationRow({
 
       {/* Line 2: root cause (indented under service name) */}
       {rootCause && (
-        <p className="text-xs text-muted-foreground/50 truncate pl-3.5 mt-0.5 font-body">
+        <p className="text-xs text-muted-foreground/70 truncate pl-3.5 mt-0.5 font-body">
           {rootCause}
         </p>
       )}
