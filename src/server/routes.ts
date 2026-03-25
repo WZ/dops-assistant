@@ -270,6 +270,21 @@ export function registerRoutes(
     res.json(db.listMessages(limit, investigationId));
   });
 
+  app.delete("/api/messages/:id", (req: Request, res: Response) => {
+    const id = Array.isArray(req.params["id"]) ? req.params["id"][0]! : req.params["id"]!;
+    const deleted = db.deleteMessage(id);
+    if (!deleted) {
+      res.status(404).json({ error: "Message not found or is an investigation message" });
+      return;
+    }
+    res.status(204).end();
+  });
+
+  app.delete("/api/messages", (_req: Request, res: Response) => {
+    const deleted = db.clearConsoleMessages();
+    res.json({ deleted });
+  });
+
   app.get("/api/dependencies/:service", async (req: Request, res: Response) => {
     const service = Array.isArray(req.params["service"]) ? req.params["service"][0]! : req.params["service"]!;
     try {
