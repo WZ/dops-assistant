@@ -17,7 +17,7 @@ import { ConversationMemory } from "../memory/conversation.js";
 import { loadConfig, getServicesFilePath } from "../config/loader.js";
 import { SkillStore } from "../skills/store.js";
 import { createMastraAdapters } from "./agents.js";
-import { getAllTools } from "../mcp/provider.js";
+import { getAllTools, getToolsByRole } from "../mcp/provider.js";
 import { ProviderRegistry } from "../mcp/provider-registry.js";
 import { createModel } from "../mastra/index.js";
 import { ServiceRegistryStore } from "../services/registry.js";
@@ -146,6 +146,10 @@ async function main() {
     logger.info("Alert webhook enabled at POST /api/webhook/alert");
   }
 
+  // Resolve metrics tool names for provider-agnostic chart rendering
+  const metricsTools = await getToolsByRole(providers, "metrics");
+  const metricsToolNames = new Set(Object.keys(metricsTools));
+
   let pendingDiscovery: ValidatedServiceConfig[] | null = null;
 
   setupWebSocket(server, {
@@ -156,6 +160,7 @@ async function main() {
     getPendingDiscovery: () => pendingDiscovery,
     clearPendingDiscovery: () => { pendingDiscovery = null; },
     getHiddenServices: () => db.getHiddenServices(),
+    metricsToolNames,
   });
 
   // Auto-refresh: run background discovery on startup if enabled
