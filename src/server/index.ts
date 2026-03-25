@@ -146,9 +146,16 @@ async function main() {
     logger.info("Alert webhook enabled at POST /api/webhook/alert");
   }
 
-  // Resolve metrics tool names for provider-agnostic chart rendering
+  // Resolve metrics tool names for provider-agnostic chart rendering.
+  // Strip MCP provider prefix (e.g. "grafana_query_prometheus" → "query_prometheus")
+  // because ws-handler receives stripped names from MastraChatAgentAdapter.
   const metricsTools = await getToolsByRole(providers, "metrics");
-  const metricsToolNames = new Set(Object.keys(metricsTools));
+  const metricsToolNames = new Set(
+    Object.keys(metricsTools).map((k) => {
+      const idx = k.indexOf("_");
+      return idx > 0 ? k.slice(idx + 1) : k;
+    }),
+  );
 
   let pendingDiscovery: ValidatedServiceConfig[] | null = null;
 
