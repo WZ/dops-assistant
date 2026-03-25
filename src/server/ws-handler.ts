@@ -433,7 +433,10 @@ export async function handleClientMessage(
     const invId = `inv_${ulid()}`;
     memory.append(threadId, { role: "user", content: msg.message });
     send({ type: "investigation:started", id: invId, service: service.name, query: msg.message });
-    send({ type: "chat", role: "assistant", content: `Starting investigation of **${service.name}**...` });
+    const ackContent = `Starting investigation of **${service.name}**...`;
+    const ackMsgId = `msg_${ulid()}`;
+    send({ type: "chat", role: "assistant", content: ackContent, id: ackMsgId, createdAt: new Date().toISOString() } as ServerMessage);
+    db.createMessage({ id: ackMsgId, role: "assistant", content: ackContent });
 
     // Build WS-streaming callbacks for the runner
     const wsCallbacks: InvestigationCallbacks = {
