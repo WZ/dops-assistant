@@ -219,17 +219,17 @@ export const ServiceCard = memo(function ServiceCard({
           <div className="flex-1 min-w-0">
             <DotTimeline data={historyData} />
           </div>
-          <span className="text-[8px] font-mono text-muted-foreground/30 flex-shrink-0">24h</span>
+          <span className="text-[8px] font-mono text-muted-foreground/45 flex-shrink-0">24h</span>
         </div>
         {(investigationCount !== undefined && investigationCount > 0 || lastInvestigation) && (
           <div className="mt-1.5 flex items-center gap-2">
             {investigationCount !== undefined && investigationCount > 0 && (
-              <span className="text-[9px] font-mono text-muted-foreground/40">
+              <span className="text-[9px] font-mono text-muted-foreground/55">
                 {investigationCount} investigations
               </span>
             )}
             {lastInvestigation && (
-              <span className="text-[9px] font-mono text-muted-foreground/40">
+              <span className="text-[9px] font-mono text-muted-foreground/55">
                 {timeAgo(lastInvestigation.created_at)}
               </span>
             )}
