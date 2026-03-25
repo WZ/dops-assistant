@@ -66,7 +66,7 @@ Infrastructure often dominates basic health check queries. Make sure to also dis
 Return a JSON array. Each object must have:
 - "name": string — the service name
 - "metrics": array of { "query": string, "description": string } — a health check query for this service
-- "logLabels": {} — always empty (log labels are populated separately)
+- "logLabels": object — key/value pairs identifying this service in log systems (e.g. {"app": "api-gateway", "namespace": "default"}). If infrastructure tools reveal pod labels, namespace, or container names, include them here. Use {} if no label info is available.
 
 Be thorough — discover ALL services. Return valid JSON.${excludeList}`,
     model: config.model as any,
