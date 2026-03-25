@@ -200,16 +200,16 @@ export class Database {
 
   listRecentMessages(limit: number): MessageRow[] {
     return this.db.prepare(
-      "SELECT * FROM (SELECT * FROM messages WHERE investigation_id IS NULL ORDER BY created_at DESC LIMIT ?) ORDER BY created_at ASC"
+      "SELECT * FROM (SELECT *, rowid AS _rid FROM messages WHERE investigation_id IS NULL ORDER BY created_at DESC, _rid DESC LIMIT ?) ORDER BY created_at ASC, _rid ASC"
     ).all(limit) as MessageRow[];
   }
 
   listMessages(limit: number, investigationId?: string): MessageRow[] {
     if (investigationId) {
-      return this.db.prepare("SELECT * FROM messages WHERE investigation_id = ? ORDER BY created_at ASC LIMIT ?").all(investigationId, limit) as MessageRow[];
+      return this.db.prepare("SELECT * FROM messages WHERE investigation_id = ? ORDER BY created_at ASC, rowid ASC LIMIT ?").all(investigationId, limit) as MessageRow[];
     }
     return this.db.prepare(
-      "SELECT * FROM (SELECT * FROM messages WHERE investigation_id IS NULL ORDER BY created_at DESC LIMIT ?) ORDER BY created_at ASC"
+      "SELECT * FROM (SELECT *, rowid AS _rid FROM messages WHERE investigation_id IS NULL ORDER BY created_at DESC, _rid DESC LIMIT ?) ORDER BY created_at ASC, _rid ASC"
     ).all(limit) as MessageRow[];
   }
 

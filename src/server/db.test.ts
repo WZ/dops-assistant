@@ -58,11 +58,12 @@ describe("Database", () => {
   });
 
   describe("messages", () => {
-    it("creates and retrieves messages", () => {
+    it("creates and retrieves console messages (excludes investigation messages)", () => {
       db.createMessage({ id: "msg_1", role: "user", content: "hello" });
       db.createMessage({ id: "msg_2", role: "assistant", content: "hi there", investigationId: "inv_1" });
       const msgs = db.listMessages(50);
-      expect(msgs).toHaveLength(2);
+      expect(msgs).toHaveLength(1);
+      expect(msgs[0]!.id).toBe("msg_1");
     });
 
     it("lists messages ordered by created_at asc", () => {
@@ -70,6 +71,79 @@ describe("Database", () => {
       db.createMessage({ id: "msg_2", role: "assistant", content: "second" });
       const msgs = db.listMessages(50);
       expect(msgs[0]!.content).toBe("first");
+    });
+
+    it("listMessages excludes investigation messages", () => {
+      db.createMessage({ id: "msg_1", role: "user", content: "console 1" });
+      db.createMessage({ id: "msg_2", role: "user", content: "console 2" });
+      db.createMessage({ id: "msg_3", role: "assistant", content: "inv msg", investigationId: "inv_1" });
+      const msgs = db.listMessages(50);
+      expect(msgs).toHaveLength(2);
+      expect(msgs.every(m => m.investigation_id === null)).toBe(true);
+    });
+
+    it("listMessages with investigationId still returns scoped messages", () => {
+      db.createMessage({ id: "msg_1", role: "user", content: "console msg" });
+      db.createMessage({ id: "msg_2", role: "assistant", content: "inv msg 1", investigationId: "inv_1" });
+      db.createMessage({ id: "msg_3", role: "assistant", content: "inv msg 2", investigationId: "inv_1" });
+      const msgs = db.listMessages(50, "inv_1");
+      expect(msgs).toHaveLength(2);
+      expect(msgs.every(m => m.investigation_id === "inv_1")).toBe(true);
+    });
+
+    it("listRecentMessages excludes investigation messages", () => {
+      db.createMessage({ id: "msg_1", role: "user", content: "console 1" });
+      db.createMessage({ id: "msg_2", role: "user", content: "console 2" });
+      db.createMessage({ id: "msg_3", role: "assistant", content: "inv msg", investigationId: "inv_1" });
+      const msgs = db.listRecentMessages(50);
+      expect(msgs).toHaveLength(2);
+      expect(msgs.every(m => m.investigation_id === null)).toBe(true);
+    });
+
+    it("listMessages returns latest N not oldest N", () => {
+      db.createMessage({ id: "msg_1", role: "user", content: "oldest" });
+      db.createMessage({ id: "msg_2", role: "user", content: "old" });
+      db.createMessage({ id: "msg_3", role: "user", content: "middle" });
+      db.createMessage({ id: "msg_4", role: "user", content: "recent" });
+      db.createMessage({ id: "msg_5", role: "user", content: "newest" });
+      const msgs = db.listMessages(3);
+      expect(msgs).toHaveLength(3);
+      // Should be the 3 most recent, returned in ASC order
+      expect(msgs[0]!.content).toBe("middle");
+      expect(msgs[1]!.content).toBe("recent");
+      expect(msgs[2]!.content).toBe("newest");
+    });
+
+    it("deleteMessage only deletes console messages", () => {
+      db.createMessage({ id: "msg_1", role: "user", content: "console msg" });
+      db.createMessage({ id: "msg_2", role: "assistant", content: "inv msg", investigationId: "inv_1" });
+      const deleted = db.deleteMessage("msg_2");
+      expect(deleted).toBe(false);
+      // Investigation message should still exist
+      const msgs = db.listMessages(50, "inv_1");
+      expect(msgs).toHaveLength(1);
+      expect(msgs[0]!.id).toBe("msg_2");
+    });
+
+    it("deleteMessage returns true for console message", () => {
+      db.createMessage({ id: "msg_1", role: "user", content: "console msg" });
+      const deleted = db.deleteMessage("msg_1");
+      expect(deleted).toBe(true);
+      const msgs = db.listMessages(50);
+      expect(msgs).toHaveLength(0);
+    });
+
+    it("clearConsoleMessages preserves investigation messages", () => {
+      db.createMessage({ id: "msg_1", role: "user", content: "console 1" });
+      db.createMessage({ id: "msg_2", role: "user", content: "console 2" });
+      db.createMessage({ id: "msg_3", role: "user", content: "console 3" });
+      db.createMessage({ id: "msg_4", role: "assistant", content: "inv msg 1", investigationId: "inv_1" });
+      db.createMessage({ id: "msg_5", role: "assistant", content: "inv msg 2", investigationId: "inv_1" });
+      const cleared = db.clearConsoleMessages();
+      expect(cleared).toBe(3);
+      // Investigation messages should still exist
+      const invMsgs = db.listMessages(50, "inv_1");
+      expect(invMsgs).toHaveLength(2);
     });
   });
 
