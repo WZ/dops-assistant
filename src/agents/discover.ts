@@ -8,6 +8,7 @@ export interface DiscoverAgentConfig {
   maxSteps?: number;
   excludeServices?: string[];
   useQuirkHandling?: boolean;
+  discoveryRecipes?: string;
 }
 
 export function createDiscoverAgent(config: DiscoverAgentConfig) {
@@ -15,61 +16,53 @@ export function createDiscoverAgent(config: DiscoverAgentConfig) {
     ? `\n\nEXCLUDE these services from your results (case-insensitive): ${config.excludeServices.join(", ")}`
     : "";
 
+  const recipeHints = config.discoveryRecipes
+    ? `\n\n## Provider-Specific Discovery Hints
+
+The following discovery recipes are configured for your monitoring stack. Use these as starting points:
+
+${config.discoveryRecipes}
+
+These are suggestions — also use your own discovery strategies based on available tools.`
+    : "";
+
   return new Agent({
     id: "discover",
     name: "discover",
-    instructions: () => `You are a service discovery agent. Your job is to find ALL monitored services — both application services AND infrastructure — using ONLY Prometheus metrics tools.
+    instructions: () => `You are a service discovery agent. Your job is to find ALL monitored services — both application services AND infrastructure — using the available metric and service catalog tools.
 
-## IMPORTANT: Use Prometheus only — do NOT use Loki or log-related tools.
+## IMPORTANT: Use metric and service catalog tools only — do NOT use log search tools.
 
 ## Process
 
-1. Find the Prometheus datasource using list_datasources
-2. Run MULTIPLE discovery queries to build a comprehensive catalog. Do NOT stop at the first query — run several and merge the results:
+1. Examine your available tools. Look for metric query tools, service listing tools, or catalog tools.
+2. Run MULTIPLE discovery queries to build a comprehensive catalog. Do NOT stop at the first query — use several approaches and merge the results:
 
-   **Kubernetes workloads (finds application services):**
-   - \`count by (deployment) (kube_deployment_status_replicas)\` — Deployments
-   - \`count by (statefulset) (kube_statefulset_status_replicas)\` — StatefulSets
-   - \`count by (daemonset) (kube_daemonset_status_desired_number_scheduled)\` — DaemonSets
-   - \`count by (container) (kube_pod_container_info{container!="POD",container!=""})\` — containers
+   **If metric query tools are available:**
+   - Query for workload metrics (deployments, statefulsets, containers) grouped by service/app name
+   - Query for scrape targets or service health metrics
+   - Look for service-level metrics that reveal application names
 
-   **Pod labels (finds services by app label):**
-   - \`count by (app) (kube_pod_info)\` — pods grouped by app label
+   **If service catalog/listing tools are available:**
+   - Use them to enumerate all known services directly
 
-   **Service registry (if available):**
-   - \`count by (service_name) (consul_catalog_service_node_healthy)\` — Consul
-
-   **Prometheus scrape targets (mostly infrastructure):**
-   - \`count by (job) (up)\` — scrape target jobs
-
-3. Merge results from all successful queries. Deduplicate — if the same service appears under different names (e.g., "faz-api-svr" as a deployment and as a container), keep one entry.
-4. For each service, construct a Prometheus health/activity metric query using the metric that discovered it.
-5. Return ALL discovered services as a JSON array.
+3. Merge results from all successful queries. Deduplicate — if the same service appears under different names, keep one entry.
+4. For each service, construct a health/activity metric query using the metric that discovered it.
+5. Return ALL discovered services as a JSON array.${recipeHints}
 
 ## IMPORTANT: Don't miss application services
-Kubernetes clusters have two categories of services:
-- **Infrastructure**: kubelet, kube-proxy, coredns, apiserver, etcd — these show up in \`up\` metrics
-- **Application**: your actual workloads (APIs, data processors, web servers) — these show up in kube_deployment, kube_statefulset, and container metrics
+Monitoring systems typically track two categories:
+- **Infrastructure**: system-level services (proxies, DNS, API servers, schedulers)
+- **Application**: your actual workloads (APIs, data processors, web servers)
 
-The \`count by (job) (up)\` query mostly returns infrastructure. You MUST also query kube_deployment and kube_statefulset metrics to find application services.
+Infrastructure often dominates basic health check queries. Make sure to also discover application services by querying workload-specific metrics.
 
 ## Output Format
 
 Return a JSON array. Each object must have:
 - "name": string — the service name
-- "metrics": array of { "query": string, "description": string } — a Prometheus health check query
+- "metrics": array of { "query": string, "description": string } — a health check query for this service
 - "logLabels": {} — always empty (log labels are populated separately)
-
-Example:
-\`\`\`json
-[
-  {
-    "name": "ingestion-server",
-    "metrics": [{ "query": "kube_deployment_status_replicas{deployment=\\"ingestion-server\\"}", "description": "Deployment replicas" }],
-    "logLabels": {}
-  }
-]
-\`\`\`
 
 Be thorough — discover ALL services. Return valid JSON.${excludeList}`,
     model: config.model as any,

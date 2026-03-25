@@ -306,7 +306,7 @@ describe("createMastraAdapters", () => {
   it("creates separate web and CLI chat agents with different tool availability", async () => {
     mockGetAllTools.mockResolvedValue({
       grafana_query_prometheus: { execute: vi.fn() },
-      grafana_get_panel_image: { execute: vi.fn() },
+      grafana_get_panel_image: { description: "Render a panel image from Grafana", execute: vi.fn() },
     });
     mockCreateChatAgent.mockImplementation((config) => ({
       id: config.agentId,
