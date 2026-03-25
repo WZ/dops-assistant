@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ArrowLeft, FilePlus } from "lucide-react";
 import { PhaseStepper, type PhaseState } from "./PhaseStepper";
-import { EvidenceCards } from "./EvidenceCards";
+import { EvidenceTimeline } from "./EvidenceTimeline";
 import { RcaReport } from "./RcaReport";
 import type { TimelineEvent } from "./ActivityTimeline";
 import type { TimeSeriesData } from "./MetricChart";
@@ -377,10 +377,11 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
           {/* Evidence */}
           {hasEvidence && (
             <section>
-              <h3 className="text-[9px] font-display font-semibold uppercase tracking-[0.15em] text-muted-foreground/50 mb-3">
-                Evidence
-              </h3>
-              <EvidenceCards evidence={{ ...evidence, timeSeries } as any} />
+              <EvidenceTimeline
+                evidence={evidence as any}
+                timeSeries={timeSeries}
+                service={service}
+              />
             </section>
           )}
 
