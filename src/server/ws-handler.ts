@@ -267,8 +267,10 @@ async function handleDeepInvestigate(
     memory.append(memoryKey, { role: "user", content: msg.message });
     memory.append(memoryKey, { role: "assistant", content: result.response });
     db.createMessage({ id: `msg_${ulid()}`, role: "user", content: msg.message, investigationId: msg.investigationId });
-    db.createMessage({ id: `msg_${ulid()}`, role: "assistant", content: result.response, investigationId: msg.investigationId });
-    send({ type: "chat:stream_end", content: result.response || "No response generated." });
+    const deepMsgId = `msg_${ulid()}`;
+    const deepMsgTime = new Date().toISOString();
+    db.createMessage({ id: deepMsgId, role: "assistant", content: result.response, investigationId: msg.investigationId });
+    send({ type: "chat:stream_end", content: result.response || "No response generated.", id: deepMsgId, createdAt: deepMsgTime, investigationId: msg.investigationId });
     send({
       type: "chat:usage",
       inputTokens: chatTokens.inputTokens,
@@ -431,7 +433,10 @@ export async function handleClientMessage(
     const invId = `inv_${ulid()}`;
     memory.append(threadId, { role: "user", content: msg.message });
     send({ type: "investigation:started", id: invId, service: service.name, query: msg.message });
-    send({ type: "chat", role: "assistant", content: `Starting investigation of **${service.name}**...` });
+    const ackContent = `Starting investigation of **${service.name}**...`;
+    const ackMsgId = `msg_${ulid()}`;
+    send({ type: "chat", role: "assistant", content: ackContent, id: ackMsgId, createdAt: new Date().toISOString() } as ServerMessage);
+    db.createMessage({ id: ackMsgId, role: "assistant", content: ackContent });
 
     // Build WS-streaming callbacks for the runner
     const wsCallbacks: InvestigationCallbacks = {
@@ -454,6 +459,8 @@ export async function handleClientMessage(
         send({ type: "investigation:complete", id: investigationId, report });
         const summary = `**Root Cause:** ${report.rootCause}\n**Confidence:** ${report.confidence}\n**Trigger:** ${report.trigger}`;
         memory.append(threadId, { role: "assistant", content: `Investigation of ${service.name}: ${summary}` });
+        // Store completion summary WITH investigationId — the DB query includes these (content starts with "**Root Cause:**")
+        // so they show in the console as RCA cards. Deep Investigation follow-up Q&A is filtered out separately.
         send({ type: "chat", role: "assistant", content: summary, investigationId, report });
         db.createMessage({ id: `msg_${ulid()}`, role: "assistant", content: summary, investigationId });
       },
@@ -531,11 +538,15 @@ export async function handleClientMessage(
       const content = result.response || "No response generated.";
       // Extract skill names from chatSkillContext for UI badges
       const usedSkillNames = chatSkillContext?.match(/### Skill: (.+)/g)?.map(m => m.replace("### Skill: ", ""));
+      const chatMsgId = `msg_${ulid()}`;
+      const chatMsgTime = new Date().toISOString();
       send({
         type: "chat:stream_end",
         content,
         ...(chartData.length > 0 ? { chartData } : {}),
         ...(usedSkillNames?.length ? { skillsUsed: usedSkillNames } : {}),
+        id: chatMsgId,
+        createdAt: chatMsgTime,
       });
       send({
         type: "chat:usage",
@@ -544,7 +555,7 @@ export async function handleClientMessage(
         durationMs: Date.now() - chatStartMs,
       });
       db.createMessage({
-        id: `msg_${ulid()}`, role: "assistant", content,
+        id: chatMsgId, role: "assistant", content,
         ...(chartData.length > 0 ? { chartData: JSON.stringify(chartData) } : {}),
       });
     } catch (err) {
