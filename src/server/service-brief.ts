@@ -420,7 +420,7 @@ async function generateSummary(
 
   const { text } = await generateText({
     model: llmModel,
-    system: `You are a DevOps assistant. Given data about a service, write a 2-3 sentence summary that correlates recent changes with current health status. Be concise and actionable. Focus on what an on-call engineer needs to know right now.`,
+    system: `You are a DevOps assistant. Given data about a service, write a 2-3 sentence summary that correlates recent changes with current health status. Be concise and actionable. Focus on what an on-call engineer needs to know right now. Output plain text only — no markdown, no bold, no asterisks, no bullet points, no formatting.`,
     prompt: `Service: ${sanitizeForPrompt(serviceName)}\n\n${parts.join("\n")}`,
     temperature: 0,
   });
