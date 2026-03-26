@@ -527,6 +527,28 @@ describe("Database", () => {
       expect(db.getHiddenServices(stackId).size).toBe(0);
       expect(db.getAllServiceMetadata(stackId)).toHaveLength(0);
     });
+
+    it("deleteStack cascades investigation_phases and investigation_events", () => {
+      const stackId = "stk_2";
+      db.createStack({ id: stackId, name: "Cascade Test", slug: "cascade-test", config: '{"providers":[]}' });
+      db.createInvestigation(stackId, { id: "inv_c1", service: "svc", query: "q", status: "running" });
+
+      // Add phases and events for the investigation
+      db.createPhase({ id: "ph_c1", investigationId: "inv_c1", phase: "metrics", status: "running" });
+      db.createPhase({ id: "ph_c2", investigationId: "inv_c1", phase: "logs", status: "running" });
+      db.createEvent({ id: "ev_c1", investigationId: "inv_c1", eventType: "tool_call", payload: '{"tool":"query"}' });
+      db.createEvent({ id: "ev_c2", investigationId: "inv_c1", eventType: "observation", payload: '{"text":"high cpu"}' });
+
+      // Verify they exist before delete
+      expect(db.getPhases("inv_c1")).toHaveLength(2);
+      expect(db.getEvents("inv_c1")).toHaveLength(2);
+
+      db.deleteStack(stackId);
+
+      // Phases and events should be cleaned up
+      expect(db.getPhases("inv_c1")).toHaveLength(0);
+      expect(db.getEvents("inv_c1")).toHaveLength(0);
+    });
   });
 
   // ── Backfill default stack ────────────────────────────────────────────

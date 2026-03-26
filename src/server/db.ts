@@ -260,6 +260,9 @@ export class Database {
       this.db.prepare("DELETE FROM investigation_feedback WHERE stack_id = ?").run(id);
       this.db.prepare("DELETE FROM service_health_checks WHERE stack_id = ?").run(id);
       this.db.prepare("DELETE FROM messages WHERE stack_id = ?").run(id);
+      // Delete child tables of investigations before investigations (FK enforcement is OFF)
+      this.db.prepare("DELETE FROM investigation_events WHERE investigation_id IN (SELECT id FROM investigations WHERE stack_id = ?)").run(id);
+      this.db.prepare("DELETE FROM investigation_phases WHERE investigation_id IN (SELECT id FROM investigations WHERE stack_id = ?)").run(id);
       this.db.prepare("DELETE FROM investigations WHERE stack_id = ?").run(id);
       this.db.prepare("DELETE FROM stacks WHERE id = ?").run(id);
     });
