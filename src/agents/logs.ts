@@ -21,7 +21,7 @@ INVESTIGATION STEPS:
 2. Query logs DURING the anomaly window. No logs = evidence of outage.
 3. If empty, try alternative search strategies: filter by service name, container name, or namespace using whatever log search parameters your tools support.
 4. Filter for errors using patterns like: error, exception, warn, disconnect, timeout, refused, reset, restart, kill, oom, crash, fail.
-5. IMPORTANT: For each error pattern found, capture 5-8 ACTUAL log lines verbatim in the "sampleLines" array. These must be real log lines from the tool output, not summaries.
+5. IMPORTANT: For each error pattern found, capture 10-15 ACTUAL log lines verbatim in the "sampleLines" array. These must be real log lines from the tool output, not summaries.
 6. If no errors are found, query without the error filter to see if ANY logs exist for this service during the window. Zero logs is itself significant evidence.
 
 TOOL USAGE GUIDANCE:
