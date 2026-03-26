@@ -11,6 +11,7 @@ import type { ServiceHealthPoller } from "./service-health-poller.js";
 import { queryServiceMetrics } from "./prometheus-query.js";
 import type { MetricSeries } from "./prometheus-query.js";
 import { inferDependencyGraph } from "./dependency-graph.js";
+import { buildServiceBrief } from "./service-brief.js";
 
 export interface DependencyNode {
   id: string;
@@ -216,6 +217,22 @@ export function registerRoutes(
       } else {
         res.status(503).json({ error: "Prometheus unavailable", metrics: [] });
       }
+    }
+  });
+
+  // ── Service Brief REST API ──────────────────────────────────────────────
+  app.get("/api/services/:name/brief", async (req: Request, res: Response) => {
+    const name = req.params["name"] as string;
+    try {
+      const allServices = registryStore ? registryStore.load() : services;
+      const brief = await buildServiceBrief(name, {
+        providers: getProviders?.() ?? [],
+        services: allServices,
+        healthPoller,
+      });
+      res.json(brief);
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : "Failed to build service brief" });
     }
   });
 
