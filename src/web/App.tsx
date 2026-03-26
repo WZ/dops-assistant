@@ -53,7 +53,7 @@ export function App() {
     : leftPane.type === "settings" ? "settings"
     : "dashboard";
 
-  const [branding, setBranding] = useState({ title: "dops", subtitle: "assistant" });
+  const [branding, setBranding] = useState({ title: "dops", subtitle: "assistant", grafanaUrl: undefined as string | undefined });
   useEffect(() => {
     fetch("/api/branding").then((r) => r.json()).then(setBranding).catch(() => {});
   }, []);
@@ -209,6 +209,7 @@ export function App() {
                       discoveryState={discoveryState}
                       onStartDiscovery={() => { ws.send({ type: "discover" }); }}
                       onResetDiscovery={() => setDiscoveryState({ phase: "", status: "complete", iteration: { current: 0, max: 0, description: "" }, toolCalls: [], results: [], error: null, phaseTokens: {}, totalUsage: null })}
+                      grafanaUrl={branding.grafanaUrl}
                     />
                   ) : leftPane.type === "settings" ? (
                     <SettingsPage
