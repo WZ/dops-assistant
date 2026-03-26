@@ -62,6 +62,9 @@ export function buildHandlers(db: Database, services: ServiceConfig[]): RouteHan
   };
 }
 
+/** Validates a service name route param: alphanumeric + hyphen/underscore/dot, max 253 chars (K8s limit). */
+const NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,252}$/;
+
 export function registerRoutes(
   app: Express, db: Database, services: ServiceConfig[], _mcp?: unknown,
   skillStore?: SkillStore, registryStore?: ServiceRegistryStore,
@@ -170,12 +173,14 @@ export function registerRoutes(
   // ── Service Metadata REST API ──────────────────────────────────────────
   app.get("/api/services/:name/metadata", (req: Request, res: Response) => {
     const name = req.params["name"] as string;
+    if (!NAME_PATTERN.test(name)) { res.status(400).json({ error: "Invalid service name" }); return; }
     const meta = db.getServiceMetadata(name);
     res.json(meta ?? { service: name, alias: null, tags: [] });
   });
 
   app.put("/api/services/:name/alias", (req: Request, res: Response) => {
     const name = req.params["name"] as string;
+    if (!NAME_PATTERN.test(name)) { res.status(400).json({ error: "Invalid service name" }); return; }
     const { alias } = req.body as { alias: string | null };
     db.upsertServiceMetadata(name, { alias: alias === null || alias === "" ? "" : alias });
     res.json({ ok: true });
@@ -183,6 +188,7 @@ export function registerRoutes(
 
   app.put("/api/services/:name/tags", (req: Request, res: Response) => {
     const name = req.params["name"] as string;
+    if (!NAME_PATTERN.test(name)) { res.status(400).json({ error: "Invalid service name" }); return; }
     const { tags } = req.body as { tags: string[] };
     db.upsertServiceMetadata(name, { tags });
     res.json({ ok: true });
@@ -191,6 +197,7 @@ export function registerRoutes(
   // ── Service Metrics REST API ────────────────────────────────────────────
   app.get("/api/services/:name/metrics", async (req: Request, res: Response) => {
     const name = req.params["name"] as string;
+    if (!NAME_PATTERN.test(name)) { res.status(400).json({ error: "Invalid service name" }); return; }
     const rawRange = (req.query["range"] as string) || "24h";
     const range = VALID_RANGES.has(rawRange) ? rawRange : "24h";
     const cacheKey = `${name}:${range}`;
@@ -231,6 +238,7 @@ export function registerRoutes(
   // ── Service Brief REST API ──────────────────────────────────────────────
   app.get("/api/services/:name/brief", async (req: Request, res: Response) => {
     const name = req.params["name"] as string;
+    if (!NAME_PATTERN.test(name)) { res.status(400).json({ error: "Invalid service name" }); return; }
     try {
       const allServices = registryStore ? registryStore.load() : services;
       const brief = await buildServiceBrief(name, {

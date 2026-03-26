@@ -96,14 +96,11 @@ function withTimeout<T>(
   ms: number,
   label: string,
 ): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) =>
-      setTimeout(() => {
-        reject(new Error(`Timeout: ${label} exceeded ${ms}ms`));
-      }, ms),
-    ),
-  ]);
+  let timeoutId: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`Timeout: ${label} exceeded ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
 }
 
 // ── Tool finder helpers ──────────────────────────────────────────────────────
@@ -306,6 +303,13 @@ async function fetchDependencies(
   return result;
 }
 
+// ── Prompt sanitization ──────────────────────────────────────────────────────
+
+/** Strip control characters and truncate to prevent prompt injection. */
+function sanitizeForPrompt(s: string): string {
+  return s.replace(/[\x00-\x1f]/g, "").slice(0, 200);
+}
+
 // ── AI Summary ───────────────────────────────────────────────────────────────
 
 async function generateSummary(
@@ -323,7 +327,7 @@ async function generateSummary(
     parts.push(`Recent changes: ${deployCount} deployment(s), ${mrCount} merge request(s).`);
     if (deployCount > 0) {
       const latest = changes.deployments[0];
-      parts.push(`Latest deploy: ref=${latest.ref}, status=${latest.pipelineStatus}, at=${latest.deployedAt}.`);
+      parts.push(`Latest deploy: ref=${sanitizeForPrompt(latest.ref)}, status=${sanitizeForPrompt(latest.pipelineStatus)}, at=${sanitizeForPrompt(latest.deployedAt)}.`);
     }
   }
 
@@ -340,7 +344,7 @@ async function generateSummary(
     const unhealthy = deps.nodes.filter(n => n.status === "unhealthy" || n.status === "degraded");
     parts.push(`Dependency graph: ${deps.nodes.length} node(s), ${deps.edges.length} edge(s).`);
     if (unhealthy.length > 0) {
-      parts.push(`Unhealthy/degraded dependencies: ${unhealthy.map(n => n.name).join(", ")}.`);
+      parts.push(`Unhealthy/degraded dependencies: ${unhealthy.map(n => sanitizeForPrompt(n.name)).join(", ")}.`);
     }
   }
 
@@ -351,7 +355,7 @@ async function generateSummary(
   const { text } = await generateText({
     model: llmModel,
     system: `You are a DevOps assistant. Given data about a service, write a 2-3 sentence summary that correlates recent changes with current health status. Be concise and actionable. Focus on what an on-call engineer needs to know right now.`,
-    prompt: `Service: ${serviceName}\n\n${parts.join("\n")}`,
+    prompt: `Service: ${sanitizeForPrompt(serviceName)}\n\n${parts.join("\n")}`,
     temperature: 0,
   });
 
