@@ -49,7 +49,7 @@ FORMATTING: Do NOT use markdown tables. Use bullet lists or plain text. Output r
 
 CRITICAL — EVIDENCE REQUIREMENTS (do NOT skip any category):
 - evidence.metrics: MUST include 3-5 items. Each: metric name, anomalous value vs baseline, timestamp. Example: "ingestion_rate spiked to 45k/s (baseline: 12k/s) at 2026-03-03T14:00Z"
-- evidence.logs: MUST include 3-5 items copied VERBATIM from the sampleLines in the log findings. Copy the FULL log line including timestamp, level, and message. Example: "2026-03-03 14:12:03 WARN NetworkClient: Error connecting to kafka-5:9092 (repeated 23 times)". If log findings have ANY sampleLines, you MUST include them. An empty logs array when log findings exist is a BUG.
+- evidence.logs: MUST include 8-10 items copied VERBATIM from the sampleLines in the log findings. Copy the FULL log line including timestamp, level, and message. Example: "2026-03-03 14:12:03 WARN NetworkClient: Error connecting to kafka-5:9092 (repeated 23 times)". If log findings have ANY sampleLines, you MUST include them. An empty logs array when log findings exist is a BUG.
 - evidence.infra: Include 1-3 items if any infra anomalies found.
 - If a category has NO findings at all, use an empty array — do NOT fabricate evidence.
 
