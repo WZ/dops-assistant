@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   buildServiceBrief,
   clearBriefCache,
@@ -130,6 +130,10 @@ beforeEach(() => {
   });
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe("buildServiceBrief", () => {
@@ -176,7 +180,8 @@ describe("buildServiceBrief", () => {
     const brief = await buildServiceBrief("api-service", baseDeps());
 
     expect(brief.changes).toBeNull();
-    expect(brief.sections.changes.status).toBe("unconfigured");
+    // getToolsByRole threw → "error", not "unconfigured" (unconfigured = no tools found)
+    expect(brief.sections.changes.status).toBe("error");
 
     // Other sections still populated
     expect(brief.infrastructure).not.toBeNull();
@@ -186,17 +191,26 @@ describe("buildServiceBrief", () => {
 
   // 3. K8s MCP timeout → infra=null, other sections work
   it("returns null infrastructure when K8s MCP times out, other sections work", async () => {
+    vi.useFakeTimers();
+
     mockGetToolsByRole.mockImplementation(async (_providers: unknown, role: string) => {
       if (role === "changes") return makeChangesTools();
       if (role === "infrastructure") {
         return {
-          k8s_describe_pod: makeTool(null, 5000), // 5s delay > 3s timeout
+          // Delay longer than the 3s section timeout — fake timers let us skip the wait
+          k8s_describe_pod: makeTool(null, 10_000),
         };
       }
       return {};
     });
 
-    const brief = await buildServiceBrief("api-service", baseDeps());
+    // Start the call without awaiting
+    const briefPromise = buildServiceBrief("api-service", baseDeps());
+
+    // Advance fake time past the 3s section timeout to fire the AbortController + rejection
+    await vi.advanceTimersByTimeAsync(4_000);
+
+    const brief = await briefPromise;
 
     // Infrastructure should be null due to timeout
     expect(brief.infrastructure).toBeNull();
@@ -205,7 +219,7 @@ describe("buildServiceBrief", () => {
     expect(brief.changes).not.toBeNull();
     expect(brief.dependencies).not.toBeNull();
     expect(brief.summary).not.toBeNull();
-  }, 10_000);
+  });
 
   // 4. All MCPs fail → all data sections null, errors populated
   it("returns all null data sections when all MCPs fail", async () => {
@@ -217,9 +231,10 @@ describe("buildServiceBrief", () => {
     expect(brief.changes).toBeNull();
     expect(brief.infrastructure).toBeNull();
     // Dependencies are inferred from services list, not from MCP, so they may still work
-    // but changes and infra are null
-    expect(brief.sections.changes.status).toBe("unconfigured");
-    expect(brief.sections.infrastructure.status).toBe("unconfigured");
+    // but changes and infra are null.
+    // getToolsByRole threw → "error" for changes and infrastructure
+    expect(brief.sections.changes.status).toBe("error");
+    expect(brief.sections.infrastructure.status).toBe("error");
     expect(brief.sections.summary.status).toBe("error");
     expect(brief.errors.length).toBeGreaterThan(0);
   });

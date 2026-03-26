@@ -87,13 +87,27 @@ function setCache<T>(service: string, section: SectionName, data: T): void {
 
 // ── Timeout helper ───────────────────────────────────────────────────────────
 
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return Promise.race([
+/**
+ * Wraps a promise with a per-section timeout backed by an AbortController.
+ * The AbortController is aborted when the timeout fires so future callers
+ * can check signal.aborted. Returns the AbortSignal for callers that want it.
+ */
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  label: string,
+): { result: Promise<T>; signal: AbortSignal } {
+  const controller = new AbortController();
+  const result = Promise.race([
     promise,
     new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`Timeout: ${label} exceeded ${ms}ms`)), ms),
+      setTimeout(() => {
+        controller.abort();
+        reject(new Error(`Timeout: ${label} exceeded ${ms}ms`));
+      }, ms),
     ),
   ]);
+  return { result, signal: controller.signal };
 }
 
 // ── Tool finder helpers ──────────────────────────────────────────────────────
@@ -144,19 +158,27 @@ function parseMcpResult(raw: unknown): unknown {
 }
 
 // ── Section fetchers ─────────────────────────────────────────────────────────
+//
+// Each fetcher owns its own cache check. It returns:
+//   - cached data (if fresh)           → no MCP call
+//   - fresh data (after MCP call)      → updates cache
+//   - null (if no tools configured)    → outer code marks section "unconfigured"
+//   - throws (if getToolsByRole fails or tool call fails hard) → outer code marks "error"
+//
+// This lets the outer Promise.allSettled always fan out all 3 in parallel.
 
 async function fetchChanges(
   serviceName: string,
   providers: MastraProvider[],
 ): Promise<ChangesSection | null> {
-  let tools: Record<string, unknown>;
-  try {
-    tools = await getToolsByRole(providers, "changes") as Record<string, unknown>;
-  } catch {
-    return null;
-  }
+  // Check cache first
+  const cached = getCached<ChangesSection>(serviceName, "changes");
+  if (cached && cached.status === "ok") return cached.data;
 
-  if (Object.keys(tools).length === 0) return null;
+  // getToolsByRole is allowed to throw — callers treat that as "error" (not "unconfigured")
+  const tools = await getToolsByRole(providers, "changes") as Record<string, unknown>;
+
+  if (Object.keys(tools).length === 0) return null; // unconfigured
 
   // Look for deployment/pipeline tools
   const deployTool = findTool(tools, ["deployment", "pipeline", "deploy"]);
@@ -174,7 +196,7 @@ async function fetchChanges(
         deployTool.execute({ service: serviceName, limit: 5 }),
         SECTION_TIMEOUT_MS,
         "fetchChanges:deployments",
-      );
+      ).result;
       const parsed = parseMcpResult(raw);
       if (Array.isArray(parsed)) {
         result.deployments = parsed;
@@ -190,7 +212,7 @@ async function fetchChanges(
         mrTool.execute({ service: serviceName, limit: 5, state: "merged" }),
         SECTION_TIMEOUT_MS,
         "fetchChanges:mergeRequests",
-      );
+      ).result;
       const parsed = parseMcpResult(raw);
       if (Array.isArray(parsed)) {
         result.mergeRequests = parsed;
@@ -200,6 +222,7 @@ async function fetchChanges(
     }
   }
 
+  setCache(serviceName, "changes", result);
   return result;
 }
 
@@ -207,41 +230,38 @@ async function fetchInfrastructure(
   serviceName: string,
   providers: MastraProvider[],
 ): Promise<InfrastructureSection | null> {
-  let tools: Record<string, unknown>;
-  try {
-    tools = await getToolsByRole(providers, "infrastructure") as Record<string, unknown>;
-  } catch {
-    return null;
-  }
+  // Check cache first
+  const cached = getCached<InfrastructureSection>(serviceName, "infrastructure");
+  if (cached && cached.status === "ok") return cached.data;
 
-  if (Object.keys(tools).length === 0) return null;
+  // getToolsByRole is allowed to throw — callers treat that as "error" (not "unconfigured")
+  const tools = await getToolsByRole(providers, "infrastructure") as Record<string, unknown>;
+
+  if (Object.keys(tools).length === 0) return null; // unconfigured
 
   // Look for pods/workload tool
   const podTool = findTool(tools, ["pod", "workload", "deployment", "describe", "resource"]);
   if (!podTool) return null;
 
-  try {
-    const raw = await withTimeout(
-      podTool.execute({ service: serviceName, namespace: "default" }),
-      SECTION_TIMEOUT_MS,
-      "fetchInfrastructure",
-    );
-    const parsed = parseMcpResult(raw);
-    if (parsed && typeof parsed === "object") {
-      // Attempt to coerce into InfrastructureSection shape
-      const data = parsed as Record<string, unknown>;
-      return {
-        workloadType: (data.workloadType as string) ?? "Deployment",
-        replicas: (data.replicas as InfrastructureSection["replicas"]) ?? { desired: 0, ready: 0, available: 0 },
-        containers: Array.isArray(data.containers) ? data.containers : [],
-        recentEvents: Array.isArray(data.recentEvents ?? data.events) ? (data.recentEvents ?? data.events) as InfrastructureSection["recentEvents"] : [],
-      };
-    }
-    return null;
-  } catch (err) {
-    logger.debug({ err, service: serviceName }, "service-brief: infrastructure fetch failed");
-    return null;
+  const raw = await withTimeout(
+    podTool.execute({ service: serviceName, namespace: "default" }),
+    SECTION_TIMEOUT_MS,
+    "fetchInfrastructure",
+  ).result;
+  const parsed = parseMcpResult(raw);
+  if (parsed && typeof parsed === "object") {
+    // Attempt to coerce into InfrastructureSection shape
+    const data = parsed as Record<string, unknown>;
+    const result: InfrastructureSection = {
+      workloadType: (data.workloadType as string) ?? "Deployment",
+      replicas: (data.replicas as InfrastructureSection["replicas"]) ?? { desired: 0, ready: 0, available: 0 },
+      containers: Array.isArray(data.containers) ? data.containers : [],
+      recentEvents: Array.isArray(data.recentEvents ?? data.events) ? (data.recentEvents ?? data.events) as InfrastructureSection["recentEvents"] : [],
+    };
+    setCache(serviceName, "infrastructure", result);
+    return result;
   }
+  return null;
 }
 
 /**
@@ -297,6 +317,10 @@ async function fetchDependencies(
   services: ServiceConfig[],
   healthPoller?: ServiceHealthPoller,
 ): Promise<{ nodes: BriefDependencyNode[]; edges: BriefDependencyEdge[]; source: "inferred" }> {
+  // Check cache first
+  const cached = getCached<{ nodes: BriefDependencyNode[]; edges: BriefDependencyEdge[]; source: "inferred" }>(serviceName, "dependencies");
+  if (cached && cached.status === "ok") return cached.data;
+
   const graph = inferDependencyGraph(services);
 
   // Filter to just the requested service and its neighbors
@@ -327,7 +351,9 @@ async function fetchDependencies(
     }
   }
 
-  return { nodes: filteredNodes, edges: filteredEdges, source: "inferred" as const };
+  const result = { nodes: filteredNodes, edges: filteredEdges, source: "inferred" as const };
+  setCache(serviceName, "dependencies", result);
+  return result;
 }
 
 // ── AI Summary ───────────────────────────────────────────────────────────────
@@ -416,132 +442,136 @@ async function doBuildServiceBrief(
     dependencies: { status: "unconfigured" },
   };
 
-  // ── Check cache per section, with stale-while-revalidate ──────────────
+  // ── Snapshot stale cache before fetching (for stale-while-revalidate) ──────
+  //
+  // Each fetcher owns its own fresh-cache check. We read stale entries here
+  // only to return them as a fallback while background revalidation runs.
 
-  let changesData: ChangesSection | null = null;
-  let infraData: InfrastructureSection | null = null;
-  let depsData: { nodes: BriefDependencyNode[]; edges: BriefDependencyEdge[]; source: "inferred" } | null = null;
+  const staleChanges = getCached<ChangesSection>(serviceName, "changes");
+  const staleInfra = getCached<InfrastructureSection>(serviceName, "infrastructure");
+  const staleDeps = getCached<{ nodes: BriefDependencyNode[]; edges: BriefDependencyEdge[]; source: "inferred" }>(serviceName, "dependencies");
+  const staleSummary = getCached<AISummary>(serviceName, "summary");
 
-  const cachedChanges = getCached<ChangesSection>(serviceName, "changes");
-  const cachedInfra = getCached<InfrastructureSection>(serviceName, "infrastructure");
-  const cachedDeps = getCached<{ nodes: BriefDependencyNode[]; edges: BriefDependencyEdge[]; source: "inferred" }>(serviceName, "dependencies");
-
-  let needFetchChanges = !cachedChanges || cachedChanges.status === "stale";
-  let needFetchInfra = !cachedInfra || cachedInfra.status === "stale";
-  let needFetchDeps = !cachedDeps || cachedDeps.status === "stale";
-
-  // Use cached data if available (even stale)
-  if (cachedChanges) {
-    changesData = cachedChanges.data;
-    sections.changes = { status: cachedChanges.status === "stale" ? "stale" : "ok", fetchedAt: Date.now() };
+  // If every section has a fresh cache hit, skip all fetches and return immediately.
+  if (
+    staleChanges?.status === "ok" &&
+    staleInfra?.status === "ok" &&
+    staleDeps?.status === "ok" &&
+    staleSummary?.status === "ok"
+  ) {
+    return {
+      summary: staleSummary.data,
+      changes: staleChanges.data,
+      infrastructure: staleInfra.data,
+      dependencies: staleDeps.data,
+      sections: {
+        summary: { status: "ok", fetchedAt: Date.now() },
+        changes: { status: "ok", fetchedAt: Date.now() },
+        infrastructure: { status: "ok", fetchedAt: Date.now() },
+        dependencies: { status: "ok", fetchedAt: Date.now() },
+      },
+      errors: [],
+    };
   }
-  if (cachedInfra) {
-    infraData = cachedInfra.data;
-    sections.infrastructure = { status: cachedInfra.status === "stale" ? "stale" : "ok", fetchedAt: Date.now() };
+
+  // ── Unconditional parallel fan-out ─────────────────────────────────────────
+  //
+  // Each fetcher checks its own cache inside and returns cached data if fresh.
+  // For stale sections: we fire the fetch in the background (do not await it in
+  // the foreground Promise.allSettled) so the caller gets the stale data
+  // immediately while a background refresh runs.
+
+  type DepsResult = { nodes: BriefDependencyNode[]; edges: BriefDependencyEdge[]; source: "inferred" };
+
+  // Background refresh for stale sections — fire-and-forget
+  if (staleChanges?.status === "stale") {
+    void fetchChanges(serviceName, providers).catch(err =>
+      logger.debug({ err, service: serviceName }, "service-brief: background changes refresh failed"),
+    );
   }
-  if (cachedDeps) {
-    depsData = cachedDeps.data;
-    sections.dependencies = { status: cachedDeps.status === "stale" ? "stale" : "ok", fetchedAt: Date.now() };
+  if (staleInfra?.status === "stale") {
+    void fetchInfrastructure(serviceName, providers).catch(err =>
+      logger.debug({ err, service: serviceName }, "service-brief: background infrastructure refresh failed"),
+    );
+  }
+  if (staleDeps?.status === "stale") {
+    void fetchDependencies(serviceName, services, healthPoller).catch(err =>
+      logger.debug({ err, service: serviceName }, "service-brief: background dependencies refresh failed"),
+    );
   }
 
-  // If all sections are fresh from cache, check summary cache too
-  if (!needFetchChanges && !needFetchInfra && !needFetchDeps) {
-    const cachedSummary = getCached<AISummary>(serviceName, "summary");
-    if (cachedSummary && cachedSummary.status === "ok") {
-      return {
-        summary: cachedSummary.data,
-        changes: changesData,
-        infrastructure: infraData,
-        dependencies: depsData,
-        sections: {
-          ...sections,
-          summary: { status: "ok", fetchedAt: Date.now() },
-        },
-        errors: [],
-      };
+  // Foreground: only fetch sections that have no usable cache (miss or max-stale exceeded)
+  const needChanges = !staleChanges;
+  const needInfra = !staleInfra;
+  const needDeps = !staleDeps;
+
+  let changesData: ChangesSection | null = staleChanges?.data ?? null;
+  let infraData: InfrastructureSection | null = staleInfra?.data ?? null;
+  let depsData: DepsResult | null = staleDeps?.data ?? null;
+
+  // Populate stale section statuses
+  if (staleChanges) sections.changes = { status: staleChanges.status === "stale" ? "stale" : "ok", fetchedAt: Date.now() };
+  if (staleInfra) sections.infrastructure = { status: staleInfra.status === "stale" ? "stale" : "ok", fetchedAt: Date.now() };
+  if (staleDeps) sections.dependencies = { status: staleDeps.status === "stale" ? "stale" : "ok", fetchedAt: Date.now() };
+
+  // Always fan out all 3 via Promise.allSettled — each fetcher returns cached data
+  // if fresh, or makes an MCP call if not.
+  const [changesResult, infraResult, depsResult] = await Promise.allSettled([
+    needChanges ? fetchChanges(serviceName, providers) : Promise.resolve(changesData),
+    needInfra ? fetchInfrastructure(serviceName, providers) : Promise.resolve(infraData),
+    needDeps ? fetchDependencies(serviceName, services, healthPoller) : Promise.resolve(depsData),
+  ]);
+
+  // Process changes result
+  if (needChanges) {
+    if (changesResult.status === "fulfilled") {
+      changesData = changesResult.value;
+      if (changesData !== null) {
+        sections.changes = { status: "ok", fetchedAt: Date.now() };
+      } else {
+        sections.changes = { status: "unconfigured" };
+      }
+    } else {
+      const msg = changesResult.reason instanceof Error ? changesResult.reason.message : String(changesResult.reason);
+      errors.push(`changes: ${msg}`);
+      sections.changes = { status: "error", error: msg };
+      logger.debug({ err: changesResult.reason, service: serviceName }, "service-brief: changes fetch failed");
     }
   }
 
-  // ── Fetch missing/stale sections in parallel ────────────────────────────
-
-  const fetchPromises: Promise<void>[] = [];
-
-  if (needFetchChanges) {
-    const isBackground = cachedChanges?.status === "stale";
-    const p = (async () => {
-      try {
-        const result = await fetchChanges(serviceName, providers);
-        if (result !== null) {
-          changesData = result;
-          setCache(serviceName, "changes", result);
-          sections.changes = { status: "ok", fetchedAt: Date.now() };
-        } else if (!cachedChanges) {
-          sections.changes = { status: "unconfigured" };
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (!isBackground) {
-          errors.push(`changes: ${msg}`);
-          if (!cachedChanges) {
-            sections.changes = { status: "error", error: msg };
-          }
-        }
-        logger.debug({ err, service: serviceName }, "service-brief: changes fetch failed");
+  // Process infrastructure result
+  if (needInfra) {
+    if (infraResult.status === "fulfilled") {
+      infraData = infraResult.value as InfrastructureSection | null;
+      if (infraData !== null) {
+        sections.infrastructure = { status: "ok", fetchedAt: Date.now() };
+      } else {
+        sections.infrastructure = { status: "unconfigured" };
       }
-    })();
-    if (!isBackground) fetchPromises.push(p);
+    } else {
+      const msg = infraResult.reason instanceof Error ? infraResult.reason.message : String(infraResult.reason);
+      errors.push(`infrastructure: ${msg}`);
+      sections.infrastructure = { status: "error", error: msg };
+      logger.debug({ err: infraResult.reason, service: serviceName }, "service-brief: infrastructure fetch failed");
+    }
   }
 
-  if (needFetchInfra) {
-    const isBackground = cachedInfra?.status === "stale";
-    const p = (async () => {
-      try {
-        const result = await fetchInfrastructure(serviceName, providers);
-        if (result !== null) {
-          infraData = result;
-          setCache(serviceName, "infrastructure", result);
-          sections.infrastructure = { status: "ok", fetchedAt: Date.now() };
-        } else if (!cachedInfra) {
-          sections.infrastructure = { status: "unconfigured" };
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (!isBackground) {
-          errors.push(`infrastructure: ${msg}`);
-          if (!cachedInfra) {
-            sections.infrastructure = { status: "error", error: msg };
-          }
-        }
-        logger.debug({ err, service: serviceName }, "service-brief: infrastructure fetch failed");
-      }
-    })();
-    if (!isBackground) fetchPromises.push(p);
-  }
-
-  if (needFetchDeps) {
-    const isBackground = cachedDeps?.status === "stale";
-    const p = (async () => {
-      try {
-        const result = await fetchDependencies(serviceName, services, healthPoller);
-        depsData = result;
-        setCache(serviceName, "dependencies", result);
+  // Process dependencies result
+  if (needDeps) {
+    if (depsResult.status === "fulfilled") {
+      depsData = depsResult.value as DepsResult | null;
+      if (depsData !== null) {
         sections.dependencies = { status: "ok", fetchedAt: Date.now() };
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (!isBackground) {
-          errors.push(`dependencies: ${msg}`);
-          if (!cachedDeps) {
-            sections.dependencies = { status: "error", error: msg };
-          }
-        }
-        logger.debug({ err, service: serviceName }, "service-brief: dependencies fetch failed");
+      } else {
+        sections.dependencies = { status: "unconfigured" };
       }
-    })();
-    if (!isBackground) fetchPromises.push(p);
+    } else {
+      const msg = depsResult.reason instanceof Error ? depsResult.reason.message : String(depsResult.reason);
+      errors.push(`dependencies: ${msg}`);
+      sections.dependencies = { status: "error", error: msg };
+      logger.debug({ err: depsResult.reason, service: serviceName }, "service-brief: dependencies fetch failed");
+    }
   }
-
-  // Wait for all non-background fetches
-  await Promise.allSettled(fetchPromises);
 
   // ── AI Summary ──────────────────────────────────────────────────────────
 
