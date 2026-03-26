@@ -83,7 +83,7 @@ export function ServiceDetailHeader({
           onClick={onBack}
           className="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground/60 hover:text-primary transition-colors"
         >
-          Dashboard
+          Operations Desk
         </button>
         <span className="font-mono text-[9px] text-muted-foreground/30">&rsaquo;</span>
         <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground/40">
@@ -183,7 +183,7 @@ export function ServiceDetailHeader({
 
           <Button
             onClick={onInvestigate}
-            className="h-9 px-5 text-[12px] font-mono bg-primary text-primary-foreground rounded-full hover:bg-primary/90 transition-colors"
+            className="h-9 px-5 text-[12px] font-mono bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
           >
             <Search size={13} className="mr-1.5" />
             Investigate

@@ -10,12 +10,14 @@ import type { ProviderRegistry } from "../mcp/provider-registry.js";
 import type { ServiceHealthPoller } from "./service-health-poller.js";
 import { queryServiceMetrics } from "./prometheus-query.js";
 import type { MetricSeries } from "./prometheus-query.js";
+import { inferDependencyGraph } from "./dependency-graph.js";
+import { buildServiceBrief } from "./service-brief.js";
 
 export interface DependencyNode {
   id: string;
   name: string;
   type: "service" | "database" | "queue" | "cache" | "external";
-  status?: "healthy" | "degraded" | "unhealthy";
+  status?: "healthy" | "degraded" | "unhealthy" | "unknown";
 }
 
 export interface DependencyEdge {
@@ -30,52 +32,6 @@ export interface RouteHandlers {
   getInvestigation(id: string): { investigation: InvestigationRow; phases: PhaseRow[]; events: EventRow[] } | undefined;
   getDependencies(service: string): Promise<{ nodes: DependencyNode[]; edges: DependencyEdge[] }>;
   getKpiStats(): KpiStats;
-}
-
-/**
- * Infer service dependency graph from service registry data.
- * Uses metric query labels and service name patterns to detect relationships.
- */
-function inferDependencyGraph(services: ServiceConfig[]): { nodes: DependencyNode[]; edges: DependencyEdge[] } {
-  const nodes: DependencyNode[] = services.map(s => ({
-    id: s.name,
-    name: s.name,
-    type: "service" as const,
-  }));
-
-  const edges: DependencyEdge[] = [];
-  const serviceNames = new Set(services.map(s => s.name));
-
-  for (const svc of services) {
-    // Check if any metric queries reference other services by name
-    for (const metric of svc.metrics) {
-      for (const otherName of serviceNames) {
-        if (otherName === svc.name) continue;
-        // Look for service references in metric queries (e.g., upstream="other-service")
-        if (metric.query.includes(otherName) || metric.query.includes(otherName.replace(/-/g, "_"))) {
-          const edgeId = `${svc.name}->${otherName}`;
-          if (!edges.some(e => e.source === svc.name && e.target === otherName)) {
-            edges.push({ source: svc.name, target: otherName, label: "metrics" });
-          }
-        }
-      }
-    }
-
-    // Check log labels for service references
-    const logLabelValues = Object.values(svc.logLabels ?? {});
-    for (const val of logLabelValues) {
-      for (const otherName of serviceNames) {
-        if (otherName === svc.name) continue;
-        if (val.includes(otherName)) {
-          if (!edges.some(e => e.source === svc.name && e.target === otherName)) {
-            edges.push({ source: svc.name, target: otherName, label: "logs" });
-          }
-        }
-      }
-    }
-  }
-
-  return { nodes, edges };
 }
 
 export function buildHandlers(db: Database, services: ServiceConfig[]): RouteHandlers {
@@ -106,6 +62,9 @@ export function buildHandlers(db: Database, services: ServiceConfig[]): RouteHan
   };
 }
 
+/** Validates a service name route param: alphanumeric + hyphen/underscore/dot, max 253 chars (K8s limit). */
+const NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,252}$/;
+
 export function registerRoutes(
   app: Express, db: Database, services: ServiceConfig[], _mcp?: unknown,
   skillStore?: SkillStore, registryStore?: ServiceRegistryStore,
@@ -113,6 +72,7 @@ export function registerRoutes(
   branding?: BrandingConfig,
   healthPoller?: ServiceHealthPoller,
   getProviders?: () => MastraProvider[],
+  llmModel?: Parameters<typeof buildServiceBrief>[1]["llmModel"],
 ): void {
   const handlers = buildHandlers(db, services);
 
@@ -214,12 +174,14 @@ export function registerRoutes(
   // ── Service Metadata REST API ──────────────────────────────────────────
   app.get("/api/services/:name/metadata", (req: Request, res: Response) => {
     const name = req.params["name"] as string;
+    if (!NAME_PATTERN.test(name)) { res.status(400).json({ error: "Invalid service name" }); return; }
     const meta = db.getServiceMetadata(name);
     res.json(meta ?? { service: name, alias: null, tags: [] });
   });
 
   app.put("/api/services/:name/alias", (req: Request, res: Response) => {
     const name = req.params["name"] as string;
+    if (!NAME_PATTERN.test(name)) { res.status(400).json({ error: "Invalid service name" }); return; }
     const { alias } = req.body as { alias: string | null };
     db.upsertServiceMetadata(name, { alias: alias === null || alias === "" ? "" : alias });
     res.json({ ok: true });
@@ -227,6 +189,7 @@ export function registerRoutes(
 
   app.put("/api/services/:name/tags", (req: Request, res: Response) => {
     const name = req.params["name"] as string;
+    if (!NAME_PATTERN.test(name)) { res.status(400).json({ error: "Invalid service name" }); return; }
     const { tags } = req.body as { tags: string[] };
     db.upsertServiceMetadata(name, { tags });
     res.json({ ok: true });
@@ -235,6 +198,7 @@ export function registerRoutes(
   // ── Service Metrics REST API ────────────────────────────────────────────
   app.get("/api/services/:name/metrics", async (req: Request, res: Response) => {
     const name = req.params["name"] as string;
+    if (!NAME_PATTERN.test(name)) { res.status(400).json({ error: "Invalid service name" }); return; }
     const rawRange = (req.query["range"] as string) || "24h";
     const range = VALID_RANGES.has(rawRange) ? rawRange : "24h";
     const cacheKey = `${name}:${range}`;
@@ -269,6 +233,24 @@ export function registerRoutes(
       } else {
         res.status(503).json({ error: "Prometheus unavailable", metrics: [] });
       }
+    }
+  });
+
+  // ── Service Brief REST API ──────────────────────────────────────────────
+  app.get("/api/services/:name/brief", async (req: Request, res: Response) => {
+    const name = req.params["name"] as string;
+    if (!NAME_PATTERN.test(name)) { res.status(400).json({ error: "Invalid service name" }); return; }
+    try {
+      const allServices = registryStore ? registryStore.load() : services;
+      const brief = await buildServiceBrief(name, {
+        providers: getProviders?.() ?? [],
+        services: allServices,
+        healthPoller,
+        llmModel,
+      });
+      res.json(brief);
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : "Failed to build service brief" });
     }
   });
 
