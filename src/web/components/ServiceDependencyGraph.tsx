@@ -63,6 +63,14 @@ export function ServiceDependencyGraph({
   // otherwise fall back to the healthMap prop passed from parent.
   const healthMap = initialData !== undefined ? (initialHealthMap ?? healthMapProp) : healthMapProp;
 
+  // Sync when initialData arrives after mount (parent fetched it async)
+  useEffect(() => {
+    if (initialData !== undefined) {
+      setData(initialData);
+      setLoading(false);
+    }
+  }, [initialData]);
+
   useEffect(() => {
     // Skip fetch when pre-fetched data was supplied.
     if (initialData !== undefined) return;
@@ -215,6 +223,7 @@ export function ServiceDependencyGraph({
           edges={edges}
           onNodeClick={(_, node) => onViewService((node.data._labelText ?? node.data.label) as string)}
           fitView
+          fitViewOptions={{ maxZoom: 0.8 }}
         >
           <Background color={border} gap={16} />
           <Controls />
