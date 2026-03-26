@@ -22,6 +22,10 @@ import type {
   BriefDependencyNode,
   BriefDependencyEdge,
   AISummary,
+  ContainerStatus,
+  K8sEvent,
+  Deployment,
+  MergeRequest,
 } from "../types/service-brief.js";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
@@ -58,6 +62,9 @@ const MAX_STALE_AGE = 10 * 60_000;
 /** Per-section timeout for MCP calls */
 const SECTION_TIMEOUT_MS = 3_000;
 
+/** Maximum number of cache entries before evicting the oldest */
+const MAX_CACHE_ENTRIES = 200;
+
 const cache = new Map<string, CacheEntry<unknown>>();
 const inflight = new Map<string, Promise<ServiceBrief>>();
 
@@ -83,6 +90,10 @@ function getCached<T>(service: string, section: SectionName): { data: T; status:
 
 function setCache<T>(service: string, section: SectionName, data: T): void {
   cache.set(cacheKey(service, section), { data, fetchedAt: Date.now() });
+  if (cache.size > MAX_CACHE_ENTRIES) {
+    const firstKey = cache.keys().next().value;
+    if (firstKey) cache.delete(firstKey);
+  }
 }
 
 // ── Timeout helper ───────────────────────────────────────────────────────────
@@ -150,6 +161,61 @@ function parseMcpResult(raw: unknown): unknown {
   return raw;
 }
 
+// ── MCP output shape coercers ────────────────────────────────────────────────
+//
+// MCP tools may return malformed or partially-missing data. These helpers
+// coerce unknown values into well-typed shapes with sensible defaults so the
+// rest of the code never sees NaN / undefined in numeric or string fields.
+
+function coerceContainer(c: unknown): ContainerStatus {
+  const obj = (c && typeof c === "object" ? c : {}) as Record<string, unknown>;
+  return {
+    name: String(obj.name ?? "unknown"),
+    cpuUsage: String(obj.cpuUsage ?? "0"),
+    cpuLimit: String(obj.cpuLimit ?? "0"),
+    memUsage: String(obj.memUsage ?? "0"),
+    memLimit: String(obj.memLimit ?? "0"),
+    restarts: Number(obj.restarts) || 0,
+    lastRestartReason: obj.lastRestartReason ? String(obj.lastRestartReason) : undefined,
+  };
+}
+
+function coerceEvent(e: unknown): K8sEvent {
+  const obj = (e && typeof e === "object" ? e : {}) as Record<string, unknown>;
+  return {
+    type: String(obj.type ?? "Warning") as K8sEvent["type"],
+    reason: String(obj.reason ?? "Unknown"),
+    message: String(obj.message ?? ""),
+    firstSeen: String(obj.firstSeen ?? new Date().toISOString()),
+    lastSeen: String(obj.lastSeen ?? new Date().toISOString()),
+    count: Number(obj.count) || 1,
+  };
+}
+
+function coerceDeployment(d: unknown): Deployment {
+  const obj = (d && typeof d === "object" ? d : {}) as Record<string, unknown>;
+  return {
+    ref: String(obj.ref ?? "unknown"),
+    pipelineId: Number(obj.pipelineId) || 0,
+    pipelineStatus: String(obj.pipelineStatus ?? "unknown"),
+    environment: String(obj.environment ?? "unknown"),
+    deployedAt: String(obj.deployedAt ?? new Date().toISOString()),
+    deployedBy: String(obj.deployedBy ?? "unknown"),
+  };
+}
+
+function coerceMergeRequest(mr: unknown): MergeRequest {
+  const obj = (mr && typeof mr === "object" ? mr : {}) as Record<string, unknown>;
+  return {
+    iid: Number(obj.iid) || 0,
+    title: String(obj.title ?? ""),
+    mergedAt: String(obj.mergedAt ?? new Date().toISOString()),
+    mergedBy: String(obj.mergedBy ?? "unknown"),
+    filesChanged: Number(obj.filesChanged) || 0,
+    webUrl: String(obj.webUrl ?? ""),
+  };
+}
+
 // ── Section fetchers ─────────────────────────────────────────────────────────
 //
 // Each fetcher owns its own cache check. It returns:
@@ -193,7 +259,7 @@ async function fetchChanges(
       );
       const parsed = parseMcpResult(raw);
       if (Array.isArray(parsed)) {
-        result.deployments = parsed;
+        result.deployments = parsed.map(coerceDeployment);
       }
     } catch (err) {
       logger.debug({ err, service: serviceName }, "service-brief: deployment fetch failed");
@@ -209,7 +275,7 @@ async function fetchChanges(
       );
       const parsed = parseMcpResult(raw);
       if (Array.isArray(parsed)) {
-        result.mergeRequests = parsed;
+        result.mergeRequests = parsed.map(coerceMergeRequest);
       }
     } catch (err) {
       logger.debug({ err, service: serviceName }, "service-brief: MR fetch failed");
@@ -250,8 +316,8 @@ async function fetchInfrastructure(
     const result: InfrastructureSection = {
       workloadType: (data.workloadType as string) ?? "Deployment",
       replicas: (data.replicas as InfrastructureSection["replicas"]) ?? { desired: 0, ready: 0, available: 0 },
-      containers: Array.isArray(data.containers) ? data.containers : [],
-      recentEvents: Array.isArray(data.recentEvents ?? data.events) ? (data.recentEvents ?? data.events) as InfrastructureSection["recentEvents"] : [],
+      containers: Array.isArray(data.containers) ? data.containers.map(coerceContainer) : [],
+      recentEvents: (() => { const evts = data.recentEvents ?? data.events; return Array.isArray(evts) ? (evts as unknown[]).map(coerceEvent) : []; })(),
     };
     setCache(serviceName, "infrastructure", result);
     return result;
