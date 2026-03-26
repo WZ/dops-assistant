@@ -7,6 +7,7 @@ import { ToastContainer } from "./dashboard/ToastContainer";
 import type { ToastItem } from "./dashboard/ToastContainer";
 import { formatDuration, severityVariant, normalizeConfidence } from "@/lib/dashboard-utils";
 import type { InvestigationSummary, Pattern, KpiStats } from "@/lib/dashboard-utils";
+import { useStackContext } from "../contexts/StackContext";
 import type { ServiceConfig } from "../../config/schema.js";
 import type { ServerMessage } from "../../types/ws-types.js";
 
@@ -15,6 +16,7 @@ interface DashboardProps {
   onInvestigationClick: (id: string) => void;
   onViewService: (serviceName: string) => void;
   onViewAllServices: () => void;
+  stackName?: string;
 }
 
 interface ActiveInvestigation {
@@ -28,7 +30,8 @@ interface ActiveInvestigation {
 
 type HealthStatus = "healthy" | "degraded" | "down" | "unknown";
 
-export function Dashboard({ wsMessages, onInvestigationClick, onViewService, onViewAllServices }: DashboardProps) {
+export function Dashboard({ wsMessages, onInvestigationClick, onViewService, onViewAllServices, stackName }: DashboardProps) {
+  const { stackFetch } = useStackContext();
   const [services, setServices] = useState<ServiceConfig[]>([]);
   const [investigations, setInvestigations] = useState<InvestigationSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -51,11 +54,11 @@ export function Dashboard({ wsMessages, onInvestigationClick, onViewService, onV
     const seq = ++fetchSeqRef.current;
     try {
       const [invRes, svcRes, healthRes, hiddenRes, kpiRes] = await Promise.all([
-        fetch("/api/investigations?limit=100"),
-        fetch("/api/services"),
-        fetch("/api/services/health"),
-        fetch("/api/services/hidden"),
-        fetch("/api/stats/kpi"),
+        stackFetch("/api/investigations?limit=100"),
+        stackFetch("/api/services"),
+        stackFetch("/api/services/health"),
+        stackFetch("/api/services/hidden"),
+        stackFetch("/api/stats/kpi"),
       ]);
       if (!invRes.ok || !svcRes.ok) {
         throw new Error(`Server error: ${!invRes.ok ? invRes.status : svcRes.status}`);
@@ -216,7 +219,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onViewService, onV
       .map(([name]) => name);
 
     Promise.all(
-      topServices.map(svc => fetch(`/api/patterns?service=${encodeURIComponent(svc)}`).then(r => r.json()).catch(() => []))
+      topServices.map(svc => stackFetch(`/api/patterns?service=${encodeURIComponent(svc)}`).then(r => r.json()).catch(() => []))
     ).then(results => setPatterns(results.flat()));
   }, [investigations]);
 
@@ -281,6 +284,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onViewService, onV
       <div className="mb-6 animate-fade-up">
         <h1 className="font-display text-xl font-bold tracking-tight text-foreground">Operations Desk</h1>
         <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">
+          {stackName && <span className="text-primary/60 uppercase">{stackName} &middot; </span>}
           {services.filter(s => !hiddenSet.has(s.name)).length} services monitored
           {lastUpdated && (
             <span className={`text-[9px] tabular-nums ${isStale ? "text-warning/60" : "text-muted-foreground/50"}`}>

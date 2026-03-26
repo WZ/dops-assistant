@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
+import { useStackContext } from "../contexts/StackContext";
 import type { ServiceRegistryVersion } from "../../types/discovery-types.js";
 
 interface VersionHistoryProps {
@@ -7,19 +8,20 @@ interface VersionHistoryProps {
 }
 
 export function VersionHistory({ onBack }: VersionHistoryProps) {
+  const { stackFetch } = useStackContext();
   const [versions, setVersions] = useState<ServiceRegistryVersion[]>([]);
 
   useEffect(() => {
-    fetch("/api/services/versions")
+    stackFetch("/api/services/versions")
       .then((r) => r.json())
       .then(setVersions)
       .catch(() => {});
   }, []);
 
   const handleRestore = async (id: string) => {
-    const res = await fetch(`/api/services/versions/${id}/restore`, { method: "POST" });
+    const res = await stackFetch(`/api/services/versions/${id}/restore`, { method: "POST" });
     if (res.ok) {
-      const updated = await fetch("/api/services/versions").then((r) => r.json());
+      const updated = await stackFetch("/api/services/versions").then((r) => r.json());
       setVersions(updated);
     }
   };

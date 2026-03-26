@@ -4,6 +4,7 @@ import { ServiceMetrics } from "./ServiceMetrics";
 import { ServiceHistory } from "./ServiceHistory";
 const ServiceOverview = lazy(() => import("./ServiceOverview").then(m => ({ default: m.ServiceOverview })));
 const ServiceDependencyGraph = lazy(() => import("./ServiceDependencyGraph").then(m => ({ default: m.ServiceDependencyGraph })));
+import { useStackContext } from "../contexts/StackContext";
 import type { useWebSocket } from "../hooks/useWebSocket";
 
 type TabId = "overview" | "metrics" | "history" | "dependencies";
@@ -41,6 +42,7 @@ export function ServiceDetail({
   grafanaUrl,
   metricQuery,
 }: ServiceDetailProps) {
+  const { stackFetch } = useStackContext();
   const [activeTab, setActiveTab] = useState<TabId>("overview");
   const [metadata, setMetadata] = useState<ServiceMetadata | null>(null);
   const [healthStatus, setHealthStatus] = useState<HealthStatus>("unknown");
@@ -54,9 +56,9 @@ export function ServiceDetail({
 
     async function fetchAll() {
       const [metaRes, healthRes, invRes] = await Promise.all([
-        fetch(`/api/services/${encodeURIComponent(serviceName)}/metadata`).catch(() => null),
-        fetch("/api/services/health").catch(() => null),
-        fetch(`/api/investigations?service=${encodeURIComponent(serviceName)}&limit=100`).catch(() => null),
+        stackFetch(`/api/services/${encodeURIComponent(serviceName)}/metadata`).catch(() => null),
+        stackFetch("/api/services/health").catch(() => null),
+        stackFetch(`/api/investigations?service=${encodeURIComponent(serviceName)}&limit=100`).catch(() => null),
       ]);
 
       if (cancelled) return;

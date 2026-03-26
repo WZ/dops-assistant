@@ -12,7 +12,10 @@ import { Sidebar } from "./components/Sidebar";
 import type { SidebarPage } from "./components/Sidebar";
 import { ServicesPage } from "./components/ServicesPage";
 import { SettingsPage } from "./components/SettingsPage";
+import { StackSwitcher } from "./components/StackSwitcher";
+import { StackProvider } from "./contexts/StackContext";
 import { useWebSocket } from "./hooks/useWebSocket";
+import { useStacks } from "./hooks/useStacks";
 import { useHealthPolling } from "./components/dashboard/useHealthPolling";
 import type { ValidatedServiceConfig } from "../types/discovery-types.js";
 
@@ -29,7 +32,7 @@ export type LeftPaneView =
   | { type: "dashboard" }
   | { type: "investigation"; id: string }
   | { type: "services"; initialService?: string }
-  | { type: "settings"; initialTab?: "providers" | "skills" };
+  | { type: "settings"; initialTab?: "providers" | "skills" | "stacks" };
 
 function useTheme() {
   const [dark, setDark] = useState(() => localStorage.getItem("theme") === "dark");
@@ -44,9 +47,12 @@ export function App() {
   const [leftPane, setLeftPane] = useState<LeftPaneView>({
     type: "dashboard",
   });
-  const ws = useWebSocket();
+  const { stacks, activeStackId, activeStack, switchStack, refetch: refetchStacks } = useStacks();
+  const ws = useWebSocket(activeStackId);
   const theme = useTheme();
   const health = useHealthPolling();
+
+  const hasMultipleStacks = stacks.length > 1;
 
   const activePage: SidebarPage =
     leftPane.type === "services" ? "services"
@@ -118,7 +124,32 @@ export function App() {
     }
   }, [ws.messages]);
 
+  // Reset discovery state and processed message index on stack switch
+  useEffect(() => {
+    lastProcessedIdx.current = 0;
+    setDiscoveryState({
+      phase: "",
+      status: "complete",
+      iteration: { current: 0, max: 0, description: "" },
+      toolCalls: [],
+      results: [],
+      error: null,
+      phaseTokens: {},
+      totalUsage: null,
+    });
+  }, [activeStackId]);
+
+  // Don't render until we have a stack ID
+  if (!activeStackId) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-background text-muted-foreground">
+        <span className="font-mono text-[10px] uppercase tracking-wider">Loading...</span>
+      </div>
+    );
+  }
+
   return (
+    <StackProvider activeStackId={activeStackId}>
     <TooltipProvider delayDuration={200}>
     <div className="h-screen flex bg-background text-foreground noise relative overflow-hidden">
       {/* Sidebar */}
@@ -131,7 +162,7 @@ export function App() {
 
       {/* Main area */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Slimmed top bar — branding + health only */}
+        {/* Slimmed top bar — branding + stack switcher + health */}
         <header className="h-10 flex items-center justify-between px-4 border-b border-border/50 bg-card/60 backdrop-blur-md shrink-0 relative z-10">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1">
@@ -147,6 +178,14 @@ export function App() {
                 {branding.subtitle}
               </span>
             </div>
+            {/* Divider + Stack Switcher */}
+            <div className="w-px h-4 bg-border" />
+            <StackSwitcher
+              stacks={stacks}
+              activeStackId={activeStackId}
+              onSwitch={switchStack}
+              onStackCreated={refetchStacks}
+            />
           </div>
           <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-secondary/30">
             {/* Health status cluster */}
@@ -169,13 +208,13 @@ export function App() {
                 : "UNKNOWN"}
             </span>
             <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/75">
-              {health.health ? formatUptime(health.health.uptime) : "—"}
+              {health.health ? formatUptime(health.health.uptime) : "\u2014"}
             </span>
             <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/75">
-              {health.health ? (health.health.probes.mcp.status === "ok" ? "mcp:ok" : "mcp:—") : "mcp:—"}
+              {health.health ? (health.health.probes.mcp.status === "ok" ? "mcp:ok" : "mcp:\u2014") : "mcp:\u2014"}
             </span>
             <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/75">
-              {health.health ? (health.health.probes.db.status === "ok" ? "db:ok" : "db:—") : "db:—"}
+              {health.health ? (health.health.probes.db.status === "ok" ? "db:ok" : "db:\u2014") : "db:\u2014"}
             </span>
           </div>
         </header>
@@ -192,6 +231,7 @@ export function App() {
                       onInvestigationClick={(id) => setLeftPane({ type: "investigation", id })}
                       onViewService={(name) => setLeftPane({ type: "services", initialService: name })}
                       onViewAllServices={() => setLeftPane({ type: "services" })}
+                      stackName={hasMultipleStacks ? activeStack?.name : undefined}
                     />
                   ) : leftPane.type === "investigation" ? (
                     <InvestigationPane
@@ -210,6 +250,7 @@ export function App() {
                       onStartDiscovery={() => { ws.send({ type: "discover" }); }}
                       onResetDiscovery={() => setDiscoveryState({ phase: "", status: "complete", iteration: { current: 0, max: 0, description: "" }, toolCalls: [], results: [], error: null, phaseTokens: {}, totalUsage: null })}
                       grafanaUrl={branding.grafanaUrl}
+                      stackName={hasMultipleStacks ? activeStack?.name : undefined}
                     />
                   ) : leftPane.type === "settings" ? (
                     <SettingsPage
@@ -218,6 +259,10 @@ export function App() {
                         setLeftPane({ type: "services" });
                       }}
                       initialTab={leftPane.initialTab}
+                      stacks={stacks}
+                      activeStackId={activeStackId}
+                      onSwitchStack={switchStack}
+                      onRefetchStacks={refetchStacks}
                     />
                   ) : null}
                 </div>
@@ -237,5 +282,6 @@ export function App() {
       </div>
     </div>
     </TooltipProvider>
+    </StackProvider>
   );
 }

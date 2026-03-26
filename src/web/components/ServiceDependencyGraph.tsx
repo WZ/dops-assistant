@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { ReactFlow, Background, Controls, type Node, type Edge } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { useStackContext } from "../contexts/StackContext";
 
 interface DependencyNode {
   id: string;
@@ -54,6 +55,7 @@ export function ServiceDependencyGraph({
   initialData,
   initialHealthMap,
 }: ServiceDependencyGraphProps) {
+  const { stackFetch } = useStackContext();
   const [data, setData] = useState<DependencyData | null>(initialData ?? null);
   const [loading, setLoading] = useState(initialData === undefined);
   const [error, setError] = useState<string | null>(null);
@@ -79,7 +81,7 @@ export function ServiceDependencyGraph({
     setLoading(true);
     setError(null);
 
-    fetch(`/api/dependencies/${encodeURIComponent(serviceName)}`)
+    stackFetch(`/api/dependencies/${encodeURIComponent(serviceName)}`)
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json() as Promise<DependencyData>;

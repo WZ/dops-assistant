@@ -7,6 +7,7 @@ import { renderInline } from "../lib/renderInline";
 import { renderMarkdown } from "../lib/renderMarkdown";
 import { formatTokens } from "../lib/formatTokens.js";
 import { MetricChart, type TimeSeriesData } from "./MetricChart";
+import { useStackContext } from "../contexts/StackContext";
 import type { useWebSocket } from "../hooks/useWebSocket";
 import type { ChartSeries } from "../../types/ws-types.js";
 
@@ -118,6 +119,7 @@ function UnreadMarker() {
 }
 
 export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, activeInvestigationId, serviceContext }: ChatPaneProps) {
+  const { stackFetch } = useStackContext();
   const { status, messages: wsMessages, send } = ws;
   const [input, setInput] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -168,7 +170,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
     if (historyLoaded.current) return;
     historyLoaded.current = true;
     setHistoryLoading(true);
-    fetch("/api/messages?limit=50")
+    stackFetch("/api/messages?limit=50")
       .then((r) => r.ok ? r.json() : [])
       .then(async (msgs: Array<{ id: string; role: string; content: string; investigation_id?: string | null; chart_data?: string | null; created_at?: string }>) => {
         if (msgs.length === 0) {
@@ -181,7 +183,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
         const reports = new Map<string, RcaReportSummary>();
         await Promise.all(invIds.map(async (id) => {
           try {
-            const res = await fetch(`/api/investigations/${id}`);
+            const res = await stackFetch(`/api/investigations/${id}`);
             if (!res.ok) return;
             const data = await res.json();
             if (data.investigation?.report) {
@@ -235,7 +237,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
       rafRef.current = null;
     }
     if (!activeInvestigationId) return;
-    fetch(`/api/messages?investigationId=${activeInvestigationId}`)
+    stackFetch(`/api/messages?investigationId=${activeInvestigationId}`)
       .then((r) => r.ok ? r.json() : [])
       .then((msgs: Array<{ role: string; content: string }>) => {
         const followUps = msgs.filter((m) =>
@@ -413,7 +415,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
 
   const handleDeleteMessage = useCallback(async (msgId: string) => {
     try {
-      const res = await fetch(`/api/messages/${msgId}`, { method: "DELETE" });
+      const res = await stackFetch(`/api/messages/${msgId}`, { method: "DELETE" });
       if (res.ok) {
         setChatMessages((prev) => prev.filter((m) => m.id !== msgId));
       }
@@ -423,7 +425,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
   const handleClearAll = useCallback(async () => {
     if (!window.confirm("Clear all console messages? This cannot be undone.")) return;
     try {
-      const res = await fetch("/api/messages", { method: "DELETE" });
+      const res = await stackFetch("/api/messages", { method: "DELETE" });
       if (res.ok) {
         setChatMessages([]);
       }

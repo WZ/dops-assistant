@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ProviderToolList, type ToolInfo } from "./ProviderToolList";
+import { useStackContext } from "../../contexts/StackContext";
 
 export interface TestResult {
   status: "ok" | "error";
@@ -196,6 +197,7 @@ export const ProviderCard = memo(function ProviderCard({
 });
 
 function ToolsSection({ name, source, toolCount }: { name: string; source: "config" | "gui"; toolCount: number }) {
+  const { stackFetch } = useStackContext();
   const [expanded, setExpanded] = useState(false);
   const [tools, setTools] = useState<ToolInfo[] | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -205,24 +207,24 @@ function ToolsSection({ name, source, toolCount }: { name: string; source: "conf
     setExpanded(next);
     if (next && !loaded) {
       try {
-        const res = await fetch(`/api/providers/${encodeURIComponent(name)}/tools`);
+        const res = await stackFetch(`/api/providers/${encodeURIComponent(name)}/tools`);
         if (res.ok) setTools(await res.json());
         else setTools([]);
       } catch { setTools([]); }
       setLoaded(true);
     }
-  }, [expanded, loaded, name]);
+  }, [expanded, loaded, name, stackFetch]);
 
   const handleUpdate = useCallback(async (enabledTools: string[]) => {
-    const res = await fetch(`/api/providers/${encodeURIComponent(name)}/tools`, {
+    const res = await stackFetch(`/api/providers/${encodeURIComponent(name)}/tools`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabledTools }),
     });
     if (!res.ok) throw new Error("Save failed");
-    const refreshRes = await fetch(`/api/providers/${encodeURIComponent(name)}/tools`);
+    const refreshRes = await stackFetch(`/api/providers/${encodeURIComponent(name)}/tools`);
     if (refreshRes.ok) setTools(await refreshRes.json());
-  }, [name]);
+  }, [name, stackFetch]);
 
   if (toolCount === 0) return null;
 

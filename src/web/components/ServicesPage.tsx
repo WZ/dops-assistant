@@ -9,6 +9,7 @@ import { ConfirmHideDialog } from "./ConfirmHideDialog";
 import { FirstRunBanner } from "./FirstRunBanner";
 import { ToastContainer } from "./dashboard/ToastContainer";
 import type { ToastItem } from "./dashboard/ToastContainer";
+import { useStackContext } from "../contexts/StackContext";
 import type { useWebSocket } from "../hooks/useWebSocket";
 import type { ServiceConfig } from "../../config/schema.js";
 import type { ValidatedServiceConfig } from "../../types/discovery-types.js";
@@ -51,6 +52,7 @@ interface ServicesPageProps {
   onStartDiscovery: () => void;
   onResetDiscovery: () => void;
   grafanaUrl?: string;
+  stackName?: string;
 }
 
 // ── Component ─────────────────────────────────────────────────────────
@@ -64,7 +66,9 @@ export function ServicesPage({
   onStartDiscovery,
   onResetDiscovery,
   grafanaUrl,
+  stackName,
 }: ServicesPageProps) {
+  const { stackFetch } = useStackContext();
   // ── Sub-view routing ──────────────────────────────────────────────
   const [subView, setSubView] = useState<SubView>({ type: "grid" });
 
@@ -101,11 +105,11 @@ export function ServicesPage({
     const seq = ++fetchSeqRef.current;
     try {
       const [invRes, svcRes, healthRes, hiddenRes, staleRes] = await Promise.all([
-        fetch("/api/investigations?limit=100"),
-        fetch("/api/services"),
-        fetch("/api/services/health"),
-        fetch("/api/services/hidden"),
-        fetch("/api/services/stale-unknown?days=7"),
+        stackFetch("/api/investigations?limit=100"),
+        stackFetch("/api/services"),
+        stackFetch("/api/services/health"),
+        stackFetch("/api/services/hidden"),
+        stackFetch("/api/services/stale-unknown?days=7"),
       ]);
       if (!invRes.ok || !svcRes.ok) {
         throw new Error(`Server error: ${!invRes.ok ? invRes.status : svcRes.status}`);
@@ -264,7 +268,7 @@ export function ServicesPage({
 
   const handleHideConfirm = useCallback(async (reason: string) => {
     if (bulkHideTarget) {
-      const res = await fetch("/api/services/hidden/batch", {
+      const res = await stackFetch("/api/services/hidden/batch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ services: bulkHideTarget, reason: reason || undefined }),
@@ -282,7 +286,7 @@ export function ServicesPage({
       setSelectionMode(false);
       setSelectedServices(new Set());
     } else if (hideTarget) {
-      const res = await fetch("/api/services/hidden", {
+      const res = await stackFetch("/api/services/hidden", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ service: hideTarget.name, reason: reason || undefined }),
@@ -300,7 +304,7 @@ export function ServicesPage({
 
   const handleUnhide = useCallback(async (name: string) => {
     try {
-      await fetch(`/api/services/hidden/${encodeURIComponent(name)}`, { method: "DELETE" });
+      await stackFetch(`/api/services/hidden/${encodeURIComponent(name)}`, { method: "DELETE" });
       setHiddenServices(prev => { const next = new Map(prev); next.delete(name); return next; });
       setToasts(t => [...t.slice(-9), { id: `unhide_${name}_${Date.now()}`, service: name, status: "unhidden" as const, timestamp: Date.now() }]);
     } catch { /* toast already shown for the action */ }
@@ -416,6 +420,7 @@ export function ServicesPage({
       <div className="mb-6 animate-fade-up">
         <h1 className="font-display text-xl font-bold tracking-tight text-foreground/90">Services</h1>
         <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide flex items-center gap-2 flex-wrap">
+          {stackName && <><span className="text-primary/60 uppercase">{stackName}</span><span className="text-muted-foreground/40">&middot;</span></>}
           <span>{visibleServiceCount} services</span>
           {services.length > 0 && (
             <span className="text-[10px] font-mono flex items-center gap-2">
