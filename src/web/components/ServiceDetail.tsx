@@ -2,10 +2,11 @@ import { useState, useEffect, useCallback, lazy, Suspense } from "react";
 import { ServiceDetailHeader } from "./ServiceDetailHeader";
 import { ServiceMetrics } from "./ServiceMetrics";
 import { ServiceHistory } from "./ServiceHistory";
+const ServiceOverview = lazy(() => import("./ServiceOverview").then(m => ({ default: m.ServiceOverview })));
 const ServiceDependencyGraph = lazy(() => import("./ServiceDependencyGraph").then(m => ({ default: m.ServiceDependencyGraph })));
 import type { useWebSocket } from "../hooks/useWebSocket";
 
-type TabId = "metrics" | "history" | "dependencies";
+type TabId = "overview" | "metrics" | "history" | "dependencies";
 
 interface ServiceDetailProps {
   serviceName: string;
@@ -25,6 +26,7 @@ interface ServiceMetadata {
 type HealthStatus = "healthy" | "degraded" | "down" | "unknown";
 
 const TABS: { id: TabId; label: string }[] = [
+  { id: "overview", label: "Overview" },
   { id: "metrics", label: "Metrics" },
   { id: "history", label: "History" },
   { id: "dependencies", label: "Dependencies" },
@@ -39,7 +41,7 @@ export function ServiceDetail({
   grafanaUrl,
   metricQuery,
 }: ServiceDetailProps) {
-  const [activeTab, setActiveTab] = useState<TabId>("metrics");
+  const [activeTab, setActiveTab] = useState<TabId>("overview");
   const [metadata, setMetadata] = useState<ServiceMetadata | null>(null);
   const [healthStatus, setHealthStatus] = useState<HealthStatus>("unknown");
   const [investigationCount, setInvestigationCount] = useState(0);
@@ -169,6 +171,11 @@ export function ServiceDetail({
         aria-labelledby={`tab-${activeTab}`}
         className="flex-1 overflow-y-auto p-6"
       >
+        {activeTab === "overview" && (
+          <Suspense fallback={<div className="h-40 rounded-lg bg-muted/30 shimmer-skeleton" />}>
+            <ServiceOverview serviceName={serviceName} onViewService={onViewService} />
+          </Suspense>
+        )}
         {activeTab === "metrics" && <ServiceMetrics serviceName={serviceName} />}
         {activeTab === "history" && (
           <ServiceHistory serviceName={serviceName} onViewInvestigation={onViewInvestigation} />

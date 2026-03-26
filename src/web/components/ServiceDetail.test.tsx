@@ -75,10 +75,10 @@ describe("ServiceDetail", () => {
     });
   });
 
-  it("defaults to Metrics tab active", () => {
+  it("defaults to Overview tab active", () => {
     renderServiceDetail();
-    const metricsTab = screen.getByRole("tab", { name: /Metrics/i });
-    expect(metricsTab.getAttribute("aria-selected")).toBe("true");
+    const overviewTab = screen.getByRole("tab", { name: /Overview/i });
+    expect(overviewTab.getAttribute("aria-selected")).toBe("true");
   });
 
   it("switches to History tab on click", async () => {

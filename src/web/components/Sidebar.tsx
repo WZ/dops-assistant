@@ -12,7 +12,7 @@ interface SidebarProps {
 }
 
 const NAV_ITEMS: { page: SidebarPage; label: string; icon: typeof LayoutGrid }[] = [
-  { page: "dashboard", label: "Dashboard", icon: LayoutGrid },
+  { page: "dashboard", label: "Operations Desk", icon: LayoutGrid },
   { page: "services", label: "Services", icon: Server },
   { page: "settings", label: "Settings", icon: Settings },
 ];
