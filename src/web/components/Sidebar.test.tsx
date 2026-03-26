@@ -23,7 +23,7 @@ function renderSidebar(props = {}) {
 describe("Sidebar", () => {
   it("renders three navigation buttons", () => {
     renderSidebar();
-    expect(screen.getByTitle("Dashboard")).toBeDefined();
+    expect(screen.getByTitle("Operations Desk")).toBeDefined();
     expect(screen.getByTitle("Services")).toBeDefined();
     expect(screen.getByTitle("Settings")).toBeDefined();
   });
