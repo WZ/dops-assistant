@@ -113,8 +113,31 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       res.status(404).json({ error: "Stack not found" });
       return;
     }
-    const { name, slug, config: stackConfig } = req.body as { name?: string; slug?: string; config?: string };
-    db.updateStack(id, { name, slug, config: stackConfig });
+    const { name, slug, config: stackConfig } = req.body as { name?: string; slug?: string; config?: unknown };
+
+    // Validate config if provided
+    if (stackConfig !== undefined) {
+      const parsed = StackConfigSchema.safeParse(stackConfig);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.issues.map(i => i.message).join(", ") });
+        return;
+      }
+    }
+
+    // Check slug uniqueness if slug is being changed
+    if (slug !== undefined) {
+      const existing = db.getStackBySlug(slug);
+      if (existing && existing.id !== id) {
+        res.status(409).json({ error: "Slug already in use" });
+        return;
+      }
+    }
+
+    db.updateStack(id, {
+      name,
+      slug,
+      config: stackConfig !== undefined ? JSON.stringify(stackConfig) : undefined,
+    });
     res.json({ ok: true });
   });
 
@@ -193,7 +216,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   app.get("/api/investigations/:id", (req: Request, res: Response) => {
     const id = req.params["id"];
     const idStr = Array.isArray(id) ? id[0]! : id!;
-    const investigation = db.getInvestigation(idStr);
+    const investigation = db.getInvestigation(req.stackId, idStr);
     if (!investigation) {
       res.status(404).json({ error: "Not found" });
       return;
@@ -293,7 +316,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
   app.delete("/api/messages/:id", (req: Request, res: Response) => {
     const id = Array.isArray(req.params["id"]) ? req.params["id"][0]! : req.params["id"]!;
-    const deleted = db.deleteMessage(id);
+    const deleted = db.deleteMessage(req.stackId, id);
     if (!deleted) {
       res.status(404).json({ error: "Message not found or is an investigation message" });
       return;
@@ -541,7 +564,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         res.status(400).json({ error: "rating must be 'useful' or 'not_useful'" });
         return;
       }
-      const investigation = db.getInvestigation(investigationId);
+      const investigation = db.getInvestigation(req.stackId, investigationId);
       if (!investigation) {
         res.status(404).json({ error: "Investigation not found" });
         return;

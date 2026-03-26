@@ -19,6 +19,11 @@ vi.mock("../mcp/provider-registry.js", () => {
   };
 });
 
+// Mock ws-handler — clearStackCaches is imported by StackManager
+vi.mock("./ws-handler.js", () => ({
+  clearStackCaches: vi.fn(),
+}));
+
 // Mock ServiceHealthPoller — requires MCP connections for polling
 vi.mock("./service-health-poller.js", () => {
   return {

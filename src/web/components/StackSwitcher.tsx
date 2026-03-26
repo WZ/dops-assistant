@@ -26,6 +26,11 @@ function healthDotColor(stack: StackSummary): string {
   return "bg-muted-foreground/30";
 }
 
+// TODO(v2): When switching stacks mid-investigation, the active investigation's
+// real-time WS events will stop rendering since the UI re-mounts with the new
+// stack's context. Ideally we'd show a warning or block switching while an
+// investigation is running. The investigation status isn't easily accessible from
+// here without lifting state — deferring to v2.
 export function StackSwitcher({ stacks, activeStackId, onSwitch, onStackCreated }: StackSwitcherProps) {
   const [createOpen, setCreateOpen] = useState(false);
   const activeStack = stacks.find((s) => s.id === activeStackId);

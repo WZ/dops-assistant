@@ -19,7 +19,7 @@
  */
 
 import { mkdirSync } from "fs";
-import { join, dirname } from "path";
+import { join } from "path";
 import pino from "pino";
 import { ulid } from "ulid";
 
@@ -31,6 +31,7 @@ import { ServiceHealthPoller, type HealthStatus } from "./service-health-poller.
 import type { Database } from "./db.js";
 import type { StackRow, StackSummary, StackConfig } from "../types/stack-types.js";
 import { DEFAULT_STACK_SLUG } from "../types/stack-types.js";
+import { clearStackCaches } from "./ws-handler.js";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
 
@@ -106,7 +107,7 @@ export class StackManager {
 
     // ProviderRegistry: non-default stacks use /dev/null to prevent file corruption (Fix 3)
     const providersFilePath = isDefault
-      ? join(dirname(process.cwd()), "providers.yaml")
+      ? join(process.cwd(), "providers.yaml")
       : "/dev/null";
     const providerRegistry = new ProviderRegistry(
       isDefault ? this.config.providers : stackConfig.providers,
@@ -254,6 +255,9 @@ export class StackManager {
 
     // Remove from in-memory map
     this.stacks.delete(stackId);
+
+    // Clear cached agents and metrics tool names
+    clearStackCaches(stackId);
 
     // Cascade delete all stack data from DB
     this.db.deleteStack(stackId);

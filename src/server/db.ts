@@ -160,6 +160,7 @@ export class Database {
     const hiddenHasStackId = hiddenInfo.some(col => col.name === "stack_id");
     if (!hiddenHasStackId) {
       this.db.exec(`
+        DROP TABLE IF EXISTS hidden_services_new;
         CREATE TABLE IF NOT EXISTS hidden_services_new (
           stack_id  TEXT NOT NULL,
           service   TEXT NOT NULL,
@@ -179,6 +180,7 @@ export class Database {
     const metaHasStackId = metaInfo.some(col => col.name === "stack_id");
     if (!metaHasStackId) {
       this.db.exec(`
+        DROP TABLE IF EXISTS service_metadata_new;
         CREATE TABLE IF NOT EXISTS service_metadata_new (
           stack_id   TEXT NOT NULL,
           service    TEXT NOT NULL,
@@ -290,10 +292,10 @@ export class Database {
     this.db.prepare(`UPDATE investigations SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
   }
 
-  getInvestigation(id: string): InvestigationRow | undefined {
+  getInvestigation(stackId: string, id: string): InvestigationRow | undefined {
     return this.db.prepare(
-      "SELECT *, CASE WHEN json_valid(report) THEN json_extract(report, '$.confidenceScore') ELSE NULL END as confidence_score FROM investigations WHERE id = ?"
-    ).get(id) as InvestigationRow | undefined;
+      "SELECT *, CASE WHEN json_valid(report) THEN json_extract(report, '$.confidenceScore') ELSE NULL END as confidence_score FROM investigations WHERE id = ? AND stack_id = ?"
+    ).get(id, stackId) as InvestigationRow | undefined;
   }
 
   listInvestigations(stackId: string, limit: number, offset: number, service?: string): InvestigationRow[] {
@@ -359,8 +361,8 @@ export class Database {
     ).all(stackId, limit) as MessageRow[];
   }
 
-  deleteMessage(id: string): boolean {
-    const result = this.db.prepare("DELETE FROM messages WHERE id = ? AND investigation_id IS NULL").run(id);
+  deleteMessage(stackId: string, id: string): boolean {
+    const result = this.db.prepare("DELETE FROM messages WHERE id = ? AND stack_id = ? AND investigation_id IS NULL").run(id, stackId);
     return result.changes > 0;
   }
 

@@ -17,7 +17,7 @@ describe("Database", () => {
   describe("investigations", () => {
     it("creates and retrieves an investigation", () => {
       db.createInvestigation(S, { id: "inv_1", service: "payments-api", query: "check errors", status: "running" });
-      const inv = db.getInvestigation("inv_1");
+      const inv = db.getInvestigation(S, "inv_1");
       expect(inv).toBeDefined();
       expect(inv!.service).toBe("payments-api");
       expect(inv!.status).toBe("running");
@@ -26,7 +26,7 @@ describe("Database", () => {
     it("updates investigation status and report", () => {
       db.createInvestigation(S, { id: "inv_1", service: "payments-api", query: "check errors", status: "running" });
       db.updateInvestigation("inv_1", { status: "complete", report: JSON.stringify({ rootCause: "OOM" }) });
-      const inv = db.getInvestigation("inv_1");
+      const inv = db.getInvestigation(S, "inv_1");
       expect(inv!.status).toBe("complete");
       expect(JSON.parse(inv!.report!).rootCause).toBe("OOM");
     });
@@ -121,7 +121,7 @@ describe("Database", () => {
     it("deleteMessage only deletes console messages", () => {
       db.createMessage(S, { id: "msg_1", role: "user", content: "console msg" });
       db.createMessage(S, { id: "msg_2", role: "assistant", content: "inv msg", investigationId: "inv_1" });
-      const deleted = db.deleteMessage("msg_2");
+      const deleted = db.deleteMessage(S, "msg_2");
       expect(deleted).toBe(false);
       // Investigation message should still exist
       const msgs = db.listMessages(S, 50, "inv_1");
@@ -131,7 +131,7 @@ describe("Database", () => {
 
     it("deleteMessage returns true for console message", () => {
       db.createMessage(S, { id: "msg_1", role: "user", content: "console msg" });
-      const deleted = db.deleteMessage("msg_1");
+      const deleted = db.deleteMessage(S, "msg_1");
       expect(deleted).toBe(true);
       const msgs = db.listMessages(S, 50);
       expect(msgs).toHaveLength(0);
@@ -261,27 +261,27 @@ describe("Database", () => {
     it("extracts confidenceScore from valid report JSON via getInvestigation", () => {
       db.createInvestigation(S, { id: "inv_1", service: "svc", query: "q", status: "complete" });
       db.updateInvestigation("inv_1", { status: "complete", report: JSON.stringify({ confidenceScore: 0.7 }) });
-      const inv = db.getInvestigation("inv_1");
+      const inv = db.getInvestigation(S, "inv_1");
       expect(inv!.confidence_score).toBe(0.7);
     });
 
     it("returns null when report JSON lacks confidenceScore field", () => {
       db.createInvestigation(S, { id: "inv_1", service: "svc", query: "q", status: "complete" });
       db.updateInvestigation("inv_1", { status: "complete", report: JSON.stringify({ rootCause: "OOM" }) });
-      const inv = db.getInvestigation("inv_1");
+      const inv = db.getInvestigation(S, "inv_1");
       expect(inv!.confidence_score).toBeNull();
     });
 
     it("returns null when report is NULL", () => {
       db.createInvestigation(S, { id: "inv_1", service: "svc", query: "q", status: "running" });
-      const inv = db.getInvestigation("inv_1");
+      const inv = db.getInvestigation(S, "inv_1");
       expect(inv!.confidence_score).toBeNull();
     });
 
     it("returns null for malformed non-JSON report (json_valid guard)", () => {
       db.createInvestigation(S, { id: "inv_1", service: "svc", query: "q", status: "complete" });
       db.updateInvestigation("inv_1", { status: "complete", report: "not valid json" });
-      const inv = db.getInvestigation("inv_1");
+      const inv = db.getInvestigation(S, "inv_1");
       expect(inv!.confidence_score).toBeNull();
     });
   });

@@ -28,7 +28,6 @@ export function CreateStackDialog({ open, onOpenChange, onCreated }: CreateStack
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [slugManual, setSlugManual] = useState(false);
-  const [description, setDescription] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,7 +37,6 @@ export function CreateStackDialog({ open, onOpenChange, onCreated }: CreateStack
       setName("");
       setSlug("");
       setSlugManual(false);
-      setDescription("");
       setSaving(false);
       setError(null);
     }
@@ -66,7 +64,6 @@ export function CreateStackDialog({ open, onOpenChange, onCreated }: CreateStack
           body: JSON.stringify({
             name: name.trim(),
             slug: slug || slugify(name),
-            description: description.trim() || undefined,
           }),
         });
 
@@ -82,7 +79,7 @@ export function CreateStackDialog({ open, onOpenChange, onCreated }: CreateStack
         setSaving(false);
       }
     },
-    [name, slug, description, onCreated],
+    [name, slug, onCreated],
   );
 
   return (
@@ -134,20 +131,6 @@ export function CreateStackDialog({ open, onOpenChange, onCreated }: CreateStack
             <p className="font-body text-[10px] text-muted-foreground/50 mt-1">
               Used in URLs and webhook paths
             </p>
-          </div>
-
-          {/* Description */}
-          <div>
-            <label className="block font-mono text-[9px] uppercase tracking-[0.1em] text-muted-foreground mb-1.5">
-              Description
-            </label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="What does this stack monitor?"
-              rows={3}
-              className="w-full font-body text-[13px] bg-secondary/30 border border-border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-muted-foreground/40 resize-none"
-            />
           </div>
 
           {/* Error */}

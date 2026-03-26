@@ -146,6 +146,20 @@ async function main() {
         res.status(404).json({ error: `Stack with slug "${slug}" not found` });
         return;
       }
+
+      // Early dedup check: extract service name from payload before creating agents
+      const payload = req.body as { alerts?: Array<{ status: string; labels: Record<string, string> }> };
+      const firingAlerts = payload.alerts?.filter(a => a.status === "firing") ?? [];
+      if (firingAlerts.length > 0) {
+        const alert = firingAlerts[0]!;
+        const serviceLabels = ["service", "service_name", "app", "job", "deployment"];
+        const serviceName = serviceLabels.map(k => alert.labels[k]).find(Boolean);
+        if (serviceName && !sharedDedup.shouldInvestigate(stackRow.id, serviceName)) {
+          res.status(429).json({ error: "Investigation already in progress for this service", service: serviceName });
+          return;
+        }
+      }
+
       const ctx = stackManager.getContext(stackRow.id);
       const stackProviders = ctx.providerRegistry.getProviders();
       const stackAdapters = await createMastraAdapters({ config, providers: stackProviders, registryStore: ctx.serviceRegistry });

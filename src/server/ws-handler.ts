@@ -106,6 +106,12 @@ const agentsCache = new Map<string, { chatAgent: IChatAgent; investigationAgent:
 /** Metrics tool names cache per stack */
 const metricsToolNamesCache = new Map<string, Set<string>>();
 
+/** Clear cached agents and metrics tool names for a deleted stack */
+export function clearStackCaches(stackId: string): void {
+  agentsCache.delete(stackId);
+  metricsToolNamesCache.delete(stackId);
+}
+
 async function getOrCreateAgents(
   stackId: string,
   ctx: StackContext,
@@ -219,7 +225,7 @@ async function handleDeepInvestigate(
   const { db } = deps;
   const memory = ctx.conversationMemory;
 
-  const investigation = db.getInvestigation(msg.investigationId);
+  const investigation = db.getInvestigation(stackId, msg.investigationId);
   if (!investigation) {
     send({ type: "chat:stream_end", content: "Investigation not found." });
     return;
