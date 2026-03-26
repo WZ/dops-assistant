@@ -9,6 +9,7 @@ const ServiceSchema = z.object({
   name: z.string(),
   metrics: z.array(MetricSchema).optional().default([]),
   logLabels: z.record(z.string()).optional().default({}),
+  gitlabProject: z.string().optional(),
 });
 
 const McpServerSchema = z.discriminatedUnion("transport", [
