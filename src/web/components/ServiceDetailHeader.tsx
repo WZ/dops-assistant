@@ -10,6 +10,8 @@ interface ServiceDetailHeaderProps {
   investigationCount?: number;
   aliasEditorOpen: boolean;
   tagEditorOpen: boolean;
+  grafanaUrl?: string;
+  metricQuery?: string;
   onBack: () => void;
   onInvestigate: () => void;
   onEditAlias: () => void;
@@ -42,6 +44,16 @@ function healthLabel(status?: string): string {
   }
 }
 
+function buildGrafanaExploreUrl(baseUrl: string, query: string): string {
+  const stripped = baseUrl.replace(/\/+$/, "");
+  const left = JSON.stringify({
+    datasource: "",
+    queries: [{ refId: "A", expr: query }],
+    range: { from: "now-1h", to: "now" },
+  });
+  return `${stripped}/explore?orgId=1&left=${encodeURIComponent(left)}`;
+}
+
 export function ServiceDetailHeader({
   serviceName,
   healthStatus,
@@ -50,6 +62,8 @@ export function ServiceDetailHeader({
   investigationCount = 0,
   aliasEditorOpen,
   tagEditorOpen,
+  grafanaUrl,
+  metricQuery,
   onBack,
   onInvestigate,
   onEditAlias,
@@ -145,15 +159,27 @@ export function ServiceDetailHeader({
             />
           </div>
 
-          <Button
-            variant="outline"
-            disabled
-            title="Grafana deep-link coming soon"
-            className="h-9 px-4 text-[12px] font-mono bg-secondary border-border rounded-lg text-foreground/70 hover:text-foreground/90 hover:bg-secondary/80 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <ExternalLink size={13} className="mr-1.5" />
-            Open in Grafana
-          </Button>
+          {grafanaUrl && metricQuery ? (
+            <a
+              href={buildGrafanaExploreUrl(grafanaUrl, metricQuery)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center h-9 px-4 text-[12px] font-mono bg-secondary border border-border rounded-lg text-foreground/70 hover:text-foreground/90 hover:bg-secondary/80 transition-colors"
+            >
+              <ExternalLink size={13} className="mr-1.5" />
+              Open in Grafana
+            </a>
+          ) : (
+            <Button
+              variant="outline"
+              disabled
+              title={!grafanaUrl ? "Configure webUrl on your dashboards provider" : "No metrics discovered for this service"}
+              className="h-9 px-4 text-[12px] font-mono bg-secondary border-border rounded-lg text-foreground/70 hover:text-foreground/90 hover:bg-secondary/80 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <ExternalLink size={13} className="mr-1.5" />
+              Open in Grafana
+            </Button>
+          )}
 
           <Button
             onClick={onInvestigate}
