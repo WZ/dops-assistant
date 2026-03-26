@@ -68,6 +68,9 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
   // ── Stack CRUD ──────────────────────────────────────────────────────────
 
+  /** Slug must be 2-64 lowercase alphanumeric chars and hyphens, no leading/trailing hyphens */
+  const SLUG_REGEX = /^[a-z0-9][a-z0-9-]*[a-z0-9]$/;
+
   app.get("/api/stacks", (_req: Request, res: Response) => {
     res.json(stackManager.listStacks());
   });
@@ -77,6 +80,10 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       const { name, slug, config: stackConfig } = req.body as { name: string; slug: string; config: unknown };
       if (!name || !slug) {
         res.status(400).json({ error: "name and slug are required" });
+        return;
+      }
+      if (!SLUG_REGEX.test(slug) || slug.length > 64) {
+        res.status(400).json({ error: "Invalid slug: must be 2-64 lowercase alphanumeric characters and hyphens" });
         return;
       }
       const parsed = StackConfigSchema.safeParse(stackConfig);
@@ -103,7 +110,19 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       res.status(404).json({ error: "Stack not found" });
       return;
     }
-    res.json(stack);
+    // Sanitize config — strip provider env vars to avoid leaking credentials
+    try {
+      const parsed = JSON.parse(stack.config);
+      if (parsed.providers) {
+        parsed.providers = parsed.providers.map((p: Record<string, unknown>) => ({
+          ...p,
+          mcpServer: { ...(p.mcpServer as Record<string, unknown>), env: undefined },
+        }));
+      }
+      res.json({ ...stack, config: JSON.stringify(parsed) });
+    } catch {
+      res.json({ ...stack, config: "{}" });
+    }
   });
 
   app.put("/api/stacks/:id", (req: Request, res: Response) => {
@@ -124,8 +143,12 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       }
     }
 
-    // Check slug uniqueness if slug is being changed
+    // Validate slug format if slug is being changed
     if (slug !== undefined) {
+      if (!SLUG_REGEX.test(slug) || slug.length > 64) {
+        res.status(400).json({ error: "Invalid slug: must be 2-64 lowercase alphanumeric characters and hyphens" });
+        return;
+      }
       const existing = db.getStackBySlug(slug);
       if (existing && existing.id !== id) {
         res.status(409).json({ error: "Slug already in use" });

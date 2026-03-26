@@ -200,7 +200,15 @@ export class StackManager {
    * Create a new stack with the given name, slug, and config.
    * Persists to DB, initializes all per-stack dependencies, and returns the context.
    */
+  /** Slug must be 2-64 lowercase alphanumeric chars and hyphens, no leading/trailing hyphens */
+  private static readonly SLUG_REGEX = /^[a-z0-9][a-z0-9-]*[a-z0-9]$/;
+
   async createStack(name: string, slug: string, config: StackConfig): Promise<StackContext> {
+    // Defense-in-depth: validate slug to prevent path traversal via join("data", slug)
+    if (!slug || !StackManager.SLUG_REGEX.test(slug) || slug.length > 64) {
+      throw new Error("Invalid slug: must be 2-64 lowercase alphanumeric characters and hyphens");
+    }
+
     // Check for duplicate slug
     const existing = this.db.getStackBySlug(slug);
     if (existing) {
