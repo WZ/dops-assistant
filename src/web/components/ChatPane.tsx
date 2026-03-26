@@ -515,34 +515,34 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                 }`}>
                   <div className="px-3.5 py-2.5 border-b border-border/20">
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-[10px] font-display font-bold uppercase tracking-[0.08em] text-foreground/60">
+                      <span className="text-[11px] font-display font-bold uppercase tracking-[0.08em] text-foreground/85">
                         Root Cause Analysis
                       </span>
                       <div className="flex items-center gap-1.5">
                         <Badge variant={msg.report.severity === "critical" ? "destructive" : "secondary"} className="text-[8px] uppercase tracking-wider">
                           {msg.report.severity}
                         </Badge>
-                        <span className="text-[8px] font-mono text-muted-foreground/50">{msg.report.confidence}{msg.report.confidenceScore != null ? ` (${msg.report.confidenceScore.toFixed(2)})` : ""}</span>
+                        <span className="text-[8px] font-mono text-muted-foreground/70">{msg.report.confidence}{msg.report.confidenceScore != null ? ` (${msg.report.confidenceScore.toFixed(2)})` : ""}</span>
                       </div>
                     </div>
                     {msg.report.summary && (
-                      <p className="text-xs font-body text-foreground/70 leading-relaxed line-clamp-2">
+                      <p className="text-[12px] font-body text-foreground/85 leading-relaxed line-clamp-2">
                         {renderInline(msg.report.summary)}
                       </p>
                     )}
                   </div>
                   <div className="px-3.5 py-2 space-y-1.5">
                     <div>
-                      <span className="text-[9px] font-display font-semibold uppercase tracking-wider text-primary/70">Root Cause</span>
-                      <p className="text-[11px] font-body text-foreground/75 leading-relaxed line-clamp-2">{renderInline(msg.report.rootCause)}</p>
+                      <span className="text-[9px] font-display font-semibold uppercase tracking-wider text-primary/90">Root Cause</span>
+                      <p className="text-[12px] font-body text-foreground/90 leading-relaxed line-clamp-2">{renderInline(msg.report.rootCause)}</p>
                     </div>
                     <div>
-                      <span className="text-[9px] font-display font-semibold uppercase tracking-wider text-accent/70">Trigger</span>
-                      <p className="text-[11px] font-body text-foreground/65 leading-relaxed line-clamp-1">{renderInline(msg.report.trigger)}</p>
+                      <span className="text-[9px] font-display font-semibold uppercase tracking-wider text-accent/90">Trigger</span>
+                      <p className="text-[12px] font-body text-foreground/85 leading-relaxed line-clamp-1">{renderInline(msg.report.trigger)}</p>
                     </div>
                   </div>
                   <div className="px-3.5 py-1.5 bg-secondary/20 border-t border-border/15 flex items-center justify-between">
-                    <span className="text-[9px] font-mono text-primary/50 group-hover:text-primary/80 transition-colors">
+                    <span className="text-[9px] font-mono text-primary/70 group-hover:text-primary/90 transition-colors">
                       View full investigation →
                     </span>
                   </div>
@@ -626,17 +626,17 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
             <Button
               variant="ghost"
               onClick={handleClearAll}
-              className="h-auto px-2 py-1 text-[10px] font-mono rounded border border-border/30 text-muted-foreground/50 hover:text-foreground/70 hover:border-border/50 hover:bg-secondary/30"
+              className="h-9 px-4 text-[12px] font-mono rounded-lg border border-border/50 text-muted-foreground hover:text-foreground/70 hover:bg-secondary/30 transition-colors"
             >
-              <Trash2 size={10} className="!size-auto" />
+              <Trash2 size={13} className="!size-auto" />
               Clear
             </Button>
             <Button
               variant="ghost"
               onClick={() => { send({ type: "new_session" }); }}
-              className="h-auto px-2 py-1 text-[10px] font-mono rounded border border-border/30 text-muted-foreground/50 hover:text-foreground/70 hover:border-border/50 hover:bg-secondary/30"
+              className="h-9 px-4 text-[12px] font-mono rounded-lg border border-border/50 text-muted-foreground hover:text-foreground/70 hover:bg-secondary/30 transition-colors"
             >
-              <Plus size={10} className="!size-auto" />
+              <Plus size={13} className="!size-auto" />
               New chat
             </Button>
           </div>
