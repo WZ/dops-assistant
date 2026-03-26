@@ -13,20 +13,15 @@ import { Database } from "./db.js";
 import { registerRoutes } from "./routes.js";
 import { setupWebSocket } from "./ws-handler.js";
 import { IntentRouter, matchServiceFromText, validateLlmServiceMatch } from "../agents/intent.js";
-import { ConversationMemory } from "../memory/conversation.js";
-import { loadConfig, getServicesFilePath } from "../config/loader.js";
+import { loadConfig } from "../config/loader.js";
 import { SkillStore } from "../skills/store.js";
-import { createMastraAdapters } from "./agents.js";
-import { getAllTools, getToolsByRole } from "../mcp/provider.js";
-import { ProviderRegistry } from "../mcp/provider-registry.js";
 import { createModel } from "../mastra/index.js";
-import { ServiceRegistryStore } from "../services/registry.js";
-import type { ValidatedServiceConfig } from "../types/discovery-types.js";
 import { InvestigationRunner } from "./investigation-runner.js";
 import { createWebhookHandler } from "./webhook-handler.js";
 import { InvestigationDedup } from "./investigation-dedup.js";
-import { ServiceHealthPoller } from "./service-health-poller.js";
 import { startHealthMonitor, stopHealthMonitor, healthHandler } from "./health-monitor.js";
+import { StackManager } from "./stack-manager.js";
+import { createMastraAdapters } from "./agents.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
@@ -48,27 +43,12 @@ async function main() {
     logger.warn({ err }, "Failed to clean up stale investigations");
   }
 
-  // Service registry store
-  const servicesPath = getServicesFilePath(configPath);
-  const registryStore = new ServiceRegistryStore(servicesPath);
-
-  // Mastra MCP providers via ProviderRegistry
-  const providersFilePath = resolve(path.dirname(configPath), "providers.yaml");
-  const registry = new ProviderRegistry(config.providers, providersFilePath);
-  await registry.initialize();
-  // Use a getter so consumers always see the latest provider list
-  const getProviders = () => registry.getProviders();
-  const providers = getProviders();
+  // Initialize StackManager — replaces singleton registryStore, ProviderRegistry, memory, healthPoller
+  const stackManager = new StackManager(db, config);
+  await stackManager.initialize();
 
   const model = createModel(config.llm);
   const router = new IntentRouter(model);
-  const memory = new ConversationMemory(config.agent.conversationMemory);
-
-  const mastraAdapters = await createMastraAdapters({ config, providers, registryStore });
-  const { chatAgent: agent, investigationAgent, discoverAgent } = mastraAdapters;
-
-  const toolCount = Object.keys(await getAllTools(providers).catch(() => ({}))).length;
-  logger.info("MCP connected (%d tools)", toolCount);
 
   // Initialize skill store
   const skillStore = new SkillStore(config.skills);
@@ -85,110 +65,119 @@ async function main() {
     maxConcurrent: config.webhook.maxConcurrent,
   });
 
-  // Alert webhook endpoint (only if secret is configured)
-  const runner = new InvestigationRunner({ db, investigationAgent, skillStore });
+  // Wire health transition handler for auto-investigate
+  stackManager.onHealthTransition = (stackId, service, from, to) => {
+    if (to !== "down") return;
+    if (from !== "healthy" && from !== "unknown") return;
+    // Defense in depth: skip hidden services
+    if (db.isServiceHidden(stackId, service)) return;
 
-  // Service health poller with auto-investigate on healthy→down transitions
-  const healthPoller = new ServiceHealthPoller({
-    providers: getProviders,
-    registryStore,
-    db,
-    getHiddenServices: () => db.getHiddenServices(),
-    onTransition: (service, from, to) => {
-      if (to !== "down") return;
-      if (from !== "healthy" && from !== "unknown") return;
-      // Defense in depth: skip hidden services even if transition slips through
-      if (db.isServiceHidden(service)) return;
+    logger.info({ service, from, to, stackId }, "ServiceHealthPoller: service transitioned to down");
 
-      logger.info({ service, from, to }, "ServiceHealthPoller: service transitioned to down");
+    if (!sharedDedup.shouldInvestigate(stackId, service)) {
+      logger.info({ service, activeCount: sharedDedup.getActiveCount(), stackId }, "ServiceHealthPoller: auto-investigate suppressed by dedup/concurrency");
+      return;
+    }
 
-      if (!sharedDedup.shouldInvestigate(service)) {
-        logger.info({ service, activeCount: sharedDedup.getActiveCount() }, "ServiceHealthPoller: auto-investigate suppressed by dedup/concurrency");
-        return;
-      }
+    // Find the service config from live registry or config.yaml
+    const ctx = stackManager.getContext(stackId);
+    const allServices = [
+      ...config.services,
+      ...ctx.serviceRegistry.load().filter((s) => !config.services.some((c) => c.name === s.name)),
+    ];
+    const serviceConfig = allServices.find((s) => s.name === service);
+    if (!serviceConfig) {
+      logger.warn({ service, stackId }, "ServiceHealthPoller: service not found in config or registry, skipping auto-investigate");
+      return;
+    }
 
-      // Find the service config from live registry or config.yaml
-      const allServices = [
-        ...config.services,
-        ...registryStore.load().filter((s) => !config.services.some((c) => c.name === s.name)),
-      ];
-      const serviceConfig = allServices.find((s) => s.name === service);
-      if (!serviceConfig) {
-        logger.warn({ service }, "ServiceHealthPoller: service not found in config or registry, skipping auto-investigate");
-        return;
-      }
+    logger.info({ service, stackId }, "ServiceHealthPoller: triggering auto-investigate (template=quick)");
+    sharedDedup.markStarted(stackId, service);
 
-      logger.info({ service }, "ServiceHealthPoller: triggering auto-investigate (template=quick)");
-      sharedDedup.markStarted(service);
-
-      runner.run({
-        service: serviceConfig,
-        message: `Service health check: ${service} transitioned from ${from} to down. Running quick investigation.`,
-        template: "quick",
-      }).catch((err) => {
-        logger.error({ err, service }, "ServiceHealthPoller: auto-investigate failed");
-      }).finally(() => {
+    // Create agents lazily for the investigation
+    const providers = ctx.providerRegistry.getProviders();
+    createMastraAdapters({ config, providers, registryStore: ctx.serviceRegistry })
+      .then(({ investigationAgent }) => {
+        const runner = new InvestigationRunner({ db, investigationAgent, skillStore });
+        return runner.run({
+          service: serviceConfig,
+          message: `Service health check: ${service} transitioned from ${from} to down. Running quick investigation.`,
+          template: "quick",
+          stackId,
+        });
+      })
+      .catch((err) => {
+        logger.error({ err, service, stackId }, "ServiceHealthPoller: auto-investigate failed");
+      })
+      .finally(() => {
         sharedDedup.markCompleted();
       });
-    },
-  });
-  healthPoller.start();
+  };
 
-  registerRoutes(app, db, config.services, undefined, skillStore, registryStore, registry, config.branding, healthPoller, getProviders, model);
+  registerRoutes(app, { db, stackManager, config, skillStore, sharedDedup });
 
   // Health check endpoint with background monitoring
-  startHealthMonitor({ providers: getProviders, db });
+  startHealthMonitor({ stackManager, db });
   app.get("/api/health", healthHandler);
 
+  // Alert webhook endpoint (only if secret is configured)
   if (config.webhook.secret) {
-    const webhookHandler = createWebhookHandler({ runner, config: config.webhook, services: config.services, dedup: sharedDedup, getHiddenServices: () => db.getHiddenServices() });
+    const defaultStackId = stackManager.getDefaultStackId();
+    const defaultCtx = stackManager.getDefaultContext();
+    const providers = defaultCtx.providerRegistry.getProviders();
+    const { investigationAgent } = await createMastraAdapters({ config, providers, registryStore: defaultCtx.serviceRegistry });
+    const runner = new InvestigationRunner({ db, investigationAgent, skillStore });
+
+    const webhookHandler = createWebhookHandler({
+      runner,
+      config: config.webhook,
+      services: config.services,
+      stackId: defaultStackId,
+      dedup: sharedDedup,
+      getHiddenServices: () => db.getHiddenServices(defaultStackId),
+    });
     app.post("/api/webhook/alert", webhookHandler);
+
+    // Stack-scoped webhook: POST /api/webhook/alert/:stackSlug
+    app.post("/api/webhook/alert/:stackSlug", async (req, res) => {
+      const slug = req.params["stackSlug"] as string;
+      const stackRow = db.getStackBySlug(slug);
+      if (!stackRow) {
+        res.status(404).json({ error: `Stack with slug "${slug}" not found` });
+        return;
+      }
+      const ctx = stackManager.getContext(stackRow.id);
+      const stackProviders = ctx.providerRegistry.getProviders();
+      const stackAdapters = await createMastraAdapters({ config, providers: stackProviders, registryStore: ctx.serviceRegistry });
+      const stackRunner = new InvestigationRunner({ db, investigationAgent: stackAdapters.investigationAgent, skillStore });
+      const stackWebhookHandler = createWebhookHandler({
+        runner: stackRunner,
+        config: config.webhook,
+        services: [...config.services, ...ctx.serviceRegistry.load().filter(s => !config.services.some(c => c.name === s.name))],
+        stackId: stackRow.id,
+        dedup: sharedDedup,
+        getHiddenServices: () => db.getHiddenServices(stackRow.id),
+      });
+      await stackWebhookHandler(req, res);
+    });
+
     logger.info("Alert webhook enabled at POST /api/webhook/alert");
   }
 
-  // Resolve metrics tool names for provider-agnostic chart rendering.
-  // Strip MCP provider prefix (e.g. "grafana_query_prometheus" → "query_prometheus")
-  // because ws-handler receives stripped names from MastraChatAgentAdapter.
-  const metricsTools = await getToolsByRole(providers, "metrics");
-  const metricsToolNames = new Set(
-    Object.keys(metricsTools).map((k) => {
-      const idx = k.indexOf("_");
-      return idx > 0 ? k.slice(idx + 1) : k;
-    }),
-  );
-
-  let pendingDiscovery: ValidatedServiceConfig[] | null = null;
-
   setupWebSocket(server, {
-    db, agent, investigationAgent, router, memory,
-    services: config.services, skillStore, validateLlmServiceMatch, matchServiceFromText,
-    discoverAgent,
-    discoveryConfig: config.discovery,
-    getPendingDiscovery: () => pendingDiscovery,
-    clearPendingDiscovery: () => { pendingDiscovery = null; },
-    getHiddenServices: () => db.getHiddenServices(),
-    metricsToolNames,
+    db, stackManager, config, router, skillStore,
+    sharedDedup,
+    validateLlmServiceMatch, matchServiceFromText,
   });
-
-  // Auto-refresh: run background discovery on startup if enabled
-  if (config.discovery.autoRefresh && discoverAgent) {
-    logger.info("Auto-refresh enabled, running background discovery...");
-    discoverAgent
-      .discover(config.discovery)
-      .then((services) => {
-        pendingDiscovery = services;
-        logger.info({ count: services.length }, "Auto-refresh discovery complete, pending review");
-      })
-      .catch((err) => {
-        logger.warn({ err }, "Auto-refresh discovery failed");
-      });
-  }
 
   const staticDir = path.resolve(__dirname, "../../dist/web");
   app.use(express.static(staticDir));
   app.get(/^(?!\/api\/)/, (_req, res) => {
     res.sendFile(path.join(staticDir, "index.html"));
   });
+
+  // Start all per-stack health pollers (staggered)
+  stackManager.startAllPollers();
 
   server.listen(port, () => {
     logger.info({ port }, "dops-assistant web server running");
@@ -197,8 +186,8 @@ async function main() {
   const shutdown = async () => {
     logger.info("Shutting down...");
     stopHealthMonitor();
-    healthPoller.stop();
-    memory.destroy();
+    stackManager.stopAllPollers();
+    stackManager.destroyAllMemory();
     db.close();
     server.close();
     process.exit(0);

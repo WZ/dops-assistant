@@ -39,6 +39,8 @@ export interface ServiceHealthPollerDeps {
   providers: MastraProvider[] | (() => MastraProvider[]);
   registryStore: ServiceRegistryStore;
   db: Database;
+  /** Stack ID for multi-stack data isolation */
+  stackId?: string;
   intervalMs?: number;
   onTransition?: (service: string, from: HealthStatus, to: HealthStatus) => void;
   /** Optional getter for hidden services — hidden services are excluded from polling */
@@ -172,6 +174,7 @@ export class ServiceHealthPoller {
   private readonly resolveProviders: () => MastraProvider[];
   private readonly registryStore: ServiceRegistryStore;
   private readonly db: Database;
+  private readonly stackId: string;
   private readonly intervalMs: number;
   private readonly onTransition?: (service: string, from: HealthStatus, to: HealthStatus) => void;
   private readonly getHiddenServices?: () => Set<string>;
@@ -186,6 +189,7 @@ export class ServiceHealthPoller {
       : () => deps.providers as MastraProvider[];
     this.registryStore = deps.registryStore;
     this.db = deps.db;
+    this.stackId = deps.stackId ?? "";
     this.intervalMs = deps.intervalMs ?? 60_000;
     this.onTransition = deps.onTransition;
     this.getHiddenServices = deps.getHiddenServices;
@@ -306,7 +310,7 @@ export class ServiceHealthPoller {
    */
   getHistory(service: string, hours: number): HealthCheckRow[] {
     try {
-      return this.db.getServiceHealthHistory(service, hours);
+      return this.db.getServiceHealthHistory(this.stackId, service, hours);
     } catch {
       return [];
     }
@@ -408,7 +412,7 @@ export class ServiceHealthPoller {
 
   private persistHealthCheck(service: string, status: HealthStatus, checkedAt: string): void {
     try {
-      this.db.insertServiceHealthCheck(service, status, checkedAt);
+      this.db.insertServiceHealthCheck(this.stackId, service, status, checkedAt);
     } catch (err) {
       logger.warn({ err, service }, "ServiceHealthPoller: failed to persist health check");
     }

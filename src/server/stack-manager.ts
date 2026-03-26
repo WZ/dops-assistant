@@ -131,6 +131,7 @@ export class StackManager {
       providers: () => providerRegistry.getProviders(),
       registryStore: serviceRegistry,
       db: this.db,
+      stackId: row.id,
       onTransition: (service: string, from: HealthStatus, to: HealthStatus) => {
         this.onHealthTransition?.(row.id, service, from, to);
       },

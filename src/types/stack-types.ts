@@ -32,11 +32,12 @@ export interface StackSummary {
 export const DEFAULT_STACK_SLUG = "default";
 
 // Extend Express.Request with stack context
+// Note: StackContext is imported from stack-manager.ts for proper typing
 declare global {
   namespace Express {
     interface Request {
       stackId: string;
-      stackContext: any; // Will be properly typed as StackContext after Phase 2
+      stackContext: import("../server/stack-manager.js").StackContext;
     }
   }
 }

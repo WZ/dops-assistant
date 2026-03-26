@@ -57,8 +57,8 @@ async function probeMcp(providers: MastraProvider[]): Promise<ProbeResult> {
 function probeDb(db: Database): ProbeResult {
   const start = Date.now();
   try {
-    // Run a trivial query to prove DB is accessible
-    db.listInvestigations(1, 0);
+    // Run a trivial query to prove DB is accessible — pass empty stackId for health probe
+    db.listInvestigations("", 1, 0);
     return { status: "ok", latencyMs: Date.now() - start };
   } catch (err) {
     return { status: "error", latencyMs: Date.now() - start, error: err instanceof Error ? err.message : String(err) };
@@ -70,12 +70,23 @@ export interface HealthMonitorDeps {
   db: Database;
 }
 
+/** Alternative deps that accept a StackManager for multi-stack support */
+export interface HealthMonitorStackDeps {
+  stackManager: { getDefaultContext(): { providerRegistry: { getProviders(): MastraProvider[] } } };
+  db: Database;
+}
+
 let intervalHandle: ReturnType<typeof setInterval> | undefined;
 
-export function startHealthMonitor(deps: HealthMonitorDeps, intervalMs = 30_000): void {
-  const resolveProviders = typeof deps.providers === "function"
-    ? deps.providers
-    : () => deps.providers as MastraProvider[];
+export function startHealthMonitor(deps: HealthMonitorDeps | HealthMonitorStackDeps, intervalMs = 30_000): void {
+  let resolveProviders: () => MastraProvider[];
+  if ("stackManager" in deps) {
+    resolveProviders = () => deps.stackManager.getDefaultContext().providerRegistry.getProviders();
+  } else {
+    resolveProviders = typeof deps.providers === "function"
+      ? deps.providers
+      : () => deps.providers as MastraProvider[];
+  }
 
   const runProbes = async () => {
     const [mcp, db] = await Promise.all([
