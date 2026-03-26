@@ -37,15 +37,6 @@ function BriefBody({ children }: { children: ReactNode }) {
 export function ServiceBrief({ summary, sectionStatus }: ServiceBriefProps) {
   const { status, fetchedAt } = sectionStatus;
 
-  // Loading: status is ok but we're still waiting for data (in-flight)
-  if (status === "ok" && summary === undefined) {
-    return (
-      <BriefShell>
-        <div className="h-20 shimmer-skeleton" />
-      </BriefShell>
-    );
-  }
-
   // Error state
   if (status === "error") {
     return (

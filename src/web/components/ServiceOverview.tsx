@@ -27,11 +27,19 @@ export function ServiceOverview({ serviceName, onViewService }: ServiceOverviewP
     return () => controller.abort();
   }, [serviceName]);
 
-  // Build healthMap from dependency nodes
-  const healthMap: Record<string, "healthy" | "degraded" | "unhealthy" | "unknown"> | undefined =
+  // Build healthMap from dependency nodes included in the brief.
+  const initialHealthMap: Record<string, "healthy" | "degraded" | "unhealthy" | "unknown"> | undefined =
     brief?.dependencies
       ? Object.fromEntries(brief.dependencies.nodes.map(n => [n.name, n.status]))
       : undefined;
+
+  // Convert brief dependency nodes/edges to the shape ServiceDependencyGraph expects.
+  const initialDepData = brief?.dependencies
+    ? {
+        nodes: brief.dependencies.nodes.map(n => ({ id: n.id, name: n.name, type: n.type })),
+        edges: brief.dependencies.edges.map(e => ({ source: e.source, target: e.target, label: e.label })),
+      }
+    : undefined;
 
   const dependencySource = brief?.dependencies?.source;
 
@@ -59,13 +67,15 @@ export function ServiceOverview({ serviceName, onViewService }: ServiceOverviewP
         />
       </div>
 
-      {/* Dependency graph — full-width, condensed */}
+      {/* Dependency graph — full-width, condensed.
+          Pass pre-fetched data from the brief so the graph doesn't double-fetch. */}
       <div style={{ height: 300 }}>
         <ServiceDependencyGraph
           serviceName={serviceName}
           onViewService={onViewService}
-          healthMap={healthMap}
           dependencySource={dependencySource}
+          initialData={initialDepData}
+          initialHealthMap={initialHealthMap}
         />
       </div>
     </div>

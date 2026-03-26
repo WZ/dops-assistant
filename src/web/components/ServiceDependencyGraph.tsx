@@ -24,9 +24,12 @@ type HealthStatus = "healthy" | "degraded" | "unhealthy" | "unknown";
 interface ServiceDependencyGraphProps {
   serviceName: string;
   onViewService: (name: string) => void;
-  // NEW optional props:
   healthMap?: Record<string, HealthStatus>;
   dependencySource?: "prometheus" | "kubernetes" | "inferred";
+  /** When provided, skip the internal fetch and use this data directly. */
+  initialData?: DependencyData;
+  /** When provided alongside initialData, skip the internal healthMap fetch. */
+  initialHealthMap?: Record<string, HealthStatus>;
 }
 
 function healthDotColor(status: HealthStatus): string {
@@ -46,15 +49,24 @@ function healthDotColor(status: HealthStatus): string {
 export function ServiceDependencyGraph({
   serviceName,
   onViewService,
-  healthMap,
+  healthMap: healthMapProp,
   dependencySource,
+  initialData,
+  initialHealthMap,
 }: ServiceDependencyGraphProps) {
-  const [data, setData] = useState<DependencyData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<DependencyData | null>(initialData ?? null);
+  const [loading, setLoading] = useState(initialData === undefined);
   const [error, setError] = useState<string | null>(null);
   const [tableOpen, setTableOpen] = useState(false);
 
+  // Merge: initialHealthMap takes precedence when initialData is provided;
+  // otherwise fall back to the healthMap prop passed from parent.
+  const healthMap = initialData !== undefined ? (initialHealthMap ?? healthMapProp) : healthMapProp;
+
   useEffect(() => {
+    // Skip fetch when pre-fetched data was supplied.
+    if (initialData !== undefined) return;
+
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -78,7 +90,7 @@ export function ServiceDependencyGraph({
       });
 
     return () => { cancelled = true; };
-  }, [serviceName]);
+  }, [serviceName, initialData]);
 
   if (loading) {
     return (
@@ -126,10 +138,6 @@ export function ServiceDependencyGraph({
     const health: HealthStatus = healthMap?.[n.name] ?? "unknown";
     const dotColor = healthDotColor(health);
     const showDot = !!healthMap;
-
-    const labelElement = showDot
-      ? `<span style="display:inline-flex;align-items:center;gap:6px;"><span style="display:inline-block;width:6px;height:6px;border-radius:9999px;background:${dotColor};flex-shrink:0;"></span>${n.name}</span>`
-      : n.name;
 
     return {
       id: n.id,
@@ -185,7 +193,6 @@ export function ServiceDependencyGraph({
   }));
 
   // Build accessible table rows
-  const nodeById = Object.fromEntries(data.nodes.map((n) => [n.id, n]));
   const tableRows = data.nodes.map((n) => {
     const outgoing = data.edges.filter((e) => e.source === n.id);
     const incoming = data.edges.filter((e) => e.target === n.id);

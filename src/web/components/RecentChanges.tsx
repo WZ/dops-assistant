@@ -5,6 +5,7 @@ import type {
   MergeRequest,
   ConfigChange,
 } from "../../types/service-brief.js";
+import { formatFreshness } from "../lib/freshness.js";
 
 interface RecentChangesProps {
   changes: ChangesSection | null;
@@ -108,20 +109,15 @@ function dotClass(type: ChangeType): string {
 
 // ── Freshness indicator ───────────────────────────────────────────────────────
 
-const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
-
 function FreshnessIndicator({ fetchedAt }: { fetchedAt?: number }) {
-  if (!fetchedAt) return null;
-
-  const ageMs = Date.now() - fetchedAt;
-  const ageSec = Math.round(ageMs / 1000);
-  const isStale = ageMs > STALE_THRESHOLD_MS;
+  const info = formatFreshness(fetchedAt);
+  if (!info) return null;
 
   return (
     <span
-      className={`text-[10px] font-mono ${isStale ? "text-warning" : "text-muted-foreground/50"}`}
+      className={`text-[10px] font-mono ${info.isStale ? "text-warning" : "text-muted-foreground/50"}`}
     >
-      Updated {ageSec}s ago
+      {info.text}
     </span>
   );
 }
