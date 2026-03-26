@@ -10,12 +10,13 @@ import type { ProviderRegistry } from "../mcp/provider-registry.js";
 import type { ServiceHealthPoller } from "./service-health-poller.js";
 import { queryServiceMetrics } from "./prometheus-query.js";
 import type { MetricSeries } from "./prometheus-query.js";
+import { inferDependencyGraph } from "./dependency-graph.js";
 
 export interface DependencyNode {
   id: string;
   name: string;
   type: "service" | "database" | "queue" | "cache" | "external";
-  status?: "healthy" | "degraded" | "unhealthy";
+  status?: "healthy" | "degraded" | "unhealthy" | "unknown";
 }
 
 export interface DependencyEdge {
@@ -30,52 +31,6 @@ export interface RouteHandlers {
   getInvestigation(id: string): { investigation: InvestigationRow; phases: PhaseRow[]; events: EventRow[] } | undefined;
   getDependencies(service: string): Promise<{ nodes: DependencyNode[]; edges: DependencyEdge[] }>;
   getKpiStats(): KpiStats;
-}
-
-/**
- * Infer service dependency graph from service registry data.
- * Uses metric query labels and service name patterns to detect relationships.
- */
-function inferDependencyGraph(services: ServiceConfig[]): { nodes: DependencyNode[]; edges: DependencyEdge[] } {
-  const nodes: DependencyNode[] = services.map(s => ({
-    id: s.name,
-    name: s.name,
-    type: "service" as const,
-  }));
-
-  const edges: DependencyEdge[] = [];
-  const serviceNames = new Set(services.map(s => s.name));
-
-  for (const svc of services) {
-    // Check if any metric queries reference other services by name
-    for (const metric of svc.metrics) {
-      for (const otherName of serviceNames) {
-        if (otherName === svc.name) continue;
-        // Look for service references in metric queries (e.g., upstream="other-service")
-        if (metric.query.includes(otherName) || metric.query.includes(otherName.replace(/-/g, "_"))) {
-          const edgeId = `${svc.name}->${otherName}`;
-          if (!edges.some(e => e.source === svc.name && e.target === otherName)) {
-            edges.push({ source: svc.name, target: otherName, label: "metrics" });
-          }
-        }
-      }
-    }
-
-    // Check log labels for service references
-    const logLabelValues = Object.values(svc.logLabels ?? {});
-    for (const val of logLabelValues) {
-      for (const otherName of serviceNames) {
-        if (otherName === svc.name) continue;
-        if (val.includes(otherName)) {
-          if (!edges.some(e => e.source === svc.name && e.target === otherName)) {
-            edges.push({ source: svc.name, target: otherName, label: "logs" });
-          }
-        }
-      }
-    }
-  }
-
-  return { nodes, edges };
 }
 
 export function buildHandlers(db: Database, services: ServiceConfig[]): RouteHandlers {

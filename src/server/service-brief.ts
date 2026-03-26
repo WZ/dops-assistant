@@ -13,6 +13,7 @@ import { generateText, type LanguageModel } from "ai";
 import pino from "pino";
 import { getToolsByRole, type MastraProvider } from "../mcp/provider.js";
 import type { ServiceConfig } from "../config/schema.js";
+import { inferDependencyGraph } from "./dependency-graph.js";
 import type { ServiceHealthPoller, HealthStatus } from "./service-health-poller.js";
 import type {
   ServiceBrief,
@@ -20,7 +21,6 @@ import type {
   InfrastructureSection,
   BriefDependencyNode,
   BriefDependencyEdge,
-  SectionStatus,
   AISummary,
 } from "../types/service-brief.js";
 
@@ -88,26 +88,22 @@ function setCache<T>(service: string, section: SectionName, data: T): void {
 // ── Timeout helper ───────────────────────────────────────────────────────────
 
 /**
- * Wraps a promise with a per-section timeout backed by an AbortController.
- * The AbortController is aborted when the timeout fires so future callers
- * can check signal.aborted. Returns the AbortSignal for callers that want it.
+ * Wraps a promise with a per-section timeout. Rejects with a descriptive
+ * error if the promise does not settle within `ms` milliseconds.
  */
 function withTimeout<T>(
   promise: Promise<T>,
   ms: number,
   label: string,
-): { result: Promise<T>; signal: AbortSignal } {
-  const controller = new AbortController();
-  const result = Promise.race([
+): Promise<T> {
+  return Promise.race([
     promise,
     new Promise<never>((_, reject) =>
       setTimeout(() => {
-        controller.abort();
         reject(new Error(`Timeout: ${label} exceeded ${ms}ms`));
       }, ms),
     ),
   ]);
-  return { result, signal: controller.signal };
 }
 
 // ── Tool finder helpers ──────────────────────────────────────────────────────
@@ -192,11 +188,12 @@ async function fetchChanges(
 
   if (deployTool) {
     try {
+      // TODO: wire gitlabProject from ServiceConfig for project path resolution
       const raw = await withTimeout(
         deployTool.execute({ service: serviceName, limit: 5 }),
         SECTION_TIMEOUT_MS,
         "fetchChanges:deployments",
-      ).result;
+      );
       const parsed = parseMcpResult(raw);
       if (Array.isArray(parsed)) {
         result.deployments = parsed;
@@ -212,7 +209,7 @@ async function fetchChanges(
         mrTool.execute({ service: serviceName, limit: 5, state: "merged" }),
         SECTION_TIMEOUT_MS,
         "fetchChanges:mergeRequests",
-      ).result;
+      );
       const parsed = parseMcpResult(raw);
       if (Array.isArray(parsed)) {
         result.mergeRequests = parsed;
@@ -243,11 +240,12 @@ async function fetchInfrastructure(
   const podTool = findTool(tools, ["pod", "workload", "deployment", "describe", "resource"]);
   if (!podTool) return null;
 
+  // TODO: namespace should come from ServiceConfig, not hardcoded
   const raw = await withTimeout(
     podTool.execute({ service: serviceName, namespace: "default" }),
     SECTION_TIMEOUT_MS,
     "fetchInfrastructure",
-  ).result;
+  );
   const parsed = parseMcpResult(raw);
   if (parsed && typeof parsed === "object") {
     // Attempt to coerce into InfrastructureSection shape
@@ -262,54 +260,6 @@ async function fetchInfrastructure(
     return result;
   }
   return null;
-}
-
-/**
- * Infer service dependency graph from service registry data.
- * Extracted from routes.ts inferDependencyGraph — uses metric queries and log labels
- * to detect relationships between services.
- */
-export function inferDependencyGraph(
-  services: ServiceConfig[],
-): { nodes: BriefDependencyNode[]; edges: BriefDependencyEdge[] } {
-  const nodes: BriefDependencyNode[] = services.map(s => ({
-    id: s.name,
-    name: s.name,
-    type: "service" as const,
-    status: "unknown" as const,
-  }));
-
-  const edges: BriefDependencyEdge[] = [];
-  const serviceNames = new Set(services.map(s => s.name));
-
-  for (const svc of services) {
-    // Check if any metric queries reference other services by name
-    for (const metric of svc.metrics) {
-      for (const otherName of serviceNames) {
-        if (otherName === svc.name) continue;
-        if (metric.query.includes(otherName) || metric.query.includes(otherName.replace(/-/g, "_"))) {
-          if (!edges.some(e => e.source === svc.name && e.target === otherName)) {
-            edges.push({ source: svc.name, target: otherName, label: "metrics" });
-          }
-        }
-      }
-    }
-
-    // Check log labels for service references
-    const logLabelValues = Object.values(svc.logLabels ?? {});
-    for (const val of logLabelValues) {
-      for (const otherName of serviceNames) {
-        if (otherName === svc.name) continue;
-        if (val.includes(otherName)) {
-          if (!edges.some(e => e.source === svc.name && e.target === otherName)) {
-            edges.push({ source: svc.name, target: otherName, label: "logs" });
-          }
-        }
-      }
-    }
-  }
-
-  return { nodes, edges };
 }
 
 async function fetchDependencies(
@@ -474,12 +424,12 @@ async function doBuildServiceBrief(
     };
   }
 
-  // ── Unconditional parallel fan-out ─────────────────────────────────────────
+  // ── Conditional parallel fan-out ──────────────────────────────────────────
   //
-  // Each fetcher checks its own cache inside and returns cached data if fresh.
-  // For stale sections: we fire the fetch in the background (do not await it in
-  // the foreground Promise.allSettled) so the caller gets the stale data
-  // immediately while a background refresh runs.
+  // Fan out all 3 sections via Promise.allSettled. Cache-hit sections resolve
+  // immediately; stale/missing sections fetch from MCP. For stale sections we
+  // also fire a background refresh so the caller gets stale data immediately
+  // while revalidation runs in the background.
 
   type DepsResult = { nodes: BriefDependencyNode[]; edges: BriefDependencyEdge[]; source: "inferred" };
 
@@ -542,7 +492,7 @@ async function doBuildServiceBrief(
   // Process infrastructure result
   if (needInfra) {
     if (infraResult.status === "fulfilled") {
-      infraData = infraResult.value as InfrastructureSection | null;
+      infraData = infraResult.value;
       if (infraData !== null) {
         sections.infrastructure = { status: "ok", fetchedAt: Date.now() };
       } else {
@@ -559,7 +509,7 @@ async function doBuildServiceBrief(
   // Process dependencies result
   if (needDeps) {
     if (depsResult.status === "fulfilled") {
-      depsData = depsResult.value as DepsResult | null;
+      depsData = depsResult.value;
       if (depsData !== null) {
         sections.dependencies = { status: "ok", fetchedAt: Date.now() };
       } else {
@@ -575,9 +525,16 @@ async function doBuildServiceBrief(
 
   // ── AI Summary ──────────────────────────────────────────────────────────
 
-  let summaryData: AISummary | null = null;
+  let summaryData: AISummary | null = staleSummary?.data ?? null;
 
-  if (llmModel) {
+  if (staleSummary?.status === "stale" && llmModel) {
+    // Return stale summary immediately, refresh in background
+    sections.summary = { status: "stale", fetchedAt: Date.now() };
+    void generateSummary(serviceName, changesData, infraData, depsData, llmModel)
+      .then(result => { if (result) setCache(serviceName, "summary", result); })
+      .catch(err => logger.debug({ err, service: serviceName }, "service-brief: background summary refresh failed"));
+  } else if (!staleSummary && llmModel) {
+    // No cached summary — generate synchronously
     try {
       summaryData = await generateSummary(
         serviceName,
@@ -597,6 +554,8 @@ async function doBuildServiceBrief(
       errors.push(`summary: ${msg}`);
       sections.summary = { status: "error", error: msg };
     }
+  } else if (staleSummary?.status === "ok") {
+    sections.summary = { status: "ok", fetchedAt: Date.now() };
   }
 
   return {

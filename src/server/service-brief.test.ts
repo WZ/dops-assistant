@@ -65,12 +65,6 @@ function makeTool(result: unknown, delay = 0): { execute: ReturnType<typeof vi.f
   };
 }
 
-function makeFailingTool(error: string): { execute: ReturnType<typeof vi.fn> } {
-  return {
-    execute: vi.fn(async () => { throw new Error(error); }),
-  };
-}
-
 function makeChangesTools(): Record<string, { execute: ReturnType<typeof vi.fn> }> {
   return {
     gitlab_list_deployments: makeTool({
@@ -281,6 +275,8 @@ describe("buildServiceBrief", () => {
     // Should return data (from stale cache or refreshed)
     expect(brief.changes).not.toBeNull();
     expect(brief.dependencies).not.toBeNull();
+    // Stale sections should be marked as stale
+    expect(brief.sections.changes.status).toBe("stale");
     // The stale data should still be usable
     expect(brief.errors).toHaveLength(0);
   });
