@@ -399,11 +399,16 @@ async function generateSummary(
 
   if (infra) {
     const { replicas, containers, recentEvents } = infra;
-    parts.push(`Infrastructure: ${replicas.ready}/${replicas.desired} replicas ready, ${containers.length} container(s).`);
-    const restarts = containers.reduce((sum, c) => sum + c.restarts, 0);
-    if (restarts > 0) parts.push(`Total container restarts: ${restarts}.`);
-    const warnings = recentEvents.filter(e => e.type === "Warning");
-    if (warnings.length > 0) parts.push(`Warning events: ${warnings.length}.`);
+    // Only include infra data in the prompt when it looks like real data — not
+    // default zeros from a "service not found" MCP response.
+    const hasRealData = replicas.desired > 0 || containers.length > 0 || recentEvents.length > 0;
+    if (hasRealData) {
+      parts.push(`Infrastructure: ${replicas.ready}/${replicas.desired} replicas ready, ${containers.length} container(s).`);
+      const restarts = containers.reduce((sum, c) => sum + c.restarts, 0);
+      if (restarts > 0) parts.push(`Total container restarts: ${restarts}.`);
+      const warnings = recentEvents.filter(e => e.type === "Warning");
+      if (warnings.length > 0) parts.push(`Warning events: ${warnings.length}.`);
+    }
   }
 
   if (deps && deps.nodes.length > 0) {
