@@ -13,6 +13,8 @@ interface ServiceDetailProps {
   onBack: () => void;
   onViewInvestigation: (id: string) => void;
   onViewService: (name: string) => void;
+  grafanaUrl?: string;
+  metricQuery?: string;
 }
 
 interface ServiceMetadata {
@@ -34,6 +36,8 @@ export function ServiceDetail({
   onBack,
   onViewInvestigation,
   onViewService,
+  grafanaUrl,
+  metricQuery,
 }: ServiceDetailProps) {
   const [activeTab, setActiveTab] = useState<TabId>("metrics");
   const [metadata, setMetadata] = useState<ServiceMetadata | null>(null);
@@ -128,6 +132,8 @@ export function ServiceDetail({
         onTagsSaved={handleTagsSaved}
         onAliasEditorOpenChange={setAliasEditorOpen}
         onTagEditorOpenChange={setTagEditorOpen}
+        grafanaUrl={grafanaUrl}
+        metricQuery={metricQuery}
       />
 
       {/* Tab navigation */}

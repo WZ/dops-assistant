@@ -35,6 +35,7 @@ export const ProviderSchema = z.object({
   roles: z.array(ProviderRoleSchema).min(1),
   mcpServer: McpServerSchema,
   region: z.string().optional(),
+  webUrl: z.string().url().optional(),
 });
 
 export type ProviderRole = z.infer<typeof ProviderRoleSchema>;

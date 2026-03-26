@@ -144,4 +144,48 @@ describe("ConfigSchema – providers", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it("accepts provider with webUrl", () => {
+    const result = ConfigSchema.safeParse({
+      llm,
+      providers: [
+        {
+          name: "grafana",
+          roles: ["metrics", "dashboards"],
+          mcpServer: stdioMcp,
+          webUrl: "https://grafana.internal:3000",
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.providers[0].webUrl).toBe("https://grafana.internal:3000");
+    }
+  });
+
+  it("accepts provider without webUrl", () => {
+    const result = ConfigSchema.safeParse({
+      llm,
+      providers: [grafanaProvider],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.providers[0].webUrl).toBeUndefined();
+    }
+  });
+
+  it("rejects provider with invalid webUrl", () => {
+    const result = ConfigSchema.safeParse({
+      llm,
+      providers: [
+        {
+          name: "grafana",
+          roles: ["metrics"],
+          mcpServer: stdioMcp,
+          webUrl: "not-a-url",
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
 });
