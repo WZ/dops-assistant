@@ -72,6 +72,7 @@ export function registerRoutes(
   branding?: BrandingConfig,
   healthPoller?: ServiceHealthPoller,
   getProviders?: () => MastraProvider[],
+  llmModel?: Parameters<typeof buildServiceBrief>[1]["llmModel"],
 ): void {
   const handlers = buildHandlers(db, services);
 
@@ -245,6 +246,7 @@ export function registerRoutes(
         providers: getProviders?.() ?? [],
         services: allServices,
         healthPoller,
+        llmModel,
       });
       res.json(brief);
     } catch (err) {
