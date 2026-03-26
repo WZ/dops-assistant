@@ -609,7 +609,7 @@ export async function handleClientMessage(
             send({ type: "chat:tool_call", tool: name, status: "calling" });
           } else {
             send({ type: "chat:tool_call", tool: name, status: "complete" });
-            if (metricsToolNames.has(name) ?? name === "query_prometheus") {
+            if (metricsToolNames.has(name) || name === "query_prometheus") {
               chartData.push(...extractChartSeries(rawResult, args));
             }
           }

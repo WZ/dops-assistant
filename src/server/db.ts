@@ -351,7 +351,7 @@ export class Database {
 
   listMessages(stackId: string, limit: number, investigationId?: string): MessageRow[] {
     if (investigationId) {
-      return this.db.prepare("SELECT * FROM messages WHERE investigation_id = ? ORDER BY created_at ASC, rowid ASC LIMIT ?").all(investigationId, limit) as MessageRow[];
+      return this.db.prepare("SELECT * FROM messages WHERE investigation_id = ? AND stack_id = ? ORDER BY created_at ASC, rowid ASC LIMIT ?").all(investigationId, stackId, limit) as MessageRow[];
     }
     // Include console messages (no investigation_id) AND investigation completion summaries
     // (content starts with "**Root Cause:**") which render as RCA cards in the console.
