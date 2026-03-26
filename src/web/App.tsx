@@ -53,9 +53,9 @@ export function App() {
     : leftPane.type === "settings" ? "settings"
     : "dashboard";
 
-  const [branding, setBranding] = useState({ title: "dops", subtitle: "assistant", grafanaUrl: undefined as string | undefined });
+  const [branding, setBranding] = useState<{ title: string; subtitle: string; grafanaUrl?: string }>({ title: "dops", subtitle: "assistant" });
   useEffect(() => {
-    fetch("/api/branding").then((r) => r.json()).then(setBranding).catch(() => {});
+    fetch("/api/branding").then((r) => r.json()).then((data) => setBranding((prev) => ({ ...prev, ...data }))).catch(() => {});
   }, []);
 
   const [discoveryState, setDiscoveryState] = useState({
