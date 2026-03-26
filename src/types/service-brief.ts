@@ -34,7 +34,13 @@ export interface BriefDependencyEdge {
 export interface Deployment {
   ref: string;
   pipelineId: number;
-  pipelineStatus: "success" | "failed" | "running";
+  /**
+   * GitLab pipeline status string.
+   * Known values: "success", "failed", "running", "pending", "canceled",
+   * "skipped", "manual", "scheduled", "created", "waiting_for_resource",
+   * "preparing", "blocked".
+   */
+  pipelineStatus: string;
   environment: string;
   /** ISO 8601 timestamp. */
   deployedAt: string;
@@ -59,6 +65,12 @@ export interface ConfigChange {
   /** ISO 8601 timestamp. */
   changedAt: string;
   changedFields?: string[];
+}
+
+export interface ChangesSection {
+  deployments: Deployment[];
+  mergeRequests: MergeRequest[];
+  configChanges: ConfigChange[];
 }
 
 // ── Infrastructure section ────────────────────────────────────────────────────
@@ -86,6 +98,17 @@ export interface K8sEvent {
   count: number;
 }
 
+export interface InfrastructureSection {
+  workloadType: string;
+  replicas: { desired: number; ready: number; available: number };
+  containers: ContainerStatus[];
+  recentEvents: K8sEvent[];
+}
+
+// ── Dependency graph source ───────────────────────────────────────────────────
+
+export type DependencyGraphSource = "prometheus" | "kubernetes" | "inferred";
+
 // ── Section freshness ─────────────────────────────────────────────────────────
 
 /**
@@ -93,8 +116,11 @@ export interface K8sEvent {
  * gracefully degrade when a data source is unconfigured or errored.
  */
 export interface SectionStatus {
-  /** Unix epoch milliseconds of the last successful fetch. */
-  fetchedAt: number;
+  /**
+   * Unix epoch milliseconds of the last successful fetch.
+   * Absent for "unconfigured" and "error" states where no fetch occurred.
+   */
+  fetchedAt?: number;
   status: "ok" | "error" | "unconfigured" | "stale";
   error?: string;
 }
@@ -125,30 +151,17 @@ export interface ServiceBrief {
   summary: AISummary | null;
 
   /** Recent deployments, merge requests, and config changes. */
-  changes: {
-    deployments: Deployment[];
-    mergeRequests: MergeRequest[];
-    configChanges: ConfigChange[];
-  } | null;
+  changes: ChangesSection | null;
 
   /** Kubernetes workload status: replicas, containers, recent events. */
-  infrastructure: {
-    workloadType: string;
-    replicas: {
-      desired: number;
-      ready: number;
-      available: number;
-    };
-    containers: ContainerStatus[];
-    recentEvents: K8sEvent[];
-  } | null;
+  infrastructure: InfrastructureSection | null;
 
   /** Service dependency graph. */
   dependencies: {
     nodes: BriefDependencyNode[];
     edges: BriefDependencyEdge[];
     /** How the graph was derived. */
-    source: "prometheus" | "kubernetes" | "inferred";
+    source: DependencyGraphSource;
   } | null;
 
   /** Per-section fetch status for staleness / error indicators in the UI. */
