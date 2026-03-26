@@ -101,7 +101,15 @@ export function registerRoutes(
   });
 
   app.get("/api/branding", (_req: Request, res: Response) => {
-    res.json(branding ?? { title: "dops", subtitle: "assistant" });
+    const base = branding ?? { title: "dops", subtitle: "assistant" };
+    let grafanaUrl: string | undefined;
+    if (providerRegistry) {
+      const dashProvider = providerRegistry.getAll().find(
+        (p) => p.config.roles.includes("dashboards") && p.config.webUrl,
+      );
+      grafanaUrl = dashProvider?.config.webUrl;
+    }
+    res.json({ ...base, grafanaUrl });
   });
 
   app.get("/api/services/graph", (_req: Request, res: Response) => {

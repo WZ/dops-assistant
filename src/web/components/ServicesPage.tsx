@@ -50,6 +50,7 @@ interface ServicesPageProps {
   discoveryState: DiscoveryState;
   onStartDiscovery: () => void;
   onResetDiscovery: () => void;
+  grafanaUrl?: string;
 }
 
 // ── Component ─────────────────────────────────────────────────────────
@@ -62,6 +63,7 @@ export function ServicesPage({
   discoveryState,
   onStartDiscovery,
   onResetDiscovery,
+  grafanaUrl,
 }: ServicesPageProps) {
   // ── Sub-view routing ──────────────────────────────────────────────
   const [subView, setSubView] = useState<SubView>({ type: "grid" });
@@ -332,6 +334,8 @@ export function ServicesPage({
   // ── Sub-view routing ──────────────────────────────────────────────
 
   if (subView.type === "detail") {
+    const svc = services.find((s) => s.name === subView.serviceName);
+    const firstMetricQuery = svc?.metrics?.[0]?.query;
     return (
       <ServiceDetail
         serviceName={subView.serviceName}
@@ -339,6 +343,8 @@ export function ServicesPage({
         onBack={() => setSubView({ type: "grid" })}
         onViewInvestigation={onViewInvestigation}
         onViewService={(name) => setSubView({ type: "detail", serviceName: name })}
+        grafanaUrl={grafanaUrl}
+        metricQuery={firstMetricQuery}
       />
     );
   }
