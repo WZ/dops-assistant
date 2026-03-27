@@ -63,10 +63,14 @@ export function createQuirkPrepareStep(config: QuirkPrepareStepConfig): PrepareS
       };
     }
 
-    // Midpoint nudge: inject a reminder message, keep toolChoice as "auto"
+    // Midpoint nudge: inject a reminder message AND keep toolChoice as "auto"
     if (step === midpointStep) {
+      console.error(`[PREPARE_STEP] MIDPOINT NUDGE step=${step}`);
       return {
         toolChoice: "auto" as const,
+        messages: [
+          { role: "user" as const, content: nudgeMessage },
+        ],
       };
     }
 
