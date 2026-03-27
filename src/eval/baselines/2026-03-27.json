@@ -1,0 +1,1335 @@
+{
+  "generatedAt": "2026-03-27T07:39:44.613Z",
+  "entries": [
+    {
+      "id": "inv_01KMQ3E16P4VSS138EEKW3M263",
+      "service": "hippo-instance1-f84r",
+      "createdAt": "2026-03-27 07:34:10",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 10,
+        "trigger": 10,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 60,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMQ394QDBZ7E3RVSTS36RPNA",
+      "service": "admin-task",
+      "createdAt": "2026-03-27 07:31:30",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMQ342PQNXYTKQG7V2R19ZW7",
+      "service": "hippo-instance1-f84r",
+      "createdAt": "2026-03-27 07:28:44",
+      "scores": {
+        "rootCause": 20,
+        "evidence": 20,
+        "trigger": 10,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 90,
+        "pass": true
+      }
+    },
+    {
+      "id": "inv_01KMQ2J6JNC55DNZKMASES247Z",
+      "service": "admin-task",
+      "createdAt": "2026-03-27 07:18:58",
+      "scores": {
+        "rootCause": 20,
+        "evidence": 20,
+        "trigger": 10,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 90,
+        "pass": true
+      }
+    },
+    {
+      "id": "inv_01KMPA20V13FC5F4QAYTSW0XXQ",
+      "service": "admin-task",
+      "createdAt": "2026-03-27 00:10:42",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMP429DBK42J75CJ8W9DFNHV",
+      "service": "cluster-autoscaler",
+      "createdAt": "2026-03-26 22:26:00",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMNTQS5ABGZJ5Z7E0EDXKQE2",
+      "service": "admin-task",
+      "createdAt": "2026-03-26 19:42:58",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMNRQNY8RSMNXFRZCZXQ3T66",
+      "service": "cluster-autoscaler",
+      "createdAt": "2026-03-26 19:07:58",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMNRDX0KP7NJAX2P2ZB5N4X3",
+      "service": "admin-task",
+      "createdAt": "2026-03-26 19:02:37",
+      "scores": {
+        "rootCause": 20,
+        "evidence": 20,
+        "trigger": 20,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 100,
+        "pass": true
+      }
+    },
+    {
+      "id": "inv_01KMMDMSJXWEHY1W889X7ZNN9X",
+      "service": "admin-task",
+      "createdAt": "2026-03-26 06:34:54",
+      "scores": {
+        "rootCause": 20,
+        "evidence": 20,
+        "trigger": 10,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 90,
+        "pass": true
+      }
+    },
+    {
+      "id": "inv_01KMKDQ81PHATMPZ3HJEYRDGR4",
+      "service": "kube-proxy",
+      "createdAt": "2026-03-25 21:17:00",
+      "scores": {
+        "rootCause": 20,
+        "evidence": 20,
+        "trigger": 20,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 100,
+        "pass": true
+      }
+    },
+    {
+      "id": "inv_01KMK6NMY4FM0M43VG9PVX2MHP",
+      "service": "admin-task",
+      "createdAt": "2026-03-25 19:13:48",
+      "scores": {
+        "rootCause": 20,
+        "evidence": 20,
+        "trigger": 20,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 100,
+        "pass": true
+      }
+    },
+    {
+      "id": "inv_01KMK3K1XVVVVC2FQSMQSV8RG7",
+      "service": "admin-task",
+      "createdAt": "2026-03-25 18:19:57",
+      "scores": {
+        "rootCause": 20,
+        "evidence": 20,
+        "trigger": 20,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 100,
+        "pass": true
+      }
+    },
+    {
+      "id": "inv_01KMK381S0EEMJVJ9FBV24JVVB",
+      "service": "admin-task",
+      "createdAt": "2026-03-25 18:13:57",
+      "scores": {
+        "rootCause": 20,
+        "evidence": 20,
+        "trigger": 10,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 90,
+        "pass": true
+      }
+    },
+    {
+      "id": "inv_01KMJZRKYWZPYSM0YDNQ7YQBNP",
+      "service": "admin-task",
+      "createdAt": "2026-03-25 17:13:05",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMHXB3RG36AFEEVVBVAQA3H0",
+      "service": "yb-master",
+      "createdAt": "2026-03-25 07:11:31",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMHXB3R6WYNNJAZ06PH0BK3Z",
+      "service": "fsoc-cloud-svc",
+      "createdAt": "2026-03-25 07:11:31",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMHXB3QVV2WMK18ZTVMC7GV1",
+      "service": "cluster-autoscaler",
+      "createdAt": "2026-03-25 07:11:31",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMHSFNCXK2QY79C704M0E1AT",
+      "service": "yb-master",
+      "createdAt": "2026-03-25 06:04:06",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMHSFNBNFQRE2VEEKDRTEF2N",
+      "service": "fsoc-cloud-svc",
+      "createdAt": "2026-03-25 06:04:06",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMHSFNAY7G39SJ0BJCWZP0CS",
+      "service": "cluster-autoscaler",
+      "createdAt": "2026-03-25 06:04:06",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMHSFM84KFPSKA8WK32XEP4B",
+      "service": "yb-master",
+      "createdAt": "2026-03-25 06:04:05",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMHSFM6Q7R0AG3X4XWH2WBYG",
+      "service": "fsoc-cloud-svc",
+      "createdAt": "2026-03-25 06:04:05",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMHSFM5Y24FC3VQXXGD5V20W",
+      "service": "cluster-autoscaler",
+      "createdAt": "2026-03-25 06:04:05",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMGYE9DWXNTN0JMZNPR607H9",
+      "service": "admin-ui",
+      "createdAt": "2026-03-24 22:11:29",
+      "scores": {
+        "rootCause": 20,
+        "evidence": 20,
+        "trigger": 10,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 90,
+        "pass": true
+      }
+    },
+    {
+      "id": "inv_01KMGXTPMFQE85VP6WFMQ8AW13",
+      "service": "admin-ui",
+      "createdAt": "2026-03-24 22:00:48",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 20,
+        "trigger": 20,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 80,
+        "pass": true
+      }
+    },
+    {
+      "id": "inv_01KMGXEH8ZT0KNV84S2RXNWH3Z",
+      "service": "admin-ui",
+      "createdAt": "2026-03-24 21:54:09",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 20,
+        "trigger": 20,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 80,
+        "pass": true
+      }
+    },
+    {
+      "id": "inv_01KMGWP83X6ER282HG6X4R1Z4Q",
+      "service": "admin-ui",
+      "createdAt": "2026-03-24 21:40:53",
+      "scores": {
+        "rootCause": 20,
+        "evidence": 20,
+        "trigger": 20,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 100,
+        "pass": true
+      }
+    },
+    {
+      "id": "inv_01KMGM27B51759BSQFGW5XFTYH",
+      "service": "yb-master",
+      "createdAt": "2026-03-24 19:10:08",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMGM27843JSK9E8A2HG0A98W",
+      "service": "fsoc-cloud-svc",
+      "createdAt": "2026-03-24 19:10:08",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMGM275BX92AEEW6GQ0HW0YP",
+      "service": "cluster-autoscaler",
+      "createdAt": "2026-03-24 19:10:08",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMGM2536QEK0ZH9VGY0NKP43",
+      "service": "yb-master",
+      "createdAt": "2026-03-24 19:10:06",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMGM24YRRVN0Q2F353FM7HF7",
+      "service": "fsoc-cloud-svc",
+      "createdAt": "2026-03-24 19:10:06",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMGM24X58SXXT1TB7FJP79Q3",
+      "service": "cluster-autoscaler",
+      "createdAt": "2026-03-24 19:10:06",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMGJBFCR0SMEJ3TS9WBCNRHJ",
+      "service": "admin-ui",
+      "createdAt": "2026-03-24 18:40:14",
+      "scores": {
+        "rootCause": 20,
+        "evidence": 20,
+        "trigger": 20,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 100,
+        "pass": true
+      }
+    },
+    {
+      "id": "inv_01KMGENQ9ZJ90EEPRWQWK8SQDD",
+      "service": "yb-master",
+      "createdAt": "2026-03-24 17:35:56",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMGENQ7HA3KRY8JKM708D78F",
+      "service": "fsoc-cloud-svc",
+      "createdAt": "2026-03-24 17:35:56",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMGENQ5F101AZC5V5MDE3XJV",
+      "service": "cluster-autoscaler",
+      "createdAt": "2026-03-24 17:35:56",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMG6FW9HJ2S7GDDTM0XRBK7F",
+      "service": "yb-master",
+      "createdAt": "2026-03-24 15:12:56",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMG6FW87S8CHFGNPGPFZKPVK",
+      "service": "fsoc-cloud-svc",
+      "createdAt": "2026-03-24 15:12:56",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMG6FW7HTZEJRFGJ316J95C1",
+      "service": "cluster-autoscaler",
+      "createdAt": "2026-03-24 15:12:56",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMF04301V36ASZTB0ZJD8JHR",
+      "service": "fsoc-global-dns-master",
+      "createdAt": "2026-03-24 04:02:23",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMF042YH671DQK5FC2JXEQHB",
+      "service": "yb-tserver",
+      "createdAt": "2026-03-24 04:02:23",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMF042Y1EHGX756KYVMKKXQH",
+      "service": "yb-master",
+      "createdAt": "2026-03-24 04:02:23",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMEVDY52Y8ZWBWNBQAKYTH25",
+      "service": "fsoc-global-dns-master",
+      "createdAt": "2026-03-24 02:40:23",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMEVDY4R41SJ049SMMH2AED5",
+      "service": "yb-tserver",
+      "createdAt": "2026-03-24 02:40:23",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMEVDY4A37KD7T3SHBHQT5ZR",
+      "service": "yb-master",
+      "createdAt": "2026-03-24 02:40:23",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMESYAT8ZZ5NE9QVV9EB0V4B",
+      "service": "yb-master",
+      "createdAt": "2026-03-24 02:14:23",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMESYARRAQTQEKJYEA1SXXN8",
+      "service": "fsoc-cloud-svc",
+      "createdAt": "2026-03-24 02:14:23",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMESYAQQHVTZFSNXJNXDNN9Z",
+      "service": "cluster-autoscaler",
+      "createdAt": "2026-03-24 02:14:23",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMEDRRCNM0FKAG50GX8GY832",
+      "service": "yb-master",
+      "createdAt": "2026-03-23 22:41:38",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMEDRRC7292QEQB3A60D2PSZ",
+      "service": "fsoc-cloud-svc",
+      "createdAt": "2026-03-23 22:41:38",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMEDRRBDD1AZYGZ1Q47M0BE7",
+      "service": "cluster-autoscaler",
+      "createdAt": "2026-03-23 22:41:38",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMEBRNSBPJA2HSAYP96T1ZPK",
+      "service": "fsoc-global-dns-master",
+      "createdAt": "2026-03-23 22:06:38",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMEBRNRK6WPGCV94QDGFK40F",
+      "service": "yb-tserver",
+      "createdAt": "2026-03-23 22:06:38",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMEBRNQQZ50EAXY4C7EW8RAV",
+      "service": "yb-master",
+      "createdAt": "2026-03-23 22:06:38",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMEAM1FT2NSZH45J5CJ7DQAT",
+      "service": "yb-master",
+      "createdAt": "2026-03-23 21:46:37",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMEAM1FEMV1NWZKJR9AHSCEB",
+      "service": "fsoc-cloud-svc",
+      "createdAt": "2026-03-23 21:46:37",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMEAM1EKCFYGTQ25NH49E92B",
+      "service": "cluster-autoscaler",
+      "createdAt": "2026-03-23 21:46:37",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KME79YQ2ER2CFTYFZ265P08A",
+      "service": "yb-master",
+      "createdAt": "2026-03-23 20:48:41",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KME79YMHSZE3VAE9ZB2YEVME",
+      "service": "fsoc-cloud-svc",
+      "createdAt": "2026-03-23 20:48:41",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KME79YK3ANB7RR38QCQDS318",
+      "service": "cluster-autoscaler",
+      "createdAt": "2026-03-23 20:48:41",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KME79YGHVF059NQGD9BESYG5",
+      "service": "yb-master",
+      "createdAt": "2026-03-23 20:48:41",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KME79YFGRTKFERY5KHB5N2VM",
+      "service": "fsoc-cloud-svc",
+      "createdAt": "2026-03-23 20:48:41",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KME79YE9QRRJ0N5368NJFY25",
+      "service": "cluster-autoscaler",
+      "createdAt": "2026-03-23 20:48:41",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KME00V3B0YFMP0Q8QG2Y1R43",
+      "service": "yb-master",
+      "createdAt": "2026-03-23 18:41:23",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KME00V2S5DY6BC7GP7THB7P4",
+      "service": "fsoc-cloud-svc",
+      "createdAt": "2026-03-23 18:41:23",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KME00V267EHTVS9QWYCH4RX1",
+      "service": "cluster-autoscaler",
+      "createdAt": "2026-03-23 18:41:23",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMDTTEN7EYVK632J9V2T13FQ",
+      "service": "admin-task",
+      "createdAt": "2026-03-23 17:10:30",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMDTT6YD7YN1MQ3TJJNCCX9N",
+      "service": "admin-task",
+      "createdAt": "2026-03-23 17:10:22",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMDQA72V3ZCDEDGBHBFP8NR8",
+      "service": "yb-master",
+      "createdAt": "2026-03-23 16:09:13",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMDQA72FEEAGXKYEEJR883FA",
+      "service": "fsoc-cloud-svc",
+      "createdAt": "2026-03-23 16:09:13",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMDQA722WE41H0NF08KDXCVE",
+      "service": "cluster-autoscaler",
+      "createdAt": "2026-03-23 16:09:13",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMCXEN1R2GJRZ3GTHC65JKZ2",
+      "service": "cockroachdb",
+      "createdAt": "2026-03-23 08:37:15",
+      "scores": {
+        "rootCause": 20,
+        "evidence": 20,
+        "trigger": 10,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 90,
+        "pass": true
+      }
+    },
+    {
+      "id": "inv_01KMCH0A33Y2NFP31N2HHK20QE",
+      "service": "admin-ui",
+      "createdAt": "2026-03-23 04:59:42",
+      "scores": {
+        "rootCause": 20,
+        "evidence": 20,
+        "trigger": 20,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 100,
+        "pass": true
+      }
+    },
+    {
+      "id": "inv_01KMCH08C15H3SA0T5BMQ88R69",
+      "service": "fsoc-global-dns-master",
+      "createdAt": "2026-03-23 04:59:40",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMCH08BC3JVE87JGDQ1WB781",
+      "service": "yb-tserver",
+      "createdAt": "2026-03-23 04:59:40",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMCH08A7HPKGVVEBYEWBVN3W",
+      "service": "yb-master",
+      "createdAt": "2026-03-23 04:59:40",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMCGF7GCPRFAWPKQVQC11NZB",
+      "service": "admin-ui",
+      "createdAt": "2026-03-23 04:50:22",
+      "scores": {
+        "rootCause": 20,
+        "evidence": 20,
+        "trigger": 10,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 90,
+        "pass": true
+      }
+    },
+    {
+      "id": "inv_01KMCDZTBJGX6WC4DN9VAHWK0J",
+      "service": "admin-portal",
+      "createdAt": "2026-03-23 04:07:00",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMCAK69EWXPG1JJG987DTD17",
+      "service": "yb-master",
+      "createdAt": "2026-03-23 03:07:41",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMCAK691Q0743G20KJBWWK2P",
+      "service": "fsoc-cloud-svc",
+      "createdAt": "2026-03-23 03:07:41",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMCAK687NVNYVD1PWJ4RD9S8",
+      "service": "cluster-autoscaler",
+      "createdAt": "2026-03-23 03:07:41",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KMBQ985HYK09Q9AR2N5EQHAJ",
+      "service": "fsoc-global-dns-master",
+      "createdAt": "2026-03-22 21:30:12",
+      "scores": {
+        "rootCause": 20,
+        "evidence": 20,
+        "trigger": 20,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 100,
+        "pass": true
+      }
+    },
+    {
+      "id": "inv_01KM1CS29EJ7MK1Z7SRNNK5FTF",
+      "service": "cache-sa-redis-headless",
+      "createdAt": "2026-03-18 21:14:12",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KM14Y2P3T5KKRMK7BCCWDZ4J",
+      "service": "pgweb",
+      "createdAt": "2026-03-18 18:57:07",
+      "scores": {
+        "rootCause": 20,
+        "evidence": 20,
+        "trigger": 10,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 90,
+        "pass": true
+      }
+    },
+    {
+      "id": "inv_01KKWD2NH69HCY1P6777GYS499",
+      "service": "ingestion-server",
+      "createdAt": "2026-03-16 22:43:14",
+      "scores": {
+        "rootCause": 20,
+        "evidence": 20,
+        "trigger": 10,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 90,
+        "pass": true
+      }
+    },
+    {
+      "id": "inv_01KKWAVDEPV8T8QH3QYD5AHTJ0",
+      "service": "ingestion-server-headless",
+      "createdAt": "2026-03-16 22:04:19",
+      "scores": {
+        "rootCause": 20,
+        "evidence": 20,
+        "trigger": 20,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 100,
+        "pass": true
+      }
+    },
+    {
+      "id": "inv_01KKWAFXJ7FP08NTMHS83Z1TAM",
+      "service": "ingestion-server-headless",
+      "createdAt": "2026-03-16 21:58:03",
+      "scores": {
+        "rootCause": 20,
+        "evidence": 20,
+        "trigger": 20,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 100,
+        "pass": true
+      }
+    },
+    {
+      "id": "inv_01KKWACSFJCQ25YA8VK52PKQ15",
+      "service": "ingestion-server-headless",
+      "createdAt": "2026-03-16 21:56:20",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KKWAAE0H2F0K038E4MMNQND2",
+      "service": "ingestion-server",
+      "createdAt": "2026-03-16 21:55:03",
+      "scores": {
+        "rootCause": 0,
+        "evidence": 0,
+        "trigger": 0,
+        "actionability": 0,
+        "factualGrounding": 0,
+        "total": 0,
+        "pass": false
+      }
+    },
+    {
+      "id": "inv_01KKW9V17H5CK7RCQWXZGJ79T4",
+      "service": "ingestion-server",
+      "createdAt": "2026-03-16 21:46:38",
+      "scores": {
+        "rootCause": 20,
+        "evidence": 20,
+        "trigger": 20,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 100,
+        "pass": true
+      }
+    },
+    {
+      "id": "inv_01KKW9S8KWYFEYW4KGG5985GHG",
+      "service": "ingestion-server",
+      "createdAt": "2026-03-16 21:45:40",
+      "scores": {
+        "rootCause": 20,
+        "evidence": 20,
+        "trigger": 20,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 100,
+        "pass": true
+      }
+    },
+    {
+      "id": "inv_01KKNFEFY8P843PFXR9SQ3JBAH",
+      "service": "ingestion-server",
+      "createdAt": "2026-03-14 06:09:58",
+      "scores": {
+        "rootCause": 20,
+        "evidence": 10,
+        "trigger": 10,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 80,
+        "pass": true
+      }
+    },
+    {
+      "id": "inv_01KKEYT4DMWDCWK4KV93H8APQ4",
+      "service": "ingestion-server",
+      "createdAt": "2026-03-11 17:23:47",
+      "scores": {
+        "rootCause": 20,
+        "evidence": 10,
+        "trigger": 10,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 80,
+        "pass": true
+      }
+    }
+  ]
+}
