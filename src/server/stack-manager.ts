@@ -128,7 +128,14 @@ export class StackManager {
     let serviceRegistry: ServiceRegistryStore;
     if (isDefault) {
       const configPath = process.env["CONFIG_PATH"] ?? "config.yaml";
-      serviceRegistry = new ServiceRegistryStore(getServicesFilePath(configPath));
+      try {
+        serviceRegistry = new ServiceRegistryStore(getServicesFilePath(configPath));
+      } catch {
+        // config.yaml may not exist (CI, tests) — fall back to per-stack path
+        const servicesDir = join("data", row.slug);
+        mkdirSync(servicesDir, { recursive: true });
+        serviceRegistry = new ServiceRegistryStore(join(servicesDir, "services.yaml"));
+      }
     } else {
       const servicesDir = join("data", row.slug);
       mkdirSync(servicesDir, { recursive: true });
