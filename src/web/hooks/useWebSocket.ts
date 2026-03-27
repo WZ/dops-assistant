@@ -3,14 +3,21 @@ import type { ClientMessage, ServerMessage } from "../../types/ws-types.js";
 
 type ConnectionStatus = "connecting" | "connected" | "disconnected";
 
-export function useWebSocket() {
+export function useWebSocket(stackId?: string) {
   const wsRef = useRef<WebSocket | null>(null);
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
   const [messages, setMessages] = useState<ServerMessage[]>([]);
 
   useEffect(() => {
+    // Don't connect until we have a stackId (may be empty string during initial load)
+    if (stackId === undefined || stackId === "") return;
+
+    setStatus("connecting");
+    // Clear messages on reconnect (stack switch)
+    setMessages([]);
+
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const url = `${protocol}//${window.location.host}/ws`;
+    const url = `${protocol}//${window.location.host}/ws?stackId=${encodeURIComponent(stackId)}`;
     const ws = new WebSocket(url);
     wsRef.current = ws;
 
@@ -37,7 +44,7 @@ export function useWebSocket() {
     return () => {
       ws.close();
     };
-  }, []);
+  }, [stackId]);
 
   const send = useCallback((msg: ClientMessage) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {

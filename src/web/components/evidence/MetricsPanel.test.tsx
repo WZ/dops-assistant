@@ -2,7 +2,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { MetricsPanel } from "./MetricsPanel";
+import { StackProvider } from "../../contexts/StackContext";
 import type { TimeSeriesData } from "../MetricChart";
+import type { ReactNode } from "react";
+
+function Wrapper({ children }: { children: ReactNode }) {
+  return <StackProvider activeStackId="test-stack">{children}</StackProvider>;
+}
 
 const mockSeries: TimeSeriesData[] = [
   {
@@ -21,12 +27,12 @@ describe("MetricsPanel", () => {
   });
 
   it("renders charts from timeSeries data", () => {
-    render(<MetricsPanel timeSeries={mockSeries} textObservations={[]} service="test-svc" />);
+    render(<MetricsPanel timeSeries={mockSeries} textObservations={[]} service="test-svc" />, { wrapper: Wrapper });
     expect(screen.getByText(/cpu_usage/)).toBeDefined();
   });
 
   it("shows empty state when no data", () => {
-    render(<MetricsPanel timeSeries={[]} textObservations={[]} service="test-svc" />);
+    render(<MetricsPanel timeSeries={[]} textObservations={[]} service="test-svc" />, { wrapper: Wrapper });
     expect(screen.getByText(/No metric data collected/)).toBeDefined();
   });
 
@@ -37,7 +43,7 @@ describe("MetricsPanel", () => {
     });
     vi.stubGlobal("fetch", mockFetch);
 
-    render(<MetricsPanel timeSeries={[]} textObservations={["CPU usage spiked to 94% at 14:32"]} service="payments-api" />);
+    render(<MetricsPanel timeSeries={[]} textObservations={["CPU usage spiked to 94% at 14:32"]} service="payments-api" />, { wrapper: Wrapper });
 
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalledWith("/api/metrics/extract", expect.objectContaining({ method: "POST" }));
@@ -52,7 +58,7 @@ describe("MetricsPanel", () => {
     vi.stubGlobal("fetch", mockFetch);
 
     const texts = Array.from({ length: 8 }, (_, i) => `Metric observation ${i}`);
-    render(<MetricsPanel timeSeries={[]} textObservations={texts} service="svc" />);
+    render(<MetricsPanel timeSeries={[]} textObservations={texts} service="svc" />, { wrapper: Wrapper });
 
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalledTimes(5);
@@ -66,7 +72,7 @@ describe("MetricsPanel", () => {
     });
     vi.stubGlobal("fetch", mockFetch);
 
-    render(<MetricsPanel timeSeries={[]} textObservations={["CPU spiked"]} service="svc" />);
+    render(<MetricsPanel timeSeries={[]} textObservations={["CPU spiked"]} service="svc" />, { wrapper: Wrapper });
 
     await waitFor(() => {
       expect(screen.getByText("CPU spiked")).toBeDefined();

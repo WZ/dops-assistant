@@ -1,5 +1,6 @@
 import { memo, useEffect, useState } from "react";
 import { timeAgo } from "@/lib/dashboard-utils";
+import { useStackContext } from "../contexts/StackContext";
 
 function DotTimeline({ data }: { data: Array<{ status: string }> }) {
   if (data.length < 3) return <span className="text-[9px] font-mono text-muted-foreground/40">&mdash;</span>;
@@ -67,11 +68,12 @@ export const ServiceCard = memo(function ServiceCard({
   onHide, onUnhide, isHidden, suggestHide, hideReason,
   selectionMode, selected, onToggleSelect,
 }: ServiceCardProps) {
+  const { stackFetch } = useStackContext();
   const [historyData, setHistoryData] = useState<Array<{ status: string }>>([]);
 
   // Fetch sparkline history once on mount
   useEffect(() => {
-    fetch(`/api/services/health/history?service=${encodeURIComponent(name)}&hours=24`)
+    stackFetch(`/api/services/health/history?service=${encodeURIComponent(name)}&hours=24`)
       .then(r => r.ok ? r.json() : [])
       .then(data => {
         if (Array.isArray(data)) setHistoryData(data);

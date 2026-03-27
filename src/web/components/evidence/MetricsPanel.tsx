@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { MetricChart, type TimeSeriesData } from "../MetricChart";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useStackContext } from "../../contexts/StackContext";
 
 export interface StructuredMetricObs {
   metric: string;
@@ -28,6 +29,7 @@ interface ExtractionResult {
 const MAX_EXTRACTIONS = 5;
 
 export function MetricsPanel({ timeSeries, textObservations, structuredObservations, service, timeRange }: MetricsPanelProps) {
+  const { stackFetch } = useStackContext();
   const [extractions, setExtractions] = useState<ExtractionResult[]>([]);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -43,7 +45,7 @@ export function MetricsPanel({ timeSeries, textObservations, structuredObservati
     setExtractions(toExtract.map(text => ({ text, series: [], loading: true, failed: false })));
 
     toExtract.forEach((text, idx) => {
-      fetch("/api/metrics/extract", {
+      stackFetch("/api/metrics/extract", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text, service, timeRange }),

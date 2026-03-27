@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { MetricChart, type TimeSeriesData } from "./MetricChart";
+import { useStackContext } from "../contexts/StackContext";
 
 interface MetricSeries {
   name: string;
@@ -43,6 +44,7 @@ function seriesToChartData(series: MetricSeries): TimeSeriesData {
 }
 
 export function ServiceMetrics({ serviceName }: ServiceMetricsProps) {
+  const { stackFetch } = useStackContext();
   const [range, setRange] = useState<TimeRange>("24h");
   const [metrics, setMetrics] = useState<MetricSeries[]>([]);
   const [loading, setLoading] = useState(true);
@@ -56,7 +58,7 @@ export function ServiceMetrics({ serviceName }: ServiceMetricsProps) {
 
     const controller = new AbortController();
 
-    fetch(`/api/services/${encodeURIComponent(serviceName)}/metrics?range=${range}`, {
+    stackFetch(`/api/services/${encodeURIComponent(serviceName)}/metrics?range=${range}`, {
       signal: controller.signal,
     })
       .then((res) => {

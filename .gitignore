@@ -19,6 +19,9 @@ logs/
 # Local incident history
 .dops/
 
+# Per-stack data (services.yaml, history)
+data/
+
 # Design/plan docs (internal)
 docs/plans/
 docs/superpowers/

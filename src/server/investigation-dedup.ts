@@ -46,10 +46,11 @@ export class InvestigationDedup {
    *  - The service was investigated within the dedup window, OR
    *  - The active investigation count has reached maxConcurrent
    */
-  shouldInvestigate(service: string): boolean {
+  shouldInvestigate(stackId: string, service: string): boolean {
     this.cleanExpiredEntries();
 
-    const lastRun = this.recentInvestigations.get(service);
+    const key = `${stackId}:${service}`;
+    const lastRun = this.recentInvestigations.get(key);
     if (lastRun !== undefined && Date.now() - lastRun < this.dedupWindowMs) {
       return false;
     }
@@ -66,8 +67,9 @@ export class InvestigationDedup {
    * Records the timestamp and increments the active count.
    * Call this immediately before starting the investigation.
    */
-  markStarted(service: string): void {
-    this.recentInvestigations.set(service, Date.now());
+  markStarted(stackId: string, service: string): void {
+    const key = `${stackId}:${service}`;
+    this.recentInvestigations.set(key, Date.now());
     this.activeCount++;
   }
 

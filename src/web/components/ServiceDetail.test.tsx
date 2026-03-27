@@ -2,6 +2,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
 import { ServiceDetail } from "./ServiceDetail.js";
+import { StackProvider } from "../contexts/StackContext";
+import type { ReactNode } from "react";
+
+function Wrapper({ children }: { children: ReactNode }) {
+  return <StackProvider activeStackId="test-stack">{children}</StackProvider>;
+}
 
 // Mock child components that have heavy dependencies (ReactFlow, etc.)
 vi.mock("./ServiceDependencyGraph", () => ({
@@ -50,7 +56,7 @@ function renderServiceDetail(overrides?: Partial<React.ComponentProps<typeof Ser
     onViewInvestigation: vi.fn(),
     onViewService: vi.fn(),
   };
-  return render(<ServiceDetail {...defaultProps} {...overrides} />);
+  return render(<ServiceDetail {...defaultProps} {...overrides} />, { wrapper: Wrapper });
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────

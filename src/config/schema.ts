@@ -39,6 +39,10 @@ export const ProviderSchema = z.object({
   webUrl: z.string().url().optional(),
 });
 
+export const StackConfigSchema = z.object({
+  providers: z.array(ProviderSchema),
+});
+
 export type ProviderRole = z.infer<typeof ProviderRoleSchema>;
 export type ProviderConfig = z.infer<typeof ProviderSchema>;
 

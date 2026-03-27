@@ -1,5 +1,6 @@
 import type { ServiceConfig } from "../config/schema.js";
 import type { ValidatedServiceConfig } from "./discovery-types.js";
+import type { StackSummary } from "./stack-types.js";
 
 // Client to Server
 export type ClientMessage =
@@ -59,4 +60,7 @@ export type ServerMessage =
   | { type: "discover:resolved" }
   | { type: "discover:phase_usage"; phase: string; inputTokens: number; outputTokens: number; durationMs: number }
   | { type: "discover:total_usage"; inputTokens: number; outputTokens: number; durationMs: number }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | { type: "stack:list"; stacks: StackSummary[] }
+  | { type: "stack:health"; stacks: Array<{ id: string; slug: string; healthSummary: { healthy: number; degraded: number; down: number; unknown: number; total: number } }> }
+  | { type: "stack:switched"; stackId: string };

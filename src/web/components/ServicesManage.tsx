@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { YamlEditor } from "./YamlEditor.js";
+import { useStackContext } from "../contexts/StackContext";
 import type { ServiceConfig } from "../../config/schema.js";
 
 interface ServicesManageProps {
@@ -19,6 +20,7 @@ interface ServicesManageProps {
 }
 
 export function ServicesManage({ onRunDiscovery, onViewHistory, onBack }: ServicesManageProps) {
+  const { stackFetch } = useStackContext();
   const [services, setServices] = useState<ServiceConfig[]>([]);
   const [yamlValue, setYamlValue] = useState("");
   const [dirty, setDirty] = useState(false);
@@ -26,7 +28,7 @@ export function ServicesManage({ onRunDiscovery, onViewHistory, onBack }: Servic
   const [confirmDiscovery, setConfirmDiscovery] = useState(false);
 
   useEffect(() => {
-    fetch("/api/services")
+    stackFetch("/api/services")
       .then((r) => r.json())
       .then((data: ServiceConfig[]) => {
         setServices(data);
@@ -46,7 +48,7 @@ export function ServicesManage({ onRunDiscovery, onViewHistory, onBack }: Servic
       const parsed = parse(yamlValue);
       if (!Array.isArray(parsed)) throw new Error("Must be an array");
 
-      const res = await fetch("/api/services", {
+      const res = await stackFetch("/api/services", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(parsed),

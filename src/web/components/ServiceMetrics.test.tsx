@@ -2,6 +2,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, cleanup } from "@testing-library/react";
 import { ServiceMetrics } from "./ServiceMetrics";
+import { StackProvider } from "../contexts/StackContext";
+import type { ReactNode } from "react";
+
+function Wrapper({ children }: { children: ReactNode }) {
+  return <StackProvider activeStackId="test-stack">{children}</StackProvider>;
+}
 
 // Mock MetricChart to avoid SVG rendering complexity in jsdom
 vi.mock("./MetricChart", () => ({
@@ -57,7 +63,7 @@ describe("ServiceMetrics", () => {
   it("shows loading shimmer initially", () => {
     // fetch never resolves — stays loading
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
-    render(<ServiceMetrics serviceName={TEST_SERVICE} />);
+    render(<ServiceMetrics serviceName={TEST_SERVICE} />, { wrapper: Wrapper });
     // Loading state renders 4 shimmer divs with shimmer-skeleton
     const shimmers = document.querySelectorAll(".shimmer-skeleton");
     expect(shimmers.length).toBe(4);
@@ -69,7 +75,7 @@ describe("ServiceMetrics", () => {
       status: 500,
     });
 
-    render(<ServiceMetrics serviceName={TEST_SERVICE} />);
+    render(<ServiceMetrics serviceName={TEST_SERVICE} />, { wrapper: Wrapper });
 
     await waitFor(() => {
       expect(screen.getByText(/Prometheus connection unavailable/)).toBeTruthy();
@@ -82,7 +88,7 @@ describe("ServiceMetrics", () => {
       json: () => Promise.resolve({ metrics: SAMPLE_METRICS, cached: false }),
     });
 
-    render(<ServiceMetrics serviceName={TEST_SERVICE} />);
+    render(<ServiceMetrics serviceName={TEST_SERVICE} />, { wrapper: Wrapper });
 
     await waitFor(() => {
       // Both the label and the mocked chart show the name — use getAllByText
@@ -97,7 +103,7 @@ describe("ServiceMetrics", () => {
 
   it("time picker buttons exist (1h, 6h, 24h, 7d)", () => {
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
-    render(<ServiceMetrics serviceName={TEST_SERVICE} />);
+    render(<ServiceMetrics serviceName={TEST_SERVICE} />, { wrapper: Wrapper });
 
     expect(screen.getByText("1h")).toBeTruthy();
     expect(screen.getByText("6h")).toBeTruthy();
@@ -107,7 +113,7 @@ describe("ServiceMetrics", () => {
 
   it("24h is default active time range", () => {
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
-    render(<ServiceMetrics serviceName={TEST_SERVICE} />);
+    render(<ServiceMetrics serviceName={TEST_SERVICE} />, { wrapper: Wrapper });
 
     const btn24h = screen.getByText("24h");
     // Active button has border-primary/60 class
