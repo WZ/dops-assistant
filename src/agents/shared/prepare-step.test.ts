@@ -120,6 +120,27 @@ describe("createQuirkPrepareStep", () => {
       expect((result as { toolChoice: string }).toolChoice).toBe("auto");
     });
 
+    it("midpoint nudge includes messages array with nudge text", () => {
+      const prepareStep = createQuirkPrepareStep({ maxSteps: 10 });
+      const midpoint = Math.floor(10 * 0.65); // step 6
+      const result = prepareStep(makeArgs(midpoint));
+      expect(result).toBeDefined();
+      expect(result).toHaveProperty("messages");
+      expect((result as any).messages).toBeInstanceOf(Array);
+      expect((result as any).messages.length).toBeGreaterThan(0);
+      expect((result as any).messages[0]).toHaveProperty("role", "user");
+      expect((result as any).messages[0].content).toContain("synthesizing");
+    });
+
+    it("midpoint nudge uses custom message when provided", () => {
+      const customMsg = "Wrap it up now.";
+      const prepareStep = createQuirkPrepareStep({ maxSteps: 10, nudgeMessage: customMsg });
+      const midpoint = Math.floor(10 * 0.65); // step 6
+      const result = prepareStep(makeArgs(midpoint));
+      expect(result).toBeDefined();
+      expect((result as any).messages[0].content).toBe(customMsg);
+    });
+
     it("wind-down takes priority over midpoint when they overlap", () => {
       // With maxSteps=3: midpoint=floor(1.8)=1, windDownStart=1
       // Step 1 is both midpoint and wind-down — wind-down should win

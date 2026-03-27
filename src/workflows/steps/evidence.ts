@@ -116,7 +116,7 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
                   const nestedContent = payload.result?.content?.[0]?.text;
                   const rawResult = nestedContent ?? payload.result ?? tr.result ?? tr.output ?? "";
                   const resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
-                  const truncated = resultStr.length > 2000 ? resultStr.slice(0, 2000) + "..." : resultStr;
+                  const truncated = resultStr.length > 8000 ? resultStr.slice(0, 8000) + "..." : resultStr;
                   toolData.push(`Tool: ${toolName}\nResult: ${truncated}`);
                   // Tool call already emitted by wrapToolsWithCallbacks — don't double-emit
                 }

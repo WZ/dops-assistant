@@ -94,6 +94,23 @@ export function buildSynthesisStep(config: WorkflowConfig) {
         );
       }
       if (timeline) promptParts.push(`\nTimeline:\n${timeline}`);
+
+      // Evidence quality feedback — tell synthesis what's thin
+      const metricsCount = (metricsFindings.observations?.length ?? 0);
+      const logsCount = (logsFindings.observations?.length ?? 0);
+      const qualityWarnings: string[] = [];
+      if (metricsCount < 2) qualityWarnings.push(`WARNING: Only ${metricsCount} metric observations provided. Extract maximum detail from what exists.`);
+      if (logsCount > 0) {
+        const sampleLineCount = (logsFindings.observations as any[])
+          .reduce((sum: number, o: any) => sum + (o.sampleLines?.length ?? 0), 0);
+        if (sampleLineCount < 3) {
+          qualityWarnings.push(`WARNING: Only ${sampleLineCount} log sample lines provided. Copy ALL available sampleLines into evidence.logs verbatim.`);
+        }
+      }
+      if (qualityWarnings.length > 0) {
+        promptParts.push(`\n⚠️ EVIDENCE QUALITY WARNINGS:\n${qualityWarnings.join("\n")}\nDo NOT leave evidence arrays empty when observations exist above. Extract and cite every piece of evidence available.`);
+      }
+
       const prompt = promptParts.filter(Boolean).join("\n");
 
       let agentResult: { text: string; usage?: any } = { text: "" };
