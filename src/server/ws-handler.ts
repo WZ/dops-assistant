@@ -8,6 +8,7 @@ import type { IntentRouter } from "../agents/intent.js";
 import { resolveServiceFromHistory } from "../agents/intent.js";
 import type { ServiceConfig, DiscoveryConfig, Config } from "../config/schema.js";
 import type { ClientMessage, ServerMessage, ChartSeries } from "../types/ws-types.js";
+import { DEFAULT_STACK_SLUG } from "../types/stack-types.js";
 import type { ValidatedServiceConfig } from "../types/discovery-types.js";
 import type { SkillStore } from "../skills/store.js";
 import { InvestigationRunner, friendlyError } from "./investigation-runner.js";
@@ -310,7 +311,9 @@ async function handleDeepInvestigate(
     ? [{ role: "system" as const, content: systemContext }]
     : history;
 
-  const services = [...deps.config.services, ...ctx.serviceRegistry.load().filter(s => !deps.config.services.some(c => c.name === s.name))];
+  const services = ctx.slug === DEFAULT_STACK_SLUG
+    ? [...deps.config.services, ...ctx.serviceRegistry.load().filter(s => !deps.config.services.some(c => c.name === s.name))]
+    : ctx.serviceRegistry.load();
 
   const chatTokens = { inputTokens: 0, outputTokens: 0 };
   const chatStartMs = Date.now();
@@ -485,7 +488,9 @@ export async function handleClientMessage(
   const { chatAgent: agent, investigationAgent } = agents;
 
   // Build services list from config + registry for this stack
-  const services = [...deps.config.services, ...ctx.serviceRegistry.load().filter(s => !deps.config.services.some(c => c.name === s.name))];
+  const services = ctx.slug === DEFAULT_STACK_SLUG
+    ? [...deps.config.services, ...ctx.serviceRegistry.load().filter(s => !deps.config.services.some(c => c.name === s.name))]
+    : ctx.serviceRegistry.load();
 
   // Filter hidden services from all resolution paths
   const hidden = db.getHiddenServices(stackId);

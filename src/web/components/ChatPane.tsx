@@ -212,7 +212,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
         setHistoryLoading(false);
       })
       .catch(() => { setHistoryLoading(false); });
-  }, []);
+  }, [stackFetch]);
 
   // Force scroll to bottom after initial history load
   useEffect(() => {
@@ -420,7 +420,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
         setChatMessages((prev) => prev.filter((m) => m.id !== msgId));
       }
     } catch { /* ignore */ }
-  }, []);
+  }, [stackFetch]);
 
   const handleClearAll = useCallback(async () => {
     if (!window.confirm("Clear all console messages? This cannot be undone.")) return;
@@ -430,7 +430,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
         setChatMessages([]);
       }
     } catch { /* ignore */ }
-  }, []);
+  }, [stackFetch]);
 
   // Compute unread marker index (insert before first message newer than lastVisitedAt)
   const unreadMarkerIndex = (() => {

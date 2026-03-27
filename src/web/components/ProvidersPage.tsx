@@ -41,7 +41,7 @@ export function ProvidersPage({ onRunDiscovery }: ProvidersPageProps) {
       setProviders(data);
     } catch { /* silently fail */ }
     setLoading(false);
-  }, []);
+  }, [stackFetch]);
 
   // Initial fetch + periodic polling every 30s
   useEffect(() => {

@@ -109,13 +109,13 @@ export function Dashboard({ wsMessages, onInvestigationClick, onViewService, onV
   // Initial data fetch
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [stackFetch]);
 
   // Auto-refresh every 60 seconds
   useEffect(() => {
     const refreshTick = setInterval(() => fetchData(), 60_000);
     return () => clearInterval(refreshTick);
-  }, []);
+  }, [stackFetch]);
 
   // WS-driven re-fetch and active investigation tracking
   useEffect(() => {

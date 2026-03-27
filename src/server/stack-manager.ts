@@ -24,6 +24,7 @@ import pino from "pino";
 import { ulid } from "ulid";
 
 import type { Config } from "../config/schema.js";
+import { getServicesFilePath } from "../config/loader.js";
 import { ProviderRegistry } from "../mcp/provider-registry.js";
 import { ConversationMemory } from "../memory/conversation.js";
 import { ServiceRegistryStore } from "../services/registry.js";
@@ -122,10 +123,17 @@ export class StackManager {
       ttlMinutes: memOpts.ttlMinutes,
     });
 
-    // ServiceRegistryStore: per-stack path data/{slug}/services.yaml
-    const servicesDir = join("data", row.slug);
-    mkdirSync(servicesDir, { recursive: true });
-    const serviceRegistry = new ServiceRegistryStore(join(servicesDir, "services.yaml"));
+    // ServiceRegistryStore: default stack uses config-relative services.yaml,
+    // non-default stacks use per-stack path data/{slug}/services.yaml
+    let serviceRegistry: ServiceRegistryStore;
+    if (isDefault) {
+      const configPath = process.env["CONFIG_PATH"] ?? "config.yaml";
+      serviceRegistry = new ServiceRegistryStore(getServicesFilePath(configPath));
+    } else {
+      const servicesDir = join("data", row.slug);
+      mkdirSync(servicesDir, { recursive: true });
+      serviceRegistry = new ServiceRegistryStore(join(servicesDir, "services.yaml"));
+    }
 
     // ServiceHealthPoller: per-stack with staggered start offset (0-30s)
     const healthPoller = new ServiceHealthPoller({

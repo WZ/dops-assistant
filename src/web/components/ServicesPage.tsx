@@ -137,7 +137,7 @@ export function ServicesPage({
       setFetchError(message);
     }
     setLoading(false);
-  }, []);
+  }, [stackFetch]);
 
   // Initial data fetch
   useEffect(() => {
@@ -308,7 +308,7 @@ export function ServicesPage({
       setHiddenServices(prev => { const next = new Map(prev); next.delete(name); return next; });
       setToasts(t => [...t.slice(-9), { id: `unhide_${name}_${Date.now()}`, service: name, status: "unhidden" as const, timestamp: Date.now() }]);
     } catch { /* toast already shown for the action */ }
-  }, []);
+  }, [stackFetch]);
 
   const toggleServiceSelection = useCallback((name: string) => {
     setSelectedServices(prev => {
@@ -316,7 +316,7 @@ export function ServicesPage({
       if (next.has(name)) next.delete(name); else next.add(name);
       return next;
     });
-  }, []);
+  }, [stackFetch]);
 
   const handleToastDismiss = (id: string) => {
     setToasts(prev => prev.filter(t => t.id !== id));

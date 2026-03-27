@@ -64,7 +64,7 @@ export function CreateStackDialog({ open, onOpenChange, onCreated }: CreateStack
           body: JSON.stringify({
             name: name.trim(),
             slug: slug || slugify(name),
-            config: JSON.stringify({ providers: [] }),
+            config: { providers: [] },
           }),
         });
 

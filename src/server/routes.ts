@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import type { Database } from "./db.js";
 import type { ServiceConfig, Config } from "../config/schema.js";
 import { ProviderSchema, StackConfigSchema } from "../config/schema.js";
+import { DEFAULT_STACK_SLUG } from "../types/stack-types.js";
 import { createMcpProvider, listProviderTools } from "../mcp/provider.js";
 import type { SkillStore } from "../skills/store.js";
 import type { StackManager } from "./stack-manager.js";
@@ -38,6 +39,12 @@ export interface RouteDeps {
 /** Get all services for a stack by merging config + registry */
 function getAllServices(config: Config, req: Request): ServiceConfig[] {
   const registryStore = req.stackContext.serviceRegistry;
+  const isDefault = req.stackContext.slug === DEFAULT_STACK_SLUG;
+  if (!isDefault) {
+    // Non-default stacks only show their own discovered/managed services
+    return registryStore.load();
+  }
+  // Default stack merges config.yaml services + registry (config takes precedence)
   const configNames = new Set(config.services.map(s => s.name));
   const registryServices = registryStore.load().filter(s => !configNames.has(s.name));
   return [...config.services, ...registryServices];
