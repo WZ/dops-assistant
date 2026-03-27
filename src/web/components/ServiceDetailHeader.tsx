@@ -47,8 +47,8 @@ function healthLabel(status?: string): string {
 function buildGrafanaExploreUrl(baseUrl: string, query: string): string {
   const stripped = baseUrl.replace(/\/+$/, "");
   const left = JSON.stringify({
-    datasource: "",
-    queries: [{ refId: "A", expr: query }],
+    datasource: "Prometheus",
+    queries: [{ refId: "A", expr: query, datasource: { type: "prometheus", uid: "" } }],
     range: { from: "now-1h", to: "now" },
   });
   return `${stripped}/explore?orgId=1&left=${encodeURIComponent(left)}`;
