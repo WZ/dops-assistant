@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { stringify, parse } from "yaml";
 import { Button } from "@/components/ui/button";
 import { YamlEditor } from "./YamlEditor.js";
+import { useStackContext } from "../contexts/StackContext";
 import type { ValidatedServiceConfig } from "../../types/discovery-types.js";
 import type { ServiceConfig } from "../../config/schema.js";
 
@@ -14,6 +15,7 @@ interface DiscoveryReviewProps {
 }
 
 export function DiscoveryReview({ services: initialServices, onAccept, onReject, onRerun, onBack }: DiscoveryReviewProps) {
+  const { stackFetch } = useStackContext();
   const [services, setServices] = useState(initialServices);
   const [showEditor, setShowEditor] = useState(false);
   const [yamlValue, setYamlValue] = useState(() => {
@@ -24,7 +26,7 @@ export function DiscoveryReview({ services: initialServices, onAccept, onReject,
   const [currentServices, setCurrentServices] = useState<ServiceConfig[]>([]);
 
   useEffect(() => {
-    fetch("/api/services")
+    stackFetch("/api/services")
       .then(r => r.ok ? r.json() : [])
       .then(data => { if (Array.isArray(data)) setCurrentServices(data); })
       .catch(() => {});

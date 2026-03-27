@@ -242,8 +242,12 @@ async function main(): Promise<void> {
 
   let rows: Array<{ id: string; service: string; report: string | null; created_at: string }>;
   try {
+    // Find the default stack to read its investigations
+    const { DEFAULT_STACK_SLUG } = await import("../types/stack-types.js");
+    const defaultStack = db.getStackBySlug(DEFAULT_STACK_SLUG);
+    const stackId = defaultStack?.id ?? "";
     rows = db
-      .listInvestigations(10_000, 0)
+      .listInvestigations(stackId, 10_000, 0)
       .filter((r) => r.status === "complete" && r.report !== null) as typeof rows;
   } finally {
     db.close();

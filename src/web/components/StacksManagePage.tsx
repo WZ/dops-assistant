@@ -1,0 +1,203 @@
+import { useState } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Loader2, Trash2 } from "lucide-react";
+import { CreateStackDialog } from "./CreateStackDialog";
+import type { StackSummary } from "../../types/stack-types.js";
+
+interface StacksManagePageProps {
+  stacks: StackSummary[];
+  activeStackId: string;
+  onSwitchStack: (stackId: string) => void;
+  onRefetch: () => Promise<void>;
+}
+
+function healthDotColor(stack: StackSummary): string {
+  const h = stack.healthSummary;
+  if (!h || h.total === 0) return "bg-muted-foreground/30";
+  if (h.down > 0) return "bg-destructive";
+  if (h.degraded > 0) return "bg-warning";
+  if (h.healthy === h.total) return "bg-success";
+  return "bg-muted-foreground/30";
+}
+
+export function StacksManagePage({ stacks, activeStackId, onSwitchStack, onRefetch }: StacksManagePageProps) {
+  const [createOpen, setCreateOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<StackSummary | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const res = await fetch(`/api/stacks/${deleteTarget.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        throw new Error(data.error || `Failed to delete stack (${res.status})`);
+      }
+      // If we deleted the active stack, switch to default
+      if (deleteTarget.id === activeStackId) {
+        const defaultStack = stacks.find((s) => s.isDefault && s.id !== deleteTarget.id);
+        if (defaultStack) onSwitchStack(defaultStack.id);
+      }
+      await onRefetch();
+      setDeleteTarget(null);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Failed to delete");
+    }
+    setDeleting(false);
+  };
+
+  // Empty/single-stack state
+  if (stacks.length <= 1) {
+    return (
+      <div className="py-12 text-center">
+        <p className="font-body text-[13px] text-muted-foreground/70">
+          You're running a single stack. Add stacks to manage multiple clusters.
+        </p>
+        <Button
+          onClick={() => setCreateOpen(true)}
+          className="mt-4 font-mono text-xs font-medium min-h-[44px]"
+        >
+          Create Stack
+        </Button>
+        <CreateStackDialog
+          open={createOpen}
+          onOpenChange={setCreateOpen}
+          onCreated={async (newStack) => {
+            await onRefetch();
+            onSwitchStack(newStack.id);
+            setCreateOpen(false);
+          }}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {/* Stack cards */}
+      <div className="space-y-2">
+        {stacks.map((stack, i) => (
+          <div
+            key={stack.id}
+            className={`flex items-center justify-between px-4 py-3 rounded-lg border border-border/40 bg-card/50 animate-fade-up delay-${Math.min(i + 1, 8)} ${
+              stack.id === activeStackId ? "ring-1 ring-primary/20" : ""
+            }`}
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <span className={`w-2 h-2 rounded-full shrink-0 ${healthDotColor(stack)}`} />
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="font-display text-sm font-semibold text-foreground truncate">
+                    {stack.name}
+                  </span>
+                  {stack.isDefault && (
+                    <Badge className="text-[9px] font-mono font-semibold uppercase py-0 h-4 bg-primary/8 text-primary border-0">
+                      DEFAULT
+                    </Badge>
+                  )}
+                  {stack.id === activeStackId && !stack.isDefault && (
+                    <Badge variant="secondary" className="text-[9px] font-mono py-0 h-4">
+                      ACTIVE
+                    </Badge>
+                  )}
+                </div>
+                <span className="font-mono text-[10px] text-muted-foreground/50">{stack.slug}</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <span className="font-mono text-[10px] text-muted-foreground/50">
+                {stack.providerCount} provider{stack.providerCount !== 1 ? "s" : ""}
+              </span>
+              {!stack.isDefault && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setDeleteTarget(stack)}
+                  className="h-7 px-2 text-destructive/60 hover:text-destructive hover:bg-destructive/8"
+                >
+                  <Trash2 size={12} />
+                </Button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Add stack action */}
+      <div className="flex items-center gap-3 mt-3 pl-3">
+        <button
+          onClick={() => setCreateOpen(true)}
+          className="text-[10px] font-mono text-primary/70 hover:text-primary transition-colors py-3 px-2 min-h-[44px]"
+        >
+          + Create Stack
+        </button>
+      </div>
+
+      {/* Create dialog */}
+      <CreateStackDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        onCreated={async (newStack) => {
+          await onRefetch();
+          onSwitchStack(newStack.id);
+          setCreateOpen(false);
+        }}
+      />
+
+      {/* Delete confirmation dialog */}
+      <Dialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) { setDeleteTarget(null); setDeleteError(null); } }}>
+        <DialogContent className="max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle className="font-display text-base font-semibold">
+              Delete {deleteTarget?.name}?
+            </DialogTitle>
+            <DialogDescription className="font-body text-[13px] text-muted-foreground/70">
+              This will permanently delete all investigations, messages, services, and provider
+              configurations for this stack. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          {deleteError && (
+            <p className="font-mono text-[10px] text-destructive">{deleteError}</p>
+          )}
+          <DialogFooter>
+            <Button
+              variant="secondary"
+              onClick={() => { setDeleteTarget(null); setDeleteError(null); }}
+              disabled={deleting}
+              className="font-mono text-xs"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDelete}
+              disabled={deleting}
+              className="font-mono text-xs"
+            >
+              {deleting ? (
+                <>
+                  <Loader2 size={12} className="animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                "Delete Stack"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

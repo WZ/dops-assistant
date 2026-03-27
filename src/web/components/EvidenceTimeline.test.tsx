@@ -2,7 +2,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { EvidenceTimeline } from "./EvidenceTimeline";
+import { StackProvider } from "../contexts/StackContext";
 import type { TimeSeriesData } from "./MetricChart";
+import type { ReactNode } from "react";
+
+function Wrapper({ children }: { children: ReactNode }) {
+  return <StackProvider activeStackId="test-stack">{children}</StackProvider>;
+}
 
 vi.mock("./MetricChart", () => ({
   MetricChart: ({ series }: { series: { metric: string } }) => (
@@ -100,6 +106,7 @@ describe("EvidenceTimeline", () => {
         timeSeries={mockTimeSeries}
         service="payments-api"
       />,
+      { wrapper: Wrapper },
     );
     expect(screen.getByTestId("chart")).toBeDefined();
     expect(screen.getByText("cpu_usage")).toBeDefined();
@@ -112,6 +119,7 @@ describe("EvidenceTimeline", () => {
         timeSeries={[]}
         service="payments-api"
       />,
+      { wrapper: Wrapper },
     );
     expect(screen.queryByTestId("chart")).toBeNull();
   });
@@ -123,6 +131,7 @@ describe("EvidenceTimeline", () => {
         timeSeries={[]}
         service="payments-api"
       />,
+      { wrapper: Wrapper },
     );
     const items = screen.getAllByRole("listitem");
     expect(items.length).toBe(2);
@@ -138,6 +147,7 @@ describe("EvidenceTimeline", () => {
         timeSeries={[]}
         service="payments-api"
       />,
+      { wrapper: Wrapper },
     );
     // Count is shown in tab trigger as "Timeline (2)"
     expect(screen.getByText(/Timeline \(2\)/)).toBeDefined();
@@ -150,6 +160,7 @@ describe("EvidenceTimeline", () => {
         timeSeries={mockTimeSeries}
         service="payments-api"
       />,
+      { wrapper: Wrapper },
     );
     expect(screen.queryByRole("list")).toBeNull();
   });
@@ -161,6 +172,7 @@ describe("EvidenceTimeline", () => {
         timeSeries={[]}
         service="payments-api"
       />,
+      { wrapper: Wrapper },
     );
     expect(screen.getByText(/connection refused to postgres/)).toBeDefined();
   });
@@ -172,6 +184,7 @@ describe("EvidenceTimeline", () => {
         timeSeries={[]}
         service="payments-api"
       />,
+      { wrapper: Wrapper },
     );
     expect(screen.getByText(/OOMKilled/)).toBeDefined();
   });

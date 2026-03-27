@@ -98,6 +98,8 @@ export interface RunOptions {
   service: ServiceConfig;
   message: string;
   investigationId?: string;
+  /** Stack ID for multi-stack data isolation */
+  stackId?: string;
   /** Investigation depth: "quick" (metrics only), "standard" (metrics+logs), "full" (all phases) */
   template?: InvestigationTemplate;
   callbacks?: InvestigationCallbacks;
@@ -121,11 +123,11 @@ export class InvestigationRunner {
    * agent with phase/tool/token tracking, persists results, and emits callbacks.
    */
   async run(opts: RunOptions): Promise<RcaReport> {
-    const { service, message, callbacks, template } = opts;
+    const { service, message, callbacks, template, stackId } = opts;
     const invId = opts.investigationId ?? `inv_${ulid()}`;
 
     // 1. Create DB record
-    this.db.createInvestigation({ id: invId, service: service.name, query: message, status: "running" });
+    this.db.createInvestigation(stackId ?? "", { id: invId, service: service.name, query: message, status: "running" });
 
     // 2. Search for matching skills
     let skillContext: string | undefined;
