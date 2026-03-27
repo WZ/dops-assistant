@@ -1,4 +1,5 @@
 import BetterSqlite3 from "better-sqlite3";
+import type { StackRow } from "../types/stack-types.js";
 
 export interface InvestigationRow {
   id: string;
@@ -63,6 +64,7 @@ export class Database {
     this.db.pragma("journal_mode = WAL");
     this.migrate();
     this.migrateServiceMetadata();
+    this.migrateStacks();
   }
 
   private migrate(): void {
@@ -130,8 +132,149 @@ export class Database {
     this.migrateHiddenServices();
   }
 
-  createInvestigation(inv: { id: string; service: string; query: string; status: string }): void {
-    this.db.prepare("INSERT INTO investigations (id, service, query, status) VALUES (?, ?, ?, ?)").run(inv.id, inv.service, inv.query, inv.status);
+  // ── Stack migration ──────────────────────────────────────────────────────
+
+  private migrateStacks(): void {
+    // Create stacks table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS stacks (
+        id         TEXT PRIMARY KEY,
+        name       TEXT NOT NULL,
+        slug       TEXT NOT NULL UNIQUE,
+        config     TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+
+    // Add stack_id column to tables that need it
+    try { this.db.exec("ALTER TABLE investigations ADD COLUMN stack_id TEXT"); } catch {}
+    try { this.db.exec("ALTER TABLE messages ADD COLUMN stack_id TEXT"); } catch {}
+    try { this.db.exec("ALTER TABLE service_health_checks ADD COLUMN stack_id TEXT"); } catch {}
+    try { this.db.exec("ALTER TABLE investigation_feedback ADD COLUMN stack_id TEXT"); } catch {}
+    try { this.db.exec("ALTER TABLE incident_patterns ADD COLUMN stack_id TEXT"); } catch {}
+
+    // Migrate hidden_services to composite PK (stack_id, service)
+    // Check if migration is needed by looking for the stack_id column
+    const hiddenInfo = this.db.prepare("PRAGMA table_info(hidden_services)").all() as Array<{ name: string }>;
+    const hiddenHasStackId = hiddenInfo.some(col => col.name === "stack_id");
+    if (!hiddenHasStackId) {
+      this.db.exec(`
+        DROP TABLE IF EXISTS hidden_services_new;
+        CREATE TABLE IF NOT EXISTS hidden_services_new (
+          stack_id  TEXT NOT NULL,
+          service   TEXT NOT NULL,
+          reason    TEXT,
+          hidden_at TEXT NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY (stack_id, service)
+        );
+        INSERT OR IGNORE INTO hidden_services_new (stack_id, service, reason, hidden_at)
+          SELECT '' as stack_id, service, reason, hidden_at FROM hidden_services;
+        DROP TABLE IF EXISTS hidden_services;
+        ALTER TABLE hidden_services_new RENAME TO hidden_services;
+      `);
+    }
+
+    // Migrate service_metadata to composite PK (stack_id, service)
+    const metaInfo = this.db.prepare("PRAGMA table_info(service_metadata)").all() as Array<{ name: string }>;
+    const metaHasStackId = metaInfo.some(col => col.name === "stack_id");
+    if (!metaHasStackId) {
+      this.db.exec(`
+        DROP TABLE IF EXISTS service_metadata_new;
+        CREATE TABLE IF NOT EXISTS service_metadata_new (
+          stack_id   TEXT NOT NULL,
+          service    TEXT NOT NULL,
+          alias      TEXT,
+          tags       TEXT,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY (stack_id, service)
+        );
+        INSERT OR IGNORE INTO service_metadata_new (stack_id, service, alias, tags, updated_at)
+          SELECT '' as stack_id, service, alias, tags, updated_at FROM service_metadata;
+        DROP TABLE IF EXISTS service_metadata;
+        ALTER TABLE service_metadata_new RENAME TO service_metadata;
+      `);
+    }
+
+    // Indexes
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_inv_stack ON investigations (stack_id);
+      CREATE INDEX IF NOT EXISTS idx_msg_stack ON messages (stack_id);
+      CREATE INDEX IF NOT EXISTS idx_shc_stack ON service_health_checks (stack_id, service, checked_at);
+    `);
+  }
+
+  // ── Backfill default stack ───────────────────────────────────────────────
+
+  backfillDefaultStack(defaultStackId: string): void {
+    this.db.prepare(`UPDATE investigations SET stack_id = ? WHERE stack_id IS NULL OR stack_id = ''`).run(defaultStackId);
+    this.db.prepare(`UPDATE messages SET stack_id = ? WHERE stack_id IS NULL OR stack_id = ''`).run(defaultStackId);
+    this.db.prepare(`UPDATE service_health_checks SET stack_id = ? WHERE stack_id IS NULL OR stack_id = ''`).run(defaultStackId);
+    this.db.prepare(`UPDATE investigation_feedback SET stack_id = ? WHERE stack_id IS NULL OR stack_id = ''`).run(defaultStackId);
+    this.db.prepare(`UPDATE incident_patterns SET stack_id = ? WHERE stack_id IS NULL OR stack_id = ''`).run(defaultStackId);
+    this.db.prepare(`UPDATE hidden_services SET stack_id = ? WHERE stack_id = ''`).run(defaultStackId);
+    this.db.prepare(`UPDATE service_metadata SET stack_id = ? WHERE stack_id = ''`).run(defaultStackId);
+  }
+
+  // ── Stack CRUD ───────────────────────────────────────────────────────────
+
+  createStack(stack: { id: string; name: string; slug: string; config: string }): void {
+    this.db.prepare(
+      "INSERT INTO stacks (id, name, slug, config) VALUES (?, ?, ?, ?)"
+    ).run(stack.id, stack.name, stack.slug, stack.config);
+  }
+
+  getStack(id: string): StackRow | undefined {
+    return this.db.prepare(
+      "SELECT * FROM stacks WHERE id = ?"
+    ).get(id) as StackRow | undefined;
+  }
+
+  getStackBySlug(slug: string): StackRow | undefined {
+    return this.db.prepare(
+      "SELECT * FROM stacks WHERE slug = ?"
+    ).get(slug) as StackRow | undefined;
+  }
+
+  listStacks(): StackRow[] {
+    return this.db.prepare(
+      "SELECT * FROM stacks ORDER BY created_at ASC"
+    ).all() as StackRow[];
+  }
+
+  updateStack(id: string, updates: { name?: string; slug?: string; config?: string }): void {
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+    if (updates.name !== undefined) { sets.push("name = ?"); vals.push(updates.name); }
+    if (updates.slug !== undefined) { sets.push("slug = ?"); vals.push(updates.slug); }
+    if (updates.config !== undefined) { sets.push("config = ?"); vals.push(updates.config); }
+    if (sets.length === 0) return;
+    sets.push("updated_at = datetime('now')");
+    vals.push(id);
+    this.db.prepare(`UPDATE stacks SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
+  }
+
+  deleteStack(id: string): void {
+    const tx = this.db.transaction(() => {
+      this.db.prepare("DELETE FROM service_metadata WHERE stack_id = ?").run(id);
+      this.db.prepare("DELETE FROM hidden_services WHERE stack_id = ?").run(id);
+      this.db.prepare("DELETE FROM incident_patterns WHERE stack_id = ?").run(id);
+      this.db.prepare("DELETE FROM investigation_feedback WHERE stack_id = ?").run(id);
+      this.db.prepare("DELETE FROM service_health_checks WHERE stack_id = ?").run(id);
+      this.db.prepare("DELETE FROM messages WHERE stack_id = ?").run(id);
+      // Delete child tables of investigations before investigations (FK enforcement is OFF)
+      this.db.prepare("DELETE FROM investigation_events WHERE investigation_id IN (SELECT id FROM investigations WHERE stack_id = ?)").run(id);
+      this.db.prepare("DELETE FROM investigation_phases WHERE investigation_id IN (SELECT id FROM investigations WHERE stack_id = ?)").run(id);
+      this.db.prepare("DELETE FROM investigations WHERE stack_id = ?").run(id);
+      this.db.prepare("DELETE FROM stacks WHERE id = ?").run(id);
+    });
+    tx();
+  }
+
+  // ── Investigation CRUD ────────────────────────────────────────────────────
+
+  createInvestigation(stackId: string, inv: { id: string; service: string; query: string; status: string }): void {
+    this.db.prepare("INSERT INTO investigations (id, service, query, status, stack_id) VALUES (?, ?, ?, ?, ?)").run(inv.id, inv.service, inv.query, inv.status, stackId);
   }
 
   updateInvestigation(id: string, updates: { status?: string; report?: string; completed_at?: string; total_input_tokens?: number; total_output_tokens?: number; total_duration_ms?: number }): void {
@@ -149,21 +292,21 @@ export class Database {
     this.db.prepare(`UPDATE investigations SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
   }
 
-  getInvestigation(id: string): InvestigationRow | undefined {
+  getInvestigation(stackId: string, id: string): InvestigationRow | undefined {
     return this.db.prepare(
-      "SELECT *, CASE WHEN json_valid(report) THEN json_extract(report, '$.confidenceScore') ELSE NULL END as confidence_score FROM investigations WHERE id = ?"
-    ).get(id) as InvestigationRow | undefined;
+      "SELECT *, CASE WHEN json_valid(report) THEN json_extract(report, '$.confidenceScore') ELSE NULL END as confidence_score FROM investigations WHERE id = ? AND stack_id = ?"
+    ).get(id, stackId) as InvestigationRow | undefined;
   }
 
-  listInvestigations(limit: number, offset: number, service?: string): InvestigationRow[] {
+  listInvestigations(stackId: string, limit: number, offset: number, service?: string): InvestigationRow[] {
     if (service) {
       return this.db.prepare(
-        "SELECT *, CASE WHEN json_valid(report) THEN json_extract(report, '$.confidenceScore') ELSE NULL END as confidence_score FROM investigations WHERE service = ? ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?"
-      ).all(service, limit, offset) as InvestigationRow[];
+        "SELECT *, CASE WHEN json_valid(report) THEN json_extract(report, '$.confidenceScore') ELSE NULL END as confidence_score FROM investigations WHERE stack_id = ? AND service = ? ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?"
+      ).all(stackId, service, limit, offset) as InvestigationRow[];
     }
     return this.db.prepare(
-      "SELECT *, CASE WHEN json_valid(report) THEN json_extract(report, '$.confidenceScore') ELSE NULL END as confidence_score FROM investigations ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?"
-    ).all(limit, offset) as InvestigationRow[];
+      "SELECT *, CASE WHEN json_valid(report) THEN json_extract(report, '$.confidenceScore') ELSE NULL END as confidence_score FROM investigations WHERE stack_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?"
+    ).all(stackId, limit, offset) as InvestigationRow[];
   }
 
   createPhase(phase: { id: string; investigationId: string; phase: string; status: string }): void {
@@ -194,35 +337,37 @@ export class Database {
     return this.db.prepare("SELECT * FROM investigation_events WHERE investigation_id = ? ORDER BY created_at ASC, rowid ASC").all(investigationId) as EventRow[];
   }
 
-  createMessage(msg: { id: string; role: string; content: string; investigationId?: string; chartData?: string }): void {
-    this.db.prepare("INSERT INTO messages (id, investigation_id, role, content, chart_data) VALUES (?, ?, ?, ?, ?)").run(msg.id, msg.investigationId ?? null, msg.role, msg.content, msg.chartData ?? null);
+  // ── Messages ──────────────────────────────────────────────────────────────
+
+  createMessage(stackId: string, msg: { id: string; role: string; content: string; investigationId?: string; chartData?: string }): void {
+    this.db.prepare("INSERT INTO messages (id, investigation_id, role, content, chart_data, stack_id) VALUES (?, ?, ?, ?, ?, ?)").run(msg.id, msg.investigationId ?? null, msg.role, msg.content, msg.chartData ?? null, stackId);
   }
 
-  listRecentMessages(limit: number): MessageRow[] {
+  listRecentMessages(stackId: string, limit: number): MessageRow[] {
     return this.db.prepare(
-      "SELECT * FROM (SELECT *, rowid AS _rid FROM messages WHERE investigation_id IS NULL ORDER BY created_at DESC, _rid DESC LIMIT ?) ORDER BY created_at ASC, _rid ASC"
-    ).all(limit) as MessageRow[];
+      "SELECT * FROM (SELECT *, rowid AS _rid FROM messages WHERE stack_id = ? AND investigation_id IS NULL ORDER BY created_at DESC, _rid DESC LIMIT ?) ORDER BY created_at ASC, _rid ASC"
+    ).all(stackId, limit) as MessageRow[];
   }
 
-  listMessages(limit: number, investigationId?: string): MessageRow[] {
+  listMessages(stackId: string, limit: number, investigationId?: string): MessageRow[] {
     if (investigationId) {
-      return this.db.prepare("SELECT * FROM messages WHERE investigation_id = ? ORDER BY created_at ASC, rowid ASC LIMIT ?").all(investigationId, limit) as MessageRow[];
+      return this.db.prepare("SELECT * FROM messages WHERE investigation_id = ? AND stack_id = ? ORDER BY created_at ASC, rowid ASC LIMIT ?").all(investigationId, stackId, limit) as MessageRow[];
     }
     // Include console messages (no investigation_id) AND investigation completion summaries
     // (content starts with "**Root Cause:**") which render as RCA cards in the console.
     // Deep Investigation follow-up Q&A is excluded.
     return this.db.prepare(
-      "SELECT * FROM (SELECT *, rowid AS _rid FROM messages WHERE investigation_id IS NULL OR content LIKE '**Root Cause:**%' ORDER BY created_at DESC, _rid DESC LIMIT ?) ORDER BY created_at ASC, _rid ASC"
-    ).all(limit) as MessageRow[];
+      "SELECT * FROM (SELECT *, rowid AS _rid FROM messages WHERE stack_id = ? AND (investigation_id IS NULL OR content LIKE '**Root Cause:**%') ORDER BY created_at DESC, _rid DESC LIMIT ?) ORDER BY created_at ASC, _rid ASC"
+    ).all(stackId, limit) as MessageRow[];
   }
 
-  deleteMessage(id: string): boolean {
-    const result = this.db.prepare("DELETE FROM messages WHERE id = ? AND investigation_id IS NULL").run(id);
+  deleteMessage(stackId: string, id: string): boolean {
+    const result = this.db.prepare("DELETE FROM messages WHERE id = ? AND stack_id = ? AND investigation_id IS NULL").run(id, stackId);
     return result.changes > 0;
   }
 
-  clearConsoleMessages(): number {
-    const result = this.db.prepare("DELETE FROM messages WHERE investigation_id IS NULL").run();
+  clearConsoleMessages(stackId: string): number {
+    const result = this.db.prepare("DELETE FROM messages WHERE stack_id = ? AND investigation_id IS NULL").run(stackId);
     return result.changes;
   }
 
@@ -241,21 +386,21 @@ export class Database {
 
   // ── KPI Stats ──────────────────────────────────────────────────────────
 
-  getKpiStats(): KpiStats {
+  getKpiStats(stackId: string): KpiStats {
     // Investigation counts
     const counts = this.db.prepare(
       `SELECT COUNT(*) as total,
         COALESCE(SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END), 0) as active,
         COALESCE(SUM(CASE WHEN status = 'complete' THEN 1 ELSE 0 END), 0) as complete,
         COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) as failed
-       FROM investigations`
-    ).get() as { total: number; active: number; complete: number; failed: number };
+       FROM investigations WHERE stack_id = ?`
+    ).get(stackId) as { total: number; active: number; complete: number; failed: number };
 
     // Success rate (exclude stale-cleanup: failed with no report)
     const completedCount = counts.complete;
     const realFailedCount = (this.db.prepare(
-      `SELECT COUNT(*) as c FROM investigations WHERE status = 'failed' AND report IS NOT NULL`
-    ).get() as { c: number }).c;
+      `SELECT COUNT(*) as c FROM investigations WHERE stack_id = ? AND status = 'failed' AND report IS NOT NULL`
+    ).get(stackId) as { c: number }).c;
     const successDenom = completedCount + realFailedCount;
     const successRate = successDenom > 0 ? (completedCount / successDenom) * 100 : null;
 
@@ -266,23 +411,23 @@ export class Database {
         COUNT(CASE WHEN json_valid(report) AND json_extract(report, '$.confidenceScore') IS NOT NULL THEN 1 END) as scored,
         COUNT(CASE WHEN json_valid(report) AND json_extract(report, '$.confidenceScore') IS NOT NULL
           AND json_extract(report, '$.confidenceScore') < 0.5 THEN 1 END) as low
-       FROM investigations WHERE status = 'complete'`
-    ).get() as { avg: number | null; scored: number; low: number };
+       FROM investigations WHERE stack_id = ? AND status = 'complete'`
+    ).get(stackId) as { avg: number | null; scored: number; low: number };
 
     // MTTR (7d window + prior 7d for trend)
     const mttr7d = this.db.prepare(
       `SELECT AVG(total_duration_ms) as avg, COUNT(*) as count
        FROM investigations
-       WHERE status = 'complete' AND completed_at >= datetime('now', '-7 days')`
-    ).get() as { avg: number | null; count: number };
+       WHERE stack_id = ? AND status = 'complete' AND completed_at >= datetime('now', '-7 days')`
+    ).get(stackId) as { avg: number | null; count: number };
 
     const mttrPrior = this.db.prepare(
       `SELECT AVG(total_duration_ms) as avg
        FROM investigations
-       WHERE status = 'complete'
+       WHERE stack_id = ? AND status = 'complete'
          AND completed_at >= datetime('now', '-14 days')
          AND completed_at < datetime('now', '-7 days')`
-    ).get() as { avg: number | null };
+    ).get(stackId) as { avg: number | null };
 
     let trend: KpiStats["mttr"]["trend"];
     if (mttr7d.avg && mttrPrior.avg) {
@@ -304,8 +449,8 @@ export class Database {
 
   // ── Feedback ─────────────────────────────────────────────────────────────
 
-  createFeedback(fb: { id: string; investigationId: string; rating: "useful" | "not_useful" }): void {
-    this.db.prepare("INSERT INTO investigation_feedback (id, investigation_id, rating) VALUES (?, ?, ?)").run(fb.id, fb.investigationId, fb.rating);
+  createFeedback(stackId: string, fb: { id: string; investigationId: string; rating: "useful" | "not_useful" }): void {
+    this.db.prepare("INSERT INTO investigation_feedback (id, investigation_id, rating, stack_id) VALUES (?, ?, ?, ?)").run(fb.id, fb.investigationId, fb.rating, stackId);
   }
 
   getFeedback(investigationId: string): { rating: string; created_at: string } | undefined {
@@ -314,16 +459,16 @@ export class Database {
 
   // ── Incident patterns ───────────────────────────────────────────────────
 
-  createPattern(p: { id: string; service: string; symptom: string; rootCause: string; severity: string; recommendedActions?: string; sourceInvestigationId?: string }): void {
+  createPattern(stackId: string, p: { id: string; service: string; symptom: string; rootCause: string; severity: string; recommendedActions?: string; sourceInvestigationId?: string }): void {
     this.db.prepare(
-      "INSERT INTO incident_patterns (id, service, symptom, root_cause, severity, recommended_actions, source_investigation_id) VALUES (?, ?, ?, ?, ?, ?, ?)"
-    ).run(p.id, p.service, p.symptom, p.rootCause, p.severity, p.recommendedActions ?? null, p.sourceInvestigationId ?? null);
+      "INSERT INTO incident_patterns (id, service, symptom, root_cause, severity, recommended_actions, source_investigation_id, stack_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    ).run(p.id, p.service, p.symptom, p.rootCause, p.severity, p.recommendedActions ?? null, p.sourceInvestigationId ?? null, stackId);
   }
 
-  findSimilarPatterns(service: string, limit = 5): Array<{ id: string; service: string; symptom: string; root_cause: string; severity: string; recommended_actions: string | null; created_at: string }> {
+  findSimilarPatterns(stackId: string, service: string, limit = 5): Array<{ id: string; service: string; symptom: string; root_cause: string; severity: string; recommended_actions: string | null; created_at: string }> {
     return this.db.prepare(
-      "SELECT id, service, symptom, root_cause, severity, recommended_actions, created_at FROM incident_patterns WHERE service = ? ORDER BY created_at DESC LIMIT ?"
-    ).all(service, limit) as any[];
+      "SELECT id, service, symptom, root_cause, severity, recommended_actions, created_at FROM incident_patterns WHERE stack_id = ? AND service = ? ORDER BY created_at DESC LIMIT ?"
+    ).all(stackId, service, limit) as any[];
   }
 
   // ── Service health checks ────────────────────────────────────────────────
@@ -344,20 +489,20 @@ export class Database {
     `);
   }
 
-  insertServiceHealthCheck(service: string, status: string, checkedAt: string): void {
+  insertServiceHealthCheck(stackId: string, service: string, status: string, checkedAt: string): void {
     this.db.prepare(
-      "INSERT INTO service_health_checks (service, status, checked_at) VALUES (?, ?, ?)"
-    ).run(service, status, checkedAt);
+      "INSERT INTO service_health_checks (service, status, checked_at, stack_id) VALUES (?, ?, ?, ?)"
+    ).run(service, status, checkedAt, stackId);
   }
 
-  getServiceHealthHistory(service: string, hours: number): Array<{ status: string; checked_at: string }> {
+  getServiceHealthHistory(stackId: string, service: string, hours: number): Array<{ status: string; checked_at: string }> {
     // Compute the cutoff timestamp in JS to avoid SQL string concatenation
     const cutoff = new Date(Date.now() - Math.ceil(hours) * 3600 * 1000).toISOString();
     return this.db.prepare(
       `SELECT status, checked_at FROM service_health_checks
-       WHERE service = ? AND checked_at >= ?
+       WHERE stack_id = ? AND service = ? AND checked_at >= ?
        ORDER BY checked_at ASC`
-    ).all(service, cutoff) as Array<{ status: string; checked_at: string }>;
+    ).all(stackId, service, cutoff) as Array<{ status: string; checked_at: string }>;
   }
 
   // ── Hidden services ──────────────────────────────────────────────────────
@@ -372,53 +517,53 @@ export class Database {
     `);
   }
 
-  hideService(service: string, reason?: string): void {
+  hideService(stackId: string, service: string, reason?: string): void {
     this.db.prepare(
-      "INSERT OR REPLACE INTO hidden_services (service, reason) VALUES (?, ?)"
-    ).run(service, reason ?? null);
+      "INSERT OR REPLACE INTO hidden_services (stack_id, service, reason) VALUES (?, ?, ?)"
+    ).run(stackId, service, reason ?? null);
   }
 
-  unhideService(service: string): void {
-    this.db.prepare("DELETE FROM hidden_services WHERE service = ?").run(service);
+  unhideService(stackId: string, service: string): void {
+    this.db.prepare("DELETE FROM hidden_services WHERE stack_id = ? AND service = ?").run(stackId, service);
   }
 
-  getHiddenServices(): Set<string> {
-    const rows = this.db.prepare("SELECT service FROM hidden_services").all() as Array<{ service: string }>;
+  getHiddenServices(stackId: string): Set<string> {
+    const rows = this.db.prepare("SELECT service FROM hidden_services WHERE stack_id = ?").all(stackId) as Array<{ service: string }>;
     return new Set(rows.map(r => r.service));
   }
 
-  getHiddenServiceDetails(): Array<{ service: string; reason: string | null; hidden_at: string }> {
+  getHiddenServiceDetails(stackId: string): Array<{ service: string; reason: string | null; hidden_at: string }> {
     return this.db.prepare(
-      "SELECT service, reason, hidden_at FROM hidden_services ORDER BY hidden_at DESC"
-    ).all() as Array<{ service: string; reason: string | null; hidden_at: string }>;
+      "SELECT service, reason, hidden_at FROM hidden_services WHERE stack_id = ? ORDER BY hidden_at DESC"
+    ).all(stackId) as Array<{ service: string; reason: string | null; hidden_at: string }>;
   }
 
-  hideServices(services: string[], reason?: string): void {
+  hideServices(stackId: string, services: string[], reason?: string): void {
     if (services.length === 0) return;
     const stmt = this.db.prepare(
-      "INSERT OR REPLACE INTO hidden_services (service, reason) VALUES (?, ?)"
+      "INSERT OR REPLACE INTO hidden_services (stack_id, service, reason) VALUES (?, ?, ?)"
     );
     const tx = this.db.transaction((svcs: string[]) => {
-      for (const svc of svcs) stmt.run(svc, reason ?? null);
+      for (const svc of svcs) stmt.run(stackId, svc, reason ?? null);
     });
     tx(services);
   }
 
-  isServiceHidden(service: string): boolean {
-    const row = this.db.prepare("SELECT 1 FROM hidden_services WHERE service = ?").get(service);
+  isServiceHidden(stackId: string, service: string): boolean {
+    const row = this.db.prepare("SELECT 1 FROM hidden_services WHERE stack_id = ? AND service = ?").get(stackId, service);
     return row !== undefined;
   }
 
-  getStaleUnknownServices(days: number): string[] {
+  getStaleUnknownServices(stackId: string, days: number): string[] {
     const cutoff = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
     return (this.db.prepare(
       `SELECT DISTINCT service FROM service_health_checks
-       WHERE service NOT IN (
+       WHERE stack_id = ? AND service NOT IN (
          SELECT DISTINCT service FROM service_health_checks
-         WHERE status != 'unknown' AND checked_at >= ?
+         WHERE stack_id = ? AND status != 'unknown' AND checked_at >= ?
        )
-       AND service NOT IN (SELECT service FROM hidden_services)`
-    ).all(cutoff) as Array<{ service: string }>).map(r => r.service);
+       AND service NOT IN (SELECT service FROM hidden_services WHERE stack_id = ?)`
+    ).all(stackId, stackId, cutoff, stackId) as Array<{ service: string }>).map(r => r.service);
   }
 
   // ── Service metadata ────────────────────────────────────────────────────
@@ -448,10 +593,10 @@ export class Database {
     `);
   }
 
-  getServiceMetadata(service: string): ServiceMetadataRow | null {
+  getServiceMetadata(stackId: string, service: string): ServiceMetadataRow | null {
     const row = this.db.prepare(
-      "SELECT service, alias, tags, updated_at FROM service_metadata WHERE service = ?"
-    ).get(service) as { service: string; alias: string | null; tags: string | null; updated_at: string } | undefined;
+      "SELECT service, alias, tags, updated_at FROM service_metadata WHERE stack_id = ? AND service = ?"
+    ).get(stackId, service) as { service: string; alias: string | null; tags: string | null; updated_at: string } | undefined;
     if (!row) return null;
     return {
       service: row.service,
@@ -461,23 +606,23 @@ export class Database {
     };
   }
 
-  upsertServiceMetadata(service: string, updates: { alias?: string; tags?: string[] }): void {
+  upsertServiceMetadata(stackId: string, service: string, updates: { alias?: string; tags?: string[] }): void {
     const alias = updates.alias !== undefined ? updates.alias : null;
     const tags = updates.tags !== undefined ? JSON.stringify(updates.tags) : null;
     this.db.prepare(`
-      INSERT INTO service_metadata (service, alias, tags, updated_at)
-      VALUES (?, ?, ?, datetime('now'))
-      ON CONFLICT(service) DO UPDATE SET
+      INSERT INTO service_metadata (stack_id, service, alias, tags, updated_at)
+      VALUES (?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(stack_id, service) DO UPDATE SET
         alias      = CASE WHEN excluded.alias IS NOT NULL THEN excluded.alias ELSE alias END,
         tags       = CASE WHEN excluded.tags  IS NOT NULL THEN excluded.tags  ELSE tags  END,
         updated_at = datetime('now')
-    `).run(service, alias, tags);
+    `).run(stackId, service, alias, tags);
   }
 
-  getAllServiceMetadata(): ServiceMetadataRow[] {
+  getAllServiceMetadata(stackId: string): ServiceMetadataRow[] {
     const rows = this.db.prepare(
-      "SELECT service, alias, tags, updated_at FROM service_metadata ORDER BY service ASC"
-    ).all() as Array<{ service: string; alias: string | null; tags: string | null; updated_at: string }>;
+      "SELECT service, alias, tags, updated_at FROM service_metadata WHERE stack_id = ? ORDER BY service ASC"
+    ).all(stackId) as Array<{ service: string; alias: string | null; tags: string | null; updated_at: string }>;
     return rows.map(row => ({
       service: row.service,
       alias: row.alias,

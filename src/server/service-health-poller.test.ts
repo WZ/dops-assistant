@@ -371,8 +371,8 @@ describe("ServiceHealthPoller", () => {
       await poller.poll();
 
       expect(db.insertServiceHealthCheck).toHaveBeenCalledTimes(2);
-      expect(db.insertServiceHealthCheck).toHaveBeenCalledWith("api", "healthy", expect.any(String));
-      expect(db.insertServiceHealthCheck).toHaveBeenCalledWith("db", "unknown", expect.any(String));
+      expect(db.insertServiceHealthCheck).toHaveBeenCalledWith("", "api", "healthy", expect.any(String));
+      expect(db.insertServiceHealthCheck).toHaveBeenCalledWith("", "db", "unknown", expect.any(String));
     });
 
     it("calls migrateServiceHealthChecks on start()", () => {
@@ -406,7 +406,7 @@ describe("ServiceHealthPoller", () => {
 
       const result = poller.getHistory("api", 24);
       expect(result).toEqual(history);
-      expect(db.getServiceHealthHistory).toHaveBeenCalledWith("api", 24);
+      expect(db.getServiceHealthHistory).toHaveBeenCalledWith("", "api", 24);
     });
 
     it("returns empty array when DB throws", () => {

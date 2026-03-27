@@ -5,6 +5,7 @@ import { ArrowLeft, FilePlus } from "lucide-react";
 import { PhaseStepper, type PhaseState } from "./PhaseStepper";
 import { EvidenceTimeline } from "./EvidenceTimeline";
 import { RcaReport } from "./RcaReport";
+import { useStackContext } from "../contexts/StackContext";
 import type { TimelineEvent } from "./ActivityTimeline";
 import type { TimeSeriesData } from "./MetricChart";
 import type { ServerMessage } from "../../types/ws-types.js";
@@ -19,6 +20,7 @@ const DEFAULT_PHASES: PhaseState[] = [
 ];
 
 export function InvestigationPane({ investigationId, wsMessages, onBack, onNavigateSkills }: { investigationId: string; wsMessages: ServerMessage[]; onBack: () => void; onNavigateSkills?: () => void }) {
+  const { stackFetch } = useStackContext();
   const [phases, setPhases] = useState<PhaseState[]>(DEFAULT_PHASES);
   const [evidence, setEvidence] = useState<Record<string, unknown>>({});
   const [report, setReport] = useState<unknown | null>(null);
@@ -47,7 +49,7 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
   useEffect(() => {
     if (query) return;
     let cancelled = false;
-    fetch(`/api/investigations/${investigationId}`)
+    stackFetch(`/api/investigations/${investigationId}`)
       .then((r) => r.ok ? r.json() : null)
       .then((data: { investigation?: { query?: string } } | null) => {
         if (!cancelled && data?.investigation?.query) setQuery(data.investigation.query);
@@ -61,7 +63,7 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
     if (isActive) return;
 
     let cancelled = false;
-    fetch(`/api/investigations/${investigationId}`)
+    stackFetch(`/api/investigations/${investigationId}`)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
@@ -332,14 +334,14 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
                   onClick={async () => {
                     try {
                       const rpt = report as Record<string, unknown>;
-                      const res = await fetch("/api/skills/generate", {
+                      const res = await stackFetch("/api/skills/generate", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify(rpt),
                       });
                       if (!res.ok) return;
                       const generated = await res.json();
-                      await fetch("/api/skills", {
+                      await stackFetch("/api/skills", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify(generated),

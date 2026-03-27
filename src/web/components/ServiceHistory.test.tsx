@@ -2,6 +2,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
 import { ServiceHistory } from "./ServiceHistory";
+import { StackProvider } from "../contexts/StackContext";
+import type { ReactNode } from "react";
+
+function Wrapper({ children }: { children: ReactNode }) {
+  return <StackProvider activeStackId="test-stack">{children}</StackProvider>;
+}
 
 const TEST_SERVICE = "payment-service";
 
@@ -56,7 +62,8 @@ describe("ServiceHistory", () => {
     });
 
     render(
-      <ServiceHistory serviceName={TEST_SERVICE} onViewInvestigation={vi.fn()} />
+      <ServiceHistory serviceName={TEST_SERVICE} onViewInvestigation={vi.fn()} />,
+      { wrapper: Wrapper },
     );
 
     await waitFor(() => {
@@ -71,7 +78,8 @@ describe("ServiceHistory", () => {
     });
 
     render(
-      <ServiceHistory serviceName={TEST_SERVICE} onViewInvestigation={vi.fn()} />
+      <ServiceHistory serviceName={TEST_SERVICE} onViewInvestigation={vi.fn()} />,
+      { wrapper: Wrapper },
     );
 
     await waitFor(() => {
@@ -88,7 +96,8 @@ describe("ServiceHistory", () => {
     });
 
     const { container } = render(
-      <ServiceHistory serviceName={TEST_SERVICE} onViewInvestigation={vi.fn()} />
+      <ServiceHistory serviceName={TEST_SERVICE} onViewInvestigation={vi.fn()} />,
+      { wrapper: Wrapper },
     );
 
     await waitFor(() => {
@@ -114,7 +123,8 @@ describe("ServiceHistory", () => {
 
     const onViewInvestigation = vi.fn();
     render(
-      <ServiceHistory serviceName={TEST_SERVICE} onViewInvestigation={onViewInvestigation} />
+      <ServiceHistory serviceName={TEST_SERVICE} onViewInvestigation={onViewInvestigation} />,
+      { wrapper: Wrapper },
     );
 
     await waitFor(() => {
@@ -137,7 +147,8 @@ describe("ServiceHistory", () => {
     });
 
     render(
-      <ServiceHistory serviceName={TEST_SERVICE} onViewInvestigation={vi.fn()} />
+      <ServiceHistory serviceName={TEST_SERVICE} onViewInvestigation={vi.fn()} />,
+      { wrapper: Wrapper },
     );
 
     await waitFor(() => {

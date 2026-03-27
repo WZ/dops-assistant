@@ -6,13 +6,17 @@ import type { Database } from "./db.js";
 import type { IChatAgent, IInvestigationAgent, IDiscoverAgent } from "../types/agent-interfaces.js";
 import type { IntentRouter } from "../agents/intent.js";
 import { resolveServiceFromHistory } from "../agents/intent.js";
-import type { ConversationMemory } from "../memory/conversation.js";
-import type { ServiceConfig, DiscoveryConfig } from "../config/schema.js";
-import type { ClientMessage, ServerMessage, PhaseStats, ChartSeries } from "../types/ws-types.js";
+import type { ServiceConfig, DiscoveryConfig, Config } from "../config/schema.js";
+import type { ClientMessage, ServerMessage, ChartSeries } from "../types/ws-types.js";
+import { DEFAULT_STACK_SLUG } from "../types/stack-types.js";
 import type { ValidatedServiceConfig } from "../types/discovery-types.js";
 import type { SkillStore } from "../skills/store.js";
 import { InvestigationRunner, friendlyError } from "./investigation-runner.js";
 import type { InvestigationCallbacks } from "./investigation-runner.js";
+import type { StackManager, StackContext } from "./stack-manager.js";
+import type { InvestigationDedup } from "./investigation-dedup.js";
+import { createMastraAdapters } from "./agents.js";
+import { getToolsByRole } from "../mcp/provider.js";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
 
@@ -21,7 +25,7 @@ const MAX_CHART_SERIES = 4;
 /** Return true when a series is a flat constant (no variation worth charting) */
 function isFlatSeries(values: [string, number][]): boolean {
   if (values.length < 2) return true;
-  const first = values[0][1];
+  const first = values[0]![1];
   return values.every(([, v]) => v === first);
 }
 
@@ -88,28 +92,81 @@ function extractChartSeries(rawResult: string, args: Record<string, unknown>): C
 
 export interface WsDeps {
   db: Database;
-  agent: IChatAgent;
-  investigationAgent: IInvestigationAgent;
+  stackManager: StackManager;
+  config: Config;
   router: IntentRouter;
-  memory: ConversationMemory;
-  services: ServiceConfig[];
   skillStore?: SkillStore;
+  sharedDedup: InvestigationDedup;
   validateLlmServiceMatch: (llmService: string | undefined, userMessage: string, services: ServiceConfig[]) => ServiceConfig | undefined;
   matchServiceFromText: (text: string, services: ServiceConfig[]) => ServiceConfig | undefined;
-  discoverAgent?: IDiscoverAgent;
-  discoveryConfig?: DiscoveryConfig;
-  getPendingDiscovery?: () => ValidatedServiceConfig[] | null;
-  clearPendingDiscovery?: () => void;
-  getHiddenServices?: () => Set<string>;
-  metricsToolNames?: Set<string>;
+}
+
+/** Lazily-created agents cache per stack */
+const agentsCache = new Map<string, { chatAgent: IChatAgent; investigationAgent: IInvestigationAgent; discoverAgent?: IDiscoverAgent }>();
+
+/** Metrics tool names cache per stack */
+const metricsToolNamesCache = new Map<string, Set<string>>();
+
+/** Clear cached agents and metrics tool names for a deleted stack */
+export function clearStackCaches(stackId: string): void {
+  agentsCache.delete(stackId);
+  metricsToolNamesCache.delete(stackId);
+}
+
+async function getOrCreateAgents(
+  stackId: string,
+  ctx: StackContext,
+  config: Config,
+): Promise<{ chatAgent: IChatAgent; investigationAgent: IInvestigationAgent; discoverAgent?: IDiscoverAgent }> {
+  const cached = agentsCache.get(stackId);
+  if (cached) return cached;
+
+  const providers = ctx.providerRegistry.getProviders();
+  const adapters = await createMastraAdapters({
+    config,
+    providers,
+    registryStore: ctx.serviceRegistry,
+  });
+
+  agentsCache.set(stackId, adapters);
+  return adapters;
+}
+
+async function getMetricsToolNames(stackId: string, ctx: StackContext): Promise<Set<string>> {
+  const cached = metricsToolNamesCache.get(stackId);
+  if (cached) return cached;
+
+  try {
+    const providers = ctx.providerRegistry.getProviders();
+    const metricsTools = await getToolsByRole(providers, "metrics");
+    const names = new Set(
+      Object.keys(metricsTools).map((k) => {
+        const idx = k.indexOf("_");
+        return idx > 0 ? k.slice(idx + 1) : k;
+      }),
+    );
+    metricsToolNamesCache.set(stackId, names);
+    return names;
+  } catch {
+    return new Set(["query_prometheus"]);
+  }
 }
 
 export function setupWebSocket(server: Server, deps: WsDeps): void {
   const wss = new WebSocketServer({ server, path: "/ws" });
 
-  wss.on("connection", (ws: WebSocket) => {
-    const threadId = `web_${ulid()}`;
-    logger.info({ threadId }, "WebSocket client connected");
+  wss.on("connection", async (ws: WebSocket, req) => {
+    // Extract stackId from query params
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const stackIdParam = url.searchParams.get("stackId");
+    const stackId = deps.stackManager.resolveStackId(stackIdParam);
+    const ctx = deps.stackManager.getContext(stackId);
+
+    const threadId = `stack_${stackId}_web_${ulid()}`;
+    logger.info({ threadId, stackId }, "WebSocket client connected");
+
+    // Per-connection pending discovery state
+    let pendingDiscovery: ValidatedServiceConfig[] | null = null;
 
     const send = (m: ServerMessage) => {
       if (ws.readyState === WebSocket.OPEN) {
@@ -117,16 +174,33 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
       }
     };
 
-    // Notify newly connected clients of pending discovery results
-    const pending = deps.getPendingDiscovery?.();
-    if (pending) {
-      send({ type: "discover:pending", services: pending });
+    // Auto-refresh: run background discovery on startup if enabled
+    const discoveryConfig = deps.config.discovery;
+    if (discoveryConfig.autoRefresh) {
+      try {
+        const agents = await getOrCreateAgents(stackId, ctx, deps.config);
+        if (agents.discoverAgent) {
+          agents.discoverAgent
+            .discover(discoveryConfig)
+            .then((services) => {
+              pendingDiscovery = services;
+              if (services.length > 0) {
+                send({ type: "discover:pending", services });
+              }
+            })
+            .catch((err) => {
+              logger.warn({ err }, "Auto-refresh discovery failed");
+            });
+        }
+      } catch (err) {
+        logger.warn({ err }, "Auto-refresh agent initialization failed");
+      }
     }
 
     ws.on("message", async (raw: Buffer) => {
       try {
         const msg = JSON.parse(raw.toString()) as ClientMessage;
-        await handleClientMessage(msg, send, deps, threadId);
+        await handleClientMessage(msg, send, deps, threadId, stackId, ctx, () => pendingDiscovery, () => { pendingDiscovery = null; });
       } catch (err) {
         logger.error({ err }, "WebSocket message handling error");
         if (ws.readyState === WebSocket.OPEN) {
@@ -136,7 +210,7 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
     });
 
     ws.on("close", () => {
-      logger.info({ threadId }, "WebSocket client disconnected");
+      logger.info({ threadId, stackId }, "WebSocket client disconnected");
     });
   });
 }
@@ -146,16 +220,21 @@ async function handleDeepInvestigate(
   send: (m: ServerMessage) => void,
   deps: WsDeps,
   threadId: string,
+  stackId: string,
+  ctx: StackContext,
 ): Promise<void> {
-  const { db, agent, memory } = deps;
+  const { db } = deps;
+  const memory = ctx.conversationMemory;
 
-  const investigation = db.getInvestigation(msg.investigationId);
+  const investigation = db.getInvestigation(stackId, msg.investigationId);
   if (!investigation) {
     send({ type: "chat:stream_end", content: "Investigation not found." });
     return;
   }
 
   const phases = db.getPhases(msg.investigationId);
+  const agents = await getOrCreateAgents(stackId, ctx, deps.config);
+  const { chatAgent: agent } = agents;
 
   // Build context from investigation data
   const contextParts: string[] = [
@@ -217,7 +296,7 @@ async function handleDeepInvestigate(
 
   // Hydrate from DB if in-memory history is empty (e.g. after page refresh)
   if (history.length === 0) {
-    const dbMessages = db.listMessages(50, msg.investigationId);
+    const dbMessages = db.listMessages(stackId, 50, msg.investigationId);
     const followUps = dbMessages.filter(m =>
       !m.content.startsWith("Starting investigation") && !m.content.startsWith("**Root Cause:**")
     );
@@ -232,6 +311,10 @@ async function handleDeepInvestigate(
     ? [{ role: "system" as const, content: systemContext }]
     : history;
 
+  const services = ctx.slug === DEFAULT_STACK_SLUG
+    ? [...deps.config.services, ...ctx.serviceRegistry.load().filter(s => !deps.config.services.some(c => c.name === s.name))]
+    : ctx.serviceRegistry.load();
+
   const chatTokens = { inputTokens: 0, outputTokens: 0 };
   const chatStartMs = Date.now();
 
@@ -240,7 +323,7 @@ async function handleDeepInvestigate(
       mode: "conversational",
       message: msg.message,
       history: fullHistory,
-      serviceContext: deps.services,
+      serviceContext: services,
       supportsInlineCharts: true,
       onTokenUsage: (u) => {
         chatTokens.inputTokens += u.inputTokens;
@@ -266,10 +349,10 @@ async function handleDeepInvestigate(
     });
     memory.append(memoryKey, { role: "user", content: msg.message });
     memory.append(memoryKey, { role: "assistant", content: result.response });
-    db.createMessage({ id: `msg_${ulid()}`, role: "user", content: msg.message, investigationId: msg.investigationId });
+    db.createMessage(stackId, { id: `msg_${ulid()}`, role: "user", content: msg.message, investigationId: msg.investigationId });
     const deepMsgId = `msg_${ulid()}`;
     const deepMsgTime = new Date().toISOString();
-    db.createMessage({ id: deepMsgId, role: "assistant", content: result.response, investigationId: msg.investigationId });
+    db.createMessage(stackId, { id: deepMsgId, role: "assistant", content: result.response, investigationId: msg.investigationId });
     send({ type: "chat:stream_end", content: result.response || "No response generated.", id: deepMsgId, createdAt: deepMsgTime, investigationId: msg.investigationId });
     send({
       type: "chat:usage",
@@ -287,19 +370,27 @@ export async function handleClientMessage(
   send: (m: ServerMessage) => void,
   deps: WsDeps,
   threadId: string,
+  stackId: string,
+  ctx: StackContext,
+  getPendingDiscovery: () => ValidatedServiceConfig[] | null,
+  clearPendingDiscovery: () => void,
 ): Promise<void> {
+  const memory = ctx.conversationMemory;
+
   if (msg.type === "new_session") {
-    deps.memory.clear(threadId);
+    memory.clear(threadId);
     send({ type: "session_cleared" });
     return;
   }
 
   if (msg.type === "deep_investigate") {
-    await handleDeepInvestigate(msg, send, deps, threadId);
+    await handleDeepInvestigate(msg, send, deps, threadId, stackId, ctx);
     return;
   }
 
-  if (msg.type === "discover" && deps.discoverAgent) {
+  const agents = await getOrCreateAgents(stackId, ctx, deps.config);
+
+  if (msg.type === "discover" && agents.discoverAgent) {
     const totalTokens = { inputTokens: 0, outputTokens: 0 };
     const phaseTokens = { inputTokens: 0, outputTokens: 0 };
     let currentPhase = "discovery";
@@ -314,8 +405,9 @@ export async function handleClientMessage(
     };
 
     try {
-      const services = await deps.discoverAgent.discover(
-        deps.discoveryConfig ?? { autoRefresh: false, excludeServices: [], maxIterations: 40, discoveryRecipes: [] },
+      const discoveryConfig = deps.config.discovery;
+      const services = await agents.discoverAgent.discover(
+        discoveryConfig ?? { autoRefresh: false, excludeServices: [], maxIterations: 40, discoveryRecipes: [] },
         (phase) => {
           // Emit usage for the phase that just ended
           if (phaseTokens.inputTokens > 0 || phaseTokens.outputTokens > 0) {
@@ -377,16 +469,14 @@ export async function handleClientMessage(
     return;
   }
 
-  if (msg.type === "discover:accept" && deps.discoverAgent) {
-    await deps.discoverAgent.accept(msg.services, "discovery");
-    deps.clearPendingDiscovery?.();
-    // Update in-memory services so chat/investigation agents see the new registry
-    deps.services = msg.services;
+  if (msg.type === "discover:accept" && agents.discoverAgent) {
+    await agents.discoverAgent.accept(msg.services, "discovery");
+    clearPendingDiscovery();
     return;
   }
 
   if (msg.type === "discover:reject") {
-    deps.clearPendingDiscovery?.();
+    clearPendingDiscovery();
     return;
   }
 
@@ -394,9 +484,16 @@ export async function handleClientMessage(
 
   const serviceContext = msg.serviceContext;
 
-  const { db, agent, investigationAgent, router, memory, services } = deps;
+  const { db } = deps;
+  const { chatAgent: agent, investigationAgent } = agents;
+
+  // Build services list from config + registry for this stack
+  const services = ctx.slug === DEFAULT_STACK_SLUG
+    ? [...deps.config.services, ...ctx.serviceRegistry.load().filter(s => !deps.config.services.some(c => c.name === s.name))]
+    : ctx.serviceRegistry.load();
+
   // Filter hidden services from all resolution paths
-  const hidden = deps.getHiddenServices?.() ?? new Set<string>();
+  const hidden = db.getHiddenServices(stackId);
   const visibleServices = hidden.size > 0 ? services.filter(s => !hidden.has(s.name)) : services;
   const serviceNames = visibleServices.map((s) => s.name);
 
@@ -405,7 +502,7 @@ export async function handleClientMessage(
     ? visibleServices.find(s => s.name === serviceContext)
     : undefined;
 
-  db.createMessage({ id: `msg_${ulid()}`, role: "user", content: msg.message });
+  db.createMessage(stackId, { id: `msg_${ulid()}`, role: "user", content: msg.message });
 
   // Context switch detection: compare service in current message vs conversation history
   // Skip when we have a pinned serviceContext — no ambiguity to detect
@@ -415,7 +512,7 @@ export async function handleClientMessage(
     send({ type: "context_switch", previousService: contextService.name, newService: mentionedService.name });
   }
 
-  const intent = await router.route(msg.message, serviceNames);
+  const intent = await deps.router.route(msg.message, serviceNames);
 
   if (intent.intent === "investigation") {
     const service =
@@ -423,7 +520,7 @@ export async function handleClientMessage(
       deps.matchServiceFromText(msg.message, visibleServices) ??
       deps.validateLlmServiceMatch(intent.service, msg.message, visibleServices) ??
       resolveServiceFromHistory(memory.get(threadId), visibleServices) ??
-      resolveServiceFromHistory(db.listRecentMessages(10), visibleServices);
+      resolveServiceFromHistory(db.listRecentMessages(stackId, 10), visibleServices);
 
     if (!service) {
       send({ type: "chat", role: "assistant", content: "I couldn't identify which service to investigate. Could you specify the service name?" });
@@ -436,7 +533,7 @@ export async function handleClientMessage(
     const ackContent = `Starting investigation of **${service.name}**...`;
     const ackMsgId = `msg_${ulid()}`;
     send({ type: "chat", role: "assistant", content: ackContent, id: ackMsgId, createdAt: new Date().toISOString() } as ServerMessage);
-    db.createMessage({ id: ackMsgId, role: "assistant", content: ackContent });
+    db.createMessage(stackId, { id: ackMsgId, role: "assistant", content: ackContent });
 
     // Build WS-streaming callbacks for the runner
     const wsCallbacks: InvestigationCallbacks = {
@@ -459,10 +556,8 @@ export async function handleClientMessage(
         send({ type: "investigation:complete", id: investigationId, report });
         const summary = `**Root Cause:** ${report.rootCause}\n**Confidence:** ${report.confidence}\n**Trigger:** ${report.trigger}`;
         memory.append(threadId, { role: "assistant", content: `Investigation of ${service.name}: ${summary}` });
-        // Store completion summary WITH investigationId — the DB query includes these (content starts with "**Root Cause:**")
-        // so they show in the console as RCA cards. Deep Investigation follow-up Q&A is filtered out separately.
         send({ type: "chat", role: "assistant", content: summary, investigationId, report });
-        db.createMessage({ id: `msg_${ulid()}`, role: "assistant", content: summary, investigationId });
+        db.createMessage(stackId, { id: `msg_${ulid()}`, role: "assistant", content: summary, investigationId });
       },
       onFailed: (investigationId, error) => {
         send({ type: "investigation:failed", id: investigationId, error });
@@ -472,7 +567,7 @@ export async function handleClientMessage(
 
     const runner = new InvestigationRunner({ db, investigationAgent, skillStore: deps.skillStore });
     try {
-      await runner.run({ service, message: msg.message, investigationId: invId, callbacks: wsCallbacks });
+      await runner.run({ service, message: msg.message, investigationId: invId, stackId, callbacks: wsCallbacks });
     } catch {
       // Error already handled by runner's onFailed callback
     }
@@ -483,7 +578,7 @@ export async function handleClientMessage(
       pinnedService ??
       mentionedService ??
       contextService ??
-      resolveServiceFromHistory(db.listRecentMessages(10), visibleServices);
+      resolveServiceFromHistory(db.listRecentMessages(stackId, 10), visibleServices);
 
     // Search for matching skills in conversational mode
     let chatSkillContext: string | undefined;
@@ -496,6 +591,8 @@ export async function handleClientMessage(
         chatSkillContext = deps.skillStore.formatForPrompt(matched);
       }
     }
+
+    const metricsToolNames = await getMetricsToolNames(stackId, ctx);
 
     const chatTokens = { inputTokens: 0, outputTokens: 0 };
     const chatStartMs = Date.now();
@@ -517,7 +614,7 @@ export async function handleClientMessage(
             send({ type: "chat:tool_call", tool: name, status: "calling" });
           } else {
             send({ type: "chat:tool_call", tool: name, status: "complete" });
-            if (deps.metricsToolNames?.has(name) ?? name === "query_prometheus") {
+            if (metricsToolNames.has(name) || name === "query_prometheus") {
               chartData.push(...extractChartSeries(rawResult, args));
             }
           }
@@ -554,7 +651,7 @@ export async function handleClientMessage(
         outputTokens: chatTokens.outputTokens,
         durationMs: Date.now() - chatStartMs,
       });
-      db.createMessage({
+      db.createMessage(stackId, {
         id: chatMsgId, role: "assistant", content,
         ...(chartData.length > 0 ? { chartData: JSON.stringify(chartData) } : {}),
       });

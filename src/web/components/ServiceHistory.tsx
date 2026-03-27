@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useStackContext } from "../contexts/StackContext";
 
 interface ServiceHistoryProps {
   serviceName: string;
@@ -43,6 +44,7 @@ function formatRelativeTime(isoString: string): string {
 }
 
 export function ServiceHistory({ serviceName, onViewInvestigation }: ServiceHistoryProps) {
+  const { stackFetch } = useStackContext();
   const [investigations, setInvestigations] = useState<InvestigationRow[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -51,7 +53,7 @@ export function ServiceHistory({ serviceName, onViewInvestigation }: ServiceHist
 
     const controller = new AbortController();
 
-    fetch(`/api/investigations?service=${encodeURIComponent(serviceName)}&limit=20`, {
+    stackFetch(`/api/investigations?service=${encodeURIComponent(serviceName)}&limit=20`, {
       signal: controller.signal,
     })
       .then((res) => {

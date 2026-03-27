@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { CirclePlus } from "lucide-react";
 import { ProviderCard, type TestResult } from "./providers/ProviderCard";
 import { ProviderForm, type ProviderFormData } from "./providers/ProviderForm";
+import { useStackContext } from "../contexts/StackContext";
 
 interface ProviderData {
   name: string;
@@ -23,6 +24,7 @@ interface ProvidersPageProps {
 }
 
 export function ProvidersPage({ onRunDiscovery }: ProvidersPageProps) {
+  const { stackFetch } = useStackContext();
   const [providers, setProviders] = useState<ProviderData[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -34,12 +36,12 @@ export function ProvidersPage({ onRunDiscovery }: ProvidersPageProps) {
 
   const fetchProviders = useCallback(async () => {
     try {
-      const res = await fetch("/api/providers");
+      const res = await stackFetch("/api/providers");
       const data = await res.json();
       setProviders(data);
     } catch { /* silently fail */ }
     setLoading(false);
-  }, []);
+  }, [stackFetch]);
 
   // Initial fetch + periodic polling every 30s
   useEffect(() => {
@@ -57,7 +59,7 @@ export function ProvidersPage({ onRunDiscovery }: ProvidersPageProps) {
       const url = isEdit
         ? `/api/providers/${encodeURIComponent(editingProvider!.name)}`
         : "/api/providers";
-      const res = await fetch(url, {
+      const res = await stackFetch(url, {
         method: isEdit ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -78,7 +80,7 @@ export function ProvidersPage({ onRunDiscovery }: ProvidersPageProps) {
   // Test connection (from form, before save)
   const handleTestFromForm = async (data: ProviderFormData) => {
     try {
-      const res = await fetch("/api/providers/test-config", {
+      const res = await stackFetch("/api/providers/test-config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: data.name, roles: data.roles, region: data.region, mcpServer: data.mcpServer }),
@@ -95,7 +97,7 @@ export function ProvidersPage({ onRunDiscovery }: ProvidersPageProps) {
     // Clear previous result for this provider
     setTestResults((prev) => { const next = { ...prev }; delete next[name]; return next; });
     try {
-      const res = await fetch(`/api/providers/${encodeURIComponent(name)}/test`, { method: "POST" });
+      const res = await stackFetch(`/api/providers/${encodeURIComponent(name)}/test`, { method: "POST" });
       const result: TestResult = await res.json();
       setTestResults((prev) => ({ ...prev, [name]: result }));
       await fetchProviders();
@@ -108,7 +110,7 @@ export function ProvidersPage({ onRunDiscovery }: ProvidersPageProps) {
   // Remove provider
   const handleRemove = async (name: string) => {
     try {
-      const res = await fetch(`/api/providers/${encodeURIComponent(name)}`, { method: "DELETE" });
+      const res = await stackFetch(`/api/providers/${encodeURIComponent(name)}`, { method: "DELETE" });
       if (!res.ok) {
         const err = await res.json();
         alert(err.error || "Failed to remove");

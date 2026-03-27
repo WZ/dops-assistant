@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Plus, FilePlus } from "lucide-react";
 import { SkillEditor } from "./SkillEditor";
+import { useStackContext } from "../contexts/StackContext";
 
 interface SkillMeta {
   id: string;
@@ -75,13 +76,14 @@ Infrastructure-level issues suspected.
 };
 
 export function SkillsPage() {
+  const { stackFetch } = useStackContext();
   const [skills, setSkills] = useState<SkillMeta[]>([]);
   const [editing, setEditing] = useState<SkillFull | null>(null);
   const [creating, setCreating] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
 
   const fetchSkills = () => {
-    fetch("/api/skills")
+    stackFetch("/api/skills")
       .then((r) => r.ok ? r.json() : [])
       .then(setSkills)
       .catch(() => {});
@@ -91,7 +93,7 @@ export function SkillsPage() {
 
   const handleEdit = async (id: string) => {
     try {
-      const res = await fetch(`/api/skills/${id}`);
+      const res = await stackFetch(`/api/skills/${id}`);
       if (res.ok) setEditing(await res.json());
     } catch { /* ignore */ }
   };
@@ -114,7 +116,7 @@ export function SkillsPage() {
     const method = creating ? "POST" : "PUT";
     const url = creating ? "/api/skills" : `/api/skills/${skill.id}`;
     try {
-      await fetch(url, {
+      await stackFetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(skill),
@@ -127,7 +129,7 @@ export function SkillsPage() {
 
   const handleDelete = async (id: string) => {
     try {
-      await fetch(`/api/skills/${id}`, { method: "DELETE" });
+      await stackFetch(`/api/skills/${id}`, { method: "DELETE" });
       setEditing(null);
       setCreating(false);
       fetchSkills();

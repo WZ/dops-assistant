@@ -71,6 +71,8 @@ export interface WebhookHandlerDeps {
   runner: InvestigationRunner;
   config: WebhookConfig;
   services: ServiceConfig[];
+  /** Stack ID for multi-stack data isolation */
+  stackId?: string;
   /** Optional shared dedup instance. If not provided, one is created internally. */
   dedup?: InvestigationDedup;
   /** Optional getter for hidden services — alerts for hidden services are ignored */
@@ -79,6 +81,7 @@ export interface WebhookHandlerDeps {
 
 export function createWebhookHandler(deps: WebhookHandlerDeps) {
   const { runner, config } = deps;
+  const stackId = deps.stackId ?? "";
   // Filter hidden services from alert matching
   const getVisibleServices = () => {
     const hidden = deps.getHiddenServices?.() ?? new Set<string>();
@@ -131,7 +134,7 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
     }
 
     // 4. Dedup + concurrency check
-    if (!dedup.shouldInvestigate(service.name)) {
+    if (!dedup.shouldInvestigate(stackId, service.name)) {
       const activeCount = dedup.getActiveCount();
       if (activeCount >= config.maxConcurrent) {
         logger.warn({ activeCount, maxConcurrent: config.maxConcurrent }, "Alert webhook: concurrency limit reached");
@@ -144,7 +147,7 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
     }
 
     // 5. Mark as in-progress and respond immediately
-    dedup.markStarted(service.name);
+    dedup.markStarted(stackId, service.name);
     const template = resolveTemplate(alert, config);
     const description = alert.annotations["summary"] ?? alert.annotations["description"] ?? alert.labels["alertname"] ?? "Alert triggered";
 
@@ -162,6 +165,7 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
         service,
         message: `Alert: ${description}. Service: ${service.name}. Alertname: ${alert.labels["alertname"] ?? "unknown"}`,
         template,
+        stackId,
       });
     } catch (err) {
       logger.error({ err, service: service.name }, "Alert webhook: headless investigation failed");

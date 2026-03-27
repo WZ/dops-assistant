@@ -53,10 +53,11 @@ describe("InvestigationRunner", () => {
       service: { name: "test-svc", metrics: [], logLabels: {} },
       message: "investigate test-svc",
       investigationId: "inv_test_1",
+      stackId: "stack-1",
     });
 
     expect(report.rootCause).toBe("Memory leak");
-    expect(db.createInvestigation).toHaveBeenCalledWith({
+    expect(db.createInvestigation).toHaveBeenCalledWith("stack-1", {
       id: "inv_test_1",
       service: "test-svc",
       query: "investigate test-svc",
@@ -106,6 +107,7 @@ describe("InvestigationRunner", () => {
     });
 
     expect(db.createInvestigation).toHaveBeenCalledWith(
+      "",
       expect.objectContaining({ id: expect.stringMatching(/^inv_/) }),
     );
   });
