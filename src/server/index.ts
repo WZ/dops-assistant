@@ -22,6 +22,7 @@ import { InvestigationDedup } from "./investigation-dedup.js";
 import { startHealthMonitor, stopHealthMonitor, healthHandler } from "./health-monitor.js";
 import { StackManager } from "./stack-manager.js";
 import { createMastraAdapters } from "./agents.js";
+import { notifySlack } from "./slack-notifier.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
@@ -60,10 +61,30 @@ async function main() {
   const port = Number(process.env["PORT"] ?? 3000);
 
   // Shared dedup for both webhook and health-poller auto-investigate
+  // Pass db for fallback dedup checks that survive server restarts
   const sharedDedup = new InvestigationDedup({
     dedupWindowSeconds: config.webhook.dedupWindowSeconds,
     maxConcurrent: config.webhook.maxConcurrent,
+    db,
   });
+
+  // Build a global onComplete handler for Slack notifications
+  const slackWebhookUrl = config.webhook.slackWebhookUrl;
+  const globalOnComplete = slackWebhookUrl
+    ? (investigationId: string, service: string, report: import("../types/rca-types.js").RcaReport) => {
+        // Resolve grafanaUrl from the default stack's dashboard provider
+        const defaultCtx = stackManager.getDefaultContext();
+        const dashProvider = defaultCtx.providerRegistry.getAll().find(
+          (p: { config: { roles: string[]; webUrl?: string } }) => p.config.roles.includes("dashboards") && p.config.webUrl,
+        );
+        notifySlack(
+          { slackWebhookUrl, grafanaUrl: dashProvider?.config.webUrl },
+          investigationId,
+          service,
+          report,
+        );
+      }
+    : undefined;
 
   // Wire health transition handler for auto-investigate
   stackManager.onHealthTransition = (stackId, service, from, to) => {
@@ -98,7 +119,7 @@ async function main() {
     const providers = ctx.providerRegistry.getProviders();
     createMastraAdapters({ config, providers, registryStore: ctx.serviceRegistry })
       .then(({ investigationAgent }) => {
-        const runner = new InvestigationRunner({ db, investigationAgent, skillStore });
+        const runner = new InvestigationRunner({ db, investigationAgent, skillStore, globalOnComplete });
         return runner.run({
           service: serviceConfig,
           message: `Service health check: ${service} transitioned from ${from} to down. Running quick investigation.`,
@@ -126,7 +147,7 @@ async function main() {
     const defaultCtx = stackManager.getDefaultContext();
     const providers = defaultCtx.providerRegistry.getProviders();
     const { investigationAgent } = await createMastraAdapters({ config, providers, registryStore: defaultCtx.serviceRegistry });
-    const runner = new InvestigationRunner({ db, investigationAgent, skillStore });
+    const runner = new InvestigationRunner({ db, investigationAgent, skillStore, globalOnComplete });
 
     const webhookHandler = createWebhookHandler({
       runner,
@@ -163,7 +184,7 @@ async function main() {
       const ctx = stackManager.getContext(stackRow.id);
       const stackProviders = ctx.providerRegistry.getProviders();
       const stackAdapters = await createMastraAdapters({ config, providers: stackProviders, registryStore: ctx.serviceRegistry });
-      const stackRunner = new InvestigationRunner({ db, investigationAgent: stackAdapters.investigationAgent, skillStore });
+      const stackRunner = new InvestigationRunner({ db, investigationAgent: stackAdapters.investigationAgent, skillStore, globalOnComplete });
       const stackWebhookHandler = createWebhookHandler({
         runner: stackRunner,
         config: config.webhook,
@@ -180,7 +201,7 @@ async function main() {
 
   setupWebSocket(server, {
     db, stackManager, config, router, skillStore,
-    sharedDedup,
+    sharedDedup, globalOnComplete,
     validateLlmServiceMatch, matchServiceFromText,
   });
 
