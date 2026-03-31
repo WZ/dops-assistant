@@ -631,6 +631,17 @@ export class Database {
     }));
   }
 
+  /**
+   * Check if a recent investigation exists for the given stack+service within a time window.
+   * Used by InvestigationDedup as a DB fallback after server restart (when in-memory map is empty).
+   */
+  hasRecentInvestigation(stackId: string, service: string, windowSeconds: number): boolean {
+    const row = this.db.prepare(
+      "SELECT 1 FROM investigations WHERE stack_id = ? AND service = ? AND created_at > datetime('now', '-' || ? || ' seconds') LIMIT 1"
+    ).get(stackId, service, Math.floor(windowSeconds));
+    return !!row;
+  }
+
   close(): void {
     this.db.close();
   }

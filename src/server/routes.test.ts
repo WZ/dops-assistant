@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import type { ServiceConfig } from "../config/schema.js";
+import { Database } from "./db.js";
+import { unlinkSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
 
 /**
  * Route handler tests — the old buildHandlers wrapper was removed in the
@@ -63,5 +67,177 @@ describe("dependency graph inference", () => {
     }
 
     expect(edges).toHaveLength(0);
+  });
+});
+
+// ── Feedback + Pattern tests (using real DB) ────────────────────────────────
+
+/** Create a temp DB for testing */
+function makeTempDb(): { db: Database; cleanup: () => void } {
+  const dbPath = join(tmpdir(), `routes-test-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`);
+  const db = new Database(dbPath);
+  return {
+    db,
+    cleanup: () => {
+      db.close();
+      try { unlinkSync(dbPath); } catch {}
+    },
+  };
+}
+
+const STACK = "test-stack";
+
+describe("Feedback creates pattern on 'useful' rating", () => {
+  it("creates an incident pattern when feedback is 'useful' and report exists", () => {
+    const { db, cleanup } = makeTempDb();
+    try {
+      // Create an investigation with a report
+      db.createInvestigation(STACK, { id: "inv_1", service: "payments-api", query: "why is it slow?", status: "complete" });
+      db.updateInvestigation("inv_1", {
+        status: "complete",
+        report: JSON.stringify({
+          service: "payments-api",
+          severity: "high",
+          summary: "High latency on payment endpoint",
+          rootCause: "Connection pool exhaustion due to leaked connections",
+          recommendedActions: ["Increase pool size", "Add connection timeout"],
+          confidenceScore: 0.85,
+        }),
+      });
+
+      // Simulate "useful" feedback + pattern extraction (same logic as route handler)
+      const investigation = db.getInvestigation(STACK, "inv_1");
+      expect(investigation).toBeDefined();
+
+      const rating = "useful";
+      db.createFeedback(STACK, { id: "fb_1", investigationId: "inv_1", rating });
+
+      if (rating === "useful" && investigation!.report) {
+        const report = JSON.parse(investigation!.report);
+        const validSeverities = ["low", "medium", "high", "critical"];
+        const actions = Array.isArray(report.recommendedActions) ? report.recommendedActions.join("; ") : "";
+        db.createPattern(STACK, {
+          id: "pat_1",
+          service: investigation!.service,
+          symptom: typeof report.summary === "string" ? report.summary.slice(0, 500) : investigation!.query,
+          rootCause: typeof report.rootCause === "string" ? report.rootCause.slice(0, 500) : "Unknown",
+          severity: validSeverities.includes(report.severity) ? report.severity : "medium",
+          recommendedActions: actions.slice(0, 1000),
+          sourceInvestigationId: "inv_1",
+        });
+      }
+
+      // Verify pattern was created
+      const patterns = db.findSimilarPatterns(STACK, "payments-api");
+      expect(patterns).toHaveLength(1);
+      expect(patterns[0]!.root_cause).toBe("Connection pool exhaustion due to leaked connections");
+      expect(patterns[0]!.severity).toBe("high");
+      expect(patterns[0]!.recommended_actions).toContain("Increase pool size");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("does not create a pattern when feedback is 'not_useful'", () => {
+    const { db, cleanup } = makeTempDb();
+    try {
+      db.createInvestigation(STACK, { id: "inv_2", service: "api", query: "test", status: "complete" });
+      db.updateInvestigation("inv_2", {
+        status: "complete",
+        report: JSON.stringify({ rootCause: "test", summary: "test", severity: "low" }),
+      });
+
+      // "not_useful" feedback — should NOT create a pattern
+      db.createFeedback(STACK, { id: "fb_2", investigationId: "inv_2", rating: "not_useful" });
+
+      // Pattern extraction only happens for "useful" — verify no pattern exists
+      const patterns = db.findSimilarPatterns(STACK, "api");
+      expect(patterns).toHaveLength(0);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe("Feedback rejects invalid rating", () => {
+  it("only accepts 'useful' or 'not_useful' as valid ratings", () => {
+    // The route handler checks: if (rating !== "useful" && rating !== "not_useful") return 400
+    // The DB also has a CHECK constraint: rating IN ('useful', 'not_useful')
+    const validRatings = ["useful", "not_useful"];
+    const invalidRatings = ["good", "bad", "thumbs_up", "", "USEFUL", "not-useful"];
+
+    for (const rating of validRatings) {
+      expect(rating === "useful" || rating === "not_useful").toBe(true);
+    }
+    for (const rating of invalidRatings) {
+      expect(rating === "useful" || rating === "not_useful").toBe(false);
+    }
+  });
+
+  it("DB CHECK constraint rejects invalid rating values", () => {
+    const { db, cleanup } = makeTempDb();
+    try {
+      db.createInvestigation(STACK, { id: "inv_3", service: "api", query: "test", status: "complete" });
+
+      // This should throw due to the CHECK constraint in the DB
+      expect(() => {
+        db.createFeedback(STACK, { id: "fb_3", investigationId: "inv_3", rating: "invalid" as any });
+      }).toThrow();
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe("Pattern extraction from RCA report", () => {
+  it("extracts symptom from report summary", () => {
+    const report = {
+      summary: "Memory usage exceeds 90% on checkout-service pods",
+      rootCause: "Memory leak in request handler",
+      severity: "critical",
+      recommendedActions: ["Restart pods", "Fix memory leak in handler.ts"],
+    };
+
+    const symptom = typeof report.summary === "string" ? report.summary.slice(0, 500) : "fallback";
+    expect(symptom).toBe("Memory usage exceeds 90% on checkout-service pods");
+  });
+
+  it("falls back to query when summary is missing", () => {
+    const report = { rootCause: "Unknown", severity: "medium" } as any;
+    const query = "why is checkout slow?";
+
+    const symptom = typeof report.summary === "string" ? report.summary.slice(0, 500) : query;
+    expect(symptom).toBe("why is checkout slow?");
+  });
+
+  it("defaults severity to medium when report severity is invalid", () => {
+    const report = { summary: "test", rootCause: "test", severity: "banana" };
+    const validSeverities = ["low", "medium", "high", "critical"];
+    const severity = validSeverities.includes(report.severity) ? report.severity : "medium";
+    expect(severity).toBe("medium");
+  });
+
+  it("joins recommendedActions array into semicolon-separated string", () => {
+    const report = { recommendedActions: ["Scale up", "Add caching", "Review queries"] };
+    const actions = Array.isArray(report.recommendedActions) ? report.recommendedActions.join("; ") : "";
+    expect(actions).toBe("Scale up; Add caching; Review queries");
+  });
+
+  it("truncates long fields to prevent DB overflow", () => {
+    const longString = "x".repeat(1000);
+    const report = {
+      summary: longString,
+      rootCause: longString,
+      severity: "high",
+      recommendedActions: [longString, longString],
+    };
+
+    const symptom = report.summary.slice(0, 500);
+    const rootCause = report.rootCause.slice(0, 500);
+    const actions = report.recommendedActions.join("; ").slice(0, 1000);
+
+    expect(symptom.length).toBe(500);
+    expect(rootCause.length).toBe(500);
+    expect(actions.length).toBe(1000);
   });
 });

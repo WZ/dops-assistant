@@ -69,7 +69,7 @@ export function createQuirkPrepareStep(config: QuirkPrepareStepConfig): PrepareS
       return {
         toolChoice: "auto" as const,
         messages: [
-          { role: "user" as const, content: nudgeMessage },
+          { role: "user" as const, content: nudgeMessage as any, id: `nudge-${step}`, createdAt: new Date() },
         ],
       };
     }

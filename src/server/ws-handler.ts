@@ -12,7 +12,7 @@ import { DEFAULT_STACK_SLUG } from "../types/stack-types.js";
 import type { ValidatedServiceConfig } from "../types/discovery-types.js";
 import type { SkillStore } from "../skills/store.js";
 import { InvestigationRunner, friendlyError } from "./investigation-runner.js";
-import type { InvestigationCallbacks } from "./investigation-runner.js";
+import type { InvestigationCallbacks, RunnerDeps } from "./investigation-runner.js";
 import type { StackManager, StackContext } from "./stack-manager.js";
 import type { InvestigationDedup } from "./investigation-dedup.js";
 import { createMastraAdapters } from "./agents.js";
@@ -97,6 +97,8 @@ export interface WsDeps {
   router: IntentRouter;
   skillStore?: SkillStore;
   sharedDedup: InvestigationDedup;
+  /** Global callback fired after every successful investigation (e.g. Slack notification) */
+  globalOnComplete?: RunnerDeps["globalOnComplete"];
   validateLlmServiceMatch: (llmService: string | undefined, userMessage: string, services: ServiceConfig[]) => ServiceConfig | undefined;
   matchServiceFromText: (text: string, services: ServiceConfig[]) => ServiceConfig | undefined;
 }
@@ -565,7 +567,7 @@ export async function handleClientMessage(
       },
     };
 
-    const runner = new InvestigationRunner({ db, investigationAgent, skillStore: deps.skillStore });
+    const runner = new InvestigationRunner({ db, investigationAgent, skillStore: deps.skillStore, globalOnComplete: deps.globalOnComplete });
     try {
       await runner.run({ service, message: msg.message, investigationId: invId, stackId, callbacks: wsCallbacks });
     } catch {
