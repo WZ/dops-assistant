@@ -356,6 +356,8 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
   app.delete("/api/messages", (req: Request, res: Response) => {
     const deleted = db.clearConsoleMessages(req.stackId);
+    // Also clear in-memory conversation history so the LLM doesn't remember deleted context
+    req.stackContext.conversationMemory.clearAll();
     res.json({ deleted });
   });
 
