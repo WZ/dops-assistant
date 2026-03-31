@@ -175,7 +175,55 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange }: E
     // Sort chronologically by timestamp ascending, Infinity entries go to end
     entries.sort((a, b) => tryParseTimestamp(a.timestamp) - tryParseTimestamp(b.timestamp));
 
-    return entries;
+    // Deduplicate: collapse entries with identical summaries into one with a count.
+    // Also group "short form" + "long form" of the same log (e.g. "ERROR:django.request:..."
+    // and "[2026-03-31 21:14:50] ERROR [None] [log.log_response:253] ...") by stripping
+    // leading timestamps and log metadata to get a core message for grouping.
+    const LEADING_META_RE = /^\[?\d{4}-\d{2}-\d{2}[\sT][\d:.]+\]?\s*(?:ERROR|WARNING|INFO|DEBUG|CRITICAL)\s*(?:\[(?:None|[^\]]*)\]\s*)?(?:\[[^\]]*:\d+\]\s*)?/i;
+    const DJANGO_PREFIX_RE = /^(?:ERROR|WARNING|INFO|DEBUG):[\w.]+:/i;
+
+    function normalizeForDedup(summary: string): string {
+      let s = summary.trim();
+      // Strip Django-style prefix: "ERROR:django.request:Internal Server Error: /path"
+      s = s.replace(DJANGO_PREFIX_RE, "").trim();
+      // Strip bracketed timestamp + level + module: "[2026-03-31 21:14:50] ERROR [None] [log.log_response:253]"
+      s = s.replace(LEADING_META_RE, "").trim();
+      // Strip leading quotes from HTTP log lines: "GET /api/..." → GET /api/...
+      s = s.replace(/^"(.+)"$/, "$1").trim();
+      return s.toLowerCase();
+    }
+
+    const deduped: TimelineEntryData[] = [];
+    const seen = new Map<string, number>(); // normalized summary → index in deduped
+
+    for (const entry of entries) {
+      if (entry.type !== "log") {
+        deduped.push(entry);
+        continue;
+      }
+      const key = normalizeForDedup(entry.summary);
+      const existingIdx = seen.get(key);
+      if (existingIdx !== undefined) {
+        const existing = deduped[existingIdx]!;
+        existing.count = (existing.count ?? 1) + 1;
+        // Keep the earliest timestamp, expand the time range
+        if (entry.timestamp && tryParseTimestamp(entry.timestamp) < tryParseTimestamp(existing.timestamp)) {
+          existing.timestamp = entry.timestamp;
+        }
+        if (entry.timestamp) {
+          const entryTs = entry.timestampEnd ?? entry.timestamp;
+          const existingEnd = existing.timestampEnd ?? existing.timestamp;
+          if (tryParseTimestamp(entryTs) > tryParseTimestamp(existingEnd)) {
+            existing.timestampEnd = entryTs;
+          }
+        }
+      } else {
+        seen.set(key, deduped.length);
+        deduped.push({ ...entry });
+      }
+    }
+
+    return deduped;
   }, [evidence.logs, evidence.infra, service]);
 
   const hasTimeline = timelineEntries.length > 0;

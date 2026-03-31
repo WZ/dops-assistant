@@ -74,6 +74,8 @@ function findToolBySuffix(tools: Record<string, Tool>, suffix: string): [string,
  * 3. Verify matched log labels return data
  */
 export async function runValidateStep(config: ValidateStepConfig): Promise<ValidatedServiceConfig[]> {
+  config.onIteration?.("validation", 0, config.services.length, "Resolving MCP tools...");
+
   // Resolve tools by role instead of scanning all providers
   const [metricsTools, logsTools, dashboardsTools, infraTools] = await Promise.all([
     getToolsByRole(config.providers, "metrics").catch(() => ({})),
@@ -101,6 +103,8 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
 
   // Compute effective label keys: merge recipe labelKeys (if any) with defaults
   const effectiveLabelKeys = computeEffectiveLabelKeys(config.discoveryRecipes);
+
+  config.onIteration?.("validation", 0, config.services.length, "Enriching log labels from K8s...");
 
   // Phase 0: Enrich log labels from K8s pod data (ground truth — namespace + labels)
   const k8sEnriched = await enrichFromK8s(config.services, podsListTool, config);
