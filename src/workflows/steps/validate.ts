@@ -224,8 +224,8 @@ async function enrichFromK8s(
   let enrichedCount = 0;
 
   const result = services.map((service) => {
-    // Skip if logLabels already populated
-    if (Object.keys(service.logLabels).length > 0) return service;
+    // Skip if logLabels already has namespace (fully enriched)
+    if (service.logLabels?.namespace) return service;
 
     const nameVariants = normalizeName(service.name);
 
@@ -246,14 +246,16 @@ async function enrichFromK8s(
 
     if (!matched) return service;
 
-    // Build logLabels from K8s data: namespace + container (service name)
-    const logLabels: Record<string, string> = { namespace: matched.namespace };
+    // Merge K8s data into existing logLabels (preserve LLM-provided labels, add namespace)
+    const logLabels: Record<string, string> = { ...service.logLabels, namespace: matched.namespace };
 
-    // Prefer app label if it matches, otherwise use container = service name
-    if (matched.labels["app"]) {
-      logLabels["container"] = matched.labels["app"];
-    } else {
-      logLabels["container"] = service.name;
+    // Add container label if not already present
+    if (!logLabels["container"] && !logLabels["app"]) {
+      if (matched.labels["app"]) {
+        logLabels["container"] = matched.labels["app"];
+      } else {
+        logLabels["container"] = service.name;
+      }
     }
 
     enrichedCount++;
