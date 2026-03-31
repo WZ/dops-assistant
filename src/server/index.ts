@@ -135,7 +135,7 @@ async function main() {
       });
   };
 
-  registerRoutes(app, { db, stackManager, config, skillStore, sharedDedup });
+  registerRoutes(app, { db, stackManager, config, skillStore, sharedDedup, llmModel: model });
 
   // Health check endpoint with background monitoring
   startHealthMonitor({ stackManager, db });

@@ -148,16 +148,12 @@ function LoadingSkeleton() {
 export function RecentChanges({ changes, sectionStatus }: RecentChangesProps) {
   return (
     <div className="rounded-lg border border-border/25 bg-card/40 overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 pt-3 pb-2">
-        <span className="text-[10px] font-mono uppercase tracking-[0.1em] text-muted-foreground/60">
-          Recent Changes
-        </span>
-        <FreshnessIndicator fetchedAt={sectionStatus.fetchedAt} />
-      </div>
-
-      {/* Divider under header */}
-      <div className="border-t border-border/25" />
+      {/* Freshness — section label provided by parent */}
+      {sectionStatus.fetchedAt !== undefined && (
+        <div className="flex justify-end px-4 pt-2 pb-1">
+          <FreshnessIndicator fetchedAt={sectionStatus.fetchedAt} />
+        </div>
+      )}
 
       {/* Loading */}
       {sectionStatus.status === "ok" && changes === null && (
