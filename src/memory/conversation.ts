@@ -36,6 +36,11 @@ export class ConversationMemory {
     this.store.delete(threadId);
   }
 
+  /** Clear all threads — used when the user clears all console messages. */
+  clearAll(): void {
+    this.store.clear();
+  }
+
   destroy(): void {
     clearInterval(this.evictionInterval);
   }

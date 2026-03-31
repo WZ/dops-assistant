@@ -141,6 +141,8 @@ const WebhookSchema = z.object({
     warning: "standard",
     info: "quick",
   }),
+  /** Slack incoming webhook URL for investigation completion notifications */
+  slackWebhookUrl: z.string().url().optional(),
 });
 
 export const ConfigSchema = z.object({

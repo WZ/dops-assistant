@@ -6,7 +6,7 @@
  * apply regardless of how an investigation is triggered.
  *
  * Usage:
- *   const dedup = new InvestigationDedup({ dedupWindowSeconds: 300, maxConcurrent: 3 });
+ *   const dedup = new InvestigationDedup({ dedupWindowSeconds: 300, maxConcurrent: 3, db });
  *
  *   if (dedup.shouldInvestigate("my-service")) {
  *     dedup.markStarted("my-service");
@@ -18,16 +18,22 @@
  *   }
  */
 
+import type { Database } from "./db.js";
+
 export interface InvestigationDedupOptions {
   /** Dedup window in seconds — suppress duplicate investigations for the same service */
   dedupWindowSeconds: number;
   /** Maximum number of concurrently running investigations */
   maxConcurrent: number;
+  /** Optional DB for fallback dedup checks that survive server restarts */
+  db?: Database;
 }
 
 export class InvestigationDedup {
   private readonly dedupWindowMs: number;
+  private readonly dedupWindowSeconds: number;
   private readonly maxConcurrent: number;
+  private readonly db?: Database;
 
   /** Maps service name → timestamp (ms) of when the last investigation started */
   private readonly recentInvestigations = new Map<string, number>();
@@ -36,14 +42,16 @@ export class InvestigationDedup {
 
   constructor(opts: InvestigationDedupOptions) {
     this.dedupWindowMs = opts.dedupWindowSeconds * 1000;
+    this.dedupWindowSeconds = opts.dedupWindowSeconds;
     this.maxConcurrent = opts.maxConcurrent;
+    this.db = opts.db;
   }
 
   /**
    * Returns true if an investigation for this service should proceed.
    *
    * Returns false if:
-   *  - The service was investigated within the dedup window, OR
+   *  - The service was investigated within the dedup window (in-memory or DB fallback), OR
    *  - The active investigation count has reached maxConcurrent
    */
   shouldInvestigate(stackId: string, service: string): boolean {
@@ -51,8 +59,18 @@ export class InvestigationDedup {
 
     const key = `${stackId}:${service}`;
     const lastRun = this.recentInvestigations.get(key);
+
+    // In-memory check (fast path)
     if (lastRun !== undefined && Date.now() - lastRun < this.dedupWindowMs) {
       return false;
+    }
+
+    // DB fallback check — catches recent investigations lost on server restart.
+    // Only queries DB when in-memory map has no entry for this key.
+    if (this.db && lastRun === undefined && this.dedupWindowSeconds > 0) {
+      if (this.db.hasRecentInvestigation(stackId, service, this.dedupWindowSeconds)) {
+        return false;
+      }
     }
 
     if (this.activeCount >= this.maxConcurrent) {
