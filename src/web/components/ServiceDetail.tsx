@@ -42,6 +42,7 @@ export function ServiceDetail({
   const [activeTab, setActiveTab] = useState<TabId>("overview");
   const [metadata, setMetadata] = useState<ServiceMetadata | null>(null);
   const [healthStatus, setHealthStatus] = useState<HealthStatus>("unknown");
+  const [healthCheckedAt, setHealthCheckedAt] = useState<number | null>(null);
   const [investigationCount, setInvestigationCount] = useState(0);
   const [aliasEditorOpen, setAliasEditorOpen] = useState(false);
   const [tagEditorOpen, setTagEditorOpen] = useState(false);
@@ -72,6 +73,7 @@ export function ServiceDetail({
         const healthMap = await healthRes.json();
         const status = healthMap[serviceName];
         setHealthStatus(status ?? "unknown");
+        setHealthCheckedAt(Date.now());
       }
 
       // Investigation count — API returns flat InvestigationRow[] array
@@ -119,6 +121,7 @@ export function ServiceDetail({
       <ServiceDetailHeader
         serviceName={serviceName}
         healthStatus={healthStatus}
+        healthCheckedAt={healthCheckedAt}
         alias={metadata?.alias}
         tags={metadata?.tags}
         investigationCount={investigationCount}

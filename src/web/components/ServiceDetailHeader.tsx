@@ -5,6 +5,7 @@ import { AliasEditor, TagEditor } from "./ServiceAliasEditor";
 interface ServiceDetailHeaderProps {
   serviceName: string;
   healthStatus?: "healthy" | "degraded" | "down" | "unknown";
+  healthCheckedAt?: number | null;
   alias?: string | null;
   tags?: string[];
   investigationCount?: number;
@@ -54,9 +55,21 @@ function buildGrafanaExploreUrl(baseUrl: string, query: string): string {
   return `${stripped}/explore?orgId=1&left=${encodeURIComponent(left)}`;
 }
 
+function formatCheckedAgo(ts: number | null | undefined): string | null {
+  if (!ts) return null;
+  const sec = Math.floor((Date.now() - ts) / 1000);
+  if (sec < 10) return "just now";
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  return `${hr}h ago`;
+}
+
 export function ServiceDetailHeader({
   serviceName,
   healthStatus,
+  healthCheckedAt,
   alias,
   tags = [],
   investigationCount = 0,
@@ -202,6 +215,12 @@ export function ServiceDetailHeader({
           }`} />
           <span className="uppercase tracking-[0.06em]">{healthLabel(healthStatus)}</span>
         </span>
+        {formatCheckedAgo(healthCheckedAt) && (
+          <>
+            <span className="text-border">·</span>
+            <span className="text-muted-foreground/50">Last checked {formatCheckedAgo(healthCheckedAt)}</span>
+          </>
+        )}
       </div>
     </div>
   );
