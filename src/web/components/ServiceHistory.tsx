@@ -15,6 +15,15 @@ interface InvestigationRow {
   created_at: string;
   completed_at: string | null;
   total_duration_ms: number | null;
+  report?: string | null;
+}
+
+function extractReportSummary(report?: string | null): string | null {
+  if (!report) return null;
+  try {
+    const parsed = JSON.parse(report);
+    return parsed.summary && parsed.summary !== "Investigation complete" ? parsed.summary : null;
+  } catch { return null; }
 }
 
 function formatRelativeTime(isoString: string): string {
@@ -115,6 +124,7 @@ export function ServiceHistory({ serviceName, onViewInvestigation }: ServiceHist
               : score !== null && score >= 0.5
                 ? "bg-warning border-warning"
                 : "bg-info border-info";
+          const summary = extractReportSummary(inv.report);
 
           return (
             <button
@@ -132,6 +142,11 @@ export function ServiceHistory({ serviceName, onViewInvestigation }: ServiceHist
               <div className="text-[13px] font-medium text-foreground/90 group-hover:text-primary transition-colors">
                 {inv.query}
               </div>
+              {summary && (
+                <div className="text-[12px] text-muted-foreground/70 mt-1 line-clamp-2">
+                  {summary}
+                </div>
+              )}
               <div className="text-[12px] text-muted-foreground/60 mt-0.5">
                 {inv.status === "complete" ? "Completed" : inv.status === "failed" ? "Failed" : "Running"}
                 {score !== null && ` · Confidence: ${score.toFixed(2)}`}
