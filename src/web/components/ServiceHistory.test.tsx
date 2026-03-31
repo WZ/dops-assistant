@@ -104,15 +104,14 @@ describe("ServiceHistory", () => {
       expect(screen.getByText("High error rate on payment-service")).toBeTruthy();
     });
 
-    // Status dots: semantic tokens for complete, failed, running
-    const dots = container.querySelectorAll(".rounded-full");
+    // Timeline dots use border-2 + rounded-full for the severity indicators
+    const dots = container.querySelectorAll(".border-2.rounded-full");
     expect(dots.length).toBe(3);
 
-    // Verify CSS classes use semantic design tokens
+    // Verify CSS classes use semantic design tokens (timeline dots use border-{color} + bg-{color})
     const dotClasses = Array.from(dots).map((el) => el.className);
-    expect(dotClasses.some((c) => c.includes("bg-success"))).toBe(true); // complete
-    expect(dotClasses.some((c) => c.includes("bg-destructive"))).toBe(true); // failed
-    expect(dotClasses.some((c) => c.includes("bg-info"))).toBe(true); // running
+    expect(dotClasses.some((c) => c.includes("border-destructive"))).toBe(true); // high confidence complete
+    expect(dotClasses.some((c) => c.includes("border-info"))).toBe(true); // failed or running (no score)
   });
 
   it("click calls onViewInvestigation with correct ID", async () => {
@@ -152,7 +151,7 @@ describe("ServiceHistory", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("87% confidence")).toBeTruthy();
+      expect(screen.getByText(/Confidence: 0\.87/)).toBeTruthy();
     });
   });
 });

@@ -26,9 +26,6 @@ function BriefShell({ children }: { children: ReactNode }) {
 function BriefBody({ children }: { children: ReactNode }) {
   return (
     <div className="px-4 py-4">
-      <span className="text-[10px] font-mono uppercase tracking-[0.1em] text-muted-foreground/60 block mb-2">
-        AI BRIEF
-      </span>
       {children}
     </div>
   );

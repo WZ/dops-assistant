@@ -11,6 +11,7 @@ import { queryServiceMetrics } from "./prometheus-query.js";
 import type { MetricSeries } from "./prometheus-query.js";
 import { inferDependencyGraph } from "./dependency-graph.js";
 import { buildServiceBrief } from "./service-brief.js";
+import type { LanguageModel } from "ai";
 
 export interface DependencyNode {
   id: string;
@@ -34,6 +35,7 @@ export interface RouteDeps {
   config: Config;
   skillStore?: SkillStore;
   sharedDedup: InvestigationDedup;
+  llmModel?: LanguageModel;
 }
 
 /** Get all services for a stack by merging config + registry */
@@ -331,6 +333,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         providers: req.stackContext.providerRegistry.getProviders(),
         services: allServices,
         healthPoller: req.stackContext.healthPoller,
+        llmModel: deps.llmModel,
       });
       res.json(brief);
     } catch (err) {

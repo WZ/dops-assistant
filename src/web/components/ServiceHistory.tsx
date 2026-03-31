@@ -15,6 +15,15 @@ interface InvestigationRow {
   created_at: string;
   completed_at: string | null;
   total_duration_ms: number | null;
+  report?: string | null;
+}
+
+function extractReportSummary(report?: string | null): string | null {
+  if (!report) return null;
+  try {
+    const parsed = JSON.parse(report);
+    return parsed.summary && parsed.summary !== "Investigation complete" ? parsed.summary : null;
+  } catch { return null; }
 }
 
 function formatRelativeTime(isoString: string): string {
@@ -93,43 +102,60 @@ export function ServiceHistory({ serviceName, onViewInvestigation }: ServiceHist
   }
 
   return (
-    <div className="space-y-2">
-      {investigations.map((inv) => (
-        <button
-          key={inv.id}
-          onClick={() => onViewInvestigation(inv.id)}
-          className="w-full flex items-center gap-3 px-4 py-3 rounded-lg border border-border/25 bg-card/40 hover:bg-card/60 transition-colors text-left"
-        >
-          {/* Status dot */}
-          <span
-            className={`w-2 h-2 rounded-full shrink-0 ${
-              inv.status === "complete"
-                ? "bg-success"
-                : inv.status === "failed"
-                  ? "bg-destructive"
-                  : "bg-info animate-status-pulse"
-            }`}
-          />
+    <div className="max-w-[900px]">
+      <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/50 mb-3">
+        Investigation History
+      </div>
+      <div className="h-px bg-border/25 mb-4" />
 
-          {/* Query text */}
-          <span className="text-[13px] flex-1 truncate">{inv.query}</span>
+      {/* Timeline */}
+      <div className="relative pl-6">
+        {/* Vertical line */}
+        <div className="absolute left-[5px] top-1 bottom-1 w-px bg-border/25" />
 
-          {/* Right side: confidence + timestamp */}
-          <div className="text-right shrink-0">
-            {inv.confidence_score != null && (
-              <div className="text-[11px] font-mono text-primary">
-                {inv.confidence_score <= 1 ? Math.round(inv.confidence_score * 100) : Math.round(inv.confidence_score)}% confidence
+        {investigations.map((inv, idx) => {
+          const score = inv.confidence_score != null
+            ? (inv.confidence_score <= 1 ? inv.confidence_score : inv.confidence_score / 100)
+            : null;
+          const dotColor = inv.status === "failed"
+            ? "bg-destructive border-destructive"
+            : score !== null && score >= 0.8
+              ? "bg-destructive border-destructive"
+              : score !== null && score >= 0.5
+                ? "bg-warning border-warning"
+                : "bg-info border-info";
+          const summary = extractReportSummary(inv.report);
+
+          return (
+            <button
+              key={inv.id}
+              onClick={() => onViewInvestigation(inv.id)}
+              className={`relative w-full text-left group ${idx < investigations.length - 1 ? "mb-5" : ""}`}
+            >
+              {/* Timeline dot */}
+              <div className={`absolute -left-6 top-1 w-[11px] h-[11px] rounded-full border-2 ${dotColor}`} />
+
+              {/* Content */}
+              <div className="font-mono text-[10px] text-muted-foreground/50 mb-0.5">
+                {new Date(inv.created_at).toISOString().replace("T", " ").slice(0, 19)} UTC
               </div>
-            )}
-            <div className="text-[11px] font-mono text-muted-foreground">
-              {formatRelativeTime(inv.created_at)} &middot;{" "}
-              {inv.total_duration_ms
-                ? `${(inv.total_duration_ms / 1000).toFixed(0)}s`
-                : "—"}
-            </div>
-          </div>
-        </button>
-      ))}
+              <div className="text-[13px] font-medium text-foreground/90 group-hover:text-primary transition-colors">
+                {inv.query}
+              </div>
+              {summary && (
+                <div className="text-[12px] text-muted-foreground/70 mt-1 line-clamp-2">
+                  {summary}
+                </div>
+              )}
+              <div className="text-[12px] text-muted-foreground/60 mt-0.5">
+                {inv.status === "complete" ? "Completed" : inv.status === "failed" ? "Failed" : "Running"}
+                {score !== null && ` · Confidence: ${score.toFixed(2)}`}
+                {inv.total_duration_ms ? ` · ${(inv.total_duration_ms / 1000).toFixed(0)}s` : ""}
+              </div>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
