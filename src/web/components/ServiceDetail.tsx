@@ -1,13 +1,11 @@
 import { useState, useEffect, useCallback, lazy, Suspense } from "react";
 import { ServiceDetailHeader } from "./ServiceDetailHeader";
-import { ServiceMetrics } from "./ServiceMetrics";
 import { ServiceHistory } from "./ServiceHistory";
 const ServiceOverview = lazy(() => import("./ServiceOverview").then(m => ({ default: m.ServiceOverview })));
-const ServiceDependencyGraph = lazy(() => import("./ServiceDependencyGraph").then(m => ({ default: m.ServiceDependencyGraph })));
 import { useStackContext } from "../contexts/StackContext";
 import type { useWebSocket } from "../hooks/useWebSocket";
 
-type TabId = "overview" | "metrics" | "history" | "dependencies";
+type TabId = "overview" | "history";
 
 interface ServiceDetailProps {
   serviceName: string;
@@ -28,9 +26,7 @@ type HealthStatus = "healthy" | "degraded" | "down" | "unknown";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "overview", label: "Overview" },
-  { id: "metrics", label: "Metrics" },
-  { id: "history", label: "History" },
-  { id: "dependencies", label: "Dependencies" },
+  { id: "history", label: "Investigations" },
 ];
 
 export function ServiceDetail({
@@ -113,7 +109,7 @@ export function ServiceDetail({
 
   const tabLabel = (tab: typeof TABS[number]) => {
     if (tab.id === "history" && investigationCount > 0) {
-      return `${tab.label} (${investigationCount})`;
+      return `Investigations (${investigationCount})`;
     }
     return tab.label;
   };
@@ -178,14 +174,8 @@ export function ServiceDetail({
             <ServiceOverview serviceName={serviceName} onViewService={onViewService} />
           </Suspense>
         )}
-        {activeTab === "metrics" && <ServiceMetrics serviceName={serviceName} />}
         {activeTab === "history" && (
           <ServiceHistory serviceName={serviceName} onViewInvestigation={onViewInvestigation} />
-        )}
-        {activeTab === "dependencies" && (
-          <Suspense fallback={<div className="h-40 rounded-lg bg-muted/30 shimmer-skeleton" />}>
-            <ServiceDependencyGraph serviceName={serviceName} onViewService={onViewService} />
-          </Suspense>
         )}
       </div>
     </div>

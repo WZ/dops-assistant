@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { ServiceBrief as ServiceBriefComponent, ServiceBriefSkeleton } from "./ServiceBrief";
+import { ServiceMetrics } from "./ServiceMetrics";
 import { RecentChanges } from "./RecentChanges";
 import { InfrastructureStatus } from "./InfrastructureStatus";
 import { ServiceDependencyGraph } from "./ServiceDependencyGraph";
@@ -77,40 +78,72 @@ export function ServiceOverview({ serviceName, onViewService }: ServiceOverviewP
   }
 
   return (
-    <div className="space-y-4">
-      {/* AI Brief — full-width */}
-      {loading && !brief ? (
-        <ServiceBriefSkeleton />
-      ) : (
-        <ServiceBriefComponent
-          summary={brief?.summary ?? null}
-          sectionStatus={brief?.sections.summary ?? fallbackStatus}
-        />
-      )}
+    <div className="space-y-8">
+      {/* ── AI Brief ──────────────────────────────────── */}
+      <section>
+        <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/50 mb-3">
+          AI Brief
+        </div>
+        <div className="h-px bg-border/25 mb-4" />
+        {loading && !brief ? (
+          <ServiceBriefSkeleton />
+        ) : (
+          <ServiceBriefComponent
+            summary={brief?.summary ?? null}
+            sectionStatus={brief?.sections.summary ?? fallbackStatus}
+          />
+        )}
+      </section>
 
-      {/* Changes + Infrastructure — side-by-side grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <RecentChanges
-          changes={brief?.changes ?? null}
-          sectionStatus={brief?.sections.changes ?? fallbackStatus}
-        />
+      {/* ── Metrics ──────────────────────────────────── */}
+      <section>
+        <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/50 mb-3">
+          Metrics
+        </div>
+        <div className="h-px bg-border/25 mb-4" />
+        <ServiceMetrics serviceName={serviceName} />
+      </section>
+
+      {/* ── Infrastructure ────────────────────────────── */}
+      <section>
+        <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/50 mb-3">
+          Infrastructure
+        </div>
+        <div className="h-px bg-border/25 mb-4" />
         <InfrastructureStatus
           infrastructure={brief?.infrastructure ?? null}
           sectionStatus={brief?.sections.infrastructure ?? fallbackStatus}
         />
-      </div>
+      </section>
 
-      {/* Dependency graph — full-width, condensed.
-          Pass pre-fetched data from the brief so the graph doesn't double-fetch. */}
-      <div style={{ height: 300 }}>
-        <ServiceDependencyGraph
-          serviceName={serviceName}
-          onViewService={onViewService}
-          dependencySource={dependencySource}
-          initialData={initialDepData}
-          initialHealthMap={initialHealthMap}
+      {/* ── Recent Changes ────────────────────────────── */}
+      <section>
+        <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/50 mb-3">
+          Recent Changes
+        </div>
+        <div className="h-px bg-border/25 mb-4" />
+        <RecentChanges
+          changes={brief?.changes ?? null}
+          sectionStatus={brief?.sections.changes ?? fallbackStatus}
         />
-      </div>
+      </section>
+
+      {/* ── Dependencies ──────────────────────────────── */}
+      <section>
+        <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/50 mb-3">
+          Dependencies
+        </div>
+        <div className="h-px bg-border/25 mb-4" />
+        <div style={{ height: 300 }}>
+          <ServiceDependencyGraph
+            serviceName={serviceName}
+            onViewService={onViewService}
+            dependencySource={dependencySource}
+            initialData={initialDepData}
+            initialHealthMap={initialHealthMap}
+          />
+        </div>
+      </section>
     </div>
   );
 }

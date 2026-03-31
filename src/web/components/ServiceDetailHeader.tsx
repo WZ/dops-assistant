@@ -191,9 +191,17 @@ export function ServiceDetailHeader({
         </div>
       </div>
 
-      {/* Meta line */}
-      <div className="ml-11 text-[11px] text-muted-foreground/50 font-mono">
-        {healthLabel(healthStatus)} &middot; {investigationCount} investigation{investigationCount !== 1 ? "s" : ""}
+      {/* Status line — monospace bar with health */}
+      <div className="mt-3 py-2.5 border-t border-b border-border/25 flex items-center gap-5 font-mono text-[11px] font-medium text-muted-foreground/70">
+        <span className="flex items-center gap-1.5">
+          <span className={`w-2 h-2 rounded-full ${
+            healthStatus === "healthy" ? "bg-success" :
+            healthStatus === "degraded" ? "bg-warning" :
+            healthStatus === "down" ? "bg-destructive animate-status-pulse" :
+            "bg-muted-foreground/30"
+          }`} />
+          <span className="uppercase tracking-[0.06em]">{healthLabel(healthStatus)}</span>
+        </span>
       </div>
     </div>
   );
