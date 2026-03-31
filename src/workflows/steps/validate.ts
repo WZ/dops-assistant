@@ -75,21 +75,24 @@ function findToolBySuffix(tools: Record<string, Tool>, suffix: string): [string,
  */
 export async function runValidateStep(config: ValidateStepConfig): Promise<ValidatedServiceConfig[]> {
   // Resolve tools by role instead of scanning all providers
-  const [metricsTools, logsTools, dashboardsTools] = await Promise.all([
+  const [metricsTools, logsTools, dashboardsTools, infraTools] = await Promise.all([
     getToolsByRole(config.providers, "metrics").catch(() => ({})),
     getToolsByRole(config.providers, "logs").catch(() => ({})),
     getToolsByRole(config.providers, "dashboards").catch(() => ({})),
+    getToolsByRole(config.providers, "infrastructure").catch(() => ({})),
   ]);
 
   const promTool = findToolBySuffix(metricsTools, "query_prometheus");
   const lokiLabelNamesTool = findToolBySuffix(logsTools, "list_loki_label_names");
   const lokiLabelValuesTool = findToolBySuffix(logsTools, "list_loki_label_values");
   const lokiTool = findToolBySuffix(logsTools, "query_loki_logs");
+  const podsListTool = findToolBySuffix(infraTools, "pods_list");
 
   console.error(`[VALIDATE] Starting validation of ${config.services.length} services`);
   console.error(`[VALIDATE] Metrics tools: ${Object.keys(metricsTools).join(", ") || "(none)"}`);
   console.error(`[VALIDATE] Logs tools: ${Object.keys(logsTools).join(", ") || "(none)"}`);
   console.error(`[VALIDATE] Dashboards tools: ${Object.keys(dashboardsTools).join(", ") || "(none)"}`);
+  console.error(`[VALIDATE] Infra tools: ${Object.keys(infraTools).join(", ") || "(none)"}`);
 
   // Find datasource listing tool — try dashboards role first, fall back to metrics role
   const listDsTool = findToolBySuffix(dashboardsTools, "list_datasources")
@@ -99,9 +102,12 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
   // Compute effective label keys: merge recipe labelKeys (if any) with defaults
   const effectiveLabelKeys = computeEffectiveLabelKeys(config.discoveryRecipes);
 
-  // Phase 1: Enrich log labels by matching service names against Loki label values
+  // Phase 0: Enrich log labels from K8s pod data (ground truth — namespace + labels)
+  const k8sEnriched = await enrichFromK8s(config.services, podsListTool, config);
+
+  // Phase 1: Enrich remaining empty logLabels by matching service names against Loki label values (fallback)
   const labelMap = await buildLabelMap(lokiLabelNamesTool, lokiLabelValuesTool, lokiDsUid, config, effectiveLabelKeys);
-  const enriched = enrichLogLabels(config.services, labelMap);
+  const enriched = enrichLogLabels(k8sEnriched, labelMap);
 
   // Phase 2: Validate metrics and logs for each service
   const results: ValidatedServiceConfig[] = [];
@@ -177,6 +183,144 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
   const partial = results.filter((r) => r.confidence === "partial").length;
   const unverified = results.filter((r) => r.confidence === "unverified").length;
   console.error(`[VALIDATE] Done: ${verified} verified, ${partial} partial, ${unverified} unverified`);
+
+  return results;
+}
+
+/**
+ * Enrich service logLabels using K8s pod data (ground truth).
+ *
+ * Calls pods_list once, parses the tabular output, and matches services
+ * to pods by name. Extracts namespace and labels (app, component, etc.)
+ * for each matched service.
+ */
+async function enrichFromK8s(
+  services: ServiceConfig[],
+  podsListTool: [string, Tool] | undefined,
+  config: ValidateStepConfig,
+): Promise<ServiceConfig[]> {
+  if (!podsListTool) {
+    console.error("[VALIDATE] No pods_list tool — skipping K8s enrichment");
+    return services;
+  }
+
+  let podRows: Array<{ name: string; namespace: string; labels: Record<string, string> }>;
+  try {
+    const start = Date.now();
+    const result = await podsListTool[1].execute!({}, {} as any);
+    const duration = Date.now() - start;
+    const resultStr = typeof result === "string" ? result : JSON.stringify(result);
+    config.onToolCall?.(podsListTool[0], {}, resultStr.slice(0, 2000), duration, undefined, "validation");
+
+    podRows = parsePodsList(resultStr);
+    console.error(`[VALIDATE] K8s pods_list: parsed ${podRows.length} pods`);
+  } catch (err) {
+    console.error(`[VALIDATE] K8s pods_list failed: ${err}`);
+    return services;
+  }
+
+  if (podRows.length === 0) return services;
+
+  let enrichedCount = 0;
+
+  const result = services.map((service) => {
+    // Skip if logLabels already populated
+    if (Object.keys(service.logLabels).length > 0) return service;
+
+    const nameVariants = normalizeName(service.name);
+
+    // Match pod by: pod name contains service name, or labels.app matches
+    const matched = podRows.find((pod) => {
+      const podLower = pod.name.toLowerCase();
+      for (const variant of nameVariants) {
+        if (podLower.startsWith(variant) || podLower.includes(variant)) return true;
+      }
+      const appLabel = pod.labels["app"]?.toLowerCase();
+      if (appLabel) {
+        for (const variant of nameVariants) {
+          if (appLabel === variant || appLabel.includes(variant)) return true;
+        }
+      }
+      return false;
+    });
+
+    if (!matched) return service;
+
+    // Build logLabels from K8s data: namespace + container (service name)
+    const logLabels: Record<string, string> = { namespace: matched.namespace };
+
+    // Prefer app label if it matches, otherwise use container = service name
+    if (matched.labels["app"]) {
+      logLabels["container"] = matched.labels["app"];
+    } else {
+      logLabels["container"] = service.name;
+    }
+
+    enrichedCount++;
+    console.error(`[VALIDATE] K8s match: "${service.name}" → namespace=${matched.namespace}, container=${logLabels["container"]} (pod=${matched.name})`);
+    return { ...service, logLabels };
+  });
+
+  console.error(`[VALIDATE] K8s enrichment: ${enrichedCount}/${services.length} services matched`);
+  return result;
+}
+
+/**
+ * Parse the tabular output from pods_list into structured rows.
+ *
+ * Expected format (space-separated with LABELS as last column):
+ *   NAMESPACE   APIVERSION   KIND   NAME   READY   STATUS   RESTARTS   AGE   IP   NODE   ...   LABELS
+ *   admin-new   v1           Pod    admin-ui-7bd9b7c579-qtcdr   1/1   Running   0   3d22h   ...   app=admin-ui,pod-template-hash=7bd9b7c579
+ */
+function parsePodsList(raw: string): Array<{ name: string; namespace: string; labels: Record<string, string> }> {
+  const text = typeof raw === "string" ? raw : JSON.stringify(raw);
+  // Handle MCP content wrapping
+  let content = text;
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed?.content?.[0]?.text) content = parsed.content[0].text;
+    else if (typeof parsed === "string") content = parsed;
+  } catch { /* use raw text */ }
+
+  const lines = content.split("\n").filter((l: string) => l.trim());
+  if (lines.length < 2) return [];
+
+  // Find header line and column positions
+  const headerLine = lines[0];
+  const namespaceIdx = headerLine.indexOf("NAMESPACE");
+  const nameIdx = headerLine.indexOf("NAME");
+  const labelsIdx = headerLine.indexOf("LABELS");
+
+  if (nameIdx === -1) return [];
+
+  const results: Array<{ name: string; namespace: string; labels: Record<string, string> }> = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+
+    // Split by whitespace for structured fields
+    const parts = line.trim().split(/\s+/);
+    if (parts.length < 4) continue;
+
+    const namespace = namespaceIdx !== -1 ? parts[0] : "";
+    // NAME is typically the 4th column (NAMESPACE, APIVERSION, KIND, NAME)
+    const name = parts[3] ?? "";
+
+    // LABELS is the last whitespace-separated field, containing comma-separated key=value pairs
+    const labels: Record<string, string> = {};
+    const lastField = parts[parts.length - 1];
+    if (lastField && lastField !== "<none>" && lastField.includes("=")) {
+      for (const pair of lastField.split(",")) {
+        const eq = pair.indexOf("=");
+        if (eq > 0) {
+          labels[pair.slice(0, eq)] = pair.slice(eq + 1);
+        }
+      }
+    }
+
+    if (name) results.push({ name, namespace, labels });
+  }
 
   return results;
 }
