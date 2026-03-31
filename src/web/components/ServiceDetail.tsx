@@ -1,13 +1,11 @@
 import { useState, useEffect, useCallback, lazy, Suspense } from "react";
 import { ServiceDetailHeader } from "./ServiceDetailHeader";
-import { ServiceMetrics } from "./ServiceMetrics";
 import { ServiceHistory } from "./ServiceHistory";
 const ServiceOverview = lazy(() => import("./ServiceOverview").then(m => ({ default: m.ServiceOverview })));
-const ServiceDependencyGraph = lazy(() => import("./ServiceDependencyGraph").then(m => ({ default: m.ServiceDependencyGraph })));
 import { useStackContext } from "../contexts/StackContext";
 import type { useWebSocket } from "../hooks/useWebSocket";
 
-type TabId = "overview" | "metrics" | "history" | "dependencies";
+type TabId = "overview" | "history";
 
 interface ServiceDetailProps {
   serviceName: string;
@@ -28,9 +26,7 @@ type HealthStatus = "healthy" | "degraded" | "down" | "unknown";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "overview", label: "Overview" },
-  { id: "metrics", label: "Metrics" },
-  { id: "history", label: "History" },
-  { id: "dependencies", label: "Dependencies" },
+  { id: "history", label: "Investigations" },
 ];
 
 export function ServiceDetail({
@@ -46,6 +42,7 @@ export function ServiceDetail({
   const [activeTab, setActiveTab] = useState<TabId>("overview");
   const [metadata, setMetadata] = useState<ServiceMetadata | null>(null);
   const [healthStatus, setHealthStatus] = useState<HealthStatus>("unknown");
+  const [healthCheckedAt, setHealthCheckedAt] = useState<number | null>(null);
   const [investigationCount, setInvestigationCount] = useState(0);
   const [aliasEditorOpen, setAliasEditorOpen] = useState(false);
   const [tagEditorOpen, setTagEditorOpen] = useState(false);
@@ -76,6 +73,7 @@ export function ServiceDetail({
         const healthMap = await healthRes.json();
         const status = healthMap[serviceName];
         setHealthStatus(status ?? "unknown");
+        setHealthCheckedAt(Date.now());
       }
 
       // Investigation count — API returns flat InvestigationRow[] array
@@ -113,7 +111,7 @@ export function ServiceDetail({
 
   const tabLabel = (tab: typeof TABS[number]) => {
     if (tab.id === "history" && investigationCount > 0) {
-      return `${tab.label} (${investigationCount})`;
+      return `Investigations (${investigationCount})`;
     }
     return tab.label;
   };
@@ -123,6 +121,7 @@ export function ServiceDetail({
       <ServiceDetailHeader
         serviceName={serviceName}
         healthStatus={healthStatus}
+        healthCheckedAt={healthCheckedAt}
         alias={metadata?.alias}
         tags={metadata?.tags}
         investigationCount={investigationCount}
@@ -178,14 +177,8 @@ export function ServiceDetail({
             <ServiceOverview serviceName={serviceName} onViewService={onViewService} />
           </Suspense>
         )}
-        {activeTab === "metrics" && <ServiceMetrics serviceName={serviceName} />}
         {activeTab === "history" && (
           <ServiceHistory serviceName={serviceName} onViewInvestigation={onViewInvestigation} />
-        )}
-        {activeTab === "dependencies" && (
-          <Suspense fallback={<div className="h-40 rounded-lg bg-muted/30 shimmer-skeleton" />}>
-            <ServiceDependencyGraph serviceName={serviceName} onViewService={onViewService} />
-          </Suspense>
         )}
       </div>
     </div>

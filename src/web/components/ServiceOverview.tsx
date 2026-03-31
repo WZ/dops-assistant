@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { ServiceBrief as ServiceBriefComponent, ServiceBriefSkeleton } from "./ServiceBrief";
+import { ServiceMetrics } from "./ServiceMetrics";
 import { RecentChanges } from "./RecentChanges";
 import { InfrastructureStatus } from "./InfrastructureStatus";
 import { ServiceDependencyGraph } from "./ServiceDependencyGraph";
@@ -60,57 +61,88 @@ export function ServiceOverview({ serviceName, onViewService }: ServiceOverviewP
   // When fetch fails entirely, use errorStatus instead of loadingStatus
   const fallbackStatus = error ? errorStatus : loadingStatus;
 
-  if (error && !brief) {
-    return (
-      <div className="space-y-4">
-        <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-6 text-center">
-          <p className="text-sm text-red-400">{error}</p>
-          <button
-            className="mt-2 text-xs text-zinc-400 hover:text-zinc-200 underline"
-            onClick={() => window.location.reload()}
-          >
-            Retry
-          </button>
-        </div>
-      </div>
-    );
-  }
+  // Brief-dependent sections show skeletons while loading, not blank
+  const briefLoading = loading && !brief;
 
   return (
-    <div className="space-y-4">
-      {/* AI Brief — full-width */}
-      {loading && !brief ? (
-        <ServiceBriefSkeleton />
-      ) : (
-        <ServiceBriefComponent
-          summary={brief?.summary ?? null}
-          sectionStatus={brief?.sections.summary ?? fallbackStatus}
-        />
-      )}
+    <div className="space-y-8">
+      {/* ── AI Brief ──────────────────────────────────── */}
+      <section>
+        <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/50 mb-3">
+          AI Brief
+        </div>
+        <div className="h-px bg-border/25 mb-4" />
+        {briefLoading ? (
+          <ServiceBriefSkeleton />
+        ) : error && !brief ? (
+          <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-4 text-center text-sm text-red-400">
+            Failed to load AI brief
+          </div>
+        ) : (
+          <ServiceBriefComponent
+            summary={brief?.summary ?? null}
+            sectionStatus={brief?.sections.summary ?? fallbackStatus}
+          />
+        )}
+      </section>
 
-      {/* Changes + Infrastructure — side-by-side grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <RecentChanges
-          changes={brief?.changes ?? null}
-          sectionStatus={brief?.sections.changes ?? fallbackStatus}
-        />
-        <InfrastructureStatus
-          infrastructure={brief?.infrastructure ?? null}
-          sectionStatus={brief?.sections.infrastructure ?? fallbackStatus}
-        />
-      </div>
+      {/* ── Metrics — renders immediately, fetches its own data ── */}
+      <section>
+        <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/50 mb-3">
+          Metrics
+        </div>
+        <div className="h-px bg-border/25 mb-4" />
+        <ServiceMetrics serviceName={serviceName} />
+      </section>
 
-      {/* Dependency graph — full-width, condensed.
-          Pass pre-fetched data from the brief so the graph doesn't double-fetch. */}
-      <div style={{ height: 300 }}>
-        <ServiceDependencyGraph
-          serviceName={serviceName}
-          onViewService={onViewService}
-          dependencySource={dependencySource}
-          initialData={initialDepData}
-          initialHealthMap={initialHealthMap}
-        />
-      </div>
+      {/* ── Infrastructure — depends on brief ── */}
+      <section>
+        <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/50 mb-3">
+          Infrastructure
+        </div>
+        <div className="h-px bg-border/25 mb-4" />
+        {briefLoading ? (
+          <div className="h-20 rounded-lg bg-muted/30 shimmer-skeleton" />
+        ) : (
+          <InfrastructureStatus
+            infrastructure={brief?.infrastructure ?? null}
+            sectionStatus={brief?.sections.infrastructure ?? fallbackStatus}
+          />
+        )}
+      </section>
+
+      {/* ── Recent Changes — depends on brief ── */}
+      <section>
+        <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/50 mb-3">
+          Recent Changes
+        </div>
+        <div className="h-px bg-border/25 mb-4" />
+        {briefLoading ? (
+          <div className="h-20 rounded-lg bg-muted/30 shimmer-skeleton" />
+        ) : (
+          <RecentChanges
+            changes={brief?.changes ?? null}
+            sectionStatus={brief?.sections.changes ?? fallbackStatus}
+          />
+        )}
+      </section>
+
+      {/* ── Dependencies — renders immediately, fetches its own data ── */}
+      <section>
+        <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/50 mb-3">
+          Dependencies
+        </div>
+        <div className="h-px bg-border/25 mb-4" />
+        <div style={{ height: 300 }}>
+          <ServiceDependencyGraph
+            serviceName={serviceName}
+            onViewService={onViewService}
+            dependencySource={dependencySource}
+            initialData={initialDepData}
+            initialHealthMap={initialHealthMap}
+          />
+        </div>
+      </section>
     </div>
   );
 }

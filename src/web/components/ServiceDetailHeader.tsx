@@ -5,6 +5,7 @@ import { AliasEditor, TagEditor } from "./ServiceAliasEditor";
 interface ServiceDetailHeaderProps {
   serviceName: string;
   healthStatus?: "healthy" | "degraded" | "down" | "unknown";
+  healthCheckedAt?: number | null;
   alias?: string | null;
   tags?: string[];
   investigationCount?: number;
@@ -54,9 +55,21 @@ function buildGrafanaExploreUrl(baseUrl: string, query: string): string {
   return `${stripped}/explore?orgId=1&left=${encodeURIComponent(left)}`;
 }
 
+function formatCheckedAgo(ts: number | null | undefined): string | null {
+  if (!ts) return null;
+  const sec = Math.floor((Date.now() - ts) / 1000);
+  if (sec < 10) return "just now";
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  return `${hr}h ago`;
+}
+
 export function ServiceDetailHeader({
   serviceName,
   healthStatus,
+  healthCheckedAt,
   alias,
   tags = [],
   investigationCount = 0,
@@ -191,9 +204,23 @@ export function ServiceDetailHeader({
         </div>
       </div>
 
-      {/* Meta line */}
-      <div className="ml-11 text-[11px] text-muted-foreground/50 font-mono">
-        {healthLabel(healthStatus)} &middot; {investigationCount} investigation{investigationCount !== 1 ? "s" : ""}
+      {/* Status line — monospace bar with health */}
+      <div className="mt-3 py-2.5 border-t border-b border-border/25 flex items-center gap-5 font-mono text-[11px] font-medium text-muted-foreground/70">
+        <span className="flex items-center gap-1.5">
+          <span className={`w-2 h-2 rounded-full ${
+            healthStatus === "healthy" ? "bg-success" :
+            healthStatus === "degraded" ? "bg-warning" :
+            healthStatus === "down" ? "bg-destructive animate-status-pulse" :
+            "bg-muted-foreground/30"
+          }`} />
+          <span className="uppercase tracking-[0.06em]">{healthLabel(healthStatus)}</span>
+        </span>
+        {formatCheckedAgo(healthCheckedAt) && (
+          <>
+            <span className="text-border">·</span>
+            <span className="text-muted-foreground/50">Last checked {formatCheckedAgo(healthCheckedAt)}</span>
+          </>
+        )}
       </div>
     </div>
   );

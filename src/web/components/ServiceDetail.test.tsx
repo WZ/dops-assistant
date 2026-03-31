@@ -87,21 +87,21 @@ describe("ServiceDetail", () => {
     expect(overviewTab.getAttribute("aria-selected")).toBe("true");
   });
 
-  it("switches to History tab on click", async () => {
+  it("switches to Investigations tab on click", async () => {
     renderServiceDetail();
 
     // Wait for initial fetches to settle
     await waitFor(() => {
-      expect(screen.getByRole("tab", { name: /History/i })).toBeTruthy();
+      expect(screen.getByRole("tab", { name: /Investigations/i })).toBeTruthy();
     });
 
-    const historyTab = screen.getByRole("tab", { name: /History/i });
-    fireEvent.click(historyTab);
+    const invTab = screen.getByRole("tab", { name: /Investigations/i });
+    fireEvent.click(invTab);
 
-    expect(historyTab.getAttribute("aria-selected")).toBe("true");
-    // Metrics tab should no longer be selected
-    const metricsTab = screen.getByRole("tab", { name: /Metrics/i });
-    expect(metricsTab.getAttribute("aria-selected")).toBe("false");
+    expect(invTab.getAttribute("aria-selected")).toBe("true");
+    // Overview tab should no longer be selected
+    const overviewTab = screen.getByRole("tab", { name: /Overview/i });
+    expect(overviewTab.getAttribute("aria-selected")).toBe("false");
   });
 
   it("back button triggers onBack callback", async () => {
@@ -116,11 +116,11 @@ describe("ServiceDetail", () => {
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 
-  it("shows investigation count in History tab label", async () => {
+  it("shows investigation count in Investigations tab label", async () => {
     renderServiceDetail();
     await waitFor(() => {
-      // The mock returns 5 items in the array, so tab should show "History (5)"
-      expect(screen.getByRole("tab", { name: /History \(5\)/i })).toBeTruthy();
+      // The mock returns 5 items in the array, so tab should show "Investigations (5)"
+      expect(screen.getByRole("tab", { name: /Investigations \(5\)/i })).toBeTruthy();
     });
   });
 });
