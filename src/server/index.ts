@@ -12,7 +12,7 @@ import pino from "pino";
 import { Database } from "./db.js";
 import { registerRoutes } from "./routes.js";
 import { setupWebSocket } from "./ws-handler.js";
-import { IntentRouter, matchServiceFromText, validateLlmServiceMatch } from "../agents/intent.js";
+import { IntentRouter, matchServiceFromText, validateLlmServiceMatch, setServiceAliases } from "../agents/intent.js";
 import { loadConfig } from "../config/loader.js";
 import { SkillStore } from "../skills/store.js";
 import { createModel } from "../mastra/index.js";
@@ -30,6 +30,10 @@ const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
 async function main() {
   const configPath = process.env["CONFIG_PATH"] ?? "config.yaml";
   const config = loadConfig(configPath);
+
+  if (config.serviceAliases && Object.keys(config.serviceAliases).length > 0) {
+    setServiceAliases(config.serviceAliases);
+  }
 
   const dbPath = process.env["DB_PATH"] ?? "dops.sqlite";
   const db = new Database(dbPath);
