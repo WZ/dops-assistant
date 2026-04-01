@@ -1,6 +1,7 @@
 import { Agent } from "@mastra/core/agent";
 import type { LanguageModel } from "ai";
 import { createQuirkPrepareStep } from "./shared/prepare-step.js";
+import { DEFAULT_TIME_RANGE_MS } from "../constants.js";
 
 interface AnomalyDetectorAgentConfig {
   model: LanguageModel;
@@ -28,7 +29,7 @@ export function extractTimeRangeViaLlm(userMessage: string): { from: string; to:
     };
   }
   return {
-    from: new Date(now.getTime() - 8 * 3600000).toISOString(),
+    from: new Date(now.getTime() - DEFAULT_TIME_RANGE_MS).toISOString(),
     to: now.toISOString(),
   };
 }

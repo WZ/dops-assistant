@@ -12,6 +12,7 @@
 import { Agent } from "@mastra/core/agent";
 import type { LanguageModel } from "ai";
 import { createQuirkPrepareStep } from "./shared/prepare-step.js";
+import { DEFAULT_AGENT_MAX_STEPS } from "../constants.js";
 
 interface ChangesAgentConfig {
   model: LanguageModel;
@@ -21,7 +22,7 @@ interface ChangesAgentConfig {
 }
 
 export function createChangesAgent(config: ChangesAgentConfig) {
-  const maxSteps = config.maxSteps ?? 10;
+  const maxSteps = config.maxSteps ?? DEFAULT_AGENT_MAX_STEPS;
   return new Agent({
     id: "changes",
     name: "changes",

@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import type { Database } from "./db.js";
 import type { ServiceConfig, Config } from "../config/schema.js";
+import { MAX_CACHE_ENTRIES } from "../constants.js";
 import { ProviderSchema, StackConfigSchema } from "../config/schema.js";
 import { DEFAULT_STACK_SLUG } from "../types/stack-types.js";
 import { createMcpProvider, listProviderTools } from "../mcp/provider.js";
@@ -71,7 +72,6 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
   // ── Metrics cache for /api/services/:name/metrics ───────────────────────
   const VALID_RANGES = new Set(["1h", "6h", "24h", "7d"]);
-  const MAX_CACHE_ENTRIES = 200;
   const metricsCache = new Map<string, { data: MetricSeries[]; fetchedAt: number }>();
   const METRICS_CACHE_TTL = 60_000; // 60 seconds
 
