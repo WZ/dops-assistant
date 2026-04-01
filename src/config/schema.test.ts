@@ -41,6 +41,35 @@ describe("ConfigSchema – defaults", () => {
     }
   });
 
+  it("accepts serviceAliases config", () => {
+    const result = ConfigSchema.safeParse({
+      llm,
+      providers: [grafanaProvider],
+      serviceAliases: {
+        pg: ["stolon-proxy"],
+        mykafka: ["kafka-brokers", "kafka-bootstrap"],
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.serviceAliases).toEqual({
+        pg: ["stolon-proxy"],
+        mykafka: ["kafka-brokers", "kafka-bootstrap"],
+      });
+    }
+  });
+
+  it("defaults serviceAliases to empty object when absent", () => {
+    const result = ConfigSchema.safeParse({
+      llm,
+      providers: [grafanaProvider],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.serviceAliases).toEqual({});
+    }
+  });
+
   it("accepts discovery config with defaults", () => {
     const result = ConfigSchema.safeParse({
       llm,

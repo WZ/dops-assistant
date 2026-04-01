@@ -83,13 +83,17 @@ function usagePct(usage: string, limit: string): number {
   return Math.min(100, (u / l) * 100);
 }
 
+/** Utilization thresholds for coloring the bar. */
+const UTILIZATION_CRITICAL_PCT = 90;
+const UTILIZATION_WARNING_PCT = 70;
+
 // ── Utilization bar ───────────────────────────────────────────────────────────
 
 function UtilBar({ pct }: { pct: number }) {
   let barColor: string;
-  if (pct >= 90) {
+  if (pct >= UTILIZATION_CRITICAL_PCT) {
     barColor = "bg-destructive";
-  } else if (pct >= 70) {
+  } else if (pct >= UTILIZATION_WARNING_PCT) {
     barColor = "bg-warning";
   } else {
     barColor = "bg-success";

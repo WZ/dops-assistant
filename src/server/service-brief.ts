@@ -12,6 +12,7 @@
 import { generateText, type LanguageModel } from "ai";
 import pino from "pino";
 import { getToolsByRole, type MastraProvider } from "../mcp/provider.js";
+import { MAX_CACHE_ENTRIES } from "../constants.js";
 import type { ServiceConfig } from "../config/schema.js";
 import { inferDependencyGraph } from "./dependency-graph.js";
 import type { ServiceHealthPoller, HealthStatus } from "./service-health-poller.js";
@@ -62,8 +63,6 @@ const MAX_STALE_AGE = 10 * 60_000;
 /** Per-section timeout for MCP calls */
 const SECTION_TIMEOUT_MS = 3_000;
 
-/** Maximum number of cache entries before evicting the oldest */
-const MAX_CACHE_ENTRIES = 200;
 
 const cache = new Map<string, CacheEntry<unknown>>();
 const inflight = new Map<string, Promise<ServiceBrief>>();

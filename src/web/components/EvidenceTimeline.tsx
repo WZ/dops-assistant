@@ -58,6 +58,8 @@ function parseRawLogLine(line: string): { timestamp: string; message: string } |
   return { timestamp: m[1]!, message: m[2]!.trim() };
 }
 
+// K8s-specific entity extraction: matches pod/deployment/service resource paths.
+// Extend with additional patterns for non-K8s environments (ECS, VMs, etc.).
 function extractEntity(text: string): string {
   // Try to extract service/pod names from patterns
   // Match pod/service-name patterns
@@ -175,7 +177,88 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange }: E
     // Sort chronologically by timestamp ascending, Infinity entries go to end
     entries.sort((a, b) => tryParseTimestamp(a.timestamp) - tryParseTimestamp(b.timestamp));
 
-    return entries;
+    // Deduplicate log entries: exact match on normalized summary, then
+    // substring containment to group short/long forms of the same event.
+    // Normalization is generic (timestamps, log levels, quotes) — no
+    // framework-specific patterns.
+
+    function normalizeForDedup(summary: string): string {
+      let s = summary.trim();
+      // Strip leading timestamps: ISO-8601, bracketed dates, syslog-style
+      s = s.replace(/^\[?\d{4}-\d{2}-\d{2}[\sT][\d:.Z+-]+\]?\s*/i, "").trim();
+      // Strip leading log levels (with optional colon/bracket delimiters)
+      s = s.replace(/^(?:ERROR|WARNING|WARN|INFO|DEBUG|CRITICAL|FATAL|TRACE)[\s:\]]+/i, "").trim();
+      // Strip bracketed metadata: [None] [module:line] [pid] etc.
+      s = s.replace(/^\[(?:[^\]]*)\]\s*/g, "").trim();
+      // Strip leading/trailing quotes
+      s = s.replace(/^"(.+)"$/, "$1").trim();
+      return s.toLowerCase();
+    }
+
+    const deduped: TimelineEntryData[] = [];
+    const seen = new Map<string, number>(); // normalized summary → index in deduped
+
+    function mergeInto(existing: TimelineEntryData, entry: TimelineEntryData) {
+      existing.count = (existing.count ?? 1) + (entry.count ?? 1);
+      if (entry.timestamp && tryParseTimestamp(entry.timestamp) < tryParseTimestamp(existing.timestamp)) {
+        existing.timestamp = entry.timestamp;
+      }
+      if (entry.timestamp) {
+        const entryTs = entry.timestampEnd ?? entry.timestamp;
+        const existingEnd = existing.timestampEnd ?? existing.timestamp;
+        if (tryParseTimestamp(entryTs) > tryParseTimestamp(existingEnd)) {
+          existing.timestampEnd = entryTs;
+        }
+      }
+    }
+
+    for (const entry of entries) {
+      if (entry.type !== "log") {
+        deduped.push(entry);
+        continue;
+      }
+      const key = normalizeForDedup(entry.summary);
+
+      // Skip dedup for empty/trivial summaries — don't merge unrelated malformed entries
+      if (key.length < 3) {
+        deduped.push({ ...entry });
+        continue;
+      }
+
+      // Pass 1: exact match
+      const existingIdx = seen.get(key);
+      if (existingIdx !== undefined) {
+        mergeInto(deduped[existingIdx]!, entry);
+        continue;
+      }
+
+      // Pass 2: substring containment — if this entry's core message is
+      // contained in an existing entry (or vice versa), they're the same event.
+      // Only match if the shorter string is ≥60% of the longer to avoid
+      // false positives like "error" matching "error in auth module".
+      let merged = false;
+      if (key.length >= 10) {
+        for (const [existingKey, idx] of seen) {
+          if (existingKey.length < 10) continue;
+          if (existingKey.includes(key) || key.includes(existingKey)) {
+            const shorter = Math.min(key.length, existingKey.length);
+            const longer = Math.max(key.length, existingKey.length);
+            if (shorter / longer >= 0.6) {
+              mergeInto(deduped[idx]!, entry);
+              merged = true;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!merged) {
+        seen.set(key, deduped.length);
+        deduped.push({ ...entry });
+      }
+    }
+
+    return deduped;
   }, [evidence.logs, evidence.infra, service]);
 
   const hasTimeline = timelineEntries.length > 0;
