@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
+import { TOOL_RESULT_TRUNCATION_LIMIT } from "../../constants.js";
 
 describe("evidence step truncation", () => {
-  const TRUNCATION_LIMIT = 8000;
+  const TRUNCATION_LIMIT = TOOL_RESULT_TRUNCATION_LIMIT;
 
   it("preserves tool results up to 8000 chars without truncating", () => {
     const longResult = "x".repeat(5000);

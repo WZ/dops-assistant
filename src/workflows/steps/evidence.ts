@@ -16,6 +16,7 @@
 import { createStep } from "@mastra/core/workflows";
 import type { WorkflowConfig } from "../investigation.js";
 import { getToolsByRole } from "../../mcp/provider.js";
+import { TOOL_RESULT_TRUNCATION_LIMIT } from "../../constants.js";
 import type { ProviderRole } from "../../config/schema.js";
 import {
   wrapToolsWithCallbacks,
@@ -116,7 +117,7 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
                   const nestedContent = payload.result?.content?.[0]?.text;
                   const rawResult = nestedContent ?? payload.result ?? tr.result ?? tr.output ?? "";
                   const resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
-                  const truncated = resultStr.length > 8000 ? resultStr.slice(0, 8000) + "..." : resultStr;
+                  const truncated = resultStr.length > TOOL_RESULT_TRUNCATION_LIMIT ? resultStr.slice(0, TOOL_RESULT_TRUNCATION_LIMIT) + "..." : resultStr;
                   toolData.push(`Tool: ${toolName}\nResult: ${truncated}`);
                   // Tool call already emitted by wrapToolsWithCallbacks — don't double-emit
                 }

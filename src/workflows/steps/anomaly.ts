@@ -13,6 +13,7 @@ import { PrefetchOutputSchema, AnomalyOutputSchema } from "../schemas.js";
 import { getToolsByRole } from "../../mcp/provider.js";
 import { wrapToolsWithCallbacks, debug } from "../tool-utils.js";
 import { getTimeContext } from "../../agents/shared/time-context.js";
+import { TOOL_RESULT_TRUNCATION_LIMIT, DEFAULT_TIME_RANGE_MS } from "../../constants.js";
 import { safeJsonParse } from "../../agents/shared/processors.js";
 import { createAnomalyDetectorAgent } from "../../agents/anomaly-detector.js";
 import { extractTimeRange, resolveTimeRangeToAbsolute } from "../helpers.js";
@@ -75,7 +76,7 @@ export function buildAnomalyStep(config: WorkflowConfig) {
                     const nestedContent = payload.result?.content?.[0]?.text;
                     const rawResult = nestedContent ?? payload.result ?? tr.result ?? tr.output ?? "";
                     const resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
-                    const truncated = resultStr.length > 2000 ? resultStr.slice(0, 2000) + "..." : resultStr;
+                    const truncated = resultStr.length > TOOL_RESULT_TRUNCATION_LIMIT ? resultStr.slice(0, TOOL_RESULT_TRUNCATION_LIMIT) + "..." : resultStr;
                     anomalyToolData.push(`Tool: ${toolName}\nResult: ${truncated}`);
                   }
                 }
@@ -212,7 +213,7 @@ Rules:
         } catch (err) {
           // Ultimate fallback: 8h window from now
           timeRangeTo = new Date().toISOString();
-          timeRangeFrom = new Date(Date.now() - 8 * 3_600_000).toISOString();
+          timeRangeFrom = new Date(Date.now() - DEFAULT_TIME_RANGE_MS).toISOString();
           debug("ANOMALY: regex fallback failed, using 8h default:", err);
         }
       }

@@ -152,6 +152,7 @@ export const ConfigSchema = z.object({
     { message: "Provider names must be unique" },
   ),
   services: z.array(ServiceSchema).default([]),
+  serviceAliases: z.record(z.array(z.string())).optional().default({}),
   agent: AgentSchema.optional().default({}),
   timeouts: TimeoutsSchema.optional().default({}),
   retry: RetrySchema.optional().default({}),

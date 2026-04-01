@@ -25,6 +25,12 @@ const { writeOutput } = await import("./output.js");
 
 const config = loadConfig(parsed.flags.config);
 
+// Wire config-driven service aliases before any intent routing
+if (config.serviceAliases && Object.keys(config.serviceAliases).length > 0) {
+  const { setServiceAliases } = await import("../agents/intent.js");
+  setServiceAliases(config.serviceAliases);
+}
+
 const providers = config.providers.map(createMcpProvider);
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
