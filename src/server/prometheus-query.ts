@@ -29,6 +29,11 @@ export interface MetricSeries {
   fetchedAt: number; // unix timestamp for cache freshness
 }
 
+/** Minimum step interval in seconds for range queries. */
+const MIN_STEP_SECONDS = 15;
+/** Target number of data points for a range query (range / target = step). */
+const TARGET_DATAPOINTS = 120;
+
 /** Map range strings to seconds for Prometheus query window. */
 const RANGE_SECONDS: Record<string, number> = {
   "1h": 3600,
@@ -161,7 +166,7 @@ async function executeQuery(
   const endTime = now.toISOString();
 
   // Compute a reasonable step based on range to get ~120 data points
-  const stepSeconds = Math.max(15, Math.floor(rangeSeconds / 120));
+  const stepSeconds = Math.max(MIN_STEP_SECONDS, Math.floor(rangeSeconds / TARGET_DATAPOINTS));
 
   // Try range query first for time series data
   const args: Record<string, unknown> = {

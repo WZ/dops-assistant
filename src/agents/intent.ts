@@ -93,7 +93,7 @@ const GENERIC_INFRA_TOKENS = new Set([
   "metrics", "monitor", "agent",
 ]);
 
-const SERVICE_ALIASES: Record<string, string[]> = {
+const DEFAULT_SERVICE_ALIASES: Record<string, string[]> = {
   kafka: ["kafka-brokers", "kafka-bootstrap"],
   clickhouse: ["ch-clickhouse"],
   postgres: ["stolon-proxy"],
@@ -102,6 +102,13 @@ const SERVICE_ALIASES: Record<string, string[]> = {
   redis: ["cache-redis-ha"],
   ingestion: ["ingestion-server"],
 };
+
+let SERVICE_ALIASES: Record<string, string[]> = { ...DEFAULT_SERVICE_ALIASES };
+
+/** Initialize aliases from config (merges config over defaults). */
+export function setServiceAliases(configAliases: Record<string, string[]>): void {
+  SERVICE_ALIASES = { ...DEFAULT_SERVICE_ALIASES, ...configAliases };
+}
 
 export function messageMatchesAnyService(message: string, serviceNames: string[]): boolean {
   const msgLower = normalizeHyphens(message).toLowerCase();

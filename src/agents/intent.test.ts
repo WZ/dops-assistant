@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { IntentRouter, matchService, matchServiceFromText, messageMatchesAnyService, validateLlmServiceMatch, resolveServiceFromHistory } from "./intent.js";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { IntentRouter, matchService, matchServiceFromText, messageMatchesAnyService, validateLlmServiceMatch, resolveServiceFromHistory, setServiceAliases } from "./intent.js";
 import type { ServiceConfig } from "../config/schema.js";
 
 // Mock the ai module's generateText function
@@ -527,5 +527,35 @@ describe("IntentRouter", () => {
     const router = new IntentRouter(dummyModel);
     const result = await router.route("show me the current dashboards");
     expect(result.intent).toBe("question");
+  });
+});
+
+describe("setServiceAliases", () => {
+  afterEach(() => {
+    // Reset to defaults after each test to avoid state leaking between tests
+    setServiceAliases({});
+  });
+
+  it("overrides default aliases with config values", () => {
+    setServiceAliases({ myapp: ["my-app-server"] });
+    expect(messageMatchesAnyService("check myapp status", ["my-app-server"])).toBe(true);
+  });
+
+  it("merges config aliases over defaults (defaults still work)", () => {
+    setServiceAliases({ myapp: ["my-app-server"] });
+    // Default alias 'kafka' should still work
+    expect(messageMatchesAnyService("kafka errors are spiking", ["some-other-service"])).toBe(true);
+  });
+
+  it("custom alias resolves to target service via matchService", () => {
+    setServiceAliases({ pg: ["stolon-proxy"] });
+    const services = [svc("stolon-proxy"), svc("redis-ha")];
+    expect(matchService("pg", services)?.name).toBe("stolon-proxy");
+  });
+
+  it("custom alias resolves via matchServiceFromText", () => {
+    setServiceAliases({ myapp: ["my-app-server"] });
+    const services = [svc("my-app-server"), svc("other-service")];
+    expect(matchServiceFromText("myapp is throwing errors", services)?.name).toBe("my-app-server");
   });
 });
