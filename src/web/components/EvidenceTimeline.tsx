@@ -199,7 +199,7 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange }: E
     const seen = new Map<string, number>(); // normalized summary → index in deduped
 
     function mergeInto(existing: TimelineEntryData, entry: TimelineEntryData) {
-      existing.count = (existing.count ?? 1) + 1;
+      existing.count = (existing.count ?? 1) + (entry.count ?? 1);
       if (entry.timestamp && tryParseTimestamp(entry.timestamp) < tryParseTimestamp(existing.timestamp)) {
         existing.timestamp = entry.timestamp;
       }
