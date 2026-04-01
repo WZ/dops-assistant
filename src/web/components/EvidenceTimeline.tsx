@@ -219,6 +219,12 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange }: E
       }
       const key = normalizeForDedup(entry.summary);
 
+      // Skip dedup for empty/trivial summaries — don't merge unrelated malformed entries
+      if (key.length < 3) {
+        deduped.push({ ...entry });
+        continue;
+      }
+
       // Pass 1: exact match
       const existingIdx = seen.get(key);
       if (existingIdx !== undefined) {
