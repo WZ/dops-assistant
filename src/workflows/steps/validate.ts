@@ -14,7 +14,8 @@ export interface ValidateStepConfig {
   onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
 }
 
-// Loki label keys that typically identify services, tried in priority order.
+// Default Loki/Prometheus label keys for K8s environments.
+// Discovery recipes (config.yaml labelKeys) override this list.
 const SERVICE_LABEL_KEYS = [
   "app",
   "container_name",

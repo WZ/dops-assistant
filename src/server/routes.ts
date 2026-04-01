@@ -75,6 +75,13 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   const metricsCache = new Map<string, { data: MetricSeries[]; fetchedAt: number }>();
   const METRICS_CACHE_TTL = 60_000; // 60 seconds
 
+  /** Maximum length for pattern symptom field. */
+  const MAX_SYMPTOM_LENGTH = 500;
+  /** Maximum length for pattern root cause field. */
+  const MAX_ROOT_CAUSE_LENGTH = 500;
+  /** Maximum length for recommended actions text. */
+  const MAX_ACTIONS_LENGTH = 1_000;
+
   // ── Stack CRUD ──────────────────────────────────────────────────────────
 
   /** Slug must be 2-64 lowercase alphanumeric chars and hyphens, no leading/trailing hyphens */
@@ -616,10 +623,10 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
           db.createPattern(req.stackId, {
             id: `pat_${makeId()}`,
             service: investigation.service,
-            symptom: typeof report.summary === "string" ? report.summary.slice(0, 500) : investigation.query,
-            rootCause: typeof report.rootCause === "string" ? report.rootCause.slice(0, 500) : "Unknown",
+            symptom: typeof report.summary === "string" ? report.summary.slice(0, MAX_SYMPTOM_LENGTH) : investigation.query,
+            rootCause: typeof report.rootCause === "string" ? report.rootCause.slice(0, MAX_ROOT_CAUSE_LENGTH) : "Unknown",
             severity: validSeverities.includes(report.severity) ? report.severity : "medium",
-            recommendedActions: actions.slice(0, 1000),
+            recommendedActions: actions.slice(0, MAX_ACTIONS_LENGTH),
             sourceInvestigationId: investigationId,
           });
         } catch { /* pattern extraction failed — not critical */ }

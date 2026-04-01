@@ -4,6 +4,19 @@ import type { ServiceConfig } from "../../../config/schema.js";
 import { extractDashboardPanelHints, extractQueryKeywords } from "../prefetch.js";
 import { type PrefetchStrategy, type ToolMap, hasTool, callProviderTool } from "./types.js";
 
+/** Maximum dashboards to include in context. */
+const MAX_DASHBOARDS = 20;
+/** Top N highest-scoring dashboards to fetch panel queries from. */
+const TOP_DASHBOARDS = 3;
+/** Fallback: if no dashboards score > 0, fetch panels from this many. */
+const FALLBACK_DASHBOARDS = 2;
+/** Maximum panel queries per dashboard after dedup. */
+const MAX_PANEL_QUERIES = 15;
+/** Maximum services to probe for working Loki log selectors. */
+const MAX_SERVICES_TO_PROBE = 5;
+/** Prefix for temporary dashboards created by dops (filtered from results). */
+const TEMP_DASHBOARD_PREFIX = "dops-temp:";
+
 export class GrafanaPrefetchStrategy implements PrefetchStrategy {
   name = "grafana";
 
@@ -31,6 +44,7 @@ export class GrafanaPrefetchStrategy implements PrefetchStrategy {
           name: string;
           type: string;
         }>;
+        // Grafana datasource types relevant to this project. Extend for additional sources.
         const relevant = datasources.filter((d) => d.type === "prometheus" || d.type === "loki");
         if (relevant.length === 0) continue;
 
@@ -85,8 +99,8 @@ export class GrafanaPrefetchStrategy implements PrefetchStrategy {
       }
 
       const allDashboards = rawDashboards
-        .filter((d) => !d.title.startsWith("dops-temp:"))
-        .slice(0, 20);
+        .filter((d) => !d.title.startsWith(TEMP_DASHBOARD_PREFIX))
+        .slice(0, MAX_DASHBOARDS);
 
       if (allDashboards.length === 0) return empty;
 
@@ -116,8 +130,8 @@ export class GrafanaPrefetchStrategy implements PrefetchStrategy {
       });
       scored.sort((a, b) => b.score - a.score);
 
-      const topDashboards = scored.filter((d) => d.score > 0).slice(0, 3);
-      if (topDashboards.length === 0) topDashboards.push(...scored.slice(0, 2));
+      const topDashboards = scored.filter((d) => d.score > 0).slice(0, TOP_DASHBOARDS);
+      if (topDashboards.length === 0) topDashboards.push(...scored.slice(0, FALLBACK_DASHBOARDS));
 
       // Extract default Prometheus UID from datasource hints
       const promUidMatch = opts?.datasourceHints?.match(/prometheus: datasourceUid="([^"]+)"/);
@@ -159,7 +173,7 @@ export class GrafanaPrefetchStrategy implements PrefetchStrategy {
             if (seen.has(q.query)) return false;
             seen.add(q.query);
             return true;
-          }).slice(0, 15);
+          }).slice(0, MAX_PANEL_QUERIES);
 
           const lines = deduped.map(
             (q) => `  - "${q.title}": \`${q.query}\` (datasource: ${q.datasource.uid})`,
@@ -232,10 +246,10 @@ export class GrafanaPrefetchStrategy implements PrefetchStrategy {
     }
 
     // Probe working selectors — limit to the target service if specified,
-    // otherwise probe the first 5 services to avoid excessive API calls
+    // otherwise probe the first MAX_SERVICES_TO_PROBE services to avoid excessive API calls
     const targetServices = targetServiceName
       ? services.filter((s) => s.name === targetServiceName)
-      : services.slice(0, 5);
+      : services.slice(0, MAX_SERVICES_TO_PROBE);
     const workingLogSelectors: string[] = [];
     for (const service of targetServices) {
       try {

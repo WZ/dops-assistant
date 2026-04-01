@@ -58,6 +58,8 @@ function parseRawLogLine(line: string): { timestamp: string; message: string } |
   return { timestamp: m[1]!, message: m[2]!.trim() };
 }
 
+// K8s-specific entity extraction: matches pod/deployment/service resource paths.
+// Extend with additional patterns for non-K8s environments (ECS, VMs, etc.).
 function extractEntity(text: string): string {
   // Try to extract service/pod names from patterns
   // Match pod/service-name patterns
