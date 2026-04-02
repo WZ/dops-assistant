@@ -116,6 +116,18 @@ async function main() {
       return;
     }
 
+    // Build enriched message with service context
+    const messageParts = [
+      `Service health check: ${service} transitioned from ${from} to down.`,
+    ];
+    if (serviceConfig.metrics?.length) {
+      messageParts.push(`Known metrics: ${serviceConfig.metrics.map(m => `${m.description} (${m.query})`).slice(0, 3).join("; ")}`);
+    }
+    if (serviceConfig.logLabels && Object.keys(serviceConfig.logLabels).length > 0) {
+      const labels = Object.entries(serviceConfig.logLabels).map(([k, v]) => `${k}="${v}"`).join(",");
+      messageParts.push(`Log selector: {${labels}}`);
+    }
+
     logger.info({ service, stackId }, "ServiceHealthPoller: triggering auto-investigate (template=quick)");
     sharedDedup.markStarted(stackId, service);
 
@@ -126,7 +138,7 @@ async function main() {
         const runner = new InvestigationRunner({ db, investigationAgent, skillStore, globalOnComplete });
         return runner.run({
           service: serviceConfig,
-          message: `Service health check: ${service} transitioned from ${from} to down. Running quick investigation.`,
+          message: messageParts.join("\n"),
           template: "quick",
           stackId,
         });
