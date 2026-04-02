@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { CirclePlus } from "lucide-react";
 import { ProviderCard, type TestResult } from "./providers/ProviderCard";
 import { ProviderForm, type ProviderFormData } from "./providers/ProviderForm";
+import { YamlModal } from "./providers/YamlModal";
 import { useStackContext } from "../contexts/StackContext";
 
 interface ProviderData {
@@ -29,6 +30,7 @@ export function ProvidersPage({ onRunDiscovery }: ProvidersPageProps) {
   const [showForm, setShowForm] = useState(false);
   const [editingProvider, setEditingProvider] = useState<ProviderFormData | null>(null);
   const [saving, setSaving] = useState(false);
+  const [showYamlModal, setShowYamlModal] = useState(false);
   const [testingName, setTestingName] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({});
   const pollRef = useRef<ReturnType<typeof setInterval>>(undefined);
@@ -212,6 +214,14 @@ export function ProvidersPage({ onRunDiscovery }: ProvidersPageProps) {
               + Add Provider
             </Button>
           )}
+          <span className="text-muted-foreground/20">&middot;</span>
+          <Button
+            variant="ghost"
+            onClick={() => setShowYamlModal(true)}
+            className="text-[10px] font-mono text-primary/70 hover:text-primary hover:bg-transparent py-3 px-2 h-auto min-h-[44px]"
+          >
+            YAML
+          </Button>
           {providers.length > 0 && (
             <>
               <span className="text-muted-foreground/20">&middot;</span>
@@ -247,6 +257,11 @@ export function ProvidersPage({ onRunDiscovery }: ProvidersPageProps) {
           </div>
         </section>
       )}
+      <YamlModal
+        open={showYamlModal}
+        onOpenChange={setShowYamlModal}
+        onImported={fetchProviders}
+      />
     </div>
   );
 }
