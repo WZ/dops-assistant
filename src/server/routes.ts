@@ -824,35 +824,37 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         existing.set(info.config.name, info.source);
       }
       const actions = categorizeImportActions(providers, overwrite, existing);
+      const actionByName = new Map(actions.map(a => [a.config.name, a]));
       const results: Array<{ name: string; status: string; toolCount?: number; error?: string }> = [];
 
-      // Report invalid providers that categorizeImportActions skipped
+      // Iterate in input order to preserve the user's sequence
       for (const raw of providers) {
         const parsed = ProviderSchema.safeParse(raw);
         if (!parsed.success) {
           const name = (raw && typeof raw === "object" && "name" in raw && typeof (raw as any).name === "string")
             ? (raw as any).name : "(unnamed)";
           results.push({ name, status: "skipped", error: "Invalid provider config" });
-        }
-      }
-
-      for (const { config, action, reason } of actions) {
-        if (action === "skip") {
-          results.push({ name: config.name, status: "skipped", error: reason });
           continue;
         }
+
+        const entry = actionByName.get(parsed.data.name);
+        if (!entry || entry.action === "skip") {
+          results.push({ name: parsed.data.name, status: "skipped", error: entry?.reason });
+          continue;
+        }
+
         try {
           let info;
-          if (action === "overwrite") {
-            info = await providerRegistry.update(config.name, config);
-            results.push({ name: config.name, status: "overwritten", toolCount: info.toolCount });
+          if (entry.action === "overwrite") {
+            info = await providerRegistry.update(entry.config.name, entry.config);
+            results.push({ name: entry.config.name, status: "overwritten", toolCount: info.toolCount });
           } else {
-            info = await providerRegistry.add(config);
-            results.push({ name: config.name, status: "added", toolCount: info.toolCount });
+            info = await providerRegistry.add(entry.config);
+            results.push({ name: entry.config.name, status: "added", toolCount: info.toolCount });
           }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          results.push({ name: config.name, status: "failed", error: msg });
+          results.push({ name: entry.config.name, status: "failed", error: msg });
         }
       }
       res.json({ results });
