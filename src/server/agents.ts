@@ -264,6 +264,7 @@ export class MastraInvestigationAdapter {
     onIteration?: OnIteration,
     skillContext?: string,
     template?: InvestigationTemplate,
+    readOnlyTools?: boolean,
   ): Promise<RcaReport> {
     const workflowConfig: WorkflowConfig = {
       ...this.workflowConfig,
@@ -274,6 +275,8 @@ export class MastraInvestigationAdapter {
       onIteration,
       onToolCall: _onToolCall,
       onTokenUsage,
+      // Security: headless investigations are locked to read-only tools
+      readOnlyTools,
     };
 
     const workflow = createInvestigationWorkflow(workflowConfig, template);

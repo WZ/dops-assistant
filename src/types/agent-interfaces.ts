@@ -42,6 +42,7 @@ export interface IInvestigationAgent {
     onIteration?: OnIteration,
     skillContext?: string,
     template?: InvestigationTemplate,
+    readOnlyTools?: boolean,
   ): Promise<RcaReport>;
 }
 

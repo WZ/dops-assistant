@@ -145,6 +145,7 @@ async function main() {
           message: messageParts.join("\n"),
           template: "quick",
           stackId,
+          readOnlyTools: true,
         });
       })
       .catch((err) => {

@@ -15,7 +15,7 @@
 
 import { createStep } from "@mastra/core/workflows";
 import type { WorkflowConfig } from "../investigation.js";
-import { getToolsByRole } from "../../mcp/provider.js";
+import { getToolsByRole, filterToReadOnlyTools } from "../../mcp/provider.js";
 import { TOOL_RESULT_TRUNCATION_LIMIT } from "../../constants.js";
 import type { ProviderRole } from "../../config/schema.js";
 import {
@@ -84,8 +84,14 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
       // 1. Get all tools for this role → wrap with callbacks (provider-agnostic)
       const roles = Array.isArray(toolRole) ? toolRole : [toolRole];
       const toolMaps = await Promise.all(roles.map(r => getToolsByRole(workflowConfig.providers, r).catch(() => ({}))));
-      const rawTools: Record<string, any> = {};
+      let rawTools: Record<string, any> = {};
       for (const m of toolMaps) Object.assign(rawTools, m);
+
+      // Security: headless investigations (webhook/poller) are locked to read-only tools
+      if (workflowConfig.readOnlyTools) {
+        rawTools = filterToReadOnlyTools(rawTools);
+        debug(`${phaseName.toUpperCase()} readOnlyTools enforced, filtered to:`, Object.keys(rawTools));
+      }
       debug(`${phaseName.toUpperCase()} tools:`, Object.keys(rawTools));
 
       // Early exit: if no tools are available for this role, skip the agent entirely.

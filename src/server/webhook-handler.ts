@@ -188,6 +188,7 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
         message: messageParts.filter(Boolean).join("\n"),
         template,
         stackId,
+        readOnlyTools: true,
       });
     } catch (err) {
       logger.error({ err, service: service.name }, "Alert webhook: headless investigation failed");
