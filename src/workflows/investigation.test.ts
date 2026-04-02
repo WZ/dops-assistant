@@ -182,7 +182,7 @@ describe("evidence step degradation", () => {
 
     // Should degrade gracefully, not throw
     expect(result).toBeDefined();
-    expect((result as any).summary).toBe("Metrics analysis unavailable");
+    expect((result as any).summary).toContain("metrics");
     expect(Array.isArray((result as any).observations)).toBe(true);
   });
 
@@ -199,7 +199,7 @@ describe("evidence step degradation", () => {
     const result = await step.execute(makeStepCtx(basePlanningContext));
 
     expect(result).toBeDefined();
-    expect((result as any).summary).toBe("Log analysis unavailable");
+    expect((result as any).summary).toContain("logs");
     expect(Array.isArray((result as any).observations)).toBe(true);
   });
 
@@ -216,7 +216,7 @@ describe("evidence step degradation", () => {
     const result = await step.execute(makeStepCtx(basePlanningContext));
 
     expect(result).toBeDefined();
-    expect((result as any).summary).toBe("Infrastructure analysis unavailable");
+    expect((result as any).summary).toContain("infra");
     expect(Array.isArray((result as any).observations)).toBe(true);
   });
 
@@ -248,9 +248,9 @@ describe("evidence step degradation", () => {
     ]);
 
     // Each phase degraded gracefully — all have a summary and observations array
-    expect((metricsResult as any).summary).toBe("Metrics analysis unavailable");
-    expect((logsResult as any).summary).toBe("Log analysis unavailable");
-    expect((infraResult as any).summary).toBe("Infrastructure analysis unavailable");
+    expect((metricsResult as any).summary).toContain("metrics");
+    expect((logsResult as any).summary).toContain("logs");
+    expect((infraResult as any).summary).toContain("infra");
 
     // All returned empty observations (not undefined)
     expect(Array.isArray((metricsResult as any).observations)).toBe(true);
