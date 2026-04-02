@@ -441,7 +441,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
               args[0] = coerceLokiArgs(args[0] as Record<string, unknown>);
             }
             const result = await (tool as any).execute(...args);
-            return truncateMcpResult(result, 10_000);
+            return truncateMcpResult(result, 20_000);
           },
         };
       } else {
