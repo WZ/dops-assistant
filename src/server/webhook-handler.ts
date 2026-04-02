@@ -149,21 +149,43 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
     // 5. Mark as in-progress and respond immediately
     dedup.markStarted(stackId, service.name);
     const template = resolveTemplate(alert, config);
-    const description = alert.annotations["summary"] ?? alert.annotations["description"] ?? alert.labels["alertname"] ?? "Alert triggered";
+    const alertName = alert.labels["alertname"] ?? "unknown";
+    const severity = alert.labels["severity"] ?? "unknown";
+    const summary = alert.annotations["summary"] ?? alert.annotations["description"] ?? "";
 
     res.status(202).json({
       message: "Investigation started",
       service: service.name,
       template,
-      alertName: alert.labels["alertname"],
+      alertName,
     });
 
-    // 6. Run investigation in background (headless — no WS callbacks)
-    logger.info({ service: service.name, template, alertName: alert.labels["alertname"] }, "Alert webhook: starting headless investigation");
+    // 6. Build enriched message from alert metadata + service config
+    const contextLabels = Object.entries(alert.labels)
+      .filter(([k]) => !["alertname", "severity", "__name__"].includes(k))
+      .map(([k, v]) => `${k}=${v}`)
+      .join(", ");
+
+    const messageParts = [
+      `Alert: ${alertName} (severity: ${severity})`,
+      `Service: ${service.name}`,
+      summary ? `Summary: ${summary}` : "",
+      contextLabels ? `Labels: ${contextLabels}` : "",
+    ];
+    if (service.metrics?.length) {
+      messageParts.push(`Known metrics: ${service.metrics.map(m => m.query).slice(0, 3).join(", ")}`);
+    }
+    if (service.logLabels && Object.keys(service.logLabels).length > 0) {
+      const labels = Object.entries(service.logLabels).map(([k, v]) => `${k}="${v}"`).join(",");
+      messageParts.push(`Log selector: {${labels}}`);
+    }
+
+    // 7. Run investigation in background (headless — no WS callbacks)
+    logger.info({ service: service.name, template, alertName }, "Alert webhook: starting headless investigation");
     try {
       await runner.run({
         service,
-        message: `Alert: ${description}. Service: ${service.name}. Alertname: ${alert.labels["alertname"] ?? "unknown"}`,
+        message: messageParts.filter(Boolean).join("\n"),
         template,
         stackId,
       });

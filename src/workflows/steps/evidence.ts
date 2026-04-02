@@ -87,6 +87,20 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
       const rawTools: Record<string, any> = {};
       for (const m of toolMaps) Object.assign(rawTools, m);
       debug(`${phaseName.toUpperCase()} tools:`, Object.keys(rawTools));
+
+      // Early exit: if no tools are available for this role, skip the agent entirely.
+      // Running an LLM with zero tools produces empty results silently.
+      if (Object.keys(rawTools).length === 0) {
+        const roleStr = Array.isArray(toolRole) ? toolRole.join('" or "') : toolRole;
+        const noToolsMsg = `No MCP tools available for ${phaseName} role — skipping. Configure a provider with role "${roleStr}" to enable.`;
+        console.error(`[EVIDENCE] ${noToolsMsg}`);
+        const ac = inputData.anomalyContext;
+        const timeRange = ac?.timeRangeFrom && ac?.timeRangeTo
+          ? { from: ac.timeRangeFrom, to: ac.timeRangeTo }
+          : undefined;
+        return { summary: noToolsMsg, observations: [], timeRange };
+      }
+
       const tools = wrapToolsWithCallbacks(rawTools, workflowConfig.onToolCall, phaseName);
 
       // 2. Create specialized agent
