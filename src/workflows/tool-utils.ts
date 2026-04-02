@@ -70,7 +70,9 @@ function coerceLokiArgs(args: Record<string, unknown>): Record<string, unknown> 
     coerced.direction = "backward";
   }
   // Minimum limit of 50 — 20 is too low for multi-minute incidents
-  if (typeof coerced.limit === "number" && coerced.limit < 50) {
+  // Handle both number and string-typed limit (LLMs sometimes send "20" instead of 20)
+  const limit = typeof coerced.limit === "string" ? Number(coerced.limit) : coerced.limit;
+  if (typeof limit === "number" && !isNaN(limit) && limit < 50) {
     coerced.limit = 50;
   }
   return coerced;
@@ -119,8 +121,9 @@ export function wrapToolsWithCallbacks(
         if (execArgs[0] && typeof execArgs[0] === "object" && tool.inputSchema) {
           execArgs[0] = coerceToolArgs(execArgs[0], tool.inputSchema);
         }
-        // Fix Loki query parameters that models consistently get wrong
-        if (name.includes("query_loki") && execArgs[0] && typeof execArgs[0] === "object") {
+        // Fix Loki log query parameters that models consistently get wrong
+        // Scoped to query_loki_logs only — stats/patterns tools may need different defaults
+        if (name.includes("query_loki_logs") && execArgs[0] && typeof execArgs[0] === "object") {
           execArgs[0] = coerceLokiArgs(execArgs[0] as Record<string, unknown>);
         }
         const start = Date.now();
