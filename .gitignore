@@ -30,6 +30,9 @@ TODOS.md
 # Claude Code
 .claude/
 
+# Docker dev compose files (contain env/secrets)
+docker-compose.dev*.yml
+
 # Local binaries/scripts
 bin/
 

@@ -8,6 +8,7 @@
 - **Push directly to main** — always create a feature branch and open a PR.
 - **Use `npm run dev`** — that's a different entrypoint with no dotenv. Use `npm run web` for the server.
 - **Run the CLI inside Claude Code** — Ink requires raw stdin which isn't available in this shell.
+- **Mention the employer company or product name** — never reference the company or its product names in code, comments, docs, commit messages, or any output. Use generic terms instead.
 - **Assume training data is correct about Mastra** — this project uses custom patterns (role-based MCP routing, `prepareStep` hooks, step factories) that don't match Mastra docs. Read the code.
 
 ## Project Overview
