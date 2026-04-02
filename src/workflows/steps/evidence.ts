@@ -267,12 +267,19 @@ export function buildLogsStep(config: WorkflowConfig) {
         ? `INCIDENT KEYWORDS (search for these as Loki line filters BEFORE generic error patterns):\n  ${incidentKeywords.join(", ")}\nThese are your highest-priority search terms. Use them with |= "keyword" in your first queries.`
         : "";
 
+      // Pre-build LogQL queries so the model doesn't have to construct the syntax
+      const baseSelector = prefetchContext.workingLogSelectors[0] || "";
+      const prebuiltQueries = baseSelector && incidentKeywords.length > 0
+        ? buildPrebuiltLogQueries(baseSelector, incidentKeywords)
+        : "";
+
       return [
         wrapUntrusted("datasource_hints", prefetchContext.datasourceHints),
         timeWindowHint,
         wrapUntrusted("log_label_hints", prefetchContext.logLabelHints),
         logLabelsHint,
         selectorHint,
+        prebuiltQueries,
         keywordsHint,
         `Known issue: ${wrapUntrusted("user_message", anomalyContext.userMessage)}`,
         anomalyContext.serviceName ? `Service: ${wrapUntrusted("service", anomalyContext.serviceName)}` : "",
@@ -355,6 +362,40 @@ export function buildChangesStep(config: WorkflowConfig) {
     extractorSchema: '{"summary": "string", "observations": [{"type": "string", "title": "string", "timestamp": "string", "author": "string", "detail": "string"}]}',
     fallbackMessage: "Change analysis unavailable",
   });
+}
+
+// ── Pre-built LogQL queries ──────────────────────────────────────────────────
+
+/**
+ * Build ready-to-use LogQL queries from the validated selector and incident keywords.
+ * Provides exact queries the model can copy-paste, avoiding the model constructing
+ * wrong syntax or using bad parameters like direction:"forward" and limit:20.
+ */
+function buildPrebuiltLogQueries(selector: string, keywords: string[]): string {
+  // Pick up to 3 most specific keywords (skip very short ones)
+  const topKeywords = keywords
+    .filter((k) => k.length > 3 && !k.includes(" "))
+    .slice(0, 3);
+
+  const queries: string[] = [];
+
+  // Query 1: keyword-filtered (most targeted)
+  if (topKeywords.length > 0) {
+    const filter = topKeywords.map((k) => `|= "${k}"`).join(" ");
+    queries.push(`Query 1 (keyword): ${selector} ${filter}`);
+  }
+
+  // Query 2: error-level entries
+  queries.push(`Query 2 (errors):  ${selector} |~ "(?i)(error|exception|fail|CreateFailed)"`);
+
+  // Query 3: all logs (no filter, for context around errors)
+  queries.push(`Query 3 (context): ${selector}`);
+
+  return [
+    "PRE-BUILT LOG QUERIES (use these logql values in order, with limit=50 and direction=backward):",
+    ...queries.map((q) => `  ${q}`),
+    "Run Query 1 first. If it returns results with errors, run Query 3 with a narrow ±60s time window around the errors for full context.",
+  ].join("\n");
 }
 
 // ── Keyword extraction ───────────────────────────────────────────────────────
