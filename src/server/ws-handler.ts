@@ -19,6 +19,7 @@ import { createMastraAdapters } from "./agents.js";
 import { getToolsByRole } from "../mcp/provider.js";
 import { ChatMessageSchema, DeepInvestigateMessageSchema } from "./sanitize.js";
 import { wrapUntrusted } from "../agents/shared/prompt-helpers.js";
+import { WsRateLimiter, classifyWsMessage } from "./rate-limit.js";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
 
@@ -158,6 +159,7 @@ async function getMetricsToolNames(stackId: string, ctx: StackContext): Promise<
 
 export function setupWebSocket(server: Server, deps: WsDeps): void {
   const wss = new WebSocketServer({ server, path: "/ws" });
+  const wsRateLimiter = new WsRateLimiter();
 
   wss.on("connection", async (ws: WebSocket, req) => {
     // Extract stackId from query params
@@ -168,6 +170,9 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
 
     const threadId = `stack_${stackId}_web_${ulid()}`;
     logger.info({ threadId, stackId }, "WebSocket client connected");
+
+    // Register connection for rate limiting
+    wsRateLimiter.register(threadId);
 
     // Per-connection pending discovery state
     let pendingDiscovery: ValidatedServiceConfig[] | null = null;
@@ -204,6 +209,15 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
     ws.on("message", async (raw: Buffer) => {
       try {
         const parsed = JSON.parse(raw.toString());
+
+        // Per-connection rate limiting
+        const msgType = typeof parsed?.type === "string" ? parsed.type : "unknown";
+        const category = classifyWsMessage(msgType);
+        if (!wsRateLimiter.checkAndIncrement(threadId, category)) {
+          send({ type: "error", message: "Rate limit exceeded. Please wait before sending more messages." });
+          return;
+        }
+
         let msg: ClientMessage;
 
         // Validate and sanitize external input for message-carrying types
@@ -237,6 +251,7 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
     });
 
     ws.on("close", () => {
+      wsRateLimiter.destroy(threadId);
       logger.info({ threadId, stackId }, "WebSocket client disconnected");
     });
   });

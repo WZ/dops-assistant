@@ -20,6 +20,7 @@ import { InvestigationRunner } from "./investigation-runner.js";
 import { createWebhookHandler } from "./webhook-handler.js";
 import { InvestigationDedup } from "./investigation-dedup.js";
 import { createApiKeyMiddleware } from "./auth-middleware.js";
+import { globalLimiter, strictLimiter, moderateLimiter } from "./rate-limit.js";
 import { startHealthMonitor, stopHealthMonitor, healthHandler } from "./health-monitor.js";
 import { StackManager } from "./stack-manager.js";
 import { createMastraAdapters } from "./agents.js";
@@ -62,6 +63,16 @@ async function main() {
 
   const app = express();
   app.use(express.json({ limit: "1mb" }));
+
+  // ── Rate limiting (applied before auth so abusive traffic is rejected early) ──
+  // Global: 300 req/min per IP for all /api/* routes
+  app.use("/api", globalLimiter);
+  // Strict: 10 req/min per IP for LLM-triggering routes
+  app.use("/api/skills/generate", strictLimiter);
+  app.use("/api/metrics/extract", strictLimiter);
+  app.use("/api/services/:name/brief", strictLimiter);
+  // Moderate: 30 req/min per IP for remaining POST/PUT/DELETE (skips GET)
+  app.use("/api", moderateLimiter);
 
   // API key auth on mutating routes (POST/PUT/DELETE/PATCH).
   // Webhook endpoints are exempt — they have their own bearer token auth.
