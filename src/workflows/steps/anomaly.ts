@@ -10,13 +10,14 @@ import { createStep } from "@mastra/core/workflows";
 import { generateText } from "ai";
 import type { WorkflowConfig } from "../investigation.js";
 import { PrefetchOutputSchema, AnomalyOutputSchema } from "../schemas.js";
-import { getToolsByRole } from "../../mcp/provider.js";
+import { getToolsByRole, filterToReadOnlyTools } from "../../mcp/provider.js";
 import { wrapToolsWithCallbacks, debug } from "../tool-utils.js";
 import { getTimeContext } from "../../agents/shared/time-context.js";
 import { TOOL_RESULT_TRUNCATION_LIMIT, DEFAULT_TIME_RANGE_MS } from "../../constants.js";
 import { safeJsonParse } from "../../agents/shared/processors.js";
 import { createAnomalyDetectorAgent } from "../../agents/anomaly-detector.js";
 import { extractTimeRange, resolveTimeRangeToAbsolute } from "../helpers.js";
+import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
 
 /**
  * Build an anomaly detection step using the anomaly detector agent.
@@ -42,7 +43,12 @@ export function buildAnomalyStep(config: WorkflowConfig) {
 
       if (!isUserReported) {
         // Proactive mode: run anomaly detection agent
-        const rawTools = await getToolsByRole(config.providers, "metrics").catch(() => ({}));
+        let rawTools = await getToolsByRole(config.providers, "metrics").catch(() => ({}));
+
+        // Security: headless investigations are locked to read-only tools
+        if (config.readOnlyTools) {
+          rawTools = filterToReadOnlyTools(rawTools);
+        }
         const tools = wrapToolsWithCallbacks(rawTools, config.onToolCall);
 
         const agent = createAnomalyDetectorAgent({
@@ -53,10 +59,10 @@ export function buildAnomalyStep(config: WorkflowConfig) {
 
         const prompt = [
           getTimeContext(),
-          inputData.datasourceHints,
-          inputData.dashboardContext,
-          `User message: ${inputData.userMessage}`,
-          inputData.serviceName ? `Service: ${inputData.serviceName}` : "",
+          wrapUntrusted("datasource_hints", inputData.datasourceHints),
+          wrapUntrusted("dashboard_context", inputData.dashboardContext),
+          `User message: ${wrapUntrusted("user_message", inputData.userMessage)}`,
+          inputData.serviceName ? `Service: ${wrapUntrusted("service", inputData.serviceName)}` : "",
         ].filter(Boolean).join("\n");
 
         let agentResult: { text: string } = { text: "" };

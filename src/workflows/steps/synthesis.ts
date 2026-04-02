@@ -13,6 +13,7 @@ import { buildTimeline, validateSeverity } from "../helpers.js";
 import { debug } from "../tool-utils.js";
 import { safeJsonParse } from "../../agents/shared/processors.js";
 import { createSynthesisAgent } from "../../agents/synthesis.js";
+import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
 
 /**
  * Build a synthesis step that combines evidence and runs quality validation.
@@ -83,13 +84,13 @@ export function buildSynthesisStep(config: WorkflowConfig) {
 
       const promptParts = [
         "Synthesize a root cause analysis from the following evidence:",
-        `\nMetrics: ${JSON.stringify({ summary: metricsFindings.summary, observations: metricsFindings.observations })}`,
-        `\nLogs: ${JSON.stringify({ summary: logsFindings.summary, observations: logsFindings.observations })}`,
-        `\nInfra: ${JSON.stringify({ summary: infraFindings.summary, observations: infraFindings.observations })}`,
+        `\nMetrics: ${wrapUntrusted("evidence_metrics", JSON.stringify({ summary: metricsFindings.summary, observations: metricsFindings.observations }))}`,
+        `\nLogs: ${wrapUntrusted("evidence_logs", JSON.stringify({ summary: logsFindings.summary, observations: logsFindings.observations }))}`,
+        `\nInfra: ${wrapUntrusted("evidence_infra", JSON.stringify({ summary: infraFindings.summary, observations: infraFindings.observations }))}`,
       ];
       if (changesFindings?.observations?.length) {
         promptParts.push(
-          `\nRecent Changes: ${JSON.stringify({ summary: changesFindings.summary, observations: changesFindings.observations })}`,
+          `\nRecent Changes: ${wrapUntrusted("evidence_changes", JSON.stringify({ summary: changesFindings.summary, observations: changesFindings.observations }))}`,
           "\nIMPORTANT: If a deployment or code change occurred shortly before the incident, this is a strong root cause signal. Highlight it prominently.",
         );
       }

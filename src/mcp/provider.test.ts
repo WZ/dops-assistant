@@ -18,7 +18,7 @@ vi.mock("@mastra/mcp", () => {
   return { MCPClient };
 });
 
-import { createMcpProvider, getToolsByRole, getAllTools, listProviderTools, classifyToolAccess } from "./provider.js";
+import { createMcpProvider, getToolsByRole, getAllTools, listProviderTools, classifyToolAccess, filterToReadOnlyTools } from "./provider.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -334,5 +334,95 @@ describe("classifyToolAccess", () => {
   });
   it("classifies configuration_view as read (exact match)", () => {
     expect(classifyToolAccess("configuration_view")).toBe("read");
+  });
+
+  // Write-keyword denylist — write keywords take priority over read keywords
+  it("classifies ambiguous names with write keywords as write", () => {
+    // "delete" write keyword overrides "list" read keyword
+    expect(classifyToolAccess("pods_delete_list")).toBe("write");
+    // "create" write keyword even with "readonly" in the name
+    expect(classifyToolAccess("create_readonly_snapshot")).toBe("write");
+  });
+
+  it("classifies all write-keyword denylist entries correctly", () => {
+    // Every write keyword should force "write" classification
+    const writeKeywords = [
+      "delete", "create", "update", "modify", "remove",
+      "patch", "put", "write", "set", "add",
+      "drop", "kill", "stop", "restart", "scale",
+      "exec", "run", "apply", "deploy",
+    ];
+    for (const keyword of writeKeywords) {
+      expect(classifyToolAccess(`pods_${keyword}`)).toBe("write");
+      expect(classifyToolAccess(`${keyword}_something`)).toBe("write");
+    }
+  });
+
+  it("does not regress existing read classifications", () => {
+    // Comprehensive regression check — all of these must remain "read"
+    const readTools = [
+      "get_dashboard_by_uid", "list_datasources", "query_prometheus",
+      "search_dashboards", "pods_list", "pods_get", "pods_log",
+      "nodes_log", "pods_top", "nodes_top", "nodes_stats_summary",
+      "pods_list_in_namespace", "events_list", "namespaces_list",
+      "resources_list", "resources_get", "configuration_view",
+      "get_metrics", "list_pods", "describe_pod", "check_health",
+      "fetch_logs", "lookup_service", "count_pods", "show_dashboard",
+      "find_errors", "read_config",
+    ];
+    for (const tool of readTools) {
+      expect(classifyToolAccess(tool)).toBe("read");
+    }
+  });
+});
+
+describe("filterToReadOnlyTools", () => {
+  it("filters out write tools and keeps read tools", () => {
+    const tools: Record<string, Tool> = {
+      list_pods: makeTool("list pods"),
+      get_metrics: makeTool("get metrics"),
+      delete_pod: makeTool("delete pod"),
+      create_dashboard: makeTool("create dashboard"),
+      query_prometheus: makeTool("query prometheus"),
+    };
+
+    const filtered = filterToReadOnlyTools(tools);
+    expect(Object.keys(filtered).sort()).toEqual(["get_metrics", "list_pods", "query_prometheus"]);
+  });
+
+  it("returns a new object, does not mutate the input", () => {
+    const tools: Record<string, Tool> = {
+      list_pods: makeTool("list pods"),
+      delete_pod: makeTool("delete pod"),
+    };
+    const originalKeys = Object.keys(tools);
+    const filtered = filterToReadOnlyTools(tools);
+
+    // Input unchanged
+    expect(Object.keys(tools)).toEqual(originalKeys);
+    // Result is a different object
+    expect(filtered).not.toBe(tools);
+    // Write tool removed from result
+    expect(filtered).not.toHaveProperty("delete_pod");
+    // Read tool kept
+    expect(filtered).toHaveProperty("list_pods");
+  });
+
+  it("returns empty record when all tools are write", () => {
+    const tools: Record<string, Tool> = {
+      deploy_service: makeTool("deploy"),
+      kill_process: makeTool("kill"),
+    };
+    const filtered = filterToReadOnlyTools(tools);
+    expect(Object.keys(filtered)).toHaveLength(0);
+  });
+
+  it("returns all tools when all are read-only", () => {
+    const tools: Record<string, Tool> = {
+      list_pods: makeTool("list"),
+      get_metrics: makeTool("get"),
+    };
+    const filtered = filterToReadOnlyTools(tools);
+    expect(Object.keys(filtered)).toHaveLength(2);
   });
 });

@@ -111,7 +111,9 @@ describe("MastraChatAgentAdapter", () => {
     expect(prompt).toContain("### Skill: CPU Runbook");
     expect(prompt).toContain("check cpu");
     expect(prompt).toContain("CPU is at 80%");
-    expect(prompt).toContain("USER: what about now?");
+    expect(prompt).toContain("what about now?");
+    // User message is wrapped in untrusted tags
+    expect(prompt).toContain("<untrusted_user_message>");
     expect(onStreamStart).toHaveBeenCalledOnce();
     expect(onStreamDelta).toHaveBeenNthCalledWith(1, {
       type: "reasoning",
@@ -185,7 +187,7 @@ describe("MastraChatAgentAdapter", () => {
       supportsInlineCharts: true,
     });
 
-    expect(inlineGenerate).toHaveBeenCalledWith(expect.stringContaining("USER: test"));
+    expect(inlineGenerate).toHaveBeenCalledWith(expect.stringContaining("<untrusted_user_message>test</untrusted_user_message>"));
     expect(onStreamDelta).toHaveBeenCalledWith({
       type: "content",
       content: "Fallback response",

@@ -12,6 +12,7 @@ import { getRecentIncidents, formatIncidentHistory } from "../history.js";
 import { debug } from "../tool-utils.js";
 import { safeJsonParse } from "../../agents/shared/processors.js";
 import { createPlannerAgent } from "../../agents/planner.js";
+import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
 
 /**
  * Build a planning step that fetches recent incidents and creates an investigation plan.
@@ -52,13 +53,13 @@ export function buildPlanningStep(config: WorkflowConfig) {
         : "";
 
       const prompt = [
-        `Anomaly: ${inputData.summary}`,
+        `Anomaly: ${wrapUntrusted("anomaly_summary", inputData.summary)}`,
         `Severity: ${inputData.severity ?? "unknown"}`,
-        inputData.serviceName ? `Service: ${inputData.serviceName}` : "",
-        serviceMetricsHint,
-        serviceLogLabelsHint,
+        inputData.serviceName ? `Service: ${wrapUntrusted("service", inputData.serviceName)}` : "",
+        serviceMetricsHint ? wrapUntrusted("metrics", serviceMetricsHint) : "",
+        serviceLogLabelsHint ? wrapUntrusted("log_labels", serviceLogLabelsHint) : "",
         inputData.skillContext
-          ? `${inputData.skillContext}\nUse these runbooks to inform your hypothesis planning. Prioritize investigation steps mentioned in matched skills.`
+          ? `${wrapUntrusted("skill_context", inputData.skillContext)}\nUse these runbooks to inform your hypothesis planning. Prioritize investigation steps mentioned in matched skills.`
           : "",
         historyContext ? `\nRecent incidents:\n${historyContext}` : "",
       ].filter(Boolean).join("\n");
