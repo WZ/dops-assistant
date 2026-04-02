@@ -10,7 +10,6 @@ interface ProviderData {
   roles: string[];
   region?: string;
   transport: string;
-  command?: string;
   url?: string;
   source: "config" | "gui";
   status: "connected" | "error" | "unknown";
@@ -129,8 +128,7 @@ export function ProvidersPage({ onRunDiscovery }: ProvidersPageProps) {
       roles: p.roles,
       region: p.region,
       mcpServer: {
-        transport: p.transport as "stdio" | "http",
-        command: p.command,
+        transport: "http",
         url: p.url,
       },
     });
