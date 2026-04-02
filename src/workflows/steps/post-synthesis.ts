@@ -11,6 +11,40 @@ import { saveIncident } from "../history.js";
 import { debug } from "../tool-utils.js";
 
 /**
+ * Build Grafana Explore deep links for logs and metrics, pre-filled with
+ * the investigation's time range and service selector.
+ */
+function buildGrafanaExploreLinks(
+  config: WorkflowConfig,
+  serviceName: string,
+  timeRange: { from: string; to: string },
+): string[] {
+  const links: string[] = [];
+
+  for (const provider of config.providers) {
+    const webUrl = (provider as any).webUrl;
+    if (!webUrl) continue;
+
+    const fromMs = new Date(timeRange.from).getTime();
+    const toMs = new Date(timeRange.to).getTime();
+    if (isNaN(fromMs) || isNaN(toMs)) continue;
+
+    // Build Loki Explore link for providers with "logs" role
+    if ((provider as any).roles?.includes("logs")) {
+      const logql = `{app="${serviceName}"} |~ "(?i)(error|exception|fail)"`;
+      const pane = JSON.stringify({
+        datasource: "loki",
+        queries: [{ refId: "A", expr: logql }],
+        range: { from: String(fromMs), to: String(toMs) },
+      });
+      links.push(`${webUrl}/explore?schemaVersion=1&panes=${encodeURIComponent(`{"a":${pane}}`)}`);
+    }
+  }
+
+  return links;
+}
+
+/**
  * Build a post-synthesis step that saves incident to history.
  */
 export function buildPostSynthesisStep(config: WorkflowConfig) {
@@ -45,6 +79,13 @@ export function buildPostSynthesisStep(config: WorkflowConfig) {
 
       debug("POST-SYNTHESIS step complete, savedToHistory:", savedToHistory);
 
+      // Build Grafana Explore deep links for the investigation time range
+      const dashboardLinks = [...(inputData.dashboardLinks ?? [])];
+      if (inputData.timeRange) {
+        const exploreLinks = buildGrafanaExploreLinks(config, serviceName, inputData.timeRange);
+        dashboardLinks.push(...exploreLinks);
+      }
+
       return {
         severity: inputData.severity,
         summary: inputData.summary,
@@ -54,7 +95,7 @@ export function buildPostSynthesisStep(config: WorkflowConfig) {
         contributingFactors: inputData.contributingFactors,
         timeline: inputData.timeline,
         evidence: inputData.evidence,
-        dashboardLinks: inputData.dashboardLinks,
+        dashboardLinks,
         recommendedActions: inputData.recommendedActions,
         confidence: inputData.confidence,
         confidenceScore: inputData.confidenceScore,
