@@ -15,6 +15,7 @@ import { getToolsByRole, type MastraProvider } from "../mcp/provider.js";
 import { MAX_CACHE_ENTRIES } from "../constants.js";
 import type { ServiceConfig } from "../config/schema.js";
 import { inferDependencyGraph } from "./dependency-graph.js";
+import { wrapUntrusted } from "../agents/shared/prompt-helpers.js";
 import type { ServiceHealthPoller, HealthStatus } from "./service-health-poller.js";
 import type {
   ServiceBrief,
@@ -370,8 +371,8 @@ async function fetchDependencies(
 
 // ── Prompt sanitization ──────────────────────────────────────────────────────
 
-/** Strip control characters and truncate to prevent prompt injection. */
-function sanitizeForPrompt(s: string): string {
+/** Strip control characters and truncate to limit prompt size. */
+function truncateForPrompt(s: string): string {
   return s.replace(/[\x00-\x1f]/g, "").slice(0, 200);
 }
 
@@ -392,7 +393,7 @@ async function generateSummary(
     parts.push(`Recent changes: ${deployCount} deployment(s), ${mrCount} merge request(s).`);
     if (deployCount > 0) {
       const latest = changes.deployments[0];
-      parts.push(`Latest deploy: ref=${sanitizeForPrompt(latest.ref)}, status=${sanitizeForPrompt(latest.pipelineStatus)}, at=${sanitizeForPrompt(latest.deployedAt)}.`);
+      parts.push(`Latest deploy: ref=${wrapUntrusted("deployment_data", truncateForPrompt(latest.ref))}, status=${wrapUntrusted("deployment_data", truncateForPrompt(latest.pipelineStatus))}, at=${wrapUntrusted("deployment_data", truncateForPrompt(latest.deployedAt))}.`);
     }
   }
 
@@ -414,7 +415,7 @@ async function generateSummary(
     const unhealthy = deps.nodes.filter(n => n.status === "unhealthy" || n.status === "degraded");
     parts.push(`Dependency graph: ${deps.nodes.length} node(s), ${deps.edges.length} edge(s).`);
     if (unhealthy.length > 0) {
-      parts.push(`Unhealthy/degraded dependencies: ${unhealthy.map(n => sanitizeForPrompt(n.name)).join(", ")}.`);
+      parts.push(`Unhealthy/degraded dependencies: ${unhealthy.map(n => wrapUntrusted("service_name", truncateForPrompt(n.name))).join(", ")}.`);
     }
   }
 
@@ -425,7 +426,7 @@ async function generateSummary(
   const { text } = await generateText({
     model: llmModel,
     system: `You are a DevOps assistant. Given data about a service, write a 2-3 sentence summary that correlates recent changes with current health status. Be concise and actionable. Focus on what an on-call engineer needs to know right now. Output plain text only — no markdown, no bold, no asterisks, no bullet points, no formatting.`,
-    prompt: `Service: ${sanitizeForPrompt(serviceName)}\n\n${parts.join("\n")}`,
+    prompt: `Service: ${wrapUntrusted("service_name", truncateForPrompt(serviceName))}\n\n${parts.join("\n")}`,
     temperature: 0,
   });
 

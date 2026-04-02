@@ -47,11 +47,14 @@ export function AliasEditor({
     setSaving(true);
     setError(null);
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      const apiKey = localStorage.getItem("dops-api-key");
+      if (apiKey) headers["X-API-Key"] = apiKey;
       const res = await fetch(
         `/api/services/${encodeURIComponent(serviceName)}/alias`,
         {
           method: "PUT",
-          headers: { "Content-Type": "application/json" },
+          headers,
           body: JSON.stringify({ alias: trimmed || null }),
         }
       );
@@ -171,11 +174,14 @@ export function TagEditor({
       setSaving(true);
       setError(null);
       try {
+        const tagHeaders: Record<string, string> = { "Content-Type": "application/json" };
+        const tagApiKey = localStorage.getItem("dops-api-key");
+        if (tagApiKey) tagHeaders["X-API-Key"] = tagApiKey;
         const res = await fetch(
           `/api/services/${encodeURIComponent(serviceName)}/tags`,
           {
             method: "PUT",
-            headers: { "Content-Type": "application/json" },
+            headers: tagHeaders,
             body: JSON.stringify({ tags: newTags }),
           }
         );
