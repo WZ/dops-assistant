@@ -261,19 +261,33 @@ export function buildLogsStep(config: WorkflowConfig) {
         ? `VALIDATED LOG SELECTOR (pre-tested, returns real logs — use this as your primary selector):\n  ${prefetchContext.workingLogSelectors[0]}\nThe configured logLabels may NOT return results. Use the validated selector above as your FIRST query.`
         : "";
 
+      // Extract incident keywords from user message and logFocus for targeted log searching
+      const incidentKeywords = extractIncidentKeywords(anomalyContext.userMessage, inputData.logFocus);
+      const keywordsHint = incidentKeywords.length > 0
+        ? `INCIDENT KEYWORDS (search for these as Loki line filters BEFORE generic error patterns):\n  ${incidentKeywords.join(", ")}\nThese are your highest-priority search terms. Use them with |= "keyword" in your first queries.`
+        : "";
+
+      // Pre-build LogQL queries so the model doesn't have to construct the syntax
+      const baseSelector = prefetchContext.workingLogSelectors[0] || "";
+      const prebuiltQueries = baseSelector && incidentKeywords.length > 0
+        ? buildPrebuiltLogQueries(baseSelector, incidentKeywords)
+        : "";
+
       return [
         wrapUntrusted("datasource_hints", prefetchContext.datasourceHints),
         timeWindowHint,
         wrapUntrusted("log_label_hints", prefetchContext.logLabelHints),
         logLabelsHint,
         selectorHint,
+        prebuiltQueries,
+        keywordsHint,
         `Known issue: ${wrapUntrusted("user_message", anomalyContext.userMessage)}`,
         anomalyContext.serviceName ? `Service: ${wrapUntrusted("service", anomalyContext.serviceName)}` : "",
         anomalyContext.skillContext
           ? `${anomalyContext.skillContext}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
           : "",
         inputData.logFocus?.length
-          ? `Focus areas: ${inputData.logFocus.join(", ")}`
+          ? `Focus areas from investigation plan:\n  ${inputData.logFocus.join("\n  ")}`
           : "",
       ].filter(Boolean).join("\n");
     },
@@ -348,4 +362,81 @@ export function buildChangesStep(config: WorkflowConfig) {
     extractorSchema: '{"summary": "string", "observations": [{"type": "string", "title": "string", "timestamp": "string", "author": "string", "detail": "string"}]}',
     fallbackMessage: "Change analysis unavailable",
   });
+}
+
+// ── Pre-built LogQL queries ──────────────────────────────────────────────────
+
+/** Escape a string for safe interpolation inside LogQL double-quoted strings. */
+function escapeLogQL(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+/**
+ * Build ready-to-use LogQL queries from the validated selector and incident keywords.
+ * Provides exact queries the model can copy-paste, avoiding the model constructing
+ * wrong syntax or using bad parameters like direction:"forward" and limit:20.
+ */
+function buildPrebuiltLogQueries(selector: string, keywords: string[]): string {
+  // Pick up to 3 most specific keywords (skip very short ones, escape for LogQL)
+  const topKeywords = keywords
+    .filter((k) => k.length >= 3 && !k.includes(" "))
+    .slice(0, 3);
+
+  const queries: string[] = [];
+
+  // Query 1: keyword-filtered (most targeted)
+  if (topKeywords.length > 0) {
+    const filter = topKeywords.map((k) => `|= "${escapeLogQL(k)}"`).join(" ");
+    queries.push(`Query 1 (keyword): ${selector} ${filter}`);
+  }
+
+  // Query 2: error-level entries
+  queries.push(`Query 2 (errors):  ${selector} |~ "(?i)(error|exception|fail)"`);
+
+  // Query 3: all logs (no filter, for context around errors)
+  queries.push(`Query 3 (context): ${selector}`);
+
+  return [
+    "PRE-BUILT LOG QUERIES (use these logql values in order, with limit=50 and direction=backward):",
+    ...queries.map((q) => `  ${q}`),
+    "Run Query 1 first. If it returns results with errors, run Query 3 with a narrow ±60s time window around the errors for full context.",
+  ].join("\n");
+}
+
+// ── Keyword extraction ───────────────────────────────────────────────────────
+
+/** Stop words to filter out when extracting incident keywords from user messages. */
+const STOP_WORDS = new Set([
+  "a", "an", "the", "is", "was", "were", "are", "been", "be", "have", "has",
+  "had", "do", "does", "did", "will", "would", "could", "should", "may",
+  "might", "shall", "can", "need", "must", "it", "its", "of", "in", "on",
+  "at", "to", "for", "with", "from", "by", "about", "into", "through",
+  "and", "or", "but", "not", "no", "if", "then", "than", "that", "this",
+  "there", "here", "what", "when", "where", "how", "why", "which", "who",
+  "all", "each", "every", "both", "few", "more", "most", "some", "any",
+  "up", "out", "so", "just", "also", "very", "too", "quite", "rather",
+  "around", "please", "check", "look", "see", "investigate", "service",
+]);
+
+/**
+ * Extract incident-specific keywords from the user message and logFocus.
+ * Filters out common stop words and short tokens, returning terms likely
+ * to be useful as Loki line filters.
+ */
+function extractIncidentKeywords(userMessage: string, logFocus?: string[]): string[] {
+  const keywords = new Set<string>();
+
+  // Extract from user message: split on whitespace/punctuation, keep meaningful tokens
+  const messageTokens = userMessage
+    .replace(/['"`,.:;!?()[\]{}]/g, " ")
+    .split(/\s+/)
+    .filter((t) => t.length >= 3 && !STOP_WORDS.has(t.toLowerCase()) && !/^\d+$/.test(t));
+  for (const token of messageTokens) keywords.add(token);
+
+  // Add logFocus items directly (these are already curated by the planner)
+  if (logFocus) {
+    for (const focus of logFocus) keywords.add(focus);
+  }
+
+  return [...keywords].slice(0, 10);
 }
