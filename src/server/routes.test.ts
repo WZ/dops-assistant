@@ -4,6 +4,7 @@ import { Database } from "./db.js";
 import { unlinkSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
+import { exportProviderConfig, validateImportProviders, categorizeImportActions, type ImportDryRunResult } from "./routes.js";
 
 /**
  * Route handler tests — the old buildHandlers wrapper was removed in the
@@ -239,5 +240,134 @@ describe("Pattern extraction from RCA report", () => {
     expect(symptom.length).toBe(500);
     expect(rootCause.length).toBe(500);
     expect(actions.length).toBe(1000);
+  });
+});
+
+// ── Provider Export/Import tests ─────────────────────────────────────────
+
+describe("GET /api/providers/export", () => {
+  it("returns provider configs as an array", async () => {
+    const mockProviderInfo = {
+      config: {
+        name: "test-grafana",
+        roles: ["metrics", "logs"],
+        mcpServer: { transport: "http" as const, url: "http://localhost:8000/mcp" },
+        region: "us-west-1",
+      },
+      source: "config" as const,
+      status: "connected" as const,
+      toolCount: 5,
+      enabledToolCount: 3,
+    };
+    const exported = exportProviderConfig(mockProviderInfo as any);
+    expect(exported).toEqual({
+      name: "test-grafana",
+      roles: ["metrics", "logs"],
+      mcpServer: { transport: "http", url: "http://localhost:8000/mcp" },
+      region: "us-west-1",
+    });
+  });
+
+  it("omits undefined optional fields", async () => {
+    const mockProviderInfo = {
+      config: {
+        name: "test-k8s",
+        roles: ["infrastructure"],
+        mcpServer: { transport: "http" as const, url: "http://localhost:8001/mcp" },
+      },
+      source: "gui" as const,
+      status: "connected" as const,
+      toolCount: 10,
+      enabledToolCount: 7,
+    };
+    const exported = exportProviderConfig(mockProviderInfo as any);
+    expect(exported).toEqual({
+      name: "test-k8s",
+      roles: ["infrastructure"],
+      mcpServer: { transport: "http", url: "http://localhost:8001/mcp" },
+    });
+    expect(exported).not.toHaveProperty("region");
+    expect(exported).not.toHaveProperty("webUrl");
+  });
+});
+
+describe("validateImportProviders", () => {
+  it("marks valid new providers as ready", () => {
+    const providers = [
+      { name: "new-grafana", roles: ["metrics"], mcpServer: { transport: "http", url: "http://localhost:8000/mcp" } },
+    ];
+    const existing = new Map<string, "config" | "gui">();
+    const results = validateImportProviders(providers, existing);
+    expect(results).toEqual([{ name: "new-grafana", status: "ready" }]);
+  });
+
+  it("marks invalid providers with error", () => {
+    const providers = [
+      { name: "bad!", roles: [], mcpServer: { transport: "http", url: "not-a-url" } },
+    ];
+    const existing = new Map<string, "config" | "gui">();
+    const results = validateImportProviders(providers, existing);
+    expect(results).toHaveLength(1);
+    expect(results[0]!.status).toBe("invalid");
+    expect(results[0]!.error).toBeDefined();
+  });
+
+  it("marks conflicting providers with source", () => {
+    const providers = [
+      { name: "grafana", roles: ["metrics"], mcpServer: { transport: "http", url: "http://localhost:8000/mcp" } },
+    ];
+    const existing = new Map<string, "config" | "gui">([["grafana", "config"]]);
+    const results = validateImportProviders(providers, existing);
+    expect(results).toEqual([{ name: "grafana", status: "conflict", source: "config" }]);
+  });
+
+  it("marks duplicate names within the batch as invalid", () => {
+    const providers = [
+      { name: "my-prov", roles: ["metrics"], mcpServer: { transport: "http", url: "http://localhost:8000/mcp" } },
+      { name: "my-prov", roles: ["logs"], mcpServer: { transport: "http", url: "http://localhost:8001/mcp" } },
+    ];
+    const existing = new Map<string, "config" | "gui">();
+    const results = validateImportProviders(providers, existing);
+    expect(results[0]!.status).toBe("ready");
+    expect(results[1]!.status).toBe("invalid");
+    expect(results[1]!.error!.toLowerCase()).toContain("duplicate");
+  });
+
+  it("handles a mix of ready, conflict, and invalid", () => {
+    const providers = [
+      { name: "new-one", roles: ["metrics"], mcpServer: { transport: "http", url: "http://localhost:8000/mcp" } },
+      { name: "existing", roles: ["logs"], mcpServer: { transport: "http", url: "http://localhost:8001/mcp" } },
+      { name: "bad", roles: [], mcpServer: { transport: "http", url: "bad" } },
+    ];
+    const existing = new Map<string, "config" | "gui">([["existing", "gui"]]);
+    const results = validateImportProviders(providers, existing);
+    expect(results[0]!.status).toBe("ready");
+    expect(results[1]!.status).toBe("conflict");
+    expect(results[1]!.source).toBe("gui");
+    expect(results[2]!.status).toBe("invalid");
+  });
+});
+
+describe("import confirm logic", () => {
+  it("categorizes providers into add, overwrite, and skip", () => {
+    const providers = [
+      { name: "new-one", roles: ["metrics"], mcpServer: { transport: "http", url: "http://localhost:8000/mcp" } },
+      { name: "existing-gui", roles: ["logs"], mcpServer: { transport: "http", url: "http://localhost:8001/mcp" } },
+      { name: "existing-config", roles: ["infrastructure"], mcpServer: { transport: "http", url: "http://localhost:8002/mcp" } },
+      { name: "conflict-skip", roles: ["dashboards"], mcpServer: { transport: "http", url: "http://localhost:8003/mcp" } },
+    ];
+    const overwrite = ["existing-gui", "existing-config"];
+    const existing = new Map<string, "config" | "gui">([
+      ["existing-gui", "gui"],
+      ["existing-config", "config"],
+      ["conflict-skip", "gui"],
+    ]);
+    const actions = categorizeImportActions(providers, overwrite, existing);
+    expect(actions).toEqual([
+      { config: providers[0], action: "add" },
+      { config: providers[1], action: "overwrite" },
+      { config: providers[2], action: "skip", reason: "Cannot overwrite config provider" },
+      { config: providers[3], action: "skip", reason: "Conflict not in overwrite list" },
+    ]);
   });
 });
