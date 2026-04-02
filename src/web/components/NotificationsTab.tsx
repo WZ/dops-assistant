@@ -69,7 +69,11 @@ export function NotificationsTab() {
     setTesting(true);
     setTestResult(null);
     try {
-      const res = await stackFetch("/api/notifications/test", { method: "POST" });
+      const res = await stackFetch("/api/notifications/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ webhookUrl: urlInput || undefined }),
+      });
       const data = await res.json();
       if (res.ok) {
         setTestResult({ ok: true });
@@ -80,13 +84,6 @@ export function NotificationsTab() {
       setTestResult({ ok: false, error: "Network error" });
     }
     setTesting(false);
-  };
-
-  const maskedUrl = (url: string) => {
-    if (!url) return "";
-    // Show first 30 chars + mask the rest
-    if (url.length <= 35) return url;
-    return url.slice(0, 30) + "•".repeat(Math.min(url.length - 30, 20));
   };
 
   if (loading) {
@@ -145,9 +142,8 @@ export function NotificationsTab() {
             <div className="relative mt-1">
               <input
                 type={showUrl ? "text" : "password"}
-                value={showUrl ? urlInput : (urlInput ? maskedUrl(urlInput) : "")}
-                onChange={(e) => { setUrlInput(e.target.value); setDirty(true); setShowUrl(true); }}
-                onFocus={() => setShowUrl(true)}
+                value={urlInput}
+                onChange={(e) => { setUrlInput(e.target.value); setDirty(true); }}
                 placeholder="https://hooks.slack.com/services/..."
                 className={INPUT_CLASS}
               />

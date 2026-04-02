@@ -868,6 +868,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     if (slack.webhookUrl !== undefined) {
       if (slack.webhookUrl === null || slack.webhookUrl === "") {
         db.deleteSetting("notifications.slack.webhookUrl");
+        db.deleteSetting("notifications.slack.enabled");
       } else {
         try {
           const parsed = new URL(slack.webhookUrl);
@@ -888,8 +889,9 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     res.json({ ok: true });
   });
 
-  app.post("/api/notifications/test", async (_req: Request, res: Response) => {
-    const slackUrl = db.getSetting("notifications.slack.webhookUrl") ?? config.webhook.slackWebhookUrl;
+  app.post("/api/notifications/test", async (req: Request, res: Response) => {
+    const { webhookUrl: bodyUrl } = req.body as { webhookUrl?: string } ?? {};
+    const slackUrl = bodyUrl || db.getSetting("notifications.slack.webhookUrl") || config.webhook.slackWebhookUrl;
     if (!slackUrl) {
       res.status(400).json({ error: "No Slack webhook URL configured" });
       return;
