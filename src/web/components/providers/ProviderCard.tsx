@@ -17,7 +17,6 @@ interface ProviderCardProps {
   roles: string[];
   region?: string;
   transport: string;
-  command?: string;
   url?: string;
   source: "config" | "gui";
   status: "connected" | "error" | "unknown";
@@ -36,7 +35,6 @@ export const ProviderCard = memo(function ProviderCard({
   roles,
   region,
   transport,
-  command,
   url,
   source,
   status,
@@ -65,11 +63,7 @@ export const ProviderCard = memo(function ProviderCard({
         ? "w-2 h-2 rounded-full bg-destructive ring-2 ring-destructive/25"
         : "w-2 h-2 rounded-full bg-muted-foreground/40";
 
-  const transportLabel = command
-    ? `${command} (${transport})`
-    : url
-      ? `${url} (${transport})`
-      : transport;
+  const transportLabel = url ?? transport;
 
   const accessibilityStatus = testing
     ? "testing"
