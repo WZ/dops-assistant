@@ -73,6 +73,14 @@ Each provider is a YAML object with the following fields:
       GITLAB_TOKEN: glpat-xxxxxxxxxxxxxxxxxxxx
       GITLAB_URL: https://gitlab.example.com
 
+# Coroot — dependencies and infrastructure via HTTP
+- name: coroot
+  roles: [dependencies, infrastructure]
+  webUrl: https://coroot.example.com
+  mcpServer:
+    transport: http
+    url: http://coroot-mcp:8002/mcp
+
 # Second Grafana — separate region
 - name: grafana-eu
   roles: [metrics, logs]
