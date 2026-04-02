@@ -304,6 +304,15 @@ async function handleDeepInvestigate(
         `Contributing Factors: ${(report.contributingFactors ?? []).join("; ")}`,
         `Recommended Actions: ${(report.recommendedActions ?? []).join("; ")}`,
       );
+      if (report.timeRange) {
+        contextParts.push(
+          "",
+          "## Investigation Time Window",
+          `From: ${report.timeRange.from}`,
+          `To: ${report.timeRange.to}`,
+          `IMPORTANT: When querying logs or metrics for follow-up questions, ALWAYS use this time window. Do NOT query outside this range — the investigation evidence is scoped to this period.`,
+        );
+      }
       if (report.evidence) {
         contextParts.push(
           "",
