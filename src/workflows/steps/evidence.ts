@@ -228,7 +228,7 @@ export function buildMetricsStep(config: WorkflowConfig) {
         `Known issue: ${wrapUntrusted("user_message", anomalyContext.userMessage)}`,
         anomalyContext.serviceName ? `Service: ${wrapUntrusted("service", anomalyContext.serviceName)}` : "",
         anomalyContext.skillContext
-          ? `${wrapUntrusted("skill_context", anomalyContext.skillContext)}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
+          ? `${anomalyContext.skillContext}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
           : "",
         inputData.metricFocus?.length
           ? `Focus areas: ${inputData.metricFocus.join(", ")}`
@@ -270,7 +270,7 @@ export function buildLogsStep(config: WorkflowConfig) {
         `Known issue: ${wrapUntrusted("user_message", anomalyContext.userMessage)}`,
         anomalyContext.serviceName ? `Service: ${wrapUntrusted("service", anomalyContext.serviceName)}` : "",
         anomalyContext.skillContext
-          ? `${wrapUntrusted("skill_context", anomalyContext.skillContext)}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
+          ? `${anomalyContext.skillContext}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
           : "",
         inputData.logFocus?.length
           ? `Focus areas: ${inputData.logFocus.join(", ")}`
@@ -305,7 +305,7 @@ export function buildInfraStep(config: WorkflowConfig) {
         `Known issue: ${wrapUntrusted("user_message", anomalyContext.userMessage)}`,
         anomalyContext.serviceName ? `Service: ${wrapUntrusted("service", anomalyContext.serviceName)}` : "",
         anomalyContext.skillContext
-          ? `${wrapUntrusted("skill_context", anomalyContext.skillContext)}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
+          ? `${anomalyContext.skillContext}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
           : "",
         inputData.infraFocus?.length
           ? `Focus areas: ${inputData.infraFocus.join(", ")}`
@@ -341,7 +341,7 @@ export function buildChangesStep(config: WorkflowConfig) {
         "Search for recent deployments, merge requests, and pipeline runs related to this service.",
         "Focus on changes that happened within 6 hours before the incident started.",
         anomalyContext.skillContext
-          ? `${wrapUntrusted("skill_context", anomalyContext.skillContext)}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
+          ? `${anomalyContext.skillContext}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
           : "",
       ].filter(Boolean).join("\n");
     },
