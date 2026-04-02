@@ -120,6 +120,27 @@ describe("webhook handler", () => {
     expect(runner.run).not.toHaveBeenCalled();
   });
 
+  it("passes readOnlyTools: true for headless investigations", async () => {
+    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES });
+    const { req, res } = mockReqRes(
+      {
+        alerts: [{
+          status: "firing",
+          labels: { alertname: "HighErrorRate", service: "checkout-service", severity: "critical" },
+          annotations: { summary: "Error rate is high" },
+          startsAt: "2026-03-18T10:00:00Z",
+          endsAt: "0001-01-01T00:00:00Z",
+        }],
+      },
+      "Bearer test-secret",
+    );
+
+    await handler(req, res);
+    expect(runner.run).toHaveBeenCalledWith(expect.objectContaining({
+      readOnlyTools: true,
+    }));
+  });
+
   it("allows requests when no secret is configured", async () => {
     const noSecretConfig = { ...DEFAULT_CONFIG, secret: undefined };
     const handler = createWebhookHandler({ runner, config: noSecretConfig, services: SERVICES });

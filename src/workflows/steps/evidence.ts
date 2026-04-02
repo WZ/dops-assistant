@@ -15,7 +15,7 @@
 
 import { createStep } from "@mastra/core/workflows";
 import type { WorkflowConfig } from "../investigation.js";
-import { getToolsByRole } from "../../mcp/provider.js";
+import { getToolsByRole, filterToReadOnlyTools } from "../../mcp/provider.js";
 import { TOOL_RESULT_TRUNCATION_LIMIT } from "../../constants.js";
 import type { ProviderRole } from "../../config/schema.js";
 import {
@@ -30,6 +30,7 @@ import { createMetricsAgent } from "../../agents/metrics.js";
 import { createLogsAgent } from "../../agents/logs.js";
 import { createInfraAgent } from "../../agents/infra.js";
 import { createChangesAgent } from "../../agents/changes.js";
+import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
 
 // ── EvidenceStepConfig ────────────────────────────────────────────────────────
 
@@ -84,8 +85,14 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
       // 1. Get all tools for this role → wrap with callbacks (provider-agnostic)
       const roles = Array.isArray(toolRole) ? toolRole : [toolRole];
       const toolMaps = await Promise.all(roles.map(r => getToolsByRole(workflowConfig.providers, r).catch(() => ({}))));
-      const rawTools: Record<string, any> = {};
+      let rawTools: Record<string, any> = {};
       for (const m of toolMaps) Object.assign(rawTools, m);
+
+      // Security: headless investigations (webhook/poller) are locked to read-only tools
+      if (workflowConfig.readOnlyTools) {
+        rawTools = filterToReadOnlyTools(rawTools);
+        debug(`${phaseName.toUpperCase()} readOnlyTools enforced, filtered to:`, Object.keys(rawTools));
+      }
       debug(`${phaseName.toUpperCase()} tools:`, Object.keys(rawTools));
 
       // Early exit: if no tools are available for this role, skip the agent entirely.
@@ -214,14 +221,14 @@ export function buildMetricsStep(config: WorkflowConfig) {
       const { metricsHint } = buildServiceContextHint(workflowConfig.services, anomalyContext.serviceName);
 
       return [
-        anomalyContext.prefetchContext.datasourceHints,
+        wrapUntrusted("datasource_hints", anomalyContext.prefetchContext.datasourceHints),
         timeWindowHint,
-        anomalyContext.prefetchContext.panelQueryHints,
+        wrapUntrusted("panel_query_hints", anomalyContext.prefetchContext.panelQueryHints),
         metricsHint,
-        `Known issue: ${anomalyContext.userMessage}`,
-        anomalyContext.serviceName ? `Service: ${anomalyContext.serviceName}` : "",
+        `Known issue: ${wrapUntrusted("user_message", anomalyContext.userMessage)}`,
+        anomalyContext.serviceName ? `Service: ${wrapUntrusted("service", anomalyContext.serviceName)}` : "",
         anomalyContext.skillContext
-          ? `${anomalyContext.skillContext}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
+          ? `${wrapUntrusted("skill_context", anomalyContext.skillContext)}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
           : "",
         inputData.metricFocus?.length
           ? `Focus areas: ${inputData.metricFocus.join(", ")}`
@@ -255,15 +262,15 @@ export function buildLogsStep(config: WorkflowConfig) {
         : "";
 
       return [
-        prefetchContext.datasourceHints,
+        wrapUntrusted("datasource_hints", prefetchContext.datasourceHints),
         timeWindowHint,
-        prefetchContext.logLabelHints,
+        wrapUntrusted("log_label_hints", prefetchContext.logLabelHints),
         logLabelsHint,
         selectorHint,
-        `Known issue: ${anomalyContext.userMessage}`,
-        anomalyContext.serviceName ? `Service: ${anomalyContext.serviceName}` : "",
+        `Known issue: ${wrapUntrusted("user_message", anomalyContext.userMessage)}`,
+        anomalyContext.serviceName ? `Service: ${wrapUntrusted("service", anomalyContext.serviceName)}` : "",
         anomalyContext.skillContext
-          ? `${anomalyContext.skillContext}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
+          ? `${wrapUntrusted("skill_context", anomalyContext.skillContext)}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
           : "",
         inputData.logFocus?.length
           ? `Focus areas: ${inputData.logFocus.join(", ")}`
@@ -292,13 +299,13 @@ export function buildInfraStep(config: WorkflowConfig) {
       const timeWindowHint = buildTimeWindowHint(anomalyContext.summary, anomalyContext.userMessage, resolvedRange);
 
       return [
-        anomalyContext.prefetchContext.datasourceHints,
+        wrapUntrusted("datasource_hints", anomalyContext.prefetchContext.datasourceHints),
         timeWindowHint,
-        anomalyContext.prefetchContext.panelQueryHints,
-        `Known issue: ${anomalyContext.userMessage}`,
-        anomalyContext.serviceName ? `Service: ${anomalyContext.serviceName}` : "",
+        wrapUntrusted("panel_query_hints", anomalyContext.prefetchContext.panelQueryHints),
+        `Known issue: ${wrapUntrusted("user_message", anomalyContext.userMessage)}`,
+        anomalyContext.serviceName ? `Service: ${wrapUntrusted("service", anomalyContext.serviceName)}` : "",
         anomalyContext.skillContext
-          ? `${anomalyContext.skillContext}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
+          ? `${wrapUntrusted("skill_context", anomalyContext.skillContext)}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
           : "",
         inputData.infraFocus?.length
           ? `Focus areas: ${inputData.infraFocus.join(", ")}`
@@ -329,12 +336,12 @@ export function buildChangesStep(config: WorkflowConfig) {
 
       return [
         timeWindowHint,
-        `Known issue: ${anomalyContext.userMessage}`,
-        anomalyContext.serviceName ? `Service: ${anomalyContext.serviceName}` : "",
+        `Known issue: ${wrapUntrusted("user_message", anomalyContext.userMessage)}`,
+        anomalyContext.serviceName ? `Service: ${wrapUntrusted("service", anomalyContext.serviceName)}` : "",
         "Search for recent deployments, merge requests, and pipeline runs related to this service.",
         "Focus on changes that happened within 6 hours before the incident started.",
         anomalyContext.skillContext
-          ? `${anomalyContext.skillContext}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
+          ? `${wrapUntrusted("skill_context", anomalyContext.skillContext)}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
           : "",
       ].filter(Boolean).join("\n");
     },

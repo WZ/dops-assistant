@@ -2,6 +2,7 @@ import { generateText, type LanguageModel } from "ai";
 import type { ServiceConfig } from "../config/schema.js";
 import type { InvestigationIntent } from "../types/rca-types.js";
 import pino from "pino";
+import { wrapUntrusted } from "./shared/prompt-helpers.js";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
 
@@ -299,7 +300,7 @@ export class IntentRouter {
       const { text } = await generateText({
         model: this.model,
         system: buildIntentClassifierPrompt(serviceNames),
-        prompt: message,
+        prompt: wrapUntrusted("user_message", message),
         temperature: 0,
       });
 

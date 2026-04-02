@@ -147,6 +147,8 @@ const WebhookSchema = z.object({
 
 export const ConfigSchema = z.object({
   llm: LlmSchema,
+  /** Optional API key for authenticating mutating (non-GET) API requests */
+  apiKey: z.string().optional(),
   providers: z.array(ProviderSchema).min(1).refine(
     (providers) => new Set(providers.map((p) => p.name)).size === providers.length,
     { message: "Provider names must be unique" },

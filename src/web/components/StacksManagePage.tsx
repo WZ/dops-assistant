@@ -40,7 +40,10 @@ export function StacksManagePage({ stacks, activeStackId, onSwitchStack, onRefet
     setDeleting(true);
     setDeleteError(null);
     try {
-      const res = await fetch(`/api/stacks/${deleteTarget.id}`, { method: "DELETE" });
+      const headers: Record<string, string> = {};
+      const apiKey = localStorage.getItem("dops-api-key");
+      if (apiKey) headers["X-API-Key"] = apiKey;
+      const res = await fetch(`/api/stacks/${deleteTarget.id}`, { method: "DELETE", headers });
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
         throw new Error(data.error || `Failed to delete stack (${res.status})`);
