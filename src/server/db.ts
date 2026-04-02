@@ -130,6 +130,19 @@ export class Database {
     `);
     this.migrateServiceHealthChecks();
     this.migrateHiddenServices();
+    this.migrateSettings();
+  }
+
+  // ── Settings migration ─────────────────────────────────────────────────
+
+  private migrateSettings(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS settings (
+        key         TEXT PRIMARY KEY,
+        value       TEXT NOT NULL,
+        updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
   }
 
   // ── Stack migration ──────────────────────────────────────────────────────
@@ -640,6 +653,23 @@ export class Database {
       "SELECT 1 FROM investigations WHERE stack_id = ? AND service = ? AND created_at > datetime('now', '-' || ? || ' seconds') LIMIT 1"
     ).get(stackId, service, Math.floor(windowSeconds));
     return !!row;
+  }
+
+  // ── Settings ──────────────────────────────────────────────────────────
+
+  getSetting(key: string): string | undefined {
+    const row = this.db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined;
+    return row?.value;
+  }
+
+  setSetting(key: string, value: string): void {
+    this.db.prepare(
+      "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now')) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+    ).run(key, value);
+  }
+
+  deleteSetting(key: string): void {
+    this.db.prepare("DELETE FROM settings WHERE key = ?").run(key);
   }
 
   close(): void {

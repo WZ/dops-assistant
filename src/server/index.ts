@@ -72,23 +72,27 @@ async function main() {
     db,
   });
 
-  // Build a global onComplete handler for Slack notifications
-  const slackWebhookUrl = config.webhook.slackWebhookUrl;
-  const globalOnComplete = slackWebhookUrl
-    ? (investigationId: string, service: string, report: import("../types/rca-types.js").RcaReport) => {
-        // Resolve grafanaUrl from the default stack's dashboard provider
-        const defaultCtx = stackManager.getDefaultContext();
-        const dashProvider = defaultCtx.providerRegistry.getAll().find(
-          (p: { config: { roles: string[]; webUrl?: string } }) => p.config.roles.includes("dashboards") && p.config.webUrl,
-        );
-        notifySlack(
-          { slackWebhookUrl, grafanaUrl: dashProvider?.config.webUrl },
-          investigationId,
-          service,
-          report,
-        );
-      }
-    : undefined;
+  // Build a global onComplete handler for Slack notifications.
+  // Reads URL dynamically so GUI changes take effect without restart.
+  const globalOnComplete = (investigationId: string, service: string, report: import("../types/rca-types.js").RcaReport) => {
+    // GUI override (DB) → config.yaml fallback
+    const url = db.getSetting("notifications.slack.webhookUrl") ?? config.webhook.slackWebhookUrl;
+    if (!url) return;
+    // Check if explicitly disabled via GUI
+    const enabled = db.getSetting("notifications.slack.enabled");
+    if (enabled === "false") return;
+
+    const defaultCtx = stackManager.getDefaultContext();
+    const dashProvider = defaultCtx.providerRegistry.getAll().find(
+      (p: { config: { roles: string[]; webUrl?: string } }) => p.config.roles.includes("dashboards") && p.config.webUrl,
+    );
+    notifySlack(
+      { slackWebhookUrl: url, grafanaUrl: dashProvider?.config.webUrl },
+      investigationId,
+      service,
+      report,
+    );
+  };
 
   // Wire health transition handler for auto-investigate
   stackManager.onHealthTransition = (stackId, service, from, to) => {

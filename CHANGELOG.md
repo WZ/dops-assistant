@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.2.0] - 2026-04-01
+
+### Added
+- Notifications tab in Settings with Slack webhook configuration, enable/disable toggle, and test button.
+- `GET/PUT /api/notifications` and `POST /api/notifications/test` API endpoints.
+- `settings` table in SQLite for persisting GUI configuration (key-value store).
+- Slack notifications are now configurable at runtime from the GUI without server restart.
+
+### Changed
+- Slack notification handler (`globalOnComplete`) now reads the webhook URL dynamically from the DB, falling back to `config.yaml`. Previously, the URL was captured once at startup.
+
 ## [0.0.1.0] - 2026-04-01
 
 ### Changed

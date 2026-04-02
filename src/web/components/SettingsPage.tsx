@@ -3,11 +3,12 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ProvidersPage } from "./ProvidersPage";
 import { SkillsPage } from "./SkillsPage";
 import { StacksManagePage } from "./StacksManagePage";
+import { NotificationsTab } from "./NotificationsTab";
 import type { StackSummary } from "../../types/stack-types.js";
 
 interface SettingsPageProps {
   onRunDiscovery: () => void;
-  initialTab?: "providers" | "skills" | "stacks";
+  initialTab?: "providers" | "skills" | "stacks" | "notifications";
   stacks: StackSummary[];
   activeStackId: string;
   onSwitchStack: (stackId: string) => void;
@@ -44,6 +45,12 @@ export function SettingsPage({ onRunDiscovery, initialTab = "providers", stacks,
           >
             Stacks
           </TabsTrigger>
+          <TabsTrigger
+            value="notifications"
+            className="font-mono text-[10px] font-medium px-4 py-2 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+          >
+            Notifications
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="providers" className="mt-4">
           <ProvidersPage onRunDiscovery={onRunDiscovery} />
@@ -58,6 +65,9 @@ export function SettingsPage({ onRunDiscovery, initialTab = "providers", stacks,
             onSwitchStack={onSwitchStack}
             onRefetch={onRefetchStacks}
           />
+        </TabsContent>
+        <TabsContent value="notifications" className="mt-4">
+          <NotificationsTab />
         </TabsContent>
       </Tabs>
     </div>
