@@ -17,7 +17,7 @@ import { z } from "zod";
  */
 function stripControlChars(input: string): string {
   // eslint-disable-next-line no-control-regex
-  return input.replace(/[\x00-\x09\x0b\x0c\x0e-\x1f]/g, "");
+  return input.replace(/[\x00-\x09\x0b\x0c\x0e-\x1f\x7f]/g, "");
 }
 
 export interface ValidateExternalInputOpts {
@@ -85,7 +85,7 @@ export const AlertPayloadSchema = z
     groupKey: z.string().optional(),
     status: z.enum(["firing", "resolved"]).optional(),
     receiver: z.string().optional(),
-    alerts: z.array(AlertSchema).min(1, "alerts array must not be empty"),
+    alerts: z.array(AlertSchema).min(1, "alerts array must not be empty").max(50),
   })
   .passthrough();
 
@@ -98,14 +98,14 @@ const MAX_CHAT_MESSAGE_LENGTH = 10_000;
 export const ChatMessageSchema = z.object({
   type: z.literal("chat"),
   message: boundedString(MAX_CHAT_MESSAGE_LENGTH),
-  serviceContext: z.string().optional(),
+  serviceContext: boundedString(500).optional(),
 });
 
 // ── DeepInvestigateMessageSchema ────────────────────────────────────────────
 
 export const DeepInvestigateMessageSchema = z.object({
   type: z.literal("deep_investigate"),
-  investigationId: z.string(),
+  investigationId: z.string().max(100),
   message: boundedString(MAX_CHAT_MESSAGE_LENGTH),
 });
 
@@ -116,9 +116,9 @@ const MAX_SKILL_BODY_LENGTH = 50_000;
 
 export const SkillInputSchema = z.object({
   title: boundedString(MAX_SKILL_TITLE_LENGTH),
-  services: z.array(z.string()).optional(),
-  alerts: z.array(z.string()).optional(),
-  tags: z.array(z.string()).optional(),
+  services: z.array(boundedString(200)).max(100).optional(),
+  alerts: z.array(boundedString(200)).max(100).optional(),
+  tags: z.array(boundedString(200)).max(100).optional(),
   body: boundedString(MAX_SKILL_BODY_LENGTH).optional(),
 });
 

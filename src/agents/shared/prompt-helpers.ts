@@ -17,7 +17,7 @@
  */
 export function wrapUntrusted(label: string, content: string | undefined | null): string {
   if (!content) return "";
-  const escaped = content.replace(/<\/untrusted_/g, "<\\/untrusted_");
+  const escaped = content.replace(/<\/?untrusted_/g, (m) => "<\\/" + m.slice(2));
   return `<untrusted_${label}>${escaped}</untrusted_${label}>`;
 }
 

@@ -8,7 +8,11 @@ import type { StackRow } from "../types/stack-types.js";
  * then call toISOString() to get a canonical representation.
  */
 export function normalizeTimestamp(sqliteStr: string): string {
-  return new Date(sqliteStr + "Z").toISOString();
+  try {
+    return new Date(sqliteStr + "Z").toISOString();
+  } catch {
+    return sqliteStr;
+  }
 }
 
 /**

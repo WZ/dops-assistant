@@ -7,6 +7,7 @@
  * (backward compatible).
  */
 
+import { timingSafeEqual } from "crypto";
 import type { Request, Response, NextFunction } from "express";
 
 /**
@@ -40,7 +41,11 @@ export function createApiKeyMiddleware(
 
     // Validate X-API-Key header
     const provided = req.headers["x-api-key"] as string | undefined;
-    if (!provided || provided !== apiKey) {
+    if (
+      !provided ||
+      provided.length !== apiKey.length ||
+      !timingSafeEqual(Buffer.from(provided), Buffer.from(apiKey))
+    ) {
       res.status(403).json({
         error: "Forbidden",
         message: "Invalid or missing API key",

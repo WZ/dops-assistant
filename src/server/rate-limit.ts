@@ -74,6 +74,7 @@ export class WsRateLimiter {
 
   /** Register a new connection and start its reset timer. */
   register(connectionId: string): void {
+    this.destroy(connectionId);
     this.counters.set(connectionId, { general: 0, investigation: 0 });
     const timer = setInterval(() => {
       const state = this.counters.get(connectionId);
