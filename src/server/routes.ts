@@ -693,7 +693,6 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       roles: p.config.roles,
       region: p.config.region,
       transport: p.config.mcpServer.transport,
-      command: p.config.mcpServer.transport === "stdio" ? p.config.mcpServer.command : undefined,
       url: p.config.mcpServer.transport === "http" ? p.config.mcpServer.url : undefined,
       source: p.source,
       status: p.status,

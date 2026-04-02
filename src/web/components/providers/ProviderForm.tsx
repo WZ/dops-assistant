@@ -7,10 +7,7 @@ export interface ProviderFormData {
   roles: string[];
   region?: string;
   mcpServer: {
-    transport: "stdio" | "http";
-    command?: string;
-    args?: string[];
-    env?: Record<string, string>;
+    transport: "http";
     url?: string;
   };
 }
@@ -39,27 +36,6 @@ const LABEL_CLASS =
 const INPUT_CLASS =
   "w-full rounded-md border border-border/40 bg-card/50 px-3 py-2 font-mono text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/15";
 
-function envRecordToString(env?: Record<string, string>): string {
-  if (!env) return "";
-  return Object.entries(env)
-    .map(([k, v]) => `${k}=${v}`)
-    .join("\n");
-}
-
-function parseEnvString(str: string): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const line of str.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const eqIdx = trimmed.indexOf("=");
-    if (eqIdx === -1) continue;
-    const key = trimmed.slice(0, eqIdx).trim();
-    const value = trimmed.slice(eqIdx + 1);
-    if (key) result[key] = value;
-  }
-  return result;
-}
-
 export function ProviderForm({
   onSave,
   onCancel,
@@ -68,18 +44,6 @@ export function ProviderForm({
   saving = false,
 }: ProviderFormProps) {
   const [name, setName] = useState(initialValues?.name ?? "");
-  const [transport, setTransport] = useState<"stdio" | "http">(
-    initialValues?.mcpServer.transport ?? "stdio"
-  );
-  const [command, setCommand] = useState(
-    initialValues?.mcpServer.command ?? ""
-  );
-  const [argsStr, setArgsStr] = useState(
-    initialValues?.mcpServer.args?.join(", ") ?? ""
-  );
-  const [envStr, setEnvStr] = useState(
-    envRecordToString(initialValues?.mcpServer.env)
-  );
   const [url, setUrl] = useState(initialValues?.mcpServer.url ?? "");
   const [roles, setRoles] = useState<Set<string>>(
     new Set(initialValues?.roles ?? [])
@@ -100,7 +64,7 @@ export function ProviderForm({
       name,
       roles: Array.from(roles),
       mcpServer: {
-        transport,
+        transport: "http",
       },
     };
 
@@ -108,18 +72,7 @@ export function ProviderForm({
       data.region = region.trim();
     }
 
-    if (transport === "stdio") {
-      if (command.trim()) data.mcpServer.command = command.trim();
-      const parsedArgs = argsStr
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-      if (parsedArgs.length > 0) data.mcpServer.args = parsedArgs;
-      const parsedEnv = parseEnvString(envStr);
-      if (Object.keys(parsedEnv).length > 0) data.mcpServer.env = parsedEnv;
-    } else {
-      if (url.trim()) data.mcpServer.url = url.trim();
-    }
+    if (url.trim()) data.mcpServer.url = url.trim();
 
     return data;
   }
@@ -138,12 +91,8 @@ export function ProviderForm({
       newErrors.roles = "At least one role is required";
     }
 
-    if (transport === "stdio" && !command.trim()) {
-      newErrors.command = "Command is required for stdio transport";
-    }
-
-    if (transport === "http" && !url.trim()) {
-      newErrors.url = "URL is required for http transport";
+    if (!url.trim()) {
+      newErrors.url = "URL is required";
     }
 
     setErrors(newErrors);
@@ -223,99 +172,29 @@ export function ProviderForm({
         )}
       </div>
 
-      {/* Transport */}
+      {/* URL */}
       <div>
-        <label className={LABEL_CLASS}>Transport</label>
-        <select
-          value={transport}
+        <label className={LABEL_CLASS}>URL</label>
+        <input
+          type="text"
+          value={url}
           onChange={(e) => {
-            setTransport(e.target.value as "stdio" | "http");
-            setTestResult(null);
+            setUrl(e.target.value);
+            if (errors.url) {
+              setErrors((prev) => {
+                const next = { ...prev };
+                delete next.url;
+                return next;
+              });
+            }
           }}
           className={cn(INPUT_CLASS, "mt-1")}
-        >
-          <option value="stdio">stdio</option>
-          <option value="http">http</option>
-        </select>
+          placeholder="http://localhost:8080/mcp"
+        />
+        {errors.url && (
+          <p className="text-xs text-destructive/80 mt-1">{errors.url}</p>
+        )}
       </div>
-
-      {/* stdio fields */}
-      {transport === "stdio" && (
-        <>
-          <div>
-            <label className={LABEL_CLASS}>Command</label>
-            <input
-              type="text"
-              value={command}
-              onChange={(e) => {
-                setCommand(e.target.value);
-                if (errors.command) {
-                  setErrors((prev) => {
-                    const next = { ...prev };
-                    delete next.command;
-                    return next;
-                  });
-                }
-              }}
-              className={cn(INPUT_CLASS, "mt-1")}
-              placeholder="npx @modelcontextprotocol/server-grafana"
-            />
-            {errors.command && (
-              <p className="text-xs text-destructive/80 mt-1">
-                {errors.command}
-              </p>
-            )}
-          </div>
-
-          <div>
-            <label className={LABEL_CLASS}>Args (comma-separated)</label>
-            <input
-              type="text"
-              value={argsStr}
-              onChange={(e) => setArgsStr(e.target.value)}
-              className={cn(INPUT_CLASS, "mt-1")}
-              placeholder="--port, 3001"
-            />
-          </div>
-
-          <div>
-            <label className={LABEL_CLASS}>Env Vars (key=value, one per line)</label>
-            <textarea
-              value={envStr}
-              onChange={(e) => setEnvStr(e.target.value)}
-              rows={3}
-              className={cn(INPUT_CLASS, "mt-1 resize-y")}
-              placeholder={"GRAFANA_URL=http://localhost:3000\nGRAFANA_TOKEN=..."}
-            />
-          </div>
-        </>
-      )}
-
-      {/* http fields */}
-      {transport === "http" && (
-        <div>
-          <label className={LABEL_CLASS}>URL</label>
-          <input
-            type="text"
-            value={url}
-            onChange={(e) => {
-              setUrl(e.target.value);
-              if (errors.url) {
-                setErrors((prev) => {
-                  const next = { ...prev };
-                  delete next.url;
-                  return next;
-                });
-              }
-            }}
-            className={cn(INPUT_CLASS, "mt-1")}
-            placeholder="http://localhost:8080/mcp"
-          />
-          {errors.url && (
-            <p className="text-xs text-destructive/80 mt-1">{errors.url}</p>
-          )}
-        </div>
-      )}
 
       {/* Roles */}
       <div>
