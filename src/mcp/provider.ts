@@ -105,6 +105,16 @@ export async function getAllTools(providers: MastraProvider[]): Promise<Record<s
 
 // ── Tool Classification ──────────────────────────────────────────────────────
 
+// Write keywords — if ANY segment matches, the tool is classified as "write"
+// regardless of other segments. Checked BEFORE read heuristics so that
+// ambiguous names like "pods_delete_list" are correctly classified as write.
+const WRITE_KEYWORDS = new Set([
+  "delete", "create", "update", "modify", "remove",
+  "patch", "put", "write", "set", "add",
+  "drop", "kill", "stop", "restart", "scale",
+  "exec", "run", "apply", "deploy",
+]);
+
 const READ_PREFIXES = [
   "get_", "list_", "search_", "query_",
   "read_", "find_", "describe_", "check_",
@@ -126,17 +136,46 @@ const READ_EXACT = new Set([
 
 /**
  * Classify a tool as read-only or write based on its name.
- * Checks prefixes (list_pods), suffixes (pods_list), and exact matches.
- * Unknown patterns default to "write" (safe default).
+ *
+ * Priority order:
+ *   1. Write-keyword denylist (any segment match → "write")
+ *   2. Exact read matches
+ *   3. Read prefixes (list_pods)
+ *   4. Read keyword segments (pods_list)
+ *   5. Default → "write" (safe default)
+ *
+ * The write-keyword check runs first so that ambiguous tool names like
+ * "pods_delete_list" or "create_readonly_snapshot" are correctly classified
+ * as write operations.
  */
 export function classifyToolAccess(toolName: string): "read" | "write" {
   const lower = toolName.toLowerCase();
+  const segments = lower.split("_");
+
+  // Write-keyword denylist takes priority — a single write keyword anywhere
+  // in the name forces "write" classification regardless of read keywords.
+  if (segments.some(s => WRITE_KEYWORDS.has(s))) return "write";
+
   if (READ_EXACT.has(lower)) return "read";
   if (READ_PREFIXES.some(p => lower.startsWith(p))) return "read";
   // Check for read keywords as segments: _keyword_ or _keyword at end
-  const segments = lower.split("_");
   if (segments.some(s => READ_KEYWORDS.includes(s))) return "read";
   return "write";
+}
+
+/**
+ * Filter a tools record to only include read-only tools.
+ * Returns a NEW object — never mutates the input.
+ * Used by headless investigations (webhook/poller) to enforce read-only access.
+ */
+export function filterToReadOnlyTools(tools: Record<string, Tool>): Record<string, Tool> {
+  const filtered: Record<string, Tool> = {};
+  for (const [name, tool] of Object.entries(tools)) {
+    if (classifyToolAccess(name) === "read") {
+      filtered[name] = tool;
+    }
+  }
+  return filtered;
 }
 
 /**

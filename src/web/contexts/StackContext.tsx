@@ -18,6 +18,10 @@ export function StackProvider({
     (url: string, opts?: RequestInit) => {
       const headers = new Headers(opts?.headers);
       headers.set("X-Stack-Id", activeStackId);
+      const apiKey = localStorage.getItem("dops-api-key");
+      if (apiKey) {
+        headers.set("X-API-Key", apiKey);
+      }
       return fetch(url, { ...opts, headers });
     },
     [activeStackId],
