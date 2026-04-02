@@ -140,7 +140,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
   const streamRef = useRef<{ content: string; reasoning: string }>({ content: "", reasoning: "" });
   const rafRef = useRef<number | null>(null);
 
-  const scrollRef = useAutoScroll([chatMessages, deepMessages, chatLoading, !!streamingMessage]);
+  const scrollRef = useAutoScroll([chatMessages, deepMessages, chatLoading, deepLoading, !!streamingMessage]);
   const processedCount = useRef(0);
   const historyLoaded = useRef(false);
   const initialScrollDone = useRef(false);
