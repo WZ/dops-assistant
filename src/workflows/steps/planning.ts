@@ -59,7 +59,7 @@ export function buildPlanningStep(config: WorkflowConfig) {
         serviceMetricsHint ? wrapUntrusted("metrics", serviceMetricsHint) : "",
         serviceLogLabelsHint ? wrapUntrusted("log_labels", serviceLogLabelsHint) : "",
         inputData.skillContext
-          ? `${wrapUntrusted("skill_context", inputData.skillContext)}\nUse these runbooks to inform your hypothesis planning. Prioritize investigation steps mentioned in matched skills.`
+          ? `${inputData.skillContext}\nUse these runbooks to inform your hypothesis planning. Prioritize investigation steps mentioned in matched skills.`
           : "",
         historyContext ? `\nRecent incidents:\n${historyContext}` : "",
       ].filter(Boolean).join("\n");

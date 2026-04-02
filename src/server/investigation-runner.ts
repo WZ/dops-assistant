@@ -19,7 +19,7 @@ import type { RcaReport } from "../types/rca-types.js";
 import type { ServiceConfig, InvestigationTemplate } from "../config/schema.js";
 import type { SkillStore } from "../skills/store.js";
 import type { PhaseStats, ServerMessage } from "../types/ws-types.js";
-import { wrapUntrusted } from "../agents/shared/prompt-helpers.js";
+
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
 
@@ -143,7 +143,7 @@ export class InvestigationRunner {
       const matchedSkills = this.skillStore.search({ service: service.name, query: message });
       if (matchedSkills.length > 0) {
         const rawSkillContext = this.skillStore.formatForPrompt(matchedSkills);
-        skillContext = wrapUntrusted("skill_context", rawSkillContext);
+        skillContext = rawSkillContext;
         logger.debug({ skillCount: matchedSkills.length, skills: matchedSkills.map(s => s.id) }, "Injecting skills into investigation");
       }
     }
