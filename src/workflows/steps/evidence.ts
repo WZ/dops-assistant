@@ -386,7 +386,7 @@ function buildPrebuiltLogQueries(selector: string, keywords: string[]): string {
   }
 
   // Query 2: error-level entries
-  queries.push(`Query 2 (errors):  ${selector} |~ "(?i)(error|exception|fail|CreateFailed)"`);
+  queries.push(`Query 2 (errors):  ${selector} |~ "(?i)(error|exception|fail)"`);
 
   // Query 3: all logs (no filter, for context around errors)
   queries.push(`Query 3 (context): ${selector}`);
