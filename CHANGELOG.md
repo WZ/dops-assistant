@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.3.0] - 2026-04-01
+
+### Added
+- Headless tool access lock: webhook and health-poller triggered investigations now use read-only MCP tools only. Prevents crafted alerts from triggering write operations via LLM.
+- Optional API key authentication on all non-GET API routes. Configure `apiKey` in `config.yaml` to protect mutating endpoints. Backward compatible when no key is set.
+- Structural prompt hardening: all external content (alert labels, user messages, skill bodies, tool results) wrapped in `<untrusted_*>` tags to separate instructions from data in LLM prompts.
+- Boundary validation with Zod schemas for Alertmanager webhooks, WebSocket chat messages, and skill API inputs. Enforces max lengths and strips control characters.
+- Tiered HTTP rate limiting: 300 req/min global, 10 req/min on LLM-triggering routes, 30 req/min on mutations. WebSocket rate limiting at 20 messages/min per connection.
+- Write-keyword denylist in `classifyToolAccess()` for security-grade tool classification.
+- `express.json({ limit: '1mb' })` body size limit.
+
+### Fixed
+- Timestamps normalized from SQLite format to ISO 8601 across all API responses. Fixes Safari parsing issues.
+- Clear, New Chat, and Start Fresh buttons disabled during streaming to prevent orphaned messages.
+
+### Changed
+- `sanitizeForPrompt()` replaced with `wrapUntrusted()` + truncation in service brief.
+- Agent system prompts updated to reference untrusted content tags.
+
 ## [0.0.2.0] - 2026-04-01
 
 ### Added

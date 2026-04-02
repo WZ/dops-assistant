@@ -36,6 +36,9 @@ export interface WorkflowConfig {
   useQuirkHandling?: boolean;
   /** Project root path for incident history storage */
   projectRoot?: string;
+  /** When true, only read-only MCP tools are available to workflow steps.
+   *  Used by headless investigations (webhook/poller) to prevent write operations. */
+  readOnlyTools?: boolean;
   /** Progress callbacks for streaming to UI */
   onPhase?: (phase: string) => void;
   onIteration?: (phase: string, iteration: number, maxIterations: number, label: string) => void;

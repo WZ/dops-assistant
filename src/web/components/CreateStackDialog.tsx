@@ -58,9 +58,12 @@ export function CreateStackDialog({ open, onOpenChange, onCreated }: CreateStack
       setError(null);
 
       try {
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        const apiKey = localStorage.getItem("dops-api-key");
+        if (apiKey) headers["X-API-Key"] = apiKey;
         const res = await fetch("/api/stacks", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers,
           body: JSON.stringify({
             name: name.trim(),
             slug: slug || slugify(name),

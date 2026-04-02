@@ -13,6 +13,7 @@ import type { MetricSeries } from "./prometheus-query.js";
 import { inferDependencyGraph } from "./dependency-graph.js";
 import { buildServiceBrief } from "./service-brief.js";
 import type { LanguageModel } from "ai";
+import { SkillInputSchema } from "./sanitize.js";
 
 export interface DependencyNode {
   id: string;
@@ -408,13 +409,13 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
     app.post("/api/skills", async (req: Request, res: Response) => {
       try {
-        const { title, services: svcs, alerts, tags, body } = req.body as {
-          title: string; services: string[]; alerts: string[]; tags: string[]; body: string;
-        };
-        if (!title) {
-          res.status(400).json({ error: "title is required" });
+        const parsed = SkillInputSchema.safeParse(req.body);
+        if (!parsed.success) {
+          const errors = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
+          res.status(400).json({ error: "Invalid skill input", details: errors });
           return;
         }
+        const { title, services: svcs, alerts, tags, body } = parsed.data;
         const skill = await skillStore.save(undefined, { title, services: svcs ?? [], alerts: alerts ?? [], tags: tags ?? [] }, body ?? "");
         res.status(201).json(skill);
       } catch (err) {
@@ -425,13 +426,13 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     app.put("/api/skills/:id", async (req: Request, res: Response) => {
       try {
         const id = Array.isArray(req.params["id"]) ? req.params["id"][0]! : req.params["id"]!;
-        const { title, services: svcs, alerts, tags, body } = req.body as {
-          title: string; services: string[]; alerts: string[]; tags: string[]; body: string;
-        };
-        if (!title) {
-          res.status(400).json({ error: "title is required" });
+        const parsed = SkillInputSchema.safeParse(req.body);
+        if (!parsed.success) {
+          const errors = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
+          res.status(400).json({ error: "Invalid skill input", details: errors });
           return;
         }
+        const { title, services: svcs, alerts, tags, body } = parsed.data;
         const skill = await skillStore.save(id, { title, services: svcs ?? [], alerts: alerts ?? [], tags: tags ?? [] }, body ?? "");
         res.json(skill);
       } catch (err) {

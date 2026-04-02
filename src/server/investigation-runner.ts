@@ -19,6 +19,7 @@ import type { RcaReport } from "../types/rca-types.js";
 import type { ServiceConfig, InvestigationTemplate } from "../config/schema.js";
 import type { SkillStore } from "../skills/store.js";
 import type { PhaseStats, ServerMessage } from "../types/ws-types.js";
+import { wrapUntrusted } from "../agents/shared/prompt-helpers.js";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
 
@@ -104,6 +105,9 @@ export interface RunOptions {
   stackId?: string;
   /** Investigation depth: "quick" (metrics only), "standard" (metrics+logs), "full" (all phases) */
   template?: InvestigationTemplate;
+  /** When true, restrict MCP tool access to read-only tools.
+   *  Used by headless investigations (webhook/poller) to prevent write operations. */
+  readOnlyTools?: boolean;
   callbacks?: InvestigationCallbacks;
 }
 
@@ -127,7 +131,7 @@ export class InvestigationRunner {
    * agent with phase/tool/token tracking, persists results, and emits callbacks.
    */
   async run(opts: RunOptions): Promise<RcaReport> {
-    const { service, message, callbacks, template, stackId } = opts;
+    const { service, message, callbacks, template, stackId, readOnlyTools } = opts;
     const invId = opts.investigationId ?? `inv_${ulid()}`;
 
     // 1. Create DB record
@@ -138,7 +142,8 @@ export class InvestigationRunner {
     if (this.skillStore) {
       const matchedSkills = this.skillStore.search({ service: service.name, query: message });
       if (matchedSkills.length > 0) {
-        skillContext = this.skillStore.formatForPrompt(matchedSkills);
+        const rawSkillContext = this.skillStore.formatForPrompt(matchedSkills);
+        skillContext = wrapUntrusted("skill_context", rawSkillContext);
         logger.debug({ skillCount: matchedSkills.length, skills: matchedSkills.map(s => s.id) }, "Injecting skills into investigation");
       }
     }
@@ -217,6 +222,7 @@ export class InvestigationRunner {
         },
         skillContext,
         template,
+        readOnlyTools,
       );
 
       // 5. Complete remaining phases
