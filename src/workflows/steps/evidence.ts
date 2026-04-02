@@ -366,22 +366,27 @@ export function buildChangesStep(config: WorkflowConfig) {
 
 // ── Pre-built LogQL queries ──────────────────────────────────────────────────
 
+/** Escape a string for safe interpolation inside LogQL double-quoted strings. */
+function escapeLogQL(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
 /**
  * Build ready-to-use LogQL queries from the validated selector and incident keywords.
  * Provides exact queries the model can copy-paste, avoiding the model constructing
  * wrong syntax or using bad parameters like direction:"forward" and limit:20.
  */
 function buildPrebuiltLogQueries(selector: string, keywords: string[]): string {
-  // Pick up to 3 most specific keywords (skip very short ones)
+  // Pick up to 3 most specific keywords (skip very short ones, escape for LogQL)
   const topKeywords = keywords
-    .filter((k) => k.length > 3 && !k.includes(" "))
+    .filter((k) => k.length >= 3 && !k.includes(" "))
     .slice(0, 3);
 
   const queries: string[] = [];
 
   // Query 1: keyword-filtered (most targeted)
   if (topKeywords.length > 0) {
-    const filter = topKeywords.map((k) => `|= "${k}"`).join(" ");
+    const filter = topKeywords.map((k) => `|= "${escapeLogQL(k)}"`).join(" ");
     queries.push(`Query 1 (keyword): ${selector} ${filter}`);
   }
 
@@ -425,7 +430,7 @@ function extractIncidentKeywords(userMessage: string, logFocus?: string[]): stri
   const messageTokens = userMessage
     .replace(/['"`,.:;!?()[\]{}]/g, " ")
     .split(/\s+/)
-    .filter((t) => t.length > 2 && !STOP_WORDS.has(t.toLowerCase()) && !/^\d+$/.test(t));
+    .filter((t) => t.length >= 3 && !STOP_WORDS.has(t.toLowerCase()) && !/^\d+$/.test(t));
   for (const token of messageTokens) keywords.add(token);
 
   // Add logFocus items directly (these are already curated by the planner)
@@ -433,5 +438,5 @@ function extractIncidentKeywords(userMessage: string, logFocus?: string[]): stri
     for (const focus of logFocus) keywords.add(focus);
   }
 
-  return [...keywords];
+  return [...keywords].slice(0, 10);
 }
