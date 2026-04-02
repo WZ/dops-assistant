@@ -105,24 +105,25 @@ describe("createApiKeyMiddleware", () => {
   });
 
   it("allows exempt paths even without API key", () => {
-    const mw = createApiKeyMiddleware("secret-key", ["/api/webhook/alert"]);
+    // When mounted at "/api", Express strips the prefix — req.path is "/webhook/alert"
+    const mw = createApiKeyMiddleware("secret-key", ["/webhook/alert"]);
     const next = vi.fn();
-    mw(mockReq({ path: "/api/webhook/alert" }), mockRes(), next);
+    mw(mockReq({ path: "/webhook/alert" }), mockRes(), next);
     expect(next).toHaveBeenCalled();
   });
 
   it("allows exempt path prefixes (e.g., stack-scoped webhook)", () => {
-    const mw = createApiKeyMiddleware("secret-key", ["/api/webhook/alert"]);
+    const mw = createApiKeyMiddleware("secret-key", ["/webhook/alert"]);
     const next = vi.fn();
-    mw(mockReq({ path: "/api/webhook/alert/eu-west" }), mockRes(), next);
+    mw(mockReq({ path: "/webhook/alert/eu-west" }), mockRes(), next);
     expect(next).toHaveBeenCalled();
   });
 
   it("does not exempt non-matching paths", () => {
-    const mw = createApiKeyMiddleware("secret-key", ["/api/webhook/alert"]);
+    const mw = createApiKeyMiddleware("secret-key", ["/webhook/alert"]);
     const next = vi.fn();
     const res = mockRes();
-    mw(mockReq({ path: "/api/stacks" }), res, next);
+    mw(mockReq({ path: "/stacks" }), res, next);
     expect(next).not.toHaveBeenCalled();
     expect(res._status).toBe(403);
   });

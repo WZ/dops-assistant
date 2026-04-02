@@ -65,8 +65,10 @@ async function main() {
 
   // API key auth on mutating routes (POST/PUT/DELETE/PATCH).
   // Webhook endpoints are exempt — they have their own bearer token auth.
+  // Note: when mounted at "/api", Express strips the prefix from req.path,
+  // so exempt paths are relative to the mount point.
   const apiKeyMiddleware = createApiKeyMiddleware(config.apiKey, [
-    "/api/webhook/alert",
+    "/webhook/alert",
   ]);
   app.use("/api", apiKeyMiddleware);
 
