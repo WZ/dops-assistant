@@ -67,7 +67,7 @@ function buildHistoryContext(task: ChatRequest): string {
 
   const sections = [
     task.skillContext
-      ? `${wrapUntrusted("skill_context", task.skillContext)}\nIf a skill matches the user's question, use it to provide informed answers.`
+      ? `${task.skillContext}\nIf a skill matches the user's question, use it to provide informed answers.`
       : "",
     task.serviceContext?.length
       ? `Configured services:\n${buildServicesContext(task.serviceContext)}`
