@@ -841,4 +841,87 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       else res.status(500).json({ error: msg });
     }
   });
+
+  // ── Notifications REST API ──────────────────────────────────────────
+
+  app.get("/api/notifications", (_req: Request, res: Response) => {
+    const slackUrl = db.getSetting("notifications.slack.webhookUrl");
+    const slackEnabled = db.getSetting("notifications.slack.enabled");
+    // Fall back to config.yaml if no GUI override
+    const effectiveUrl = slackUrl ?? config.webhook.slackWebhookUrl ?? null;
+    const effectiveEnabled = slackEnabled !== undefined ? slackEnabled === "true" : !!effectiveUrl;
+    res.json({
+      slack: {
+        webhookUrl: effectiveUrl,
+        enabled: effectiveEnabled,
+        source: slackUrl ? "gui" : (config.webhook.slackWebhookUrl ? "config" : "none"),
+      },
+    });
+  });
+
+  app.put("/api/notifications", (req: Request, res: Response) => {
+    const { slack } = req.body as { slack?: { webhookUrl?: string | null; enabled?: boolean } };
+    if (!slack) {
+      res.status(400).json({ error: "Missing slack configuration" });
+      return;
+    }
+    if (slack.webhookUrl !== undefined) {
+      if (slack.webhookUrl === null || slack.webhookUrl === "") {
+        db.deleteSetting("notifications.slack.webhookUrl");
+        db.deleteSetting("notifications.slack.enabled");
+      } else {
+        try {
+          const parsed = new URL(slack.webhookUrl);
+          if (parsed.protocol !== "https:") {
+            res.status(400).json({ error: "Webhook URL must use HTTPS" });
+            return;
+          }
+        } catch {
+          res.status(400).json({ error: "Invalid webhook URL" });
+          return;
+        }
+        db.setSetting("notifications.slack.webhookUrl", slack.webhookUrl);
+      }
+    }
+    if (slack.enabled !== undefined) {
+      db.setSetting("notifications.slack.enabled", String(slack.enabled));
+    }
+    res.json({ ok: true });
+  });
+
+  app.post("/api/notifications/test", async (req: Request, res: Response) => {
+    const { webhookUrl: bodyUrl } = req.body as { webhookUrl?: string } ?? {};
+    const slackUrl = bodyUrl || db.getSetting("notifications.slack.webhookUrl") || config.webhook.slackWebhookUrl;
+    if (!slackUrl) {
+      res.status(400).json({ error: "No Slack webhook URL configured" });
+      return;
+    }
+    try {
+      const { notifySlack } = await import("./slack-notifier.js");
+      await notifySlack(
+        { slackWebhookUrl: slackUrl },
+        "test_notification",
+        "Test Service",
+        {
+          service: "Test Service",
+          severity: "low",
+          summary: "This is a test notification from dops-assistant.",
+          rootCause: "Test notification — no actual incident.",
+          confidenceScore: 1.0,
+          confidence: "high",
+          investigatedAt: new Date().toISOString(),
+          impact: { duration: "N/A", description: "No impact — test only" },
+          trigger: "Manual test from Settings → Notifications",
+          contributingFactors: [],
+          timeline: [],
+          evidence: { metrics: [], logs: [], infra: [] },
+          dashboardLinks: [],
+          recommendedActions: ["No action required — this was a test."],
+        },
+      );
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : "Failed to send test notification" });
+    }
+  });
 }
