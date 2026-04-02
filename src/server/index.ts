@@ -19,6 +19,7 @@ import { createModel } from "../mastra/index.js";
 import { InvestigationRunner } from "./investigation-runner.js";
 import { createWebhookHandler } from "./webhook-handler.js";
 import { InvestigationDedup } from "./investigation-dedup.js";
+import { createApiKeyMiddleware } from "./auth-middleware.js";
 import { startHealthMonitor, stopHealthMonitor, healthHandler } from "./health-monitor.js";
 import { StackManager } from "./stack-manager.js";
 import { createMastraAdapters } from "./agents.js";
@@ -61,6 +62,14 @@ async function main() {
 
   const app = express();
   app.use(express.json());
+
+  // API key auth on mutating routes (POST/PUT/DELETE/PATCH).
+  // Webhook endpoints are exempt — they have their own bearer token auth.
+  const apiKeyMiddleware = createApiKeyMiddleware(config.apiKey, [
+    "/api/webhook/alert",
+  ]);
+  app.use("/api", apiKeyMiddleware);
+
   const server = createServer(app);
   const port = Number(process.env["PORT"] ?? 3000);
 
