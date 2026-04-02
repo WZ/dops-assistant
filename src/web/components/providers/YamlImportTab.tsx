@@ -56,7 +56,11 @@ export function YamlImportTab({ onImported, onCancel }: YamlImportTabProps) {
       return;
     }
 
-    // Must be an array
+    // Validate parsed result is a provider object or array of objects
+    if (parsed == null || typeof parsed !== "object") {
+      setParseError("Expected a provider object or array of providers");
+      return;
+    }
     const providers = Array.isArray(parsed) ? parsed : [parsed];
 
     setValidating(true);
@@ -121,7 +125,7 @@ export function YamlImportTab({ onImported, onCancel }: YamlImportTabProps) {
   };
 
   const hasActionableProviders = dryRunResults.some(
-    (r) => r.status === "ready" || (r.status === "conflict" && overwriteSet.has(r.name)),
+    (r) => r.status === "ready" || (r.status === "conflict" && r.source !== "config" && overwriteSet.has(r.name)),
   );
 
   // ── PASTE phase ──
@@ -169,9 +173,9 @@ export function YamlImportTab({ onImported, onCancel }: YamlImportTabProps) {
     return (
       <div className="space-y-4">
         <div className="space-y-2 max-h-[350px] overflow-y-auto">
-          {dryRunResults.map((r) => (
+          {dryRunResults.map((r, i) => (
             <div
-              key={r.name}
+              key={`${r.name}-${i}`}
               className="flex items-center gap-3 rounded-md border border-border/30 bg-card/30 px-3 py-2"
             >
               {/* Status icon */}
@@ -250,9 +254,9 @@ export function YamlImportTab({ onImported, onCancel }: YamlImportTabProps) {
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        {confirmResults.map((r) => (
+        {confirmResults.map((r, i) => (
           <div
-            key={r.name}
+            key={`${r.name}-${i}`}
             className="flex items-center gap-3 rounded-md border border-border/30 bg-card/30 px-3 py-2"
           >
             {(r.status === "added" || r.status === "overwritten") && (
