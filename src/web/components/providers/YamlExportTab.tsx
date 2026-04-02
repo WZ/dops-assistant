@@ -16,6 +16,7 @@ export function YamlExportTab() {
   const [yaml, setYaml] = useState("");
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [error, setError] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -25,15 +26,20 @@ export function YamlExportTab() {
         setYaml(stringify(configs, { indent: 2 }));
       } catch {
         setYaml("# Failed to load providers");
+        setError(true);
       }
       setLoading(false);
     })();
   }, [stackFetch]);
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(yaml);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(yaml);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard API failed (no focus, permissions, non-HTTPS)
+    }
   };
 
   return (
@@ -47,7 +53,7 @@ export function YamlExportTab() {
       <div className="flex justify-end">
         <Button
           onClick={handleCopy}
-          disabled={loading || !yaml}
+          disabled={loading || error || !yaml}
           className="font-mono text-xs font-medium min-h-[44px]"
         >
           {copied ? "Copied!" : "Copy to Clipboard"}

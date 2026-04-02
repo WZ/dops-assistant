@@ -803,6 +803,10 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       res.status(400).json({ error: "providers must be an array" });
       return;
     }
+    if (providers.length > 50) {
+      res.status(400).json({ error: "Maximum 50 providers per import" });
+      return;
+    }
     const existing = new Map<string, "config" | "gui">();
     for (const info of providerRegistry.getAll()) {
       existing.set(info.config.name, info.source);
@@ -818,6 +822,10 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       const { providers, overwrite = [] } = req.body as { providers?: unknown[]; overwrite?: string[] };
       if (!Array.isArray(providers)) {
         res.status(400).json({ error: "providers must be an array" });
+        return;
+      }
+      if (providers.length > 50) {
+        res.status(400).json({ error: "Maximum 50 providers per import" });
         return;
       }
       const existing = new Map<string, "config" | "gui">();
