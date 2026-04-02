@@ -20,6 +20,7 @@ import type { InvestigationRunner } from "./investigation-runner.js";
 import { InvestigationDedup } from "./investigation-dedup.js";
 import { matchServiceFromText } from "../agents/intent.js";
 import { AlertPayloadSchema, type ValidatedAlertPayload } from "./sanitize.js";
+import { wrapUntrusted } from "../agents/shared/prompt-helpers.js";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
 
@@ -170,10 +171,10 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
       .join(", ");
 
     const messageParts = [
-      `Alert: ${alertName} (severity: ${severity})`,
+      `Alert: ${wrapUntrusted("alert_name", alertName)} (severity: ${wrapUntrusted("alert_severity", severity)})`,
       `Service: ${service.name}`,
-      summary ? `Summary: ${summary}` : "",
-      contextLabels ? `Labels: ${contextLabels}` : "",
+      summary ? `Summary: ${wrapUntrusted("alert_summary", summary)}` : "",
+      contextLabels ? `Labels: ${wrapUntrusted("alert_labels", contextLabels)}` : "",
     ];
     if (service.metrics?.length) {
       messageParts.push(`Known metrics: ${service.metrics.map(m => m.query).slice(0, 3).join(", ")}`);

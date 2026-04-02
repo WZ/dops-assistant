@@ -24,6 +24,7 @@ import type { ChatRequest, ChatResponse, ImageAttachment } from "../types/agent-
 import type { TokenUsage } from "../types/llm-types.js";
 import type { ValidatedServiceConfig } from "../types/discovery-types.js";
 import { createChatAgent } from "../agents/chat.js";
+import { wrapUntrusted } from "../agents/shared/prompt-helpers.js";
 import { createInvestigationWorkflow, type WorkflowConfig } from "../workflows/investigation.js";
 import { runDiscovery } from "../workflows/discovery.js";
 import { createModel } from "../mastra/index.js";
@@ -66,7 +67,7 @@ function buildHistoryContext(task: ChatRequest): string {
 
   const sections = [
     task.skillContext
-      ? `${task.skillContext}\nIf a skill matches the user's question, use it to provide informed answers.`
+      ? `${wrapUntrusted("skill_context", task.skillContext)}\nIf a skill matches the user's question, use it to provide informed answers.`
       : "",
     task.serviceContext?.length
       ? `Configured services:\n${buildServicesContext(task.serviceContext)}`
@@ -74,7 +75,7 @@ function buildHistoryContext(task: ChatRequest): string {
     historyLines.length > 0
       ? `Conversation so far:\n${historyLines.join("\n")}`
       : "",
-    `USER: ${task.message}`,
+    `USER: ${wrapUntrusted("user_message", task.message)}`,
   ].filter(Boolean);
 
   return sections.join("\n\n");

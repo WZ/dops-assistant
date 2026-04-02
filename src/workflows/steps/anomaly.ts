@@ -17,6 +17,7 @@ import { TOOL_RESULT_TRUNCATION_LIMIT, DEFAULT_TIME_RANGE_MS } from "../../const
 import { safeJsonParse } from "../../agents/shared/processors.js";
 import { createAnomalyDetectorAgent } from "../../agents/anomaly-detector.js";
 import { extractTimeRange, resolveTimeRangeToAbsolute } from "../helpers.js";
+import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
 
 /**
  * Build an anomaly detection step using the anomaly detector agent.
@@ -58,10 +59,10 @@ export function buildAnomalyStep(config: WorkflowConfig) {
 
         const prompt = [
           getTimeContext(),
-          inputData.datasourceHints,
-          inputData.dashboardContext,
-          `User message: ${inputData.userMessage}`,
-          inputData.serviceName ? `Service: ${inputData.serviceName}` : "",
+          wrapUntrusted("datasource_hints", inputData.datasourceHints),
+          wrapUntrusted("dashboard_context", inputData.dashboardContext),
+          `User message: ${wrapUntrusted("user_message", inputData.userMessage)}`,
+          inputData.serviceName ? `Service: ${wrapUntrusted("service", inputData.serviceName)}` : "",
         ].filter(Boolean).join("\n");
 
         let agentResult: { text: string } = { text: "" };
