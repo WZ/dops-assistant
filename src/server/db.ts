@@ -1,6 +1,41 @@
 import BetterSqlite3 from "better-sqlite3";
 import type { StackRow } from "../types/stack-types.js";
 
+/**
+ * Converts a SQLite datetime string (YYYY-MM-DD HH:MM:SS, UTC) to ISO 8601.
+ * SQLite datetime('now') produces no T separator and no Z suffix; Safari
+ * cannot reliably parse that format.  We append 'Z' to tell Date() it's UTC,
+ * then call toISOString() to get a canonical representation.
+ */
+export function normalizeTimestamp(sqliteStr: string): string {
+  return new Date(sqliteStr + "Z").toISOString();
+}
+
+/**
+ * Recursively walks an object (or array) and converts every string property
+ * whose key ends with `_at` from SQLite format to ISO 8601.  Non-`_at`
+ * strings and all other value types are left untouched.
+ */
+export function normalizeRow<T>(row: T): T {
+  if (row === null || row === undefined) return row;
+  if (Array.isArray(row)) {
+    return row.map(normalizeRow) as unknown as T;
+  }
+  if (typeof row === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(row as Record<string, unknown>)) {
+      if (k.endsWith("_at") && typeof v === "string" && v.length > 0) {
+        // Only convert if it looks like a SQLite datetime (no T separator)
+        out[k] = v.includes("T") ? v : normalizeTimestamp(v);
+      } else {
+        out[k] = v;
+      }
+    }
+    return out as T;
+  }
+  return row;
+}
+
 export interface InvestigationRow {
   id: string;
   service: string;
@@ -306,20 +341,21 @@ export class Database {
   }
 
   getInvestigation(stackId: string, id: string): InvestigationRow | undefined {
-    return this.db.prepare(
+    const row = this.db.prepare(
       "SELECT *, CASE WHEN json_valid(report) THEN json_extract(report, '$.confidenceScore') ELSE NULL END as confidence_score FROM investigations WHERE id = ? AND stack_id = ?"
     ).get(id, stackId) as InvestigationRow | undefined;
+    return row ? normalizeRow(row) : undefined;
   }
 
   listInvestigations(stackId: string, limit: number, offset: number, service?: string): InvestigationRow[] {
     if (service) {
-      return this.db.prepare(
+      return (this.db.prepare(
         "SELECT *, CASE WHEN json_valid(report) THEN json_extract(report, '$.confidenceScore') ELSE NULL END as confidence_score FROM investigations WHERE stack_id = ? AND service = ? ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?"
-      ).all(stackId, service, limit, offset) as InvestigationRow[];
+      ).all(stackId, service, limit, offset) as InvestigationRow[]).map(normalizeRow);
     }
-    return this.db.prepare(
+    return (this.db.prepare(
       "SELECT *, CASE WHEN json_valid(report) THEN json_extract(report, '$.confidenceScore') ELSE NULL END as confidence_score FROM investigations WHERE stack_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?"
-    ).all(stackId, limit, offset) as InvestigationRow[];
+    ).all(stackId, limit, offset) as InvestigationRow[]).map(normalizeRow);
   }
 
   createPhase(phase: { id: string; investigationId: string; phase: string; status: string }): void {
@@ -339,7 +375,7 @@ export class Database {
   }
 
   getPhases(investigationId: string): PhaseRow[] {
-    return this.db.prepare("SELECT * FROM investigation_phases WHERE investigation_id = ? ORDER BY started_at ASC").all(investigationId) as PhaseRow[];
+    return (this.db.prepare("SELECT * FROM investigation_phases WHERE investigation_id = ? ORDER BY started_at ASC").all(investigationId) as PhaseRow[]).map(normalizeRow);
   }
 
   createEvent(event: { id: string; investigationId: string; eventType: string; payload: string }): void {
@@ -347,7 +383,7 @@ export class Database {
   }
 
   getEvents(investigationId: string): EventRow[] {
-    return this.db.prepare("SELECT * FROM investigation_events WHERE investigation_id = ? ORDER BY created_at ASC, rowid ASC").all(investigationId) as EventRow[];
+    return (this.db.prepare("SELECT * FROM investigation_events WHERE investigation_id = ? ORDER BY created_at ASC, rowid ASC").all(investigationId) as EventRow[]).map(normalizeRow);
   }
 
   // ── Messages ──────────────────────────────────────────────────────────────
@@ -357,21 +393,21 @@ export class Database {
   }
 
   listRecentMessages(stackId: string, limit: number): MessageRow[] {
-    return this.db.prepare(
+    return (this.db.prepare(
       "SELECT * FROM (SELECT *, rowid AS _rid FROM messages WHERE stack_id = ? AND investigation_id IS NULL ORDER BY created_at DESC, _rid DESC LIMIT ?) ORDER BY created_at ASC, _rid ASC"
-    ).all(stackId, limit) as MessageRow[];
+    ).all(stackId, limit) as MessageRow[]).map(normalizeRow);
   }
 
   listMessages(stackId: string, limit: number, investigationId?: string): MessageRow[] {
     if (investigationId) {
-      return this.db.prepare("SELECT * FROM messages WHERE investigation_id = ? AND stack_id = ? ORDER BY created_at ASC, rowid ASC LIMIT ?").all(investigationId, stackId, limit) as MessageRow[];
+      return (this.db.prepare("SELECT * FROM messages WHERE investigation_id = ? AND stack_id = ? ORDER BY created_at ASC, rowid ASC LIMIT ?").all(investigationId, stackId, limit) as MessageRow[]).map(normalizeRow);
     }
     // Include console messages (no investigation_id) AND investigation completion summaries
     // (content starts with "**Root Cause:**") which render as RCA cards in the console.
     // Deep Investigation follow-up Q&A is excluded.
-    return this.db.prepare(
+    return (this.db.prepare(
       "SELECT * FROM (SELECT *, rowid AS _rid FROM messages WHERE stack_id = ? AND (investigation_id IS NULL OR content LIKE '**Root Cause:**%') ORDER BY created_at DESC, _rid DESC LIMIT ?) ORDER BY created_at ASC, _rid ASC"
-    ).all(stackId, limit) as MessageRow[];
+    ).all(stackId, limit) as MessageRow[]).map(normalizeRow);
   }
 
   deleteMessage(stackId: string, id: string): boolean {
@@ -467,7 +503,8 @@ export class Database {
   }
 
   getFeedback(investigationId: string): { rating: string; created_at: string } | undefined {
-    return this.db.prepare("SELECT rating, created_at FROM investigation_feedback WHERE investigation_id = ? ORDER BY created_at DESC LIMIT 1").get(investigationId) as { rating: string; created_at: string } | undefined;
+    const row = this.db.prepare("SELECT rating, created_at FROM investigation_feedback WHERE investigation_id = ? ORDER BY created_at DESC LIMIT 1").get(investigationId) as { rating: string; created_at: string } | undefined;
+    return row ? normalizeRow(row) : undefined;
   }
 
   // ── Incident patterns ───────────────────────────────────────────────────
@@ -479,9 +516,9 @@ export class Database {
   }
 
   findSimilarPatterns(stackId: string, service: string, limit = 5): Array<{ id: string; service: string; symptom: string; root_cause: string; severity: string; recommended_actions: string | null; created_at: string }> {
-    return this.db.prepare(
+    return (this.db.prepare(
       "SELECT id, service, symptom, root_cause, severity, recommended_actions, created_at FROM incident_patterns WHERE stack_id = ? AND service = ? ORDER BY created_at DESC LIMIT ?"
-    ).all(stackId, service, limit) as any[];
+    ).all(stackId, service, limit) as any[]).map(normalizeRow);
   }
 
   // ── Service health checks ────────────────────────────────────────────────
@@ -546,9 +583,9 @@ export class Database {
   }
 
   getHiddenServiceDetails(stackId: string): Array<{ service: string; reason: string | null; hidden_at: string }> {
-    return this.db.prepare(
+    return (this.db.prepare(
       "SELECT service, reason, hidden_at FROM hidden_services WHERE stack_id = ? ORDER BY hidden_at DESC"
-    ).all(stackId) as Array<{ service: string; reason: string | null; hidden_at: string }>;
+    ).all(stackId) as Array<{ service: string; reason: string | null; hidden_at: string }>).map(normalizeRow);
   }
 
   hideServices(stackId: string, services: string[], reason?: string): void {
@@ -611,11 +648,12 @@ export class Database {
       "SELECT service, alias, tags, updated_at FROM service_metadata WHERE stack_id = ? AND service = ?"
     ).get(stackId, service) as { service: string; alias: string | null; tags: string | null; updated_at: string } | undefined;
     if (!row) return null;
+    const normalized = normalizeRow(row);
     return {
-      service: row.service,
-      alias: row.alias,
-      tags: row.tags ? Database.parseTags(row.tags) : [],
-      updated_at: row.updated_at,
+      service: normalized.service,
+      alias: normalized.alias,
+      tags: normalized.tags ? Database.parseTags(normalized.tags) : [],
+      updated_at: normalized.updated_at,
     };
   }
 
@@ -636,12 +674,15 @@ export class Database {
     const rows = this.db.prepare(
       "SELECT service, alias, tags, updated_at FROM service_metadata WHERE stack_id = ? ORDER BY service ASC"
     ).all(stackId) as Array<{ service: string; alias: string | null; tags: string | null; updated_at: string }>;
-    return rows.map(row => ({
-      service: row.service,
-      alias: row.alias,
-      tags: row.tags ? Database.parseTags(row.tags) : [],
-      updated_at: row.updated_at,
-    }));
+    return rows.map(row => {
+      const normalized = normalizeRow(row);
+      return {
+        service: normalized.service,
+        alias: normalized.alias,
+        tags: normalized.tags ? Database.parseTags(normalized.tags) : [],
+        updated_at: normalized.updated_at,
+      };
+    });
   }
 
   /**
