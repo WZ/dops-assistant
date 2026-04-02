@@ -767,6 +767,8 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
             </div>
           )}
         </div>
+        {/* Spacer so auto-scroll clears the shortcut chips overlay */}
+        {isDeepMode && <div className="h-12" />}
       </div>
 
       {/* Deep mode shortcut chips -- always visible */}
