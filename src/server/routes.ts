@@ -1,11 +1,12 @@
 import type { Express, Request, Response } from "express";
 import type { Database } from "./db.js";
-import type { ServiceConfig, Config } from "../config/schema.js";
+import type { ServiceConfig, Config, ProviderConfig } from "../config/schema.js";
 import { MAX_CACHE_ENTRIES } from "../constants.js";
 import { ProviderSchema, StackConfigSchema } from "../config/schema.js";
 import { DEFAULT_STACK_SLUG } from "../types/stack-types.js";
 import { createMcpProvider, listProviderTools } from "../mcp/provider.js";
 import type { SkillStore } from "../skills/store.js";
+import type { ProviderInfo } from "../mcp/provider-registry.js";
 import type { StackManager } from "./stack-manager.js";
 import type { InvestigationDedup } from "./investigation-dedup.js";
 import { queryServiceMetrics } from "./prometheus-query.js";
@@ -51,6 +52,90 @@ function getAllServices(config: Config, req: Request): ServiceConfig[] {
   const configNames = new Set(config.services.map(s => s.name));
   const registryServices = registryStore.load().filter(s => !configNames.has(s.name));
   return [...config.services, ...registryServices];
+}
+
+/** Extract the portable ProviderConfig from a ProviderInfo, stripping runtime fields. */
+export function exportProviderConfig(info: ProviderInfo): ProviderConfig {
+  const cfg: Record<string, unknown> = {
+    name: info.config.name,
+    roles: info.config.roles,
+    mcpServer: info.config.mcpServer,
+  };
+  if (info.config.region) cfg.region = info.config.region;
+  if (info.config.webUrl) cfg.webUrl = info.config.webUrl;
+  return cfg as ProviderConfig;
+}
+
+export interface ImportDryRunResult {
+  name: string;
+  status: "ready" | "conflict" | "invalid";
+  source?: "config" | "gui";
+  error?: string;
+}
+
+export function validateImportProviders(
+  providers: unknown[],
+  existingProviders: Map<string, "config" | "gui">,
+): ImportDryRunResult[] {
+  const results: ImportDryRunResult[] = [];
+  const seenNames = new Set<string>();
+
+  for (const raw of providers) {
+    const parsed = ProviderSchema.safeParse(raw);
+    if (!parsed.success) {
+      const name = (raw && typeof raw === "object" && "name" in raw && typeof (raw as any).name === "string")
+        ? (raw as any).name
+        : `(unnamed)`;
+      results.push({ name, status: "invalid", error: parsed.error.issues.map(i => i.message).join("; ") });
+      continue;
+    }
+    const config = parsed.data;
+    if (seenNames.has(config.name)) {
+      results.push({ name: config.name, status: "invalid", error: `Duplicate name in import: "${config.name}" appears more than once` });
+      continue;
+    }
+    seenNames.add(config.name);
+    const existingSource = existingProviders.get(config.name);
+    if (existingSource) {
+      results.push({ name: config.name, status: "conflict", source: existingSource });
+      continue;
+    }
+    results.push({ name: config.name, status: "ready" });
+  }
+  return results;
+}
+
+export interface ImportAction {
+  config: ProviderConfig;
+  action: "add" | "overwrite" | "skip";
+  reason?: string;
+}
+
+export function categorizeImportActions(
+  providers: unknown[],
+  overwrite: string[],
+  existingProviders: Map<string, "config" | "gui">,
+): ImportAction[] {
+  const overwriteSet = new Set(overwrite);
+  const actions: ImportAction[] = [];
+  for (const raw of providers) {
+    const parsed = ProviderSchema.safeParse(raw);
+    if (!parsed.success) continue;
+    const config = parsed.data;
+    const existingSource = existingProviders.get(config.name);
+    if (!existingSource) {
+      actions.push({ config, action: "add" });
+    } else if (overwriteSet.has(config.name)) {
+      if (existingSource === "config") {
+        actions.push({ config, action: "skip", reason: "Cannot overwrite config provider" });
+      } else {
+        actions.push({ config, action: "overwrite" });
+      }
+    } else {
+      actions.push({ config, action: "skip", reason: "Conflict not in overwrite list" });
+    }
+  }
+  return actions;
 }
 
 export function registerRoutes(app: Express, deps: RouteDeps): void {
@@ -700,6 +785,65 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       enabledToolCount: p.enabledToolCount,
       error: p.error,
     })));
+  });
+
+  // GET /api/providers/export — return raw ProviderConfig[] for YAML export
+  app.get("/api/providers/export", (req: Request, res: Response) => {
+    const providerRegistry = req.stackContext.providerRegistry;
+    const providers = providerRegistry.getAll();
+    res.json(providers.map(exportProviderConfig));
+  });
+
+  // POST /api/providers/import — dry-run validation
+  app.post("/api/providers/import", (req: Request, res: Response) => {
+    const providerRegistry = req.stackContext.providerRegistry;
+    const { providers } = req.body as { providers?: unknown[] };
+    if (!Array.isArray(providers)) {
+      res.status(400).json({ error: "providers must be an array" });
+      return;
+    }
+    const existing = new Map<string, "config" | "gui">();
+    for (const info of providerRegistry.getAll()) {
+      existing.set(info.config.name, info.source);
+    }
+    const results = validateImportProviders(providers, existing);
+    res.json({ results });
+  });
+
+  // POST /api/providers/import/confirm — execute the import
+  app.post("/api/providers/import/confirm", async (req: Request, res: Response) => {
+    const providerRegistry = req.stackContext.providerRegistry;
+    const { providers, overwrite = [] } = req.body as { providers?: unknown[]; overwrite?: string[] };
+    if (!Array.isArray(providers)) {
+      res.status(400).json({ error: "providers must be an array" });
+      return;
+    }
+    const existing = new Map<string, "config" | "gui">();
+    for (const info of providerRegistry.getAll()) {
+      existing.set(info.config.name, info.source);
+    }
+    const actions = categorizeImportActions(providers, overwrite, existing);
+    const results: Array<{ name: string; status: string; toolCount?: number; error?: string }> = [];
+    for (const { config, action, reason } of actions) {
+      if (action === "skip") {
+        results.push({ name: config.name, status: "skipped" });
+        continue;
+      }
+      try {
+        let info;
+        if (action === "overwrite") {
+          info = await providerRegistry.update(config.name, config);
+          results.push({ name: config.name, status: "overwritten", toolCount: info.toolCount });
+        } else {
+          info = await providerRegistry.add(config);
+          results.push({ name: config.name, status: "added", toolCount: info.toolCount });
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        results.push({ name: config.name, status: "failed", error: msg });
+      }
+    }
+    res.json({ results });
   });
 
   // POST /api/providers — add a new provider
