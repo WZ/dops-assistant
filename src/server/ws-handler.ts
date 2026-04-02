@@ -17,6 +17,7 @@ import type { StackManager, StackContext } from "./stack-manager.js";
 import type { InvestigationDedup } from "./investigation-dedup.js";
 import { createMastraAdapters } from "./agents.js";
 import { getToolsByRole } from "../mcp/provider.js";
+import { ChatMessageSchema, DeepInvestigateMessageSchema } from "./sanitize.js";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
 
@@ -201,7 +202,30 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
 
     ws.on("message", async (raw: Buffer) => {
       try {
-        const msg = JSON.parse(raw.toString()) as ClientMessage;
+        const parsed = JSON.parse(raw.toString());
+        let msg: ClientMessage;
+
+        // Validate and sanitize external input for message-carrying types
+        if (parsed?.type === "chat") {
+          const result = ChatMessageSchema.safeParse(parsed);
+          if (!result.success) {
+            const errors = result.error.issues.map((i: { path: (string | number)[]; message: string }) => `${i.path.join(".")}: ${i.message}`);
+            send({ type: "error", message: `Invalid chat message: ${errors.join("; ")}` });
+            return;
+          }
+          msg = result.data as ClientMessage;
+        } else if (parsed?.type === "deep_investigate") {
+          const result = DeepInvestigateMessageSchema.safeParse(parsed);
+          if (!result.success) {
+            const errors = result.error.issues.map((i: { path: (string | number)[]; message: string }) => `${i.path.join(".")}: ${i.message}`);
+            send({ type: "error", message: `Invalid message: ${errors.join("; ")}` });
+            return;
+          }
+          msg = result.data as ClientMessage;
+        } else {
+          msg = parsed as ClientMessage;
+        }
+
         await handleClientMessage(msg, send, deps, threadId, stackId, ctx, () => pendingDiscovery, () => { pendingDiscovery = null; });
       } catch (err) {
         logger.error({ err }, "WebSocket message handling error");

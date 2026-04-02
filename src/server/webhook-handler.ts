@@ -19,6 +19,7 @@ import type { WebhookConfig, ServiceConfig, InvestigationTemplate } from "../con
 import type { InvestigationRunner } from "./investigation-runner.js";
 import { InvestigationDedup } from "./investigation-dedup.js";
 import { matchServiceFromText } from "../agents/intent.js";
+import { AlertPayloadSchema, type ValidatedAlertPayload } from "./sanitize.js";
 
 const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
 
@@ -28,8 +29,8 @@ interface AlertmanagerAlert {
   status: "firing" | "resolved";
   labels: Record<string, string>;
   annotations: Record<string, string>;
-  startsAt: string;
-  endsAt: string;
+  startsAt?: string;
+  endsAt?: string;
 }
 
 interface AlertmanagerPayload {
@@ -102,14 +103,16 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
       }
     }
 
-    // 2. Parse payload
-    let payload: AlertmanagerPayload;
+    // 2. Parse and validate payload through Zod schema
+    let payload: ValidatedAlertPayload;
     try {
-      payload = req.body as AlertmanagerPayload;
-      if (!payload.alerts || !Array.isArray(payload.alerts) || payload.alerts.length === 0) {
-        res.status(400).json({ error: "Invalid payload: missing or empty alerts array" });
+      const result = AlertPayloadSchema.safeParse(req.body);
+      if (!result.success) {
+        const errors = result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
+        res.status(400).json({ error: "Invalid alert payload", details: errors });
         return;
       }
+      payload = result.data;
     } catch {
       res.status(400).json({ error: "Invalid JSON payload" });
       return;

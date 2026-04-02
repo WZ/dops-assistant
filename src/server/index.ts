@@ -61,7 +61,7 @@ async function main() {
   await skillStore.loadAll();
 
   const app = express();
-  app.use(express.json());
+  app.use(express.json({ limit: "1mb" }));
 
   // API key auth on mutating routes (POST/PUT/DELETE/PATCH).
   // Webhook endpoints are exempt — they have their own bearer token auth.
