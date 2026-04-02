@@ -57,6 +57,26 @@ function coerceToolArgs(args: Record<string, unknown>, toolSchema: any): Record<
 }
 
 /**
+ * Override Loki query parameters that LLMs consistently get wrong.
+ *
+ * The gpt-oss-120b model always sends direction:"forward" (oldest-first) and limit:20,
+ * which causes investigations to miss recent errors buried past the first 20 entries.
+ * Force backward (newest-first) and a minimum limit of 50 so error evidence surfaces.
+ */
+function coerceLokiArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const coerced = { ...args };
+  // Always use backward (newest-first) — errors at the end of a window are more relevant
+  if (coerced.direction === "forward" || !coerced.direction) {
+    coerced.direction = "backward";
+  }
+  // Minimum limit of 50 — 20 is too low for multi-minute incidents
+  if (typeof coerced.limit === "number" && coerced.limit < 50) {
+    coerced.limit = 50;
+  }
+  return coerced;
+}
+
+/**
  * Strip MCP provider prefix from tool name (e.g. "grafana_query_prometheus" → "query_prometheus").
  * The frontend expects unprefixed tool names for chart rendering and display.
  */
@@ -98,6 +118,10 @@ export function wrapToolsWithCallbacks(
         // Coerce args to match schema (fixes LLM type mismatches)
         if (execArgs[0] && typeof execArgs[0] === "object" && tool.inputSchema) {
           execArgs[0] = coerceToolArgs(execArgs[0], tool.inputSchema);
+        }
+        // Fix Loki query parameters that models consistently get wrong
+        if (name.includes("query_loki") && execArgs[0] && typeof execArgs[0] === "object") {
+          execArgs[0] = coerceLokiArgs(execArgs[0] as Record<string, unknown>);
         }
         const start = Date.now();
         try {
