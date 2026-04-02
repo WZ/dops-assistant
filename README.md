@@ -73,6 +73,52 @@ The investigation workflow runs 6 phases. Evidence gathering (metrics, logs, inf
   <img src="docs/img/investigation-flow.svg" alt="Investigation Flow" width="800"/>
 </p>
 
+## Investigation Triggers
+
+Investigations can be triggered three ways:
+
+### 1. User-Initiated (Web UI / CLI)
+
+Type a message like "admin-task is returning 500 errors since 4pm" in the UI or CLI. The intent router detects an incident report and launches the full investigation pipeline with your message as context.
+
+### 2. Alert Webhook (Alertmanager)
+
+Configure [Alertmanager](https://prometheus.io/docs/alerting/latest/alertmanager/) to POST to `/api/webhook/alert`. Incoming alerts automatically trigger headless investigations.
+
+```yaml
+# config.yaml
+webhook:
+  enabled: true
+  bearerToken: "${WEBHOOK_BEARER_TOKEN}"
+  defaultTemplate: standard     # quick | standard | full
+  dedupWindowMinutes: 30
+  maxConcurrent: 3
+```
+
+```yaml
+# alertmanager.yml receiver config
+receivers:
+  - name: dops
+    webhook_configs:
+      - url: http://your-server:3000/api/webhook/alert
+        http_config:
+          bearer_token: "<your-token>"
+```
+
+When an alert fires, the webhook handler extracts severity, summary, labels, and the service's known metrics/log selectors from `services.yaml`, then passes everything to the investigation runner. Investigation depth (quick/standard/full) can be set per-severity in config.
+
+### 3. Health Poller (Automatic)
+
+A background poller queries Prometheus every 60 seconds for deployment replica counts and `up` metrics. When a service transitions from healthy to down, it automatically triggers a quick investigation.
+
+No configuration needed beyond having a Prometheus MCP provider. The poller uses the service registry (`services.yaml`) to know which services to monitor, and includes each service's known metrics and log selectors in the investigation context.
+
+| Trigger | Context richness | Investigation depth | Requires |
+|---------|-----------------|-------------------|----------|
+| User message | High (natural language + time refs) | Configurable | Nothing extra |
+| Alert webhook | Medium (alert labels + service config) | Per-severity template | Alertmanager config |
+| Health poller | Medium (transition info + service config) | Quick (metrics only) | Prometheus provider |
+
 ## Documentation
 
 - **[Architecture Overview](docs/architecture-overview.md)** — system design, component details, data flow, design decisions
