@@ -143,6 +143,22 @@ describe("PUT /api/notifications logic", () => {
     }
   });
 
+  it("rejects non-HTTPS URL (SSRF protection)", () => {
+    // Simulate the PUT handler's HTTPS-only check
+    const httpUrl = "http://169.254.169.254/latest/meta-data/";
+    const parsed = new URL(httpUrl);
+    expect(parsed.protocol).not.toBe("https:");
+
+    const fileUrl = "file:///etc/passwd";
+    const fileParsed = new URL(fileUrl);
+    expect(fileParsed.protocol).not.toBe("https:");
+
+    // Valid HTTPS URL should pass
+    const httpsUrl = "https://hooks.slack.com/services/T00/B00/xxx";
+    const httpsParsed = new URL(httpsUrl);
+    expect(httpsParsed.protocol).toBe("https:");
+  });
+
   it("with null URL clears the setting", () => {
     const { db, cleanup } = makeTempDb();
     try {

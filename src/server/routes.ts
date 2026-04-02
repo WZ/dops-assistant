@@ -870,7 +870,11 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         db.deleteSetting("notifications.slack.webhookUrl");
       } else {
         try {
-          new URL(slack.webhookUrl);
+          const parsed = new URL(slack.webhookUrl);
+          if (parsed.protocol !== "https:") {
+            res.status(400).json({ error: "Webhook URL must use HTTPS" });
+            return;
+          }
         } catch {
           res.status(400).json({ error: "Invalid webhook URL" });
           return;
