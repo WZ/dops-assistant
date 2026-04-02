@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.3.1] - 2026-04-02
+
+### Fixed
+- Investigation logs agent now searches for incident-specific keywords before generic error patterns, preventing chronic noise (config warnings, etc.) from burying critical evidence like provisioning failures.
+- Planner agent extracts action keywords from user messages for targeted Loki log queries.
+- Evidence step passes extracted incident keywords to the logs agent prompt, making targeted searches the default behavior.
+
 ## [0.0.3.0] - 2026-04-01
 
 ### Added
