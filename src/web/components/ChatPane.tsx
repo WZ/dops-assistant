@@ -8,6 +8,7 @@ import { renderMarkdown } from "../lib/renderMarkdown";
 import { formatTokens } from "../lib/formatTokens.js";
 import { MetricChart, type TimeSeriesData } from "./MetricChart";
 import { useStackContext } from "../contexts/StackContext";
+import { safeGetItem, safeSetItem } from "../lib/utils";
 import type { useWebSocket } from "../hooks/useWebSocket";
 import type { ChartSeries } from "../../types/ws-types.js";
 
@@ -98,7 +99,7 @@ function DaySeparator({ label }: { label: string }) {
   return (
     <div className="flex items-center gap-3 py-2">
       <div className="flex-1 h-px bg-border/30" />
-      <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/50">
+      <span className="font-mono text-[9px] uppercase tracking-[0.1em] text-muted-foreground/50">
         {label}
       </span>
       <div className="flex-1 h-px bg-border/30" />
@@ -110,7 +111,7 @@ function UnreadMarker() {
   return (
     <div className="flex items-center gap-3 py-2">
       <div className="flex-1 h-px bg-destructive/40" />
-      <span className="font-mono text-[9px] uppercase tracking-wider text-destructive/70 font-semibold">
+      <span className="font-mono text-[9px] uppercase tracking-[0.1em] text-destructive/70 font-semibold">
         NEW
       </span>
       <div className="flex-1 h-px bg-destructive/40" />
@@ -154,11 +155,11 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
 
   // Load lastVisitedAt from localStorage on mount
   useEffect(() => {
-    lastVisitedAt.current = localStorage.getItem(LAST_VISITED_KEY);
+    lastVisitedAt.current = safeGetItem(LAST_VISITED_KEY);
     // Update on window focus
     const onFocus = () => {
       const now = new Date().toISOString();
-      localStorage.setItem(LAST_VISITED_KEY, now);
+      safeSetItem(LAST_VISITED_KEY, now);
       lastVisitedAt.current = now;
     };
     window.addEventListener("focus", onFocus);
@@ -510,18 +511,24 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                 onClick={() => onViewInvestigation(msg.investigationId!)}
                 className="w-full text-left group"
               >
-                <div className={`rounded-xl border bg-card/50 overflow-hidden transition-all group-hover:border-primary/40 group-hover:shadow-md ${
-                  msg.report.severity === "critical" ? "border-destructive/30 glow-red" :
-                  msg.report.severity === "high" ? "border-accent/25 glow-coral" :
-                  "border-primary/20 glow-teal"
+                <div className={`rca-reveal rca-reveal-glow rounded-xl border bg-card/50 overflow-hidden transition-all group-hover:border-primary/40 group-hover:shadow-md ${
+                  msg.report.severity === "critical" ? "border-destructive/30 glow-red rca-reveal-glow-red" :
+                  msg.report.severity === "high" ? "border-accent/25 glow-coral rca-reveal-glow-coral" :
+                  "border-primary/20 glow-teal rca-reveal-glow-teal"
                 }`}>
-                  <div className="px-3.5 py-2.5 border-b border-border/20">
+                  {/* Severity classification stripe */}
+                  <div className={`h-[2px] rca-stripe ${
+                    msg.report.severity === "critical" ? "bg-destructive" :
+                    msg.report.severity === "high" ? "bg-accent" :
+                    "bg-primary/60"
+                  }`} />
+                  <div className="px-3.5 py-2.5 border-b border-border/20 rca-section-1">
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-[11px] font-display font-bold uppercase tracking-[0.08em] text-foreground/85">
+                      <span className="text-[11px] font-mono font-semibold uppercase tracking-[0.1em] text-foreground/85">
                         Root Cause Analysis
                       </span>
                       <div className="flex items-center gap-1.5">
-                        <Badge variant={msg.report.severity === "critical" ? "destructive" : "secondary"} className="text-[8px] uppercase tracking-wider">
+                        <Badge variant={msg.report.severity === "critical" ? "destructive" : "secondary"} className="text-[8px] uppercase tracking-[0.1em]">
                           {msg.report.severity}
                         </Badge>
                         <span className="text-[8px] font-mono text-muted-foreground/70">{msg.report.confidence}{msg.report.confidenceScore != null ? ` (${msg.report.confidenceScore.toFixed(2)})` : ""}</span>
@@ -534,16 +541,16 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                     )}
                   </div>
                   <div className="px-3.5 py-2 space-y-1.5">
-                    <div>
-                      <span className="text-[9px] font-display font-semibold uppercase tracking-wider text-primary/90">Root Cause</span>
+                    <div className="rca-section-2">
+                      <span className="text-[9px] font-mono font-semibold uppercase tracking-[0.1em] text-primary/90">Root Cause</span>
                       <p className="text-[12px] font-body text-foreground/90 leading-relaxed line-clamp-2">{renderInline(msg.report.rootCause)}</p>
                     </div>
-                    <div>
-                      <span className="text-[9px] font-display font-semibold uppercase tracking-wider text-accent/90">Trigger</span>
+                    <div className="rca-section-3">
+                      <span className="text-[9px] font-mono font-semibold uppercase tracking-[0.1em] text-accent/90">Trigger</span>
                       <p className="text-[12px] font-body text-foreground/85 leading-relaxed line-clamp-1">{renderInline(msg.report.trigger)}</p>
                     </div>
                   </div>
-                  <div className="px-3.5 py-1.5 bg-secondary/20 border-t border-border/15 flex items-center justify-between">
+                  <div className="px-3.5 py-1.5 bg-secondary/20 border-t border-border/15 flex items-center justify-between rca-section-4">
                     <span className="text-[9px] font-mono text-primary/70 group-hover:text-primary/90 transition-colors">
                       View full investigation →
                     </span>
@@ -605,18 +612,18 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
           {isDeepMode ? (
             <>
               <SearchCode size={13} className="!size-auto text-accent" />
-              <span className="font-display text-[11px] font-semibold tracking-[0.12em] uppercase text-accent">
+              <span className="font-mono text-[11px] font-semibold tracking-[0.12em] uppercase text-accent">
                 Deep Investigation
               </span>
             </>
           ) : (
             <>
-              <MessageSquare size={13} strokeWidth={1.5} className="!size-auto text-muted-foreground/70" />
-              <span className="font-display text-[11px] font-semibold tracking-[0.12em] uppercase text-muted-foreground/50">
+              <MessageSquare size={13} strokeWidth={1.5} className="!size-auto text-primary/50" />
+              <span className="font-mono text-[11px] font-semibold tracking-[0.12em] uppercase text-primary/40">
                 Console
               </span>
               {serviceContext && (
-                <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
+                <span className="text-[10px] font-mono uppercase tracking-[0.12em] px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
                   {serviceContext}
                 </span>
               )}
@@ -695,14 +702,27 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
           {!historyLoading && messages.length === 0 && !isDeepMode && !chatLoading && (
             <div className="h-full min-h-[200px] flex flex-col items-center justify-center text-center animate-fade-in">
               <div className="w-11 h-11 rounded-xl bg-primary/8 border border-primary/15 flex items-center justify-center mb-3">
-                <MessageSquare size={18} strokeWidth={1.5} className="!size-auto text-primary/50" />
+                <Search size={18} strokeWidth={1.5} className="!size-auto text-primary/50" />
               </div>
-              <p className="text-sm text-muted-foreground/50 font-body">
-                No messages yet — ask about your services
+              <p className="text-sm text-muted-foreground/60 font-body">
+                Your investigation console
               </p>
-              <p className="text-[11px] text-muted-foreground/60 mt-1.5 font-mono">
-                try &quot;investigate ingestion-server&quot;
+              <p className="text-[11px] text-muted-foreground/40 mt-1 font-body">
+                Ask about services, check health, or start an investigation
               </p>
+              <div className="flex flex-wrap justify-center gap-1.5 mt-4">
+                {["What services are unhealthy?", "Investigate the noisiest service", "Show recent incidents"].map((prompt, i) => (
+                  <button
+                    key={prompt}
+                    onClick={() => handleSubmit(prompt)}
+                    disabled={status !== "connected"}
+                    className="px-2.5 py-1 text-[10px] font-mono rounded-full border border-primary/20 text-primary/60 hover:bg-primary/8 hover:border-primary/30 hover:text-primary/80 transition-colors disabled:opacity-30 animate-fade-up"
+                    style={{ animationDelay: `${i * 0.06}s` }}
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
           {messages.length === 0 && isDeepMode && (

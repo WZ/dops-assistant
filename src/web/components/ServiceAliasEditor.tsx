@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { safeGetItem } from "../lib/utils";
 import { Check, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -48,7 +49,7 @@ export function AliasEditor({
     setError(null);
     try {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
-      const apiKey = localStorage.getItem("dops-api-key");
+      const apiKey = safeGetItem("dops-api-key");
       if (apiKey) headers["X-API-Key"] = apiKey;
       const res = await fetch(
         `/api/services/${encodeURIComponent(serviceName)}/alias`,
@@ -175,7 +176,7 @@ export function TagEditor({
       setError(null);
       try {
         const tagHeaders: Record<string, string> = { "Content-Type": "application/json" };
-        const tagApiKey = localStorage.getItem("dops-api-key");
+        const tagApiKey = safeGetItem("dops-api-key");
         if (tagApiKey) tagHeaders["X-API-Key"] = tagApiKey;
         const res = await fetch(
           `/api/services/${encodeURIComponent(serviceName)}/tags`,
