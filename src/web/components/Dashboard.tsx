@@ -281,7 +281,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onViewService, onV
         <div className="h-full w-full bg-primary/30 animate-refresh-breathe" />
       </div>
       {/* Section A: Title */}
-      <div className="mb-6 animate-fade-up">
+      <div className="mb-8 animate-fade-up">
         <h1 className="font-display text-xl font-bold tracking-tight text-foreground">Operations Desk</h1>
         <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">
           {stackName && <span className="text-primary/60 uppercase">{stackName} &middot; </span>}
@@ -316,7 +316,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onViewService, onV
       )}
 
       {/* Section B: KPI Stat Cards */}
-      <section aria-label="Overview" className="mb-6">
+      <section aria-label="Overview" className="mb-4">
         <div className="flex items-center gap-2 mb-3">
           <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
           <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">Overview</h2>
@@ -347,7 +347,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onViewService, onV
 
       {/* Section C: Active Investigations */}
       {activeList.length > 0 && (
-        <section aria-label="Active" className="mb-6 animate-fade-up">
+        <section aria-label="Active" className="mb-4 animate-fade-up">
           <div className="flex items-center gap-2 mb-3">
             <div className="w-0.5 h-3.5 rounded-full bg-accent/60" />
             <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">Active</h2>
@@ -360,7 +360,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onViewService, onV
                   <span className="font-body text-sm font-medium text-foreground/80">{inv.service}</span>
                   <Badge variant="secondary" className="text-[10px] py-0 h-4">{inv.phase}</Badge>
                 </div>
-                <span className="font-mono text-[10px] text-muted-foreground/65">{formatElapsed(inv.startTime)}</span>
+                <span className="font-mono text-[10px] tabular-nums text-accent/50">{formatElapsed(inv.startTime)}</span>
               </div>
             ))}
           </div>
@@ -369,7 +369,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onViewService, onV
 
       {/* Section D: Services Health */}
       {services.length > 0 && (
-        <section aria-label="Services" className="mb-6">
+        <section aria-label="Services" className="mb-8">
           <div className="flex items-center gap-2 mb-3">
             <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
             <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">Services</h2>
@@ -383,7 +383,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onViewService, onV
       )}
 
       {/* Section E: Investigation Log */}
-      <section aria-label="Investigation Log" className="mb-6">
+      <section aria-label="Investigation Log" className="mb-4">
         <div className="flex items-center gap-2 mb-3">
           <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
           <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">Investigation Log</h2>
@@ -405,8 +405,8 @@ export function Dashboard({ wsMessages, onInvestigationClick, onViewService, onV
               <line x1="52" y1="52" x2="58" y2="58" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
             </svg>
             <div className="text-center">
-              <p className="font-body text-[13px] text-muted-foreground/70">No investigations yet</p>
-              <p className="font-mono text-[10px] text-muted-foreground/50 mt-1">start one from chat or click a service</p>
+              <p className="font-body text-[13px] text-muted-foreground/70">All quiet on the operations front</p>
+              <p className="font-mono text-[10px] text-muted-foreground/50 mt-1">investigations will appear here as they run</p>
             </div>
           </div>
         ) : (
@@ -422,7 +422,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onViewService, onV
 
       {/* Section F: Learned Patterns */}
       {patterns.length > 0 && (
-        <section aria-label="Learned Patterns" className="mb-6">
+        <section aria-label="Learned Patterns" className="mb-4">
           <button
             aria-expanded={patternsExpanded}
             onClick={() => setPatternsExpanded(!patternsExpanded)}
@@ -436,17 +436,23 @@ export function Dashboard({ wsMessages, onInvestigationClick, onViewService, onV
               <path d="m6 9 6 6 6-6"/>
             </svg>
           </button>
-          {patternsExpanded && (
-            <div className="space-y-1.5 animate-fade-in">
-              {patterns.map((p, i) => (
-                <div key={i} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-card/30">
-                  <Badge variant={severityVariant(p.severity)} className="text-[10px] py-0 h-4">{p.severity}</Badge>
-                  <span className="font-body text-xs text-foreground/70">{p.service}</span>
-                  <span className="font-mono text-[10px] text-muted-foreground/50 truncate">{p.rootCause}</span>
-                </div>
-              ))}
+          <div
+            className="grid transition-[grid-template-rows] duration-300 ease-out"
+            style={{ gridTemplateRows: patternsExpanded ? "1fr" : "0fr" }}
+            {...(patternsExpanded ? {} : { inert: "" as any })}
+          >
+            <div className="overflow-hidden">
+              <div className="space-y-1.5">
+                {patterns.map((p, i) => (
+                  <div key={i} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-card/30">
+                    <Badge variant={severityVariant(p.severity)} className="text-[10px] py-0 h-4">{p.severity}</Badge>
+                    <span className="font-body text-xs text-foreground/70">{p.service}</span>
+                    <span className="font-mono text-[10px] text-muted-foreground/50 truncate">{p.rootCause}</span>
+                  </div>
+                ))}
+              </div>
             </div>
-          )}
+          </div>
         </section>
       )}
 

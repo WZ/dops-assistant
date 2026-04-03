@@ -48,11 +48,15 @@ function Toast({ toast, onDismiss, onClick }: { toast: ToastItem; onDismiss: () 
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       onClick={toast.status === "hidden" || toast.status === "unhidden" ? undefined : onClick}
-      className={`${toast.status !== "hidden" && toast.status !== "unhidden" ? "cursor-pointer" : ""} max-w-[320px] rounded-lg border border-border bg-card p-3 transition-all ${
-        exiting ? "opacity-0 translate-x-3" : "animate-slide-in-right"
-      }`}
+      className={`${toast.status !== "hidden" && toast.status !== "unhidden" ? "cursor-pointer" : ""} max-w-[320px] rounded-lg border bg-card p-3 transition-all ${
+        toast.status === "complete" ? "border-success/25 glow-green" :
+        toast.status === "failed" ? "border-destructive/25 glow-red" :
+        "border-border"
+      } ${exiting ? "opacity-0 translate-x-3" : "animate-slide-in-right"}`}
       style={{
-        boxShadow: "0 8px 24px hsl(var(--foreground) / 0.08)",
+        boxShadow: toast.status === "complete" || toast.status === "failed"
+          ? undefined  // glow classes handle shadow
+          : "0 8px 24px hsl(var(--foreground) / 0.08)",
         transitionDuration: exiting ? "250ms" : undefined,
       }}
     >
@@ -82,7 +86,8 @@ function Toast({ toast, onDismiss, onClick }: { toast: ToastItem; onDismiss: () 
           <p className="font-mono text-[10px] text-muted-foreground/60">
             {toast.status === "hidden" ? "hidden from monitoring"
               : toast.status === "unhidden" ? "monitoring resumed"
-              : `Investigation ${toast.status === "complete" ? "complete" : "failed"} — click to view`}
+              : toast.status === "complete" ? "Root cause identified — click to view"
+              : "Investigation failed — click to view"}
           </p>
         </div>
         <Button

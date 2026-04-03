@@ -82,7 +82,7 @@ export function ServiceMetrics({ serviceName }: ServiceMetricsProps) {
     <div>
       {/* Time picker row */}
       <div className="flex items-center gap-2 mb-5">
-        <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground/60">
+        <span className="text-[10px] font-mono uppercase tracking-[0.12em] text-muted-foreground/60">
           Time Range
         </span>
         {(["1h", "6h", "24h", "7d"] as TimeRange[]).map((preset) => (

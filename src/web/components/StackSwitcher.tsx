@@ -40,7 +40,7 @@ export function StackSwitcher({ stacks, activeStackId, onSwitch, onStackCreated 
   if (isSingleStack) {
     return (
       <div className="flex items-center gap-1.5 px-2 py-1">
-        <span className="font-mono text-[10px] font-medium uppercase tracking-wider text-foreground/80">
+        <span className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-foreground/80">
           {activeStack?.name ?? "Default"}
         </span>
       </div>
@@ -58,7 +58,7 @@ export function StackSwitcher({ stacks, activeStackId, onSwitch, onStackCreated 
             {activeStack && (
               <span className={`w-[5px] h-[5px] rounded-full shrink-0 ${healthDotColor(activeStack)}`} />
             )}
-            <span className="font-mono text-[10px] font-medium uppercase tracking-wider text-foreground/80 max-w-[120px] truncate">
+            <span className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-foreground/80 max-w-[120px] truncate">
               {activeStack?.name ?? "Select Stack"}
             </span>
             <ChevronDown size={12} className="text-muted-foreground/60 shrink-0" />
@@ -76,7 +76,7 @@ export function StackSwitcher({ stacks, activeStackId, onSwitch, onStackCreated 
               }`}
             >
               <span className={`w-[5px] h-[5px] rounded-full shrink-0 ${healthDotColor(stack)}`} />
-              <span className="font-mono text-[10px] font-medium uppercase tracking-wider flex-1 truncate">
+              <span className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] flex-1 truncate">
                 {stack.name}
               </span>
               <span className="font-mono text-[10px] text-muted-foreground/50">
@@ -90,7 +90,7 @@ export function StackSwitcher({ stacks, activeStackId, onSwitch, onStackCreated 
             className="flex items-center gap-2 px-3 py-2 h-8 cursor-pointer text-primary"
           >
             <Plus size={12} />
-            <span className="font-mono text-[10px] font-medium uppercase tracking-wider">
+            <span className="font-mono text-[10px] font-medium uppercase tracking-[0.12em]">
               New Stack
             </span>
           </DropdownMenuItem>

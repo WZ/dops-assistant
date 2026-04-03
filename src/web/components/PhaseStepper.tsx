@@ -133,7 +133,7 @@ function PhaseDetails({ phase, events, evidence }: { phase: PhaseState; events: 
       {/* Observations from evidence */}
       {observations.length > 0 && (
         <div className="mt-1 p-2 rounded-md bg-secondary/20 border border-border/15 space-y-1">
-          <p className="text-[9px] font-display font-semibold uppercase tracking-[0.12em] text-muted-foreground/70 mb-0.5">Findings</p>
+          <p className="text-[9px] font-mono font-semibold uppercase tracking-[0.12em] text-muted-foreground/70 mb-0.5">Findings</p>
           {observations.map((o, i) => (
             <p key={i} className="text-[11px] text-foreground/55 font-mono leading-relaxed">
               {typeof o === "string" ? o : JSON.stringify(o)}

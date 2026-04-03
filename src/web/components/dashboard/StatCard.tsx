@@ -29,6 +29,13 @@ export const StatCard = memo(function StatCard({
     danger: "text-destructive",
   }[variant];
 
+  const accentBorder = {
+    default: "border-l-primary/40",
+    success: "border-l-success/50",
+    warning: "border-l-warning/50",
+    danger: "border-l-destructive/50",
+  }[variant];
+
   if (loading) {
     return (
       <div
@@ -50,7 +57,7 @@ export const StatCard = memo(function StatCard({
     <div
       role="group"
       aria-label={`${label}: ${value}`}
-      className="rounded-lg border border-border/40 bg-card/50 p-4 card-lift"
+      className={cn("rounded-lg border border-border/40 border-l-2 bg-card/50 p-4 card-lift", accentBorder)}
     >
       {/* Value row — mono-display level */}
       <div className="flex items-baseline gap-2">

@@ -35,9 +35,9 @@ export function Sidebar({ activePage, onNavigate, dark, onToggleTheme }: Sidebar
                       : "text-muted-foreground hover:bg-secondary hover:text-foreground"
                   }`}
                 >
-                  {isActive && (
-                    <div className="absolute left-[-6px] top-1/2 -translate-y-1/2 w-[3px] h-4 bg-primary rounded-r-sm" />
-                  )}
+                  <div className={`absolute left-[-6px] top-1/2 -translate-y-1/2 w-[3px] h-4 bg-primary rounded-r-sm transition-all duration-200 ${
+                    isActive ? "opacity-100 scale-y-100" : "opacity-0 scale-y-0"
+                  }`} />
                   <Icon size={18} strokeWidth={1.8} />
                 </button>
               </TooltipTrigger>
