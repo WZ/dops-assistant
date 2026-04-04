@@ -63,7 +63,7 @@ function severityColor(severity: string): string {
 
 function SectionLabel({ children, color = "text-foreground/70" }: { children: ReactNode; color?: string }) {
   return (
-    <h4 className={`text-xs font-display font-bold uppercase tracking-[0.08em] ${color} mb-1.5`}>
+    <h4 className={`text-xs font-mono font-semibold uppercase tracking-[0.1em] ${color} mb-1.5`}>
       {children}
     </h4>
   );
@@ -72,7 +72,7 @@ function SectionLabel({ children, color = "text-foreground/70" }: { children: Re
 function CollapsibleSection({ id, label, count, open, toggle, children }: { id: string; label: string; count: number; open: boolean; toggle: () => void; children: ReactNode }) {
   return (
     <Collapsible open={open} onOpenChange={toggle}>
-      <CollapsibleTrigger className="flex items-center gap-1.5 text-xs font-display font-bold uppercase tracking-[0.08em] text-foreground/70 hover:text-foreground transition-colors cursor-pointer">
+      <CollapsibleTrigger className="flex items-center gap-1.5 text-xs font-mono font-semibold uppercase tracking-[0.1em] text-foreground/70 hover:text-foreground transition-colors cursor-pointer">
         <ChevronRight size={9} className={`!size-auto transition-transform duration-200 ${open ? "rotate-90" : ""}`} />
         {label} ({count})
       </CollapsibleTrigger>
@@ -101,7 +101,7 @@ export function RcaReport({ report }: { report: RcaReportData }) {
             Root Cause Analysis
           </h3>
           <div className="flex gap-1.5 items-center">
-            <Badge variant={severityColor(report.severity) as any} className="text-[9px] uppercase tracking-wider">
+            <Badge variant={severityColor(report.severity) as any} className="text-[9px] uppercase tracking-[0.1em]">
               {report.severity}
             </Badge>
             <span className="text-[9px] font-mono text-muted-foreground">
@@ -199,7 +199,7 @@ export function RcaReport({ report }: { report: RcaReportData }) {
         {/* Skills Used */}
         {report.skillsUsed && report.skillsUsed.length > 0 && (
           <div className="pt-3 border-t border-border/20">
-            <h4 className="text-[10px] font-display font-semibold uppercase tracking-[0.12em] text-muted-foreground mb-2">
+            <h4 className="text-[10px] font-mono font-semibold uppercase tracking-[0.12em] text-muted-foreground mb-2">
               Skills Used
             </h4>
             <div className="flex flex-wrap gap-1.5">
@@ -216,7 +216,7 @@ export function RcaReport({ report }: { report: RcaReportData }) {
         {/* Grafana Links */}
         {report.dashboardLinks.length > 0 && (
           <div className="pt-3 border-t border-border/20">
-            <h4 className="text-[10px] font-display font-semibold uppercase tracking-[0.12em] text-muted-foreground mb-2">
+            <h4 className="text-[10px] font-mono font-semibold uppercase tracking-[0.12em] text-muted-foreground mb-2">
               Dashboards
             </h4>
             <div className="flex flex-wrap gap-2">

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { safeGetItem, safeSetItem } from "./lib/utils";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -35,10 +36,10 @@ export type LeftPaneView =
   | { type: "settings"; initialTab?: "providers" | "skills" | "stacks" };
 
 function useTheme() {
-  const [dark, setDark] = useState(() => localStorage.getItem("theme") === "dark");
+  const [dark, setDark] = useState(() => safeGetItem("theme") === "dark");
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
-    localStorage.setItem("theme", dark ? "dark" : "light");
+    safeSetItem("theme", dark ? "dark" : "light");
   }, [dark]);
   return { dark, toggle: () => setDark((d) => !d) };
 }

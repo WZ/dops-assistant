@@ -1,4 +1,5 @@
 import { createContext, useContext, useCallback, type ReactNode } from "react";
+import { safeGetItem } from "../lib/utils";
 
 interface StackContextValue {
   activeStackId: string;
@@ -18,7 +19,7 @@ export function StackProvider({
     (url: string, opts?: RequestInit) => {
       const headers = new Headers(opts?.headers);
       headers.set("X-Stack-Id", activeStackId);
-      const apiKey = localStorage.getItem("dops-api-key");
+      const apiKey = safeGetItem("dops-api-key");
       if (apiKey) {
         headers.set("X-API-Key", apiKey);
       }

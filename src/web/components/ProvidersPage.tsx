@@ -138,7 +138,7 @@ export function ProvidersPage({ onRunDiscovery }: ProvidersPageProps) {
   };
 
   return (
-    <div className="h-full overflow-y-auto p-6 relative z-[2]">
+    <div className="h-full overflow-y-auto relative z-[2]">
       {/* Title */}
       <div className="mb-6 animate-fade-up">
         <h1 className="font-display text-xl font-bold tracking-tight text-foreground/90">Providers</h1>
@@ -158,7 +158,7 @@ export function ProvidersPage({ onRunDiscovery }: ProvidersPageProps) {
 
         {loading ? (
           /* 3 shimmer skeleton cards */
-          <div className="space-y-2">
+          <div className="space-y-3">
             {[0, 1, 2].map(i => (
               <div key={i} className="h-24 rounded-lg" style={{
                 background: "linear-gradient(90deg, hsl(var(--muted)) 25%, hsl(var(--secondary)) 50%, hsl(var(--muted)) 75%)",
@@ -185,7 +185,7 @@ export function ProvidersPage({ onRunDiscovery }: ProvidersPageProps) {
           </div>
         ) : (
           /* Provider cards */
-          <div className="space-y-2">
+          <div className="space-y-3">
             {providers.map((p, i) => (
               <div key={p.name} className={`animate-fade-up delay-${Math.min(i + 1, 8)}`}>
                 <ProviderCard

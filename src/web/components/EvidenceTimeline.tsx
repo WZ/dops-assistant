@@ -274,12 +274,12 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange }: E
     <Tabs defaultValue={defaultTab} className="w-full">
       <TabsList className="w-full bg-secondary/20 border border-border/25 rounded-lg p-0.5">
         {hasMetricData && (
-          <TabsTrigger value="metrics" className="flex-1 text-[10px] font-mono uppercase tracking-wider">
+          <TabsTrigger value="metrics" className="flex-1 text-[10px] font-mono uppercase tracking-[0.12em]">
             Metrics ({metricsCount})
           </TabsTrigger>
         )}
         {hasTimeline && (
-          <TabsTrigger value="timeline" className="flex-1 text-[10px] font-mono uppercase tracking-wider">
+          <TabsTrigger value="timeline" className="flex-1 text-[10px] font-mono uppercase tracking-[0.12em]">
             Timeline ({timelineEntries.length})
           </TabsTrigger>
         )}
