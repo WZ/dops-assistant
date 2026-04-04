@@ -304,6 +304,15 @@ async function handleDeepInvestigate(
         `Contributing Factors: ${(report.contributingFactors ?? []).join("; ")}`,
         `Recommended Actions: ${(report.recommendedActions ?? []).join("; ")}`,
       );
+      if (report.timeRange) {
+        contextParts.push(
+          "",
+          "## Investigation Time Window",
+          `From: ${report.timeRange.from}`,
+          `To: ${report.timeRange.to}`,
+          `IMPORTANT: When querying logs or metrics for follow-up questions, ALWAYS use this time window. Do NOT query outside this range — the investigation evidence is scoped to this period.`,
+        );
+      }
       if (report.evidence) {
         contextParts.push(
           "",
@@ -330,6 +339,12 @@ async function handleDeepInvestigate(
         contextParts.push("", `## ${phase.phase} Phase Findings`, JSON.stringify(findings, null, 2));
       } catch { /* ignore */ }
     }
+  }
+
+  // Extract time range for injection into user messages (LLMs ignore system-level time hints)
+  let investigationTimeRange: { from: string; to: string } | undefined;
+  if (investigation.report) {
+    try { investigationTimeRange = JSON.parse(investigation.report).timeRange; } catch { /* ignore */ }
   }
 
   const rawContext = contextParts.join("\n");
@@ -361,10 +376,16 @@ async function handleDeepInvestigate(
   const chatTokens = { inputTokens: 0, outputTokens: 0 };
   const chatStartMs = Date.now();
 
+  // Inject time range directly into the message so the LLM uses it in Loki queries.
+  // System-level instructions are ignored by gpt-oss-120b; inline hints work better.
+  const augmentedMessage = investigationTimeRange
+    ? `${msg.message}\n\n[For any log or metric queries, use startRfc3339="${investigationTimeRange.from}" endRfc3339="${investigationTimeRange.to}"]`
+    : msg.message;
+
   try {
     const result = await agent.chat({
       mode: "conversational",
-      message: msg.message,
+      message: augmentedMessage,
       history: fullHistory,
       serviceContext: services,
       supportsInlineCharts: true,

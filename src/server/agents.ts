@@ -31,6 +31,7 @@ import { createModel } from "../mastra/index.js";
 import type { Config } from "../config/schema.js";
 import type { MastraProvider } from "../mcp/provider.js";
 import { getAllTools } from "../mcp/provider.js";
+import { coerceLokiArgs } from "../workflows/tool-utils.js";
 import type { ServiceRegistryStore } from "../services/registry.js";
 import type { LanguageModel } from "ai";
 
@@ -116,6 +117,23 @@ function extractToolImages(toolName: string, result: unknown): ImageAttachment[]
     });
   }
   return attachments;
+}
+
+/**
+ * Truncate MCP tool result to prevent oversized context when fed back to the LLM.
+ * Preserves the MCP content wrapper structure.
+ */
+function truncateMcpResult(result: unknown, maxChars: number): unknown {
+  if (!result || typeof result !== "object") return result;
+  const content = (result as any).content;
+  if (!Array.isArray(content)) return result;
+  const truncated = content.map((part: any) => {
+    if (part?.type === "text" && typeof part.text === "string" && part.text.length > maxChars) {
+      return { ...part, text: part.text.slice(0, maxChars) + `\n... (truncated from ${part.text.length} chars)` };
+    }
+    return part;
+  });
+  return { ...result, content: truncated };
 }
 
 function selectChatAgent(agents: MastraChatAgentSet, task: ChatRequest): MastraChatAgent {
@@ -400,6 +418,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
 
   // Web chat renders charts inline from metrics data. CLI still needs panel-image tools.
   // Exclude tools whose descriptions indicate they produce images/screenshots/rendered panels.
+  // Also apply coerceLokiArgs to Loki tools so chat follow-ups get direction:backward + limit>=50.
   const allTools = await getAllTools(providers).catch(() => ({}));
   const inlineChartTools: Record<string, any> = {};
   for (const [name, tool] of Object.entries(allTools)) {
@@ -409,7 +428,26 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       (desc.includes("panel") ||
         desc.includes("render") ||
         desc.includes("screenshot"));
-    if (!isImageTool) inlineChartTools[name] = tool;
+    if (!isImageTool) {
+      // Wrap Loki log query tools with parameter coercion + result truncation.
+      // Coercion: direction:backward + limit>=50 (same fix as investigation agents).
+      // Truncation: cap result to 10K chars so the chat context doesn't exceed the
+      // backend's limit when the full Loki response (33K+) is fed back to the LLM.
+      if (name.includes("query_loki_logs")) {
+        inlineChartTools[name] = {
+          ...tool,
+          execute: async (...args: any[]) => {
+            if (args[0] && typeof args[0] === "object") {
+              args[0] = coerceLokiArgs(args[0] as Record<string, unknown>);
+            }
+            const result = await (tool as any).execute(...args);
+            return truncateMcpResult(result, 20_000);
+          },
+        };
+      } else {
+        inlineChartTools[name] = tool;
+      }
+    }
   }
 
   const chatAgent = new MastraChatAgentAdapter(
