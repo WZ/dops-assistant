@@ -4,6 +4,7 @@ import { ServiceMetrics } from "./ServiceMetrics";
 import { RecentChanges } from "./RecentChanges";
 import { InfrastructureStatus } from "./InfrastructureStatus";
 import { ServiceDependencyGraph } from "./ServiceDependencyGraph";
+import { useStackContext } from "../contexts/StackContext";
 import type { ServiceBrief, SectionStatus } from "../../types/service-brief.js";
 
 interface ServiceOverviewProps {
@@ -15,6 +16,7 @@ const loadingStatus: SectionStatus = { status: "ok" as const };
 const errorStatus: SectionStatus = { status: "error" as const, error: "Fetch failed" };
 
 export function ServiceOverview({ serviceName, onViewService }: ServiceOverviewProps) {
+  const { stackFetch } = useStackContext();
   const [brief, setBrief] = useState<ServiceBrief | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -23,7 +25,7 @@ export function ServiceOverview({ serviceName, onViewService }: ServiceOverviewP
     setLoading(true);
     setError(null);
     const controller = new AbortController();
-    fetch(`/api/services/${encodeURIComponent(serviceName)}/brief`, { signal: controller.signal })
+    stackFetch(`/api/services/${encodeURIComponent(serviceName)}/brief`, { signal: controller.signal })
       .then(res => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
@@ -37,7 +39,7 @@ export function ServiceOverview({ serviceName, onViewService }: ServiceOverviewP
       })
       .finally(() => setLoading(false));
     return () => controller.abort();
-  }, [serviceName]);
+  }, [serviceName, stackFetch]);
 
   // Build healthMap from dependency nodes included in the brief.
   const initialHealthMap: Record<string, "healthy" | "degraded" | "unhealthy" | "unknown"> | undefined =
