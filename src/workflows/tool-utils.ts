@@ -63,7 +63,7 @@ function coerceToolArgs(args: Record<string, unknown>, toolSchema: any): Record<
  * which causes investigations to miss recent errors buried past the first 20 entries.
  * Force backward (newest-first) and a minimum limit of 50 so error evidence surfaces.
  */
-function coerceLokiArgs(args: Record<string, unknown>): Record<string, unknown> {
+export function coerceLokiArgs(args: Record<string, unknown>): Record<string, unknown> {
   const coerced = { ...args };
   // Always use backward (newest-first) — errors at the end of a window are more relevant
   if (coerced.direction === "forward" || !coerced.direction) {
