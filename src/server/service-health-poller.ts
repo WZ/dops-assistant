@@ -45,6 +45,8 @@ export interface ServiceHealthPollerDeps {
   onTransition?: (service: string, from: HealthStatus, to: HealthStatus) => void;
   /** Optional getter for hidden services — hidden services are excluded from polling */
   getHiddenServices?: () => Set<string>;
+  /** Getter for Prometheus datasource UID (re-read from provider registry on each poll) */
+  getPrometheusDatasourceUid?: () => string | undefined;
 }
 
 /** Prometheus query_prometheus result entry */
@@ -182,6 +184,8 @@ export class ServiceHealthPoller {
   private cachedHealth: Map<string, HealthStatus> = new Map();
   private intervalHandle: ReturnType<typeof setInterval> | undefined;
   private migrated = false;
+  private cachedPromDsUid: string | undefined;
+  private readonly getPromDsUid?: () => string | undefined;
 
   constructor(deps: ServiceHealthPollerDeps) {
     this.resolveProviders = typeof deps.providers === "function"
@@ -193,6 +197,7 @@ export class ServiceHealthPoller {
     this.intervalMs = deps.intervalMs ?? 60_000;
     this.onTransition = deps.onTransition;
     this.getHiddenServices = deps.getHiddenServices;
+    this.getPromDsUid = deps.getPrometheusDatasourceUid;
   }
 
   /** Start the poller — runs immediately, then on interval. */
@@ -246,8 +251,16 @@ export class ServiceHealthPoller {
         return;
       }
 
-      // Find the Prometheus datasource UID (required by grafana-mcp)
-      const promDsUid = await this.findPrometheusDatasourceUid(tools);
+      // Use pre-resolved Prometheus datasource UID (from provider init or test).
+      // Re-check the getter each poll in case test() resolved it after init.
+      // Fall back to runtime lookup if still not available.
+      if (!this.cachedPromDsUid && this.getPromDsUid) {
+        this.cachedPromDsUid = this.getPromDsUid();
+      }
+      if (!this.cachedPromDsUid) {
+        this.cachedPromDsUid = await this.findPrometheusDatasourceUid(tools);
+      }
+      const promDsUid = this.cachedPromDsUid;
 
       // Run the 3 batch queries in parallel — query raw metrics (not > 0 / == 1)
       // so that zero-replica or down services appear in results with value 0.
@@ -346,9 +359,15 @@ export class ServiceHealthPoller {
     if (!listDsTool) return undefined;
     try {
       const result = await (listDsTool[1] as { execute: (args: unknown) => Promise<unknown> }).execute({});
-      const outer = typeof result === "string" ? JSON.parse(result) : result;
-      const data = outer?.content?.[0]?.text ? JSON.parse(outer.content[0].text) : outer;
-      const datasources = Array.isArray(data) ? data : data?.datasources ?? [];
+      const outer = typeof result === "object" && result !== null ? result : undefined;
+      if (!outer) return undefined;
+      const textContent = (outer as any)?.content?.[0]?.text;
+      if (!textContent || typeof textContent !== "string") return undefined;
+      // Skip error responses from MCP
+      if ((outer as any)?.isError) return undefined;
+      let data: unknown;
+      try { data = JSON.parse(textContent); } catch { return undefined; }
+      const datasources = Array.isArray(data) ? data : (data as any)?.datasources ?? [];
       const prom = datasources.find((ds: Record<string, unknown>) =>
         ds.type === "prometheus" || (ds.typeName as string)?.toLowerCase().includes("prometheus") || (ds.name as string)?.toLowerCase().includes("prometheus")
       );

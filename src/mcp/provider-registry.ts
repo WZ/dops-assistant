@@ -10,7 +10,41 @@ import {
   type MastraProvider,
   type ToolInfo,
 } from "./provider.js";
+import pino from "pino";
 import { z } from "zod";
+
+const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
+
+/**
+ * Resolve the Prometheus datasource UID from a metrics provider's tool set.
+ * Called during initialization when the MCP session is fresh.
+ */
+async function resolvePrometheusDatasourceUid(tools: Record<string, unknown>): Promise<string | undefined> {
+  const listDsTool = Object.entries(tools).find(
+    ([name]) => name.includes("list_datasource") || name.includes("list_datasources"),
+  ) ?? Object.entries(tools).find(
+    ([name]) => name.includes("datasource") && !name.includes("get_datasource"),
+  );
+  if (!listDsTool) return undefined;
+  try {
+    const result = await (listDsTool[1] as { execute: (args: unknown) => Promise<unknown> }).execute({});
+    const outer = typeof result === "object" && result !== null ? result : undefined;
+    if (!outer || (outer as any)?.isError) return undefined;
+    const textContent = (outer as any)?.content?.[0]?.text;
+    if (!textContent || typeof textContent !== "string") return undefined;
+    let data: unknown;
+    try { data = JSON.parse(textContent); } catch { return undefined; }
+    const datasources = Array.isArray(data) ? data : (data as any)?.datasources ?? [];
+    const prom = datasources.find((ds: Record<string, unknown>) =>
+      ds.type === "prometheus" || (ds.name as string)?.toLowerCase().includes("prometheus") || (ds.name as string)?.toLowerCase().includes("metric"),
+    );
+    if (prom?.uid) {
+      logger.info({ uid: prom.uid, name: prom.name }, "ProviderRegistry: resolved Prometheus datasource UID");
+      return prom.uid as string;
+    }
+  } catch { /* non-fatal */ }
+  return undefined;
+}
 
 export interface ProviderInfo {
   provider: MastraProvider;
@@ -20,6 +54,8 @@ export interface ProviderInfo {
   toolCount: number;
   enabledToolCount: number;
   error?: string;
+  /** Cached Prometheus datasource UID, resolved at initialization for metrics-role providers. */
+  prometheusDatasourceUid?: string;
 }
 
 const GuiProvidersSchema = z.array(ProviderSchema);
@@ -159,12 +195,64 @@ export class ProviderRegistry {
       }
       entry.enabledToolCount = entry.provider.enabledTools?.length ?? toolCount;
 
+      // Resolve Prometheus datasource UID if not yet cached (session is fresh after successful test)
+      if (!entry.prometheusDatasourceUid && entry.config.roles.includes("metrics") && toolCount > 0) {
+        const allRawTools = await listAllProviderTools(entry.provider);
+        entry.prometheusDatasourceUid = await resolvePrometheusDatasourceUid(allRawTools);
+      }
+
+      // Smoke test: execute a lightweight read-only tool to verify end-to-end connectivity
+      const allTools = await listAllProviderTools(entry.provider);
+      const smokeError = await this.smokeTestTool(allTools);
+      if (smokeError) {
+        entry.status = "error";
+        entry.error = smokeError;
+        return { status: "error", toolCount, error: smokeError };
+      }
+
       return { status: "ok", toolCount };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       entry.status = "error";
       entry.error = message;
       return { status: "error", toolCount: 0, error: message };
+    }
+  }
+
+  /**
+   * Execute a lightweight read-only tool to verify the upstream service is reachable and authenticated.
+   * Returns an error message if the tool call fails, or undefined if it succeeds.
+   */
+  private async smokeTestTool(tools: Record<string, unknown>): Promise<string | undefined> {
+    // Pick a lightweight tool: prefer list_datasources, namespaces_list, or any "list" tool
+    const candidates = ["list_datasources", "namespaces_list", "list_namespaces"];
+    let smokeTool: { execute: (args: unknown) => Promise<unknown> } | undefined;
+    for (const [name, tool] of Object.entries(tools)) {
+      if (candidates.some(c => name.includes(c))) {
+        smokeTool = tool as any;
+        break;
+      }
+    }
+    if (!smokeTool) {
+      // Fall back to any tool with "list" in the name
+      for (const [name, tool] of Object.entries(tools)) {
+        if (name.includes("list")) {
+          smokeTool = tool as any;
+          break;
+        }
+      }
+    }
+    if (!smokeTool) return undefined; // No suitable tool, skip smoke test
+
+    try {
+      const result = await smokeTool.execute({});
+      const content = (result as any)?.content?.[0];
+      if ((result as any)?.isError || content?.text?.includes("Unauthorized") || content?.text?.includes("401")) {
+        return `Tool execution failed: ${content?.text?.slice(0, 120) ?? "unknown error"}`;
+      }
+      return undefined; // Success
+    } catch (err) {
+      return `Tool execution failed: ${err instanceof Error ? err.message : String(err)}`;
     }
   }
 
@@ -273,6 +361,15 @@ export class ProviderRegistry {
       provider.enabledTools = defaults;
     }
 
+    // Resolve Prometheus datasource UID for metrics-role providers (session is fresh here)
+    let prometheusDatasourceUid: string | undefined;
+    if (config.roles.includes("metrics") && toolCount > 0) {
+      try {
+        const allTools = await listAllProviderTools(provider);
+        prometheusDatasourceUid = await resolvePrometheusDatasourceUid(allTools);
+      } catch { /* non-fatal */ }
+    }
+
     const info: ProviderInfo = {
       provider,
       config,
@@ -281,6 +378,7 @@ export class ProviderRegistry {
       toolCount,
       enabledToolCount: provider.enabledTools?.length ?? toolCount,
       error,
+      prometheusDatasourceUid,
     };
 
     this.entries.set(config.name, info);

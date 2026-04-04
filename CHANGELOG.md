@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.6.0] - 2026-04-04
+
+### Fixed
+- Provider Test button now verifies end-to-end connectivity by executing a lightweight tool call, catching upstream auth failures (401) that tool listing alone misses.
+- Prometheus datasource UID cached at provider init and refreshed on successful Test, eliminating intermittent health poll failures from stale MCP sessions.
+- Defensive JSON parsing in datasource UID lookup prevents crash when MCP returns error text.
+
 ## [0.0.5.0] - 2026-04-04
 
 ### Fixed
