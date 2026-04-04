@@ -141,7 +141,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
   const streamRef = useRef<{ content: string; reasoning: string }>({ content: "", reasoning: "" });
   const rafRef = useRef<number | null>(null);
 
-  const scrollRef = useAutoScroll([chatMessages, deepMessages, chatLoading, !!streamingMessage]);
+  const scrollRef = useAutoScroll([chatMessages, deepMessages, chatLoading, deepLoading, !!streamingMessage]);
   const processedCount = useRef(0);
   const historyLoaded = useRef(false);
   const initialScrollDone = useRef(false);
@@ -787,6 +787,8 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
             </div>
           )}
         </div>
+        {/* Spacer so auto-scroll clears the shortcut chips overlay */}
+        {isDeepMode && <div className="h-12" />}
       </div>
 
       {/* Deep mode shortcut chips -- always visible */}
