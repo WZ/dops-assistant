@@ -33,7 +33,7 @@ function TagInput({ label, values, onChange }: { label: string; values: string[]
 
   return (
     <div>
-      <label className="block text-[10px] font-display font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1.5">
+      <label className="block text-[10px] font-mono font-semibold uppercase tracking-[0.12em] text-muted-foreground/60 mb-1.5">
         {label}
       </label>
       <div className="flex flex-wrap gap-1 mb-1.5">
@@ -128,7 +128,7 @@ export function SkillEditor({ skill, isNew, onSave, onDelete, onCancel }: SkillE
         <div className="max-w-3xl mx-auto px-5 py-6 space-y-5">
           {/* Title */}
           <div>
-            <label className="block text-[10px] font-display font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1.5">
+            <label className="block text-[10px] font-mono font-semibold uppercase tracking-[0.12em] text-muted-foreground/60 mb-1.5">
               Title
             </label>
             <input
@@ -148,7 +148,7 @@ export function SkillEditor({ skill, isNew, onSave, onDelete, onCancel }: SkillE
 
           {/* Body */}
           <div>
-            <label className="block text-[10px] font-display font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1.5">
+            <label className="block text-[10px] font-mono font-semibold uppercase tracking-[0.12em] text-muted-foreground/60 mb-1.5">
               Body
             </label>
             {preview ? (

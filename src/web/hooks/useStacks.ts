@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import type { StackSummary } from "../../types/stack-types.js";
+import { safeGetItem, safeSetItem } from "../lib/utils";
 
 const STORAGE_KEY = "dops:lastStackId";
 
@@ -30,7 +31,7 @@ export function useStacks(): UseStacksResult {
         if (prev && data.some((s) => s.id === prev)) return prev;
 
         // Try localStorage
-        const stored = localStorage.getItem(STORAGE_KEY);
+        const stored = safeGetItem(STORAGE_KEY);
         if (stored && data.some((s) => s.id === stored)) return stored;
 
         // Fall back to default stack
@@ -49,7 +50,7 @@ export function useStacks(): UseStacksResult {
 
   const switchStack = useCallback((stackId: string) => {
     setActiveStackId(stackId);
-    localStorage.setItem(STORAGE_KEY, stackId);
+    safeSetItem(STORAGE_KEY, stackId);
   }, []);
 
   const activeStack = stacks.find((s) => s.id === activeStackId);

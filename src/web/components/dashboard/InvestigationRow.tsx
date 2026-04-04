@@ -38,6 +38,13 @@ export const InvestigationRow = memo(function InvestigationRow({
         ? "bg-destructive"
         : "bg-accent animate-status-pulse";
 
+  const statusBorder =
+    inv.status === "complete"
+      ? "border-l-success/40"
+      : inv.status === "failed"
+        ? "border-l-destructive/40"
+        : "border-l-accent/40";
+
   const totalTokens = (inv.total_input_tokens ?? 0) + (inv.total_output_tokens ?? 0);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -53,7 +60,8 @@ export const InvestigationRow = memo(function InvestigationRow({
       onClick={() => onClick(inv.id)}
       onKeyDown={handleKeyDown}
       className={cn(
-        "group cursor-pointer rounded-lg border border-border/40 bg-card/40 hover:bg-card/70 hover:border-primary/25 px-4 py-3 transition-all card-lift",
+        "group cursor-pointer rounded-lg border border-border/40 border-l-2 bg-card/40 hover:bg-card/70 hover:border-t-primary/25 hover:border-r-primary/25 hover:border-b-primary/25 px-4 py-3 transition-all card-lift",
+        statusBorder,
         className,
       )}
     >
@@ -77,7 +85,17 @@ export const InvestigationRow = memo(function InvestigationRow({
         {/* Right-aligned metrics */}
         <div className="flex items-center gap-2 flex-shrink-0">
           {confidenceDisplay && (
-            <span className="font-mono text-[10px] text-foreground/75">
+            <span className={cn(
+              "font-mono text-[10px]",
+              (() => {
+                let num = parseFloat(confidenceDisplay);
+                if (isNaN(num)) return "text-foreground/75";
+                if (num > 0 && num <= 1) num *= 100;
+                if (num >= 80) return "text-success";
+                if (num >= 60) return "text-warning";
+                return "text-destructive/80";
+              })()
+            )}>
               {confidenceDisplay}
             </span>
           )}

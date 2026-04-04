@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.4.0] - 2026-04-03
+
+### Changed
+- Section labels across all components now use JetBrains Mono with precise tracking (0.1–0.12em), matching the design system spec for uppercase labels.
+- Health strip chips are tinted by health status (green/yellow/red backgrounds) with staggered fade-up entrance animation.
+- Investigation rows and stat cards show a colored left accent border indicating status/variant.
+- Toast notifications glow on completion (green) and failure (red) for instant visual feedback.
+- RCA report cards in chat reveal with a staggered entrance animation: stripe extends, sections fade in sequentially, then a brief glow pulse fades to the resting state.
+- Learned patterns and service group sections use smooth CSS grid collapse animation instead of conditional rendering.
+- Chat empty state shows quick-action prompt chips ("What services are unhealthy?", etc.) and an investigation-focused message.
+- Sidebar active indicator transitions smoothly via opacity/scale instead of mount/unmount.
+- Provider card spacing increased for better visual rhythm.
+
+### Fixed
+- localStorage access wrapped in safe helpers (`safeGetItem`/`safeSetItem`) across all 10 call sites. Prevents crashes in SSR and test environments where localStorage may not be fully available.
+- Collapsed service groups and learned patterns sections now set the `inert` attribute, preventing hidden cards from receiving keyboard focus or firing API requests.
+- Investigation row hover no longer clobbers the status-colored left border.
+- Confidence scores between 0 and 1 (e.g., 0.85) are normalized to percentage scale before color-coding, preventing high-confidence values from displaying as red/destructive.
+- Health chip tints fall back to the `unknown` style for unexpected health status values.
+- Pre-existing test failures fixed: `supertest` added as dev dependency, `rate-limit.test.ts` now runs.
+- Docker Compose dev files added to `.gitignore`.
+
 ## [0.0.3.1] - 2026-04-02
 
 ### Fixed

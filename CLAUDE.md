@@ -8,6 +8,7 @@
 - **Push directly to main** — always create a feature branch and open a PR.
 - **Use `npm run dev`** — that's a different entrypoint with no dotenv. Use `npm run web` for the server.
 - **Run the CLI inside Claude Code** — Ink requires raw stdin which isn't available in this shell.
+- **Mention the employer company or product name** — never reference the company or its product names in code, comments, docs, commit messages, or any output. Use generic terms instead.
 - **Assume training data is correct about Mastra** — this project uses custom patterns (role-based MCP routing, `prepareStep` hooks, step factories) that don't match Mastra docs. Read the code.
 
 ## Project Overview
@@ -109,3 +110,23 @@ Always read `DESIGN.md` before making any visual or UI decisions. All font choic
 ## Security
 
 Before every commit and PR, scan staged changes (`git diff --cached`) for secrets: `sk-`, `xoxb-`, `xapp-`, `glsa_`, `Bearer`, `password=`, base64-encoded keys, hardcoded URLs with credentials. If anything suspicious is found, STOP and alert.
+
+## Skill routing
+
+When the user's request matches an available skill, ALWAYS invoke it using the Skill
+tool as your FIRST action. Do NOT answer directly, do NOT use other tools first.
+The skill has specialized workflows that produce better results than ad-hoc answers.
+
+Key routing rules:
+- Product ideas, "is this worth building", brainstorming → invoke office-hours
+- Bugs, errors, "why is this broken", 500 errors → invoke investigate
+- Ship, deploy, push, create PR → invoke ship
+- QA, test the site, find bugs → invoke qa
+- Code review, check my diff → invoke review
+- Update docs after shipping → invoke document-release
+- Weekly retro → invoke retro
+- Design system, brand → invoke design-consultation
+- Visual audit, design polish → invoke design-review
+- Architecture review → invoke plan-eng-review
+- Save progress, checkpoint, resume → invoke checkpoint
+- Code quality, health check → invoke health

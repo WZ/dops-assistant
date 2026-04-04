@@ -154,7 +154,7 @@ export const ProviderCard = memo(function ProviderCard({
       )}
 
       {/* Action buttons */}
-      <div className="mt-1 pl-[10px] flex items-center gap-0">
+      <div className="mt-1 pl-[10px] flex items-center gap-1">
         {source === "gui" && onEdit && (
           <Button
             variant="link"

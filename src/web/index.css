@@ -318,6 +318,61 @@ input:focus, textarea:focus {
   border-radius: 2px;
 }
 
+/* ── RCA dossier reveal ── */
+@keyframes rca-enter {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes rca-stripe-extend {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+@keyframes rca-section-reveal {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes rca-glow-pulse {
+  0% { opacity: 0; }
+  40% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.rca-reveal {
+  animation: rca-enter 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+}
+.rca-stripe {
+  transform-origin: left;
+  animation: rca-stripe-extend 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+  animation-delay: 0.15s;
+}
+.rca-section-1 { animation: rca-section-reveal 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94) both; animation-delay: 0.2s; }
+.rca-section-2 { animation: rca-section-reveal 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94) both; animation-delay: 0.35s; }
+.rca-section-3 { animation: rca-section-reveal 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94) both; animation-delay: 0.5s; }
+.rca-section-4 { animation: rca-section-reveal 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94) both; animation-delay: 0.65s; }
+
+/* Glow pulse overlay — bright flash that fades, revealing resting glow beneath */
+.rca-reveal-glow {
+  position: relative;
+}
+.rca-reveal-glow::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  animation: rca-glow-pulse 1s ease-out both;
+  animation-delay: 0.3s;
+}
+.rca-reveal-glow-teal::after { box-shadow: 0 0 28px hsl(var(--primary) / 0.5); }
+.rca-reveal-glow-coral::after { box-shadow: 0 0 28px hsl(var(--accent) / 0.5); }
+.rca-reveal-glow-red::after { box-shadow: 0 0 28px hsl(0 90% 68% / 0.5); }
+
 /* ── Reduced motion — disable decorative animations ── */
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-up,
@@ -338,6 +393,17 @@ input:focus, textarea:focus {
   .progress-bar-fill {
     animation: none !important;
     transform: none !important;
+  }
+  .rca-reveal,
+  .rca-stripe,
+  .rca-section-1, .rca-section-2, .rca-section-3, .rca-section-4 {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .rca-reveal-glow::after {
+    animation: none !important;
+    opacity: 0 !important;
   }
 }
 

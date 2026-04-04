@@ -23,6 +23,13 @@ const DOT_COLORS: Record<HealthStatus, string> = {
   unknown: "bg-muted-foreground/30",
 };
 
+const CHIP_TINTS: Record<HealthStatus, string> = {
+  healthy: "bg-success/6 hover:bg-success/12 border border-success/10",
+  degraded: "bg-warning/8 hover:bg-warning/15 border border-warning/12",
+  down: "bg-destructive/8 hover:bg-destructive/15 border border-destructive/12",
+  unknown: "bg-secondary/50 hover:bg-secondary border border-transparent",
+};
+
 export function HealthStrip({ services, onClickService, onViewAll }: HealthStripProps) {
   const sorted = useMemo(
     () => [...services].sort((a, b) => HEALTH_ORDER[a.health] - HEALTH_ORDER[b.health] || a.name.localeCompare(b.name)),
@@ -33,11 +40,12 @@ export function HealthStrip({ services, onClickService, onViewAll }: HealthStrip
 
   return (
     <div data-testid="health-strip" className="flex flex-wrap gap-1.5 p-3 px-4 bg-card border border-border rounded-lg">
-      {sorted.map((svc) => (
+      {sorted.map((svc, i) => (
         <button
           key={svc.name}
           onClick={() => onClickService(svc.name)}
-          className="flex items-center gap-[5px] px-2.5 py-1 rounded-md bg-secondary/50 hover:bg-secondary transition-colors"
+          className={`flex items-center gap-[5px] px-2.5 py-1 rounded-md transition-colors animate-fade-up ${CHIP_TINTS[svc.health] ?? CHIP_TINTS.unknown}`}
+          style={{ animationDelay: `${Math.min(i * 0.04, 0.32)}s` }}
         >
           <span className={`w-[5px] h-[5px] rounded-full ${DOT_COLORS[svc.health]}`} />
           <span className="font-mono text-[10px] font-medium text-foreground/90">{svc.name}</span>

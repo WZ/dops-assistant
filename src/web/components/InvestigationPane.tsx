@@ -297,7 +297,7 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
             </>
           )}
           {isRunning && (
-            <span className="text-[10px] font-mono text-primary/60 uppercase tracking-wider">investigating...</span>
+            <span className="text-[10px] font-mono text-primary/60 uppercase tracking-[0.12em]">investigating...</span>
           )}
         </div>
       </div>

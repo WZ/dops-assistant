@@ -90,7 +90,7 @@ function PhaseChangeEvent({ event }: { event: Extract<TimelineEvent, { type: "ph
     return (
       <div className="flex items-center gap-2 py-1.5 animate-fade-up">
         <div className="w-0.5 h-3.5 rounded-full bg-primary/40" />
-        <span className="text-[10px] font-display font-semibold text-primary/60 uppercase tracking-[0.12em]">
+        <span className="text-[10px] font-mono font-semibold text-primary/60 uppercase tracking-[0.12em]">
           {event.phase}
         </span>
         <div className="h-px flex-1 bg-primary/10" />
@@ -105,7 +105,7 @@ function PhaseChangeEvent({ event }: { event: Extract<TimelineEvent, { type: "ph
   return (
     <div className="flex items-center gap-2 py-1.5 animate-fade-up">
       <div className={`w-0.5 h-3.5 rounded-full ${event.status === "complete" ? "bg-success/40" : "bg-destructive/40"}`} />
-      <span className={`text-[10px] font-display font-semibold uppercase tracking-[0.12em] ${event.status === "complete" ? "text-success/60" : "text-destructive/60"}`}>
+      <span className={`text-[10px] font-mono font-semibold uppercase tracking-[0.12em] ${event.status === "complete" ? "text-success/60" : "text-destructive/60"}`}>
         {event.phase} {event.status === "complete" ? "\u2713" : "\u2717"}
       </span>
       {statsText && (

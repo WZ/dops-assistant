@@ -584,29 +584,35 @@ export function ServicesPage({
                     </span>
                   )}
                 </button>
-                {!collapsedGroups[group.key] && (
-                  <div className="grid grid-cols-3 gap-3 dashboard-services-grid">
-                    {group.services.map((svc, i) => (
-                      <div key={svc.name} className={`animate-fade-up delay-${Math.min(i + 1, 8)}`}>
-                        <ServiceCard
-                          name={svc.name}
-                          onClick={() => setSubView({ type: "detail", serviceName: svc.name })}
-                          lastInvestigation={serviceInvData.get(svc.name)?.lastInvestigation ?? null}
-                          investigationCount={serviceInvData.get(svc.name)?.count ?? 0}
-                          healthStatus={healthData[svc.name] as "healthy" | "degraded" | "down" | "unknown" | undefined}
-                          onHide={group.isHidden ? undefined : () => setHideTarget({ name: svc.name, defaultReason: staleServices.has(svc.name) ? "No monitoring data for 7+ days" : undefined })}
-                          onUnhide={group.isHidden ? () => handleUnhide(svc.name) : undefined}
-                          isHidden={group.isHidden}
-                          suggestHide={!group.isHidden && staleServices.has(svc.name)}
-                          hideReason={hiddenServices.get(svc.name)?.reason}
-                          selectionMode={selectionMode && !group.isHidden}
-                          selected={selectedServices.has(svc.name)}
-                          onToggleSelect={() => toggleServiceSelection(svc.name)}
-                        />
-                      </div>
-                    ))}
+                <div
+                  className="grid transition-[grid-template-rows] duration-300 ease-out"
+                  style={{ gridTemplateRows: collapsedGroups[group.key] ? "0fr" : "1fr" }}
+                  {...(collapsedGroups[group.key] ? { inert: "" as any } : {})}
+                >
+                  <div className="overflow-hidden">
+                    <div className="grid grid-cols-3 gap-3 dashboard-services-grid">
+                      {group.services.map((svc, i) => (
+                        <div key={svc.name} className={`animate-fade-up delay-${Math.min(i + 1, 8)}`}>
+                          <ServiceCard
+                            name={svc.name}
+                            onClick={() => setSubView({ type: "detail", serviceName: svc.name })}
+                            lastInvestigation={serviceInvData.get(svc.name)?.lastInvestigation ?? null}
+                            investigationCount={serviceInvData.get(svc.name)?.count ?? 0}
+                            healthStatus={healthData[svc.name] as "healthy" | "degraded" | "down" | "unknown" | undefined}
+                            onHide={group.isHidden ? undefined : () => setHideTarget({ name: svc.name, defaultReason: staleServices.has(svc.name) ? "No monitoring data for 7+ days" : undefined })}
+                            onUnhide={group.isHidden ? () => handleUnhide(svc.name) : undefined}
+                            isHidden={group.isHidden}
+                            suggestHide={!group.isHidden && staleServices.has(svc.name)}
+                            hideReason={hiddenServices.get(svc.name)?.reason}
+                            selectionMode={selectionMode && !group.isHidden}
+                            selected={selectedServices.has(svc.name)}
+                            onToggleSelect={() => toggleServiceSelection(svc.name)}
+                          />
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                )}
+                </div>
               </div>
             ))}
 
