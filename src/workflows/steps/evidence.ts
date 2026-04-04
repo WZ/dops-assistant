@@ -182,6 +182,36 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
       const parsed = safeJsonParse(agentText);
       debug(`${phaseName.toUpperCase()} parsed:`, parsed ? "OK" : "FAILED");
 
+      // 6b. If agent produced text but it's not JSON, run extractor on the text
+      // The model may have produced a natural language analysis instead of JSON.
+      // Re-prompt with the agent's own analysis to get structured output.
+      if (!parsed && agentText?.trim() && agentText.length > 50) {
+        debug(`${phaseName.toUpperCase()}: non-JSON text (${agentText.length} chars), re-extracting`);
+        const { Agent: ExtractAgent } = await import("@mastra/core/agent");
+        const extractor = new ExtractAgent({
+          name: `${phaseName}-extractor`,
+          id: `${phaseName}-extractor`,
+          instructions: `Convert this investigation analysis into structured JSON. Return ONLY valid JSON matching this schema: ${extractorSchema}`,
+          model: workflowConfig.model as any,
+        });
+        try {
+          const extraction = await extractor.generate(agentText.slice(0, 8000));
+          const reParsed = safeJsonParse(extraction.text ?? "");
+          if (reParsed) {
+            debug(`${phaseName.toUpperCase()}: re-extraction succeeded`);
+            const ac = inputData.anomalyContext;
+            const timeRange = ac?.timeRangeFrom && ac?.timeRangeTo
+              ? { from: ac.timeRangeFrom, to: ac.timeRangeTo }
+              : undefined;
+            return {
+              summary: reParsed.summary ?? fallbackMessage,
+              observations: reParsed.observations ?? [],
+              timeRange,
+            };
+          }
+        } catch { /* fall through */ }
+      }
+
       // 7. Build timeRange pass-through from anomaly context
       const ac = inputData.anomalyContext;
       const timeRange = ac?.timeRangeFrom && ac?.timeRangeTo
@@ -196,6 +226,24 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
           timeRange,
         };
       }
+
+      // 9. Fallback: use agent text or raw tool data as summary so synthesis
+      // can still work with real evidence instead of "unavailable".
+      if (agentText?.trim()) {
+        // Agent produced natural language analysis — use it as the summary
+        debug(`${phaseName.toUpperCase()}: using agent text as summary (${agentText.length} chars)`);
+        return { summary: agentText.slice(0, 3000), observations: [], timeRange };
+      }
+      if (toolData.length > 0) {
+        const toolSummary = toolData
+          .filter((d) => d.startsWith("Tool:"))
+          .map((d) => d.slice(0, 500))
+          .join("\n---\n")
+          .slice(0, 3000);
+        debug(`${phaseName.toUpperCase()}: forwarding ${toolData.length} raw tool results as summary`);
+        return { summary: `${phaseName} tools returned data but structured extraction failed. Raw results:\n${toolSummary}`, observations: [], timeRange };
+      }
+
       return { summary: fallbackMessage, observations: [], timeRange };
     },
   });

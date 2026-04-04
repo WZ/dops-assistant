@@ -150,9 +150,11 @@ export class InvestigationRunner {
 
     // 3. Set up phase tracking
     const runningPhases = new Set<string>();
-    const phaseStats = new Map<string, { toolCalls: number; iterations: number; startMs: number }>();
+    const phaseStats = new Map<string, { toolCalls: number; iterations: number; startMs: number; inputTokens: number; outputTokens: number }>();
     const totalTokens = { inputTokens: 0, outputTokens: 0 };
-    const phaseTokens = { inputTokens: 0, outputTokens: 0 };
+    // Track which phase last reported an iteration — used to attribute token usage
+    // to the correct phase when multiple evidence phases run in parallel.
+    let lastIterationPhase = "";
     const investigationStartMs = Date.now();
 
     // Helper: emit + persist event to DB
@@ -163,8 +165,14 @@ export class InvestigationRunner {
     const onTokenUsage = (u: { inputTokens: number; outputTokens: number }) => {
       totalTokens.inputTokens += u.inputTokens;
       totalTokens.outputTokens += u.outputTokens;
-      phaseTokens.inputTokens += u.inputTokens;
-      phaseTokens.outputTokens += u.outputTokens;
+      // Attribute tokens to the phase that most recently reported an iteration.
+      // In evidence.ts, onIteration fires before onTokenUsage in the same
+      // synchronous onStepFinish callback, so lastIterationPhase is accurate.
+      const stats = phaseStats.get(lastIterationPhase);
+      if (stats) {
+        stats.inputTokens += u.inputTokens;
+        stats.outputTokens += u.outputTokens;
+      }
     };
 
     try {
@@ -195,9 +203,7 @@ export class InvestigationRunner {
                 toolCalls: stats.toolCalls, iterations: stats.iterations, durationMs,
               } : undefined);
               persistEvent("investigation:phase", { phase: prev, status: "complete" });
-              callbacks?.onPhaseUsage?.(invId, prev, phaseTokens.inputTokens, phaseTokens.outputTokens, durationMs);
-              phaseTokens.inputTokens = 0;
-              phaseTokens.outputTokens = 0;
+              callbacks?.onPhaseUsage?.(invId, prev, stats?.inputTokens ?? 0, stats?.outputTokens ?? 0, durationMs);
               runningPhases.delete(prev);
             }
           }
@@ -208,13 +214,14 @@ export class InvestigationRunner {
               callbacks?.onPhase?.(fp, "running");
               persistEvent("investigation:phase", { phase: fp, status: "running" });
               runningPhases.add(fp);
-              phaseStats.set(fp, { toolCalls: 0, iterations: 0, startMs: Date.now() });
+              phaseStats.set(fp, { toolCalls: 0, iterations: 0, startMs: Date.now(), inputTokens: 0, outputTokens: 0 });
             }
           }
         },
         // onIteration
         (phase, iteration, maxIterations, description) => {
           const frontendPhase = runningPhases.has(phase) ? phase : (runningPhases.size > 0 ? [...runningPhases][0]! : phase);
+          lastIterationPhase = frontendPhase;
           const stats = phaseStats.get(frontendPhase);
           if (stats) stats.iterations = Math.max(stats.iterations, iteration + 1);
           callbacks?.onIteration?.(frontendPhase, iteration, maxIterations, description);
@@ -233,9 +240,7 @@ export class InvestigationRunner {
           observationCount: 0, criticalCount: 0,
           toolCalls: stats.toolCalls, iterations: stats.iterations, durationMs,
         } : undefined);
-        callbacks?.onPhaseUsage?.(invId, fp, phaseTokens.inputTokens, phaseTokens.outputTokens, durationMs);
-        phaseTokens.inputTokens = 0;
-        phaseTokens.outputTokens = 0;
+        callbacks?.onPhaseUsage?.(invId, fp, stats?.inputTokens ?? 0, stats?.outputTokens ?? 0, durationMs);
       }
       runningPhases.clear();
 
