@@ -282,8 +282,8 @@ export function Dashboard({ wsMessages, onInvestigationClick, onViewService, onV
       </div>
       {/* Section A: Title */}
       <div className="mb-8 animate-fade-up">
-        <h1 className="font-display text-xl font-bold tracking-tight text-foreground">Operations Desk</h1>
-        <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">
+        <h1 className="font-display text-2xl font-extrabold tracking-tight text-foreground">Operations Desk</h1>
+        <p className="text-xs font-mono text-muted-foreground/70 mt-1.5 tracking-wide">
           {stackName && <span className="text-primary/60 uppercase">{stackName} &middot; </span>}
           {services.filter(s => !hiddenSet.has(s.name)).length} services monitored
           {lastUpdated && (
@@ -292,6 +292,7 @@ export function Dashboard({ wsMessages, onInvestigationClick, onViewService, onV
             </span>
           )}
         </p>
+        <div className="mt-4 h-px bg-border/60" />
       </div>
 
       {/* Error banner */}
@@ -352,15 +353,15 @@ export function Dashboard({ wsMessages, onInvestigationClick, onViewService, onV
             <div className="w-0.5 h-3.5 rounded-full bg-accent/60" />
             <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">Active</h2>
           </div>
-          <div className="rounded-lg border border-accent/20 bg-accent/5 p-3 space-y-2">
+          <div className="rounded-lg border-l-[3px] border-l-accent/70 border border-accent/25 bg-accent/5 p-3 space-y-2 glow-coral">
             {activeList.map(inv => (
               <div key={inv.id} className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <div className={`w-1.5 h-1.5 rounded-full ${inv.failed ? "bg-destructive" : "bg-accent animate-status-pulse"}`} />
-                  <span className="font-body text-sm font-medium text-foreground/80">{inv.service}</span>
+                  <div className={`w-2 h-2 rounded-full ring-2 ${inv.failed ? "bg-destructive ring-destructive/25" : "bg-accent ring-accent/20 animate-status-pulse"}`} />
+                  <span className="font-body text-sm font-semibold text-foreground/90">{inv.service}</span>
                   <Badge variant="secondary" className="text-[10px] py-0 h-4">{inv.phase}</Badge>
                 </div>
-                <span className="font-mono text-[10px] tabular-nums text-accent/50">{formatElapsed(inv.startTime)}</span>
+                <span className="font-mono text-[10px] tabular-nums text-accent/60 font-medium">{formatElapsed(inv.startTime)}</span>
               </div>
             ))}
           </div>
@@ -385,8 +386,9 @@ export function Dashboard({ wsMessages, onInvestigationClick, onViewService, onV
       {/* Section E: Investigation Log */}
       <section aria-label="Investigation Log" className="mb-4">
         <div className="flex items-center gap-2 mb-3">
-          <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
-          <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">Investigation Log</h2>
+          <div className="w-0.5 h-4 rounded-full bg-primary" />
+          <h2 className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-foreground/50">Investigation Log</h2>
+          <span className="font-mono text-[9px] tabular-nums text-muted-foreground/40">{investigations.length}</span>
         </div>
         {loading ? (
           <div className="space-y-2">
@@ -405,8 +407,8 @@ export function Dashboard({ wsMessages, onInvestigationClick, onViewService, onV
               <line x1="52" y1="52" x2="58" y2="58" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
             </svg>
             <div className="text-center">
-              <p className="font-body text-[13px] text-muted-foreground/70">All quiet on the operations front</p>
-              <p className="font-mono text-[10px] text-muted-foreground/50 mt-1">investigations will appear here as they run</p>
+              <p className="font-display text-sm font-semibold text-muted-foreground/60">All quiet on the operations front</p>
+              <p className="font-mono text-[10px] text-muted-foreground/40 mt-1">investigations will appear here as they run</p>
             </div>
           </div>
         ) : (

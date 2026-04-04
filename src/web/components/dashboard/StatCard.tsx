@@ -30,10 +30,10 @@ export const StatCard = memo(function StatCard({
   }[variant];
 
   const accentBorder = {
-    default: "border-l-primary/40",
-    success: "border-l-success/50",
-    warning: "border-l-warning/50",
-    danger: "border-l-destructive/50",
+    default: "border-l-primary/60",
+    success: "border-l-success/70",
+    warning: "border-l-warning/70",
+    danger: "border-l-destructive/70",
   }[variant];
 
   if (loading) {
@@ -57,13 +57,13 @@ export const StatCard = memo(function StatCard({
     <div
       role="group"
       aria-label={`${label}: ${value}`}
-      className={cn("rounded-lg border border-border/40 border-l-2 bg-card/50 p-4 card-lift", accentBorder)}
+      className={cn("rounded-lg border border-border/40 border-l-[3px] bg-card/50 p-4 card-lift noise relative overflow-hidden", accentBorder)}
     >
       {/* Value row — mono-display level */}
       <div className="flex items-baseline gap-2">
         <span
           className={cn(
-            "font-mono text-[26px] font-semibold tabular-nums leading-none",
+            "font-mono text-[36px] font-semibold tabular-nums leading-none tracking-tight",
             valueColor
           )}
         >

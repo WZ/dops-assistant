@@ -125,8 +125,13 @@ export function App() {
     }
   }, [ws.messages]);
 
-  // Reset discovery state and processed message index on stack switch
+  // Reset view and discovery state on stack switch
+  const prevStackRef = useRef(activeStackId);
   useEffect(() => {
+    if (prevStackRef.current !== activeStackId && prevStackRef.current) {
+      setLeftPane({ type: "dashboard" });
+    }
+    prevStackRef.current = activeStackId;
     lastProcessedIdx.current = 0;
     setDiscoveryState({
       phase: "",

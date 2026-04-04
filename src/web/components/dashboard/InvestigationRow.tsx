@@ -40,10 +40,15 @@ export const InvestigationRow = memo(function InvestigationRow({
 
   const statusBorder =
     inv.status === "complete"
-      ? "border-l-success/40"
+      ? "border-l-success/60"
       : inv.status === "failed"
-        ? "border-l-destructive/40"
-        : "border-l-accent/40";
+        ? "border-l-destructive/60"
+        : "border-l-accent/60";
+
+  const severityTint =
+    severity === "critical" ? "bg-destructive/4" :
+    severity === "high" ? "bg-accent/4" :
+    "";
 
   const totalTokens = (inv.total_input_tokens ?? 0) + (inv.total_output_tokens ?? 0);
 
@@ -60,7 +65,8 @@ export const InvestigationRow = memo(function InvestigationRow({
       onClick={() => onClick(inv.id)}
       onKeyDown={handleKeyDown}
       className={cn(
-        "group cursor-pointer rounded-lg border border-border/40 border-l-2 bg-card/40 hover:bg-card/70 hover:border-t-primary/25 hover:border-r-primary/25 hover:border-b-primary/25 px-4 py-3 transition-all card-lift",
+        "group cursor-pointer rounded-lg border border-border/40 border-l-[3px] hover:bg-card/70 hover:border-t-primary/25 hover:border-r-primary/25 hover:border-b-primary/25 px-4 py-3 transition-all card-lift",
+        severityTint || "bg-card/40",
         statusBorder,
         className,
       )}
@@ -68,7 +74,7 @@ export const InvestigationRow = memo(function InvestigationRow({
       {/* Line 1: dot + service + severity + (right-aligned) confidence + tokens + duration */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          <div className={`flex-shrink-0 w-1.5 h-1.5 rounded-full ${statusColor}`} />
+          <div className={`flex-shrink-0 w-2 h-2 rounded-full ${statusColor} ${inv.status !== "running" ? "ring-2 ring-current/15" : ""}`} />
           <span className="font-body text-sm font-medium text-foreground/90 group-hover:text-foreground transition-colors truncate">
             {inv.service}
           </span>

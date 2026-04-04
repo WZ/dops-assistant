@@ -62,7 +62,7 @@ const SECTION_TTL: Record<SectionName, number> = {
 const MAX_STALE_AGE = 10 * 60_000;
 
 /** Per-section timeout for MCP calls */
-const SECTION_TIMEOUT_MS = 3_000;
+const SECTION_TIMEOUT_MS = 10_000;
 
 
 const cache = new Map<string, CacheEntry<unknown>>();
@@ -159,6 +159,93 @@ function parseMcpResult(raw: unknown): unknown {
     try { return JSON.parse(raw); } catch { return raw; }
   }
   return raw;
+}
+
+// ── Infrastructure result coercion ───────────────────────────────────────────
+
+/**
+ * Coerce a parsed MCP result into InfrastructureSection.
+ * Handles two formats:
+ *   1. Pre-structured: { workloadType, replicas, containers, recentEvents }
+ *   2. Raw K8s resource (JSON object or YAML string): extract from spec/status
+ */
+function coerceInfrastructureResult(parsed: unknown, kind: string): InfrastructureSection | null {
+  if (!parsed) return null;
+
+  // If it's a string (YAML from K8s MCP), try to extract key fields with regex
+  if (typeof parsed === "string") {
+    return extractInfraFromYaml(parsed, kind);
+  }
+
+  if (typeof parsed !== "object") return null;
+  const data = parsed as Record<string, unknown>;
+
+  // Check if this is a raw K8s resource (has spec/status fields)
+  if (data.spec || data.status || data.kind) {
+    return extractInfraFromK8sObject(data, kind);
+  }
+
+  // Pre-structured format from custom tools
+  return {
+    workloadType: (data.workloadType as string) ?? kind,
+    replicas: (data.replicas as InfrastructureSection["replicas"]) ?? { desired: 0, ready: 0, available: 0 },
+    containers: Array.isArray(data.containers) ? data.containers.map(coerceContainer) : [],
+    recentEvents: (() => { const evts = data.recentEvents ?? data.events; return Array.isArray(evts) ? (evts as unknown[]).map(coerceEvent) : []; })(),
+  };
+}
+
+/** Extract infrastructure info from a raw K8s resource object. */
+function extractInfraFromK8sObject(data: Record<string, unknown>, kind: string): InfrastructureSection {
+  const spec = (data.spec ?? {}) as Record<string, unknown>;
+  const status = (data.status ?? {}) as Record<string, unknown>;
+  const template = (spec.template ?? {}) as Record<string, unknown>;
+  const templateSpec = ((template.spec ?? {}) as Record<string, unknown>);
+  const containers = Array.isArray(templateSpec.containers) ? templateSpec.containers : [];
+
+  return {
+    workloadType: (data.kind as string) ?? kind,
+    replicas: {
+      desired: Number(spec.replicas) || 0,
+      ready: Number(status.readyReplicas) || 0,
+      available: Number(status.availableReplicas) || 0,
+    },
+    containers: containers.map((c: unknown) => {
+      const cObj = (c && typeof c === "object" ? c : {}) as Record<string, unknown>;
+      const resources = (cObj.resources ?? {}) as Record<string, Record<string, string>>;
+      return coerceContainer({
+        name: cObj.name,
+        cpuLimit: resources.limits?.cpu,
+        memLimit: resources.limits?.memory,
+        cpuUsage: resources.requests?.cpu ?? "0",
+        memUsage: resources.requests?.memory ?? "0",
+        restarts: 0,
+      });
+    }),
+    recentEvents: [],
+  };
+}
+
+/** Extract infrastructure info from YAML string (K8s MCP returns YAML). */
+function extractInfraFromYaml(yaml: string, kind: string): InfrastructureSection | null {
+  // Extract key fields with regex — lightweight, no YAML parser dependency
+  const replicas = Number(yaml.match(/^\s*replicas:\s*(\d+)/m)?.[1]) || 0;
+  const readyReplicas = Number(yaml.match(/readyReplicas:\s*(\d+)/)?.[1]) || 0;
+  const availableReplicas = Number(yaml.match(/availableReplicas:\s*(\d+)/)?.[1]) || 0;
+
+  // Extract container names from the template spec
+  const containerNames: string[] = [];
+  const containerRegex = /containers:\s*\n((?:\s+-\s+.*\n?)*)/;
+  const containersBlock = yaml.match(containerRegex)?.[1] ?? "";
+  for (const m of containersBlock.matchAll(/name:\s*(\S+)/g)) {
+    containerNames.push(m[1]);
+  }
+
+  return {
+    workloadType: (yaml.match(/^kind:\s*(\S+)/m)?.[1]) ?? kind,
+    replicas: { desired: replicas, ready: readyReplicas, available: availableReplicas },
+    containers: containerNames.map(name => coerceContainer({ name, restarts: 0 })),
+    recentEvents: [],
+  };
 }
 
 // ── MCP output shape coercers ────────────────────────────────────────────────
@@ -286,9 +373,23 @@ async function fetchChanges(
   return result;
 }
 
+/** Infer K8s workload kind from the service's metric queries. */
+function inferWorkloadKind(serviceName: string, services: ServiceConfig[]): string {
+  const svc = services.find(s => s.name === serviceName);
+  if (!svc?.metrics) return "Deployment";
+  for (const m of svc.metrics) {
+    const q = m.query.toLowerCase();
+    if (q.includes("statefulset")) return "StatefulSet";
+    if (q.includes("daemonset")) return "DaemonSet";
+  }
+  return "Deployment";
+}
+
 async function fetchInfrastructure(
   serviceName: string,
   providers: MastraProvider[],
+  namespace?: string,
+  services?: ServiceConfig[],
 ): Promise<InfrastructureSection | null> {
   // Check cache first
   const cached = getCached<InfrastructureSection>(serviceName, "infrastructure");
@@ -299,26 +400,27 @@ async function fetchInfrastructure(
 
   if (Object.keys(tools).length === 0) return null; // unconfigured
 
-  // Look for pods/workload tool
-  const podTool = findTool(tools, ["pod", "workload", "deployment", "describe", "resource"]);
+  // Look for resource/deployment tool by name (not description) to avoid false matches
+  // Prefer resources_get (can query Deployments), then pods_get
+  const podTool = Object.entries(tools).find(([name]) =>
+    name.includes("resources_get") || name.includes("resource_get"),
+  )?.[1] as ExecutableTool | undefined
+    ?? Object.entries(tools).find(([name]) =>
+      name.includes("pods_get") || name.includes("pod_get"),
+    )?.[1] as ExecutableTool | undefined;
   if (!podTool) return null;
 
-  // TODO: namespace should come from ServiceConfig, not hardcoded
+  const ns = namespace || "default";
+  // Infer workload kind from metric queries (e.g. kube_statefulset_... → StatefulSet)
+  const kind = inferWorkloadKind(serviceName, services ?? []);
   const raw = await withTimeout(
-    podTool.execute({ service: serviceName, namespace: "default" }),
+    podTool.execute({ apiVersion: "apps/v1", kind, name: serviceName, namespace: ns }),
     SECTION_TIMEOUT_MS,
     "fetchInfrastructure",
   );
   const parsed = parseMcpResult(raw);
-  if (parsed && typeof parsed === "object") {
-    // Attempt to coerce into InfrastructureSection shape
-    const data = parsed as Record<string, unknown>;
-    const result: InfrastructureSection = {
-      workloadType: (data.workloadType as string) ?? "Deployment",
-      replicas: (data.replicas as InfrastructureSection["replicas"]) ?? { desired: 0, ready: 0, available: 0 },
-      containers: Array.isArray(data.containers) ? data.containers.map(coerceContainer) : [],
-      recentEvents: (() => { const evts = data.recentEvents ?? data.events; return Array.isArray(evts) ? (evts as unknown[]).map(coerceEvent) : []; })(),
-    };
+  const result = coerceInfrastructureResult(parsed, kind);
+  if (result) {
     setCache(serviceName, "infrastructure", result);
     return result;
   }
@@ -459,6 +561,10 @@ async function doBuildServiceBrief(
 ): Promise<ServiceBrief> {
   const { providers, services, healthPoller, llmModel } = deps;
 
+  // Resolve namespace from service config (discovery stores it in logLabels.namespace)
+  const svcConfig = services.find(s => s.name === serviceName);
+  const namespace = (svcConfig?.logLabels as Record<string, string> | undefined)?.namespace;
+
   const errors: string[] = [];
   const sections: ServiceBrief["sections"] = {
     summary: { status: "unconfigured" },
@@ -515,7 +621,7 @@ async function doBuildServiceBrief(
     );
   }
   if (staleInfra?.status === "stale") {
-    void fetchInfrastructure(serviceName, providers).catch(err =>
+    void fetchInfrastructure(serviceName, providers, namespace, services).catch(err =>
       logger.debug({ err, service: serviceName }, "service-brief: background infrastructure refresh failed"),
     );
   }
@@ -543,7 +649,7 @@ async function doBuildServiceBrief(
   // if fresh, or makes an MCP call if not.
   const [changesResult, infraResult, depsResult] = await Promise.allSettled([
     needChanges ? fetchChanges(serviceName, providers) : Promise.resolve(changesData),
-    needInfra ? fetchInfrastructure(serviceName, providers) : Promise.resolve(infraData),
+    needInfra ? fetchInfrastructure(serviceName, providers, namespace, services) : Promise.resolve(infraData),
     needDeps ? fetchDependencies(serviceName, services, healthPoller) : Promise.resolve(depsData),
   ]);
 

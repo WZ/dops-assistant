@@ -106,10 +106,15 @@ export class StackManager {
     const stackConfig = JSON.parse(row.config) as StackConfig;
     const isDefault = row.id === this.defaultStackId;
 
-    // ProviderRegistry: non-default stacks use /dev/null to prevent file corruption (Fix 3)
-    const providersFilePath = isDefault
-      ? join(process.cwd(), "providers.yaml")
-      : "/dev/null";
+    // ProviderRegistry: per-stack providers.yaml (same pattern as ServiceRegistryStore)
+    let providersFilePath: string;
+    if (isDefault) {
+      providersFilePath = join(process.cwd(), "providers.yaml");
+    } else {
+      const stackDir = join("data", row.slug);
+      mkdirSync(stackDir, { recursive: true });
+      providersFilePath = join(stackDir, "providers.yaml");
+    }
     const providerRegistry = new ProviderRegistry(
       isDefault ? this.config.providers : stackConfig.providers,
       providersFilePath,

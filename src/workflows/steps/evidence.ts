@@ -312,12 +312,19 @@ export function buildInfraStep(config: WorkflowConfig) {
       const resolvedRange = anomalyContext.timeRangeFrom && anomalyContext.timeRangeTo ? { from: anomalyContext.timeRangeFrom, to: anomalyContext.timeRangeTo } : undefined;
       const timeWindowHint = buildTimeWindowHint(anomalyContext.summary, anomalyContext.userMessage, resolvedRange);
 
+      // Resolve namespace from ServiceConfig for K8s resource queries
+      const svcConfig = anomalyContext.serviceName
+        ? workflowConfig.services.find(s => s.name === anomalyContext.serviceName)
+        : undefined;
+      const namespace = (svcConfig?.logLabels as Record<string, string> | undefined)?.namespace;
+
       return [
         wrapUntrusted("datasource_hints", anomalyContext.prefetchContext.datasourceHints),
         timeWindowHint,
         wrapUntrusted("panel_query_hints", anomalyContext.prefetchContext.panelQueryHints),
         `Known issue: ${wrapUntrusted("user_message", anomalyContext.userMessage)}`,
         anomalyContext.serviceName ? `Service: ${wrapUntrusted("service", anomalyContext.serviceName)}` : "",
+        namespace ? `Kubernetes namespace: ${namespace}` : "",
         anomalyContext.skillContext
           ? `${anomalyContext.skillContext}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
           : "",

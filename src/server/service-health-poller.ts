@@ -337,8 +337,10 @@ export class ServiceHealthPoller {
   private async findPrometheusDatasourceUid(
     tools: Record<string, unknown>,
   ): Promise<string | undefined> {
-    // Prefer tools with "datasource" in the name; don't fall back to generic "list" tools
+    // Prefer list_datasources over get_datasource (which requires a UID argument)
     const listDsTool = Object.entries(tools).find(
+      ([name]) => name.includes("list_datasource") || name.includes("list_datasources"),
+    ) ?? Object.entries(tools).find(
       ([name]) => name.includes("datasource"),
     );
     if (!listDsTool) return undefined;
