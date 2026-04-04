@@ -150,6 +150,15 @@ export class ProviderRegistry {
       entry.status = "connected";
       entry.toolCount = toolCount;
       entry.error = undefined;
+
+      // Re-run auto-compute if initial registration failed before defaults were set
+      if (!entry.provider.enabledTools?.length && toolCount > 0) {
+        const allRawTools = await listAllProviderTools(entry.provider);
+        const defaults = computeDefaultEnabledTools(allRawTools, entry.config.name);
+        entry.provider.enabledTools = defaults;
+      }
+      entry.enabledToolCount = entry.provider.enabledTools?.length ?? toolCount;
+
       return { status: "ok", toolCount };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
