@@ -182,10 +182,14 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
       const parsed = safeJsonParse(agentText);
       debug(`${phaseName.toUpperCase()} parsed:`, parsed ? "OK" : "FAILED");
 
-      // 6b. If agent produced text but it's not JSON, run extractor on the text
-      // The model may have produced a natural language analysis instead of JSON.
-      // Re-prompt with the agent's own analysis to get structured output.
-      if (!parsed && agentText?.trim() && agentText.length > 50) {
+      // 6b. If agent text has no useful structured data, run extractor.
+      // This covers two cases:
+      //   a) safeJsonParse returned null (text isn't JSON at all)
+      //   b) safeJsonParse matched a {…} span but observations is empty — common
+      //      when the agent mixes natural language with JSON fragments and
+      //      safeJsonParse grabs a wide span that parses but lacks real content
+      const parsedIsEmpty = parsed && (!parsed.observations || parsed.observations.length === 0);
+      if ((!parsed || parsedIsEmpty) && agentText?.trim() && agentText.length > 50) {
         debug(`${phaseName.toUpperCase()}: non-JSON text (${agentText.length} chars), re-extracting`);
         const { Agent: ExtractAgent } = await import("@mastra/core/agent");
         const extractor = new ExtractAgent({

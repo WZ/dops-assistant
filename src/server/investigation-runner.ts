@@ -247,9 +247,11 @@ export class InvestigationRunner {
       // 5.5 Confidence gate — force low score when rootCause is vague or evidence is missing
       const vagueRootCause = /unable to determine|under investigation/i.test(report.rootCause ?? "");
       const totalEvidence = (report.evidence?.metrics?.length ?? 0) + (report.evidence?.logs?.length ?? 0) + (report.evidence?.infra?.length ?? 0);
-      if (totalEvidence === 0) {
+      // Also check if the report summary contains real analysis (not just "Investigation complete")
+      const hasMeaningfulSummary = report.summary && report.summary.length > 30 && !/^investigation complete$/i.test(report.summary.trim());
+      if (totalEvidence === 0 && !hasMeaningfulSummary) {
         report.confidenceScore = Math.min(report.confidenceScore ?? 1, 0.2);
-        logger.info({ invId, service: service.name }, "Confidence gate: no evidence, forcing score to 0.2");
+        logger.info({ invId, service: service.name }, "Confidence gate: no evidence and no meaningful summary, forcing score to 0.2");
       } else if (vagueRootCause) {
         report.confidenceScore = Math.min(report.confidenceScore ?? 1, 0.3);
         logger.info({ invId, service: service.name }, "Confidence gate: vague rootCause, forcing score to 0.3");
