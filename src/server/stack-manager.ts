@@ -148,6 +148,8 @@ export class StackManager {
     }
 
     // ServiceHealthPoller: per-stack with staggered start offset (0-30s)
+    // Prometheus datasource UID is resolved lazily from the provider registry
+    // (may not be available at init if remote MCP timed out, resolves on first successful test/poll)
     const healthPoller = new ServiceHealthPoller({
       providers: () => providerRegistry.getProviders(),
       registryStore: serviceRegistry,
@@ -157,6 +159,9 @@ export class StackManager {
         this.onHealthTransition?.(row.id, service, from, to);
       },
       getHiddenServices: () => this.db.getHiddenServices(row.id),
+      getPrometheusDatasourceUid: () => providerRegistry.getAll().find(
+        p => p.config.roles.includes("metrics") && p.prometheusDatasourceUid,
+      )?.prometheusDatasourceUid,
     });
 
     const ctx: StackContext = {
