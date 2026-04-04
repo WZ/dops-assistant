@@ -141,7 +141,7 @@ export function ProvidersPage({ onRunDiscovery }: ProvidersPageProps) {
     <div className="h-full overflow-y-auto relative z-[2]">
       {/* Title */}
       <div className="mb-6 animate-fade-up">
-        <h1 className="font-display text-xl font-bold tracking-tight text-foreground/90">Providers</h1>
+        <h1 className="font-display text-2xl font-extrabold tracking-tight text-foreground/90">Providers</h1>
         <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">
           {providers.length} MCP provider{providers.length !== 1 ? "s" : ""} configured
         </p>

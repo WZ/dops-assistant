@@ -82,7 +82,7 @@ function makeChangesTools(): Record<string, { execute: ReturnType<typeof vi.fn> 
 
 function makeInfraTools(): Record<string, { execute: ReturnType<typeof vi.fn> }> {
   return {
-    k8s_describe_pod: makeTool({
+    k8s_resources_get: makeTool({
       content: [{ type: "text", text: JSON.stringify({
         workloadType: "Deployment",
         replicas: { desired: 3, ready: 3, available: 3 },

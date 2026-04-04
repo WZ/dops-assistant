@@ -93,11 +93,13 @@ export function RcaReport({ report }: { report: RcaReportData }) {
     "border-primary/20 glow-teal";
 
   return (
-    <div className={`rounded-xl border ${severityGlow} bg-card/50 overflow-hidden animate-fade-up`}>
+    <div className={`rounded-xl border ${severityGlow} bg-card/50 overflow-hidden animate-fade-up noise relative`}>
+      {/* Severity stripe */}
+      <div className={`h-[3px] ${report.severity === "critical" ? "bg-destructive" : report.severity === "high" ? "bg-accent" : "bg-primary/60"}`} />
       {/* Header */}
       <div className="px-5 py-4 border-b border-border/30">
         <div className="flex items-center justify-between">
-          <h3 className="font-display text-base font-bold tracking-tight text-foreground">
+          <h3 className="font-display text-lg font-extrabold tracking-tight text-foreground">
             Root Cause Analysis
           </h3>
           <div className="flex gap-1.5 items-center">

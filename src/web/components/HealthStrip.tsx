@@ -25,8 +25,8 @@ const DOT_COLORS: Record<HealthStatus, string> = {
 
 const CHIP_TINTS: Record<HealthStatus, string> = {
   healthy: "bg-success/6 hover:bg-success/12 border border-success/10",
-  degraded: "bg-warning/8 hover:bg-warning/15 border border-warning/12",
-  down: "bg-destructive/8 hover:bg-destructive/15 border border-destructive/12",
+  degraded: "bg-warning/10 hover:bg-warning/18 border border-warning/20 glow-warning",
+  down: "bg-destructive/10 hover:bg-destructive/18 border border-destructive/20 glow-red",
   unknown: "bg-secondary/50 hover:bg-secondary border border-transparent",
 };
 
@@ -47,7 +47,7 @@ export function HealthStrip({ services, onClickService, onViewAll }: HealthStrip
           className={`flex items-center gap-[5px] px-2.5 py-1 rounded-md transition-colors animate-fade-up ${CHIP_TINTS[svc.health] ?? CHIP_TINTS.unknown}`}
           style={{ animationDelay: `${Math.min(i * 0.04, 0.32)}s` }}
         >
-          <span className={`w-[5px] h-[5px] rounded-full ${DOT_COLORS[svc.health]}`} />
+          <span className={`rounded-full ${DOT_COLORS[svc.health]} ${svc.health === "down" || svc.health === "degraded" ? "w-[7px] h-[7px] ring-2 ring-current/20" : "w-[5px] h-[5px]"}`} />
           <span className="font-mono text-[10px] font-medium text-foreground/90">{svc.name}</span>
         </button>
       ))}

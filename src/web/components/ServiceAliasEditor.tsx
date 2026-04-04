@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { safeGetItem } from "../lib/utils";
 import { Check, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useStackContext } from "../contexts/StackContext";
 
 // ---------------------------------------------------------------------------
 // AliasEditor
@@ -22,6 +23,7 @@ export function AliasEditor({
   open,
   onOpenChange,
 }: AliasEditorProps) {
+  const { stackFetch } = useStackContext();
   const [value, setValue] = useState(currentAlias ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +53,7 @@ export function AliasEditor({
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       const apiKey = safeGetItem("dops-api-key");
       if (apiKey) headers["X-API-Key"] = apiKey;
-      const res = await fetch(
+      const res = await stackFetch(
         `/api/services/${encodeURIComponent(serviceName)}/alias`,
         {
           method: "PUT",
@@ -147,6 +149,7 @@ export function TagEditor({
   open,
   onOpenChange,
 }: TagEditorProps) {
+  const { stackFetch } = useStackContext();
   const [tags, setTags] = useState<string[]>([]);
   const [input, setInput] = useState("");
   const [saving, setSaving] = useState(false);
@@ -178,7 +181,7 @@ export function TagEditor({
         const tagHeaders: Record<string, string> = { "Content-Type": "application/json" };
         const tagApiKey = safeGetItem("dops-api-key");
         if (tagApiKey) tagHeaders["X-API-Key"] = tagApiKey;
-        const res = await fetch(
+        const res = await stackFetch(
           `/api/services/${encodeURIComponent(serviceName)}/tags`,
           {
             method: "PUT",
