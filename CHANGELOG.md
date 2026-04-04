@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.5.0] - 2026-04-04
+
+### Fixed
+- Non-default stack providers now persist to `data/{slug}/providers.yaml` instead of being lost on server restart.
+- Provider `enabledToolCount` updates correctly after reconnecting a previously-failed MCP connection.
+- Health poller and Metrics tab now prefer `list_datasources` over `get_datasource` for Prometheus datasource UID lookup, fixing "Prometheus connection unavailable" on stacks with non-standard UIDs.
+- Service brief infrastructure section parses YAML responses from K8s MCP `resources_get`, resolves namespace from `logLabels`, and infers workload kind from metric queries.
+- Service detail pages (AI Brief, alias editor, tag editor) now send the `X-Stack-Id` header, fixing empty data on non-default stacks.
+- Investigation infrastructure agent queries the Deployment/StatefulSet resource directly when replicas are 0, providing "scaled to zero" evidence for root cause analysis.
+- Section timeout for MCP calls increased from 3s to 10s to accommodate remote MCP servers.
+
+### Changed
+- UI polish across settings page, health strip, dashboard components.
+
 ## [0.0.4.0] - 2026-04-03
 
 ### Changed
