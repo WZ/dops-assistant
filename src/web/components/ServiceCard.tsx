@@ -1,20 +1,49 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { timeAgo } from "@/lib/dashboard-utils";
 import { useStackContext } from "../contexts/StackContext";
+
+const BUCKET_COUNT = 48; // 24h ÷ 48 = 30-minute buckets
+const SEVERITY: Record<string, number> = { down: 3, degraded: 2, unknown: 1, healthy: 0 };
+
+/** Normalize variable-length health data into fixed-width buckets.
+ *  Each bucket uses the worst status observed in that time window. */
+function bucketize(data: Array<{ status: string }>, count: number): Array<{ status: string }> {
+  if (data.length <= count) {
+    // Pad short data to fixed width with empty buckets
+    const padded = [...data];
+    while (padded.length < count) padded.unshift({ status: "empty" });
+    return padded;
+  }
+  const bucketSize = data.length / count;
+  const buckets: Array<{ status: string }> = [];
+  for (let i = 0; i < count; i++) {
+    const start = Math.floor(i * bucketSize);
+    const end = Math.floor((i + 1) * bucketSize);
+    let worst = "healthy";
+    for (let j = start; j < end; j++) {
+      if ((SEVERITY[data[j].status] ?? 0) > (SEVERITY[worst] ?? 0)) {
+        worst = data[j].status;
+      }
+    }
+    buckets.push({ status: worst });
+  }
+  return buckets;
+}
 
 function DotTimeline({ data }: { data: Array<{ status: string }> }) {
   if (data.length < 3) return <span className="text-[9px] font-mono text-muted-foreground/40">&mdash;</span>;
 
+  const buckets = useMemo(() => bucketize(data, BUCKET_COUNT), [data]);
   const healthyCount = data.filter(d => d.status === "healthy").length;
   const downCount = data.filter(d => d.status === "down").length;
 
   return (
     <div
-      className="flex gap-[1.5px] overflow-hidden"
+      className="flex gap-[1.5px]"
       role="img"
       aria-label={`Health: ${healthyCount} of ${data.length} checks healthy${downCount > 0 ? `, ${downCount} down` : ""}`}
     >
-      {data.map((d, i) => (
+      {buckets.map((d, i) => (
         <div
           key={i}
           className="rounded-[1px]"
@@ -23,12 +52,17 @@ function DotTimeline({ data }: { data: Array<{ status: string }> }) {
             minWidth: 2,
             maxWidth: 6,
             height: 8,
-            background: d.status === "healthy"
+            background: d.status === "empty"
+              ? "var(--color-muted-foreground)"
+              : d.status === "healthy"
               ? "var(--color-success)"
               : d.status === "down"
               ? "var(--color-destructive)"
               : "var(--color-muted-foreground)",
-            opacity: d.status === "down" ? 1 : d.status === "healthy" ? 0.75 : 0.35,
+            opacity: d.status === "empty" ? 0.1
+              : d.status === "down" ? 1
+              : d.status === "healthy" ? 0.75
+              : 0.35,
           }}
         />
       ))}

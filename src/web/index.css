@@ -31,12 +31,12 @@
     --warning-foreground: 30 40% 12%;
     --info: 210 58% 46%;
     --info-foreground: 0 0% 100%;
-    --glow-teal: 0 0 10px hsl(166 80% 27% / 0.12);
-    --glow-coral: 0 0 10px hsl(10 55% 50% / 0.12);
-    --glow-green: 0 0 10px hsl(152 72% 34% / 0.15);
-    --glow-red: 0 0 10px hsl(0 72% 46% / 0.15);
-    --glow-warning: 0 0 10px hsl(42 73% 42% / 0.12);
-    --glow-info: 0 0 10px hsl(210 58% 46% / 0.10);
+    --glow-teal: 0 0 18px hsl(166 80% 27% / 0.18);
+    --glow-coral: 0 0 18px hsl(10 55% 50% / 0.16);
+    --glow-green: 0 0 18px hsl(152 72% 34% / 0.2);
+    --glow-red: 0 0 18px hsl(0 72% 46% / 0.2);
+    --glow-warning: 0 0 16px hsl(42 73% 42% / 0.16);
+    --glow-info: 0 0 16px hsl(210 58% 46% / 0.14);
   }
 
   .dark {
@@ -67,12 +67,12 @@
     --warning-foreground: 0 0% 98%;
     --info: 215 62% 56%;
     --info-foreground: 0 0% 98%;
-    --glow-teal: 0 0 14px hsl(160 67% 50% / 0.25);
-    --glow-coral: 0 0 14px hsl(14 65% 60% / 0.22);
-    --glow-green: 0 0 14px hsl(152 70% 55% / 0.25);
-    --glow-red: 0 0 12px hsl(0 90% 68% / 0.28);
-    --glow-warning: 0 0 14px hsl(42 73% 49% / 0.25);
-    --glow-info: 0 0 14px hsl(215 62% 56% / 0.25);
+    --glow-teal: 0 0 22px hsl(160 67% 50% / 0.3);
+    --glow-coral: 0 0 22px hsl(14 65% 60% / 0.28);
+    --glow-green: 0 0 22px hsl(152 70% 55% / 0.3);
+    --glow-red: 0 0 20px hsl(0 90% 68% / 0.32);
+    --glow-warning: 0 0 22px hsl(42 73% 49% / 0.3);
+    --glow-info: 0 0 22px hsl(215 62% 56% / 0.3);
   }
 }
 
@@ -280,8 +280,8 @@ input:focus, textarea:focus {
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 .card-lift:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px hsl(var(--foreground) / 0.06);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px hsl(var(--foreground) / 0.08);
 }
 
 /* ── Shimmer skeleton loading ── */

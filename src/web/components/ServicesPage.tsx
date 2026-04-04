@@ -418,7 +418,7 @@ export function ServicesPage({
 
       {/* Page title */}
       <div className="mb-6 animate-fade-up">
-        <h1 className="font-display text-xl font-bold tracking-tight text-foreground/90">Services</h1>
+        <h1 className="font-display text-2xl font-extrabold tracking-tight text-foreground/90">Services</h1>
         <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide flex items-center gap-2 flex-wrap">
           {stackName && <><span className="text-primary/60 uppercase">{stackName}</span><span className="text-muted-foreground/40">&middot;</span></>}
           <span>{visibleServiceCount} services</span>
