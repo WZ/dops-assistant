@@ -140,6 +140,8 @@ export function buildSynthesisStep(config: WorkflowConfig) {
       let confidence: "low" | "medium" | "high" = "low";
       let confidenceScore = 0.5;
 
+      const extractorInstructions = 'You are a root cause analysis summarizer. Given investigation evidence, produce a JSON summary. Return ONLY valid JSON: {"severity": "low"|"medium"|"high"|"critical", "summary": "string", "impact": {"duration": "string", "description": "string"}, "rootCause": "string", "trigger": "string", "contributingFactors": ["string"], "timeline": [{"time": "string", "event": "string"}], "evidence": {"metrics": ["string"], "logs": ["string"], "infra": ["string"]}, "dashboardLinks": ["string"], "recommendedActions": ["string"], "confidence": "low"|"medium"|"high", "confidenceScore": number}';
+
       let synthesisText = agentResult.text;
       if (!synthesisText?.trim()) {
         // Synthesis agent has no tools so agentResult.text should normally be populated.
@@ -149,7 +151,7 @@ export function buildSynthesisStep(config: WorkflowConfig) {
         const extractor = new ExtractAgent({
           name: "synthesis-extractor",
           id: "synthesis-extractor",
-          instructions: 'You are a root cause analysis summarizer. Given investigation evidence, produce a JSON summary. Return ONLY valid JSON: {"severity": "low"|"medium"|"high"|"critical", "summary": "string", "impact": {"duration": "string", "description": "string"}, "rootCause": "string", "trigger": "string", "contributingFactors": ["string"], "timeline": [{"time": "string", "event": "string"}], "evidence": {"metrics": ["string"], "logs": ["string"], "infra": ["string"]}, "dashboardLinks": ["string"], "recommendedActions": ["string"], "confidence": "low"|"medium"|"high", "confidenceScore": number}',
+          instructions: extractorInstructions,
           model: config.model as any,
         });
         try {
@@ -157,7 +159,34 @@ export function buildSynthesisStep(config: WorkflowConfig) {
           synthesisText = extraction.text ?? "";
         } catch { /* keep empty */ }
       }
-      const synthesisParsed = safeJsonParse(synthesisText);
+      let synthesisParsed = safeJsonParse(synthesisText);
+
+      // safeJsonParse can extract a partial JSON span (e.g. gets severity but
+      // misses rootCause). If the result has a vague/default rootCause but the
+      // synthesis text is substantial, re-extract to get a complete result.
+      const isIncomplete = synthesisParsed && (
+        !synthesisParsed.rootCause ||
+        /^unable to determine$/i.test(synthesisParsed.rootCause?.trim?.() ?? "")
+      );
+      if (isIncomplete && synthesisText && synthesisText.length > 200) {
+        debug("SYNTHESIS: parsed but rootCause missing/vague, re-extracting from", synthesisText.length, "chars");
+        const { Agent: ExtractAgent } = await import("@mastra/core/agent");
+        const extractor = new ExtractAgent({
+          name: "synthesis-extractor",
+          id: "synthesis-extractor",
+          instructions: extractorInstructions,
+          model: config.model as any,
+        });
+        try {
+          const extraction = await extractor.generate(synthesisText.slice(0, 12000));
+          const reParsed = safeJsonParse(extraction.text ?? "");
+          if (reParsed?.rootCause && !/^unable to determine$/i.test(reParsed.rootCause.trim())) {
+            debug("SYNTHESIS: re-extraction produced rootCause:", reParsed.rootCause.slice(0, 100));
+            synthesisParsed = reParsed;
+          }
+        } catch { /* keep original */ }
+      }
+
       if (synthesisParsed) {
         severity = synthesisParsed.severity ?? severity;
         summary = synthesisParsed.summary ?? summary;
