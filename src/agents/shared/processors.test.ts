@@ -55,4 +55,28 @@ describe("safeJsonParse", () => {
     const valid = '{"key":"value"}';
     expect(safeJsonParse(valid)).toEqual({ key: "value" });
   });
+
+  it("extracts the LAST JSON object from mixed natural language + JSON text", () => {
+    // Simulates the common case: agent writes analysis with embedded JSON snippets,
+    // then ends with the structured output JSON as instructed.
+    const text = [
+      'I analyzed the infrastructure. The pod had {"status": "Running"} which is normal.',
+      'Events showed {"reason": "Killing", "count": 1} for the deployment.',
+      'Based on my analysis, here is the structured result:',
+      '{"summary": "Pod was killed and recreated", "observations": [{"resource": "pod", "status": "Killing", "detail": "Deployment recreated at 08:22"}]}',
+    ].join("\n");
+    const result = safeJsonParse(text);
+    expect(result).not.toBeNull();
+    expect(result.summary).toBe("Pod was killed and recreated");
+    expect(result.observations).toHaveLength(1);
+    expect(result.observations[0].resource).toBe("pod");
+  });
+
+  it("returns null for text with only small inline JSON snippets and no structured output", () => {
+    // Braces exist but no substantial JSON object
+    const text = 'The config uses {"a": 1} settings.';
+    // This should still parse the small object (it is valid JSON)
+    const result = safeJsonParse(text);
+    expect(result).toEqual({ a: 1 });
+  });
 });
