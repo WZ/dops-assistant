@@ -11,12 +11,19 @@ interface SkillMeta {
   services: string[];
   alerts: string[];
   tags: string[];
+  scope?: string[];
   enabled?: boolean;
 }
 
 interface SkillFull extends SkillMeta {
   body: string;
 }
+
+const SCOPE_COLORS: Record<string, string> = {
+  investigation: "bg-blue-500/15 text-blue-400 border-blue-500/20",
+  discovery: "bg-amber-500/15 text-amber-400 border-amber-500/20",
+  chat: "bg-emerald-500/15 text-emerald-400 border-emerald-500/20",
+};
 
 const TEMPLATES: Record<string, { title: string; body: string }> = {
   health: {
@@ -220,6 +227,15 @@ export function SkillsPage() {
                         <h3 className={`text-sm font-display font-semibold transition-colors ${enabled ? "text-foreground/80 hover:text-foreground" : "text-foreground/40"}`}>
                           {skill.title}
                         </h3>
+                        {skill.scope && skill.scope.length > 0 && (
+                          <div className="flex gap-1 mt-0.5">
+                            {skill.scope.map((s) => (
+                              <span key={s} className={`px-1.5 py-0.5 text-[9px] font-mono rounded border ${SCOPE_COLORS[s] ?? "bg-secondary/50 text-muted-foreground/60"}`}>
+                                {s}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </button>
                       <Switch
                         checked={enabled}
