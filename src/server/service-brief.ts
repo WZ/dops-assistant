@@ -300,6 +300,7 @@ function extractInfraFromYaml(yaml: string, kind: string): InfrastructureSection
     let inResources = false;
     let inLimits = false;
     let inRequests = false;
+    let resourcesIndent = 0;
     for (const line of lines) {
       // Track which container we're in
       if (containerNames.includes(line.match(/^\s*name:\s*(\S+)/)?.[1] ?? "")) {
@@ -308,17 +309,29 @@ function extractInfraFromYaml(yaml: string, kind: string): InfrastructureSection
           containerResources.set(currentContainer, {});
         }
       }
-      if (/^\s*resources:\s*$/.test(line)) { inResources = true; inLimits = false; inRequests = false; continue; }
-      if (inResources && /^\s*limits:\s*$/.test(line)) { inLimits = true; inRequests = false; continue; }
-      if (inResources && /^\s*requests:\s*$/.test(line)) { inRequests = true; inLimits = false; continue; }
-      if (inResources && /^\s*\S+:/.test(line) && !/^\s*(cpu|memory|limits|requests):/.test(line)) {
-        inResources = false; inLimits = false; inRequests = false;
+      // Track resources: > limits:/requests: > cpu:/memory: state machine
+      // Use indentation to know when we've left the resources block
+      if (/^\s*resources:\s*$/.test(line)) {
+        inResources = true; inLimits = false; inRequests = false;
+        resourcesIndent = (line.match(/^(\s*)/)?.[1].length ?? 0);
+        continue;
+      }
+      if (inResources) {
+        const thisIndent = line.match(/^(\s*)/)?.[1].length ?? 0;
+        // Left the resources block if indent is at or before resources level
+        if (/\S/.test(line) && thisIndent <= resourcesIndent) {
+          inResources = false; inLimits = false; inRequests = false;
+          // Don't continue — this line might be a container-level key
+        } else {
+          if (/^\s*limits:\s*$/.test(line)) { inLimits = true; inRequests = false; continue; }
+          if (/^\s*requests:\s*$/.test(line)) { inRequests = true; inLimits = false; continue; }
+        }
       }
       if (currentContainer && inResources) {
         const res = containerResources.get(currentContainer);
         if (!res) continue;
-        const cpuMatch = line.match(/^\s*cpu:\s*["']?(\S+?)["']?\s*$/);
-        const memMatch = line.match(/^\s*memory:\s*["']?(\S+?)["']?\s*$/);
+        const cpuMatch = line.match(/^\s*cpu:\s*["']?([^"'\s]+)["']?\s*$/);
+        const memMatch = line.match(/^\s*memory:\s*["']?([^"'\s]+)["']?\s*$/);
         if (cpuMatch && inLimits) res.cpuLimit = cpuMatch[1];
         if (memMatch && inLimits) res.memLimit = memMatch[1];
         if (cpuMatch && inRequests) res.cpuRequest = cpuMatch[1];
