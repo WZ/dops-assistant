@@ -284,6 +284,7 @@ export class MastraInvestigationAdapter {
     skillContext?: string,
     template?: InvestigationTemplate,
     readOnlyTools?: boolean,
+    skills?: import("../skills/store.js").Skill[],
   ): Promise<RcaReport> {
     const workflowConfig: WorkflowConfig = {
       ...this.workflowConfig,
@@ -296,6 +297,8 @@ export class MastraInvestigationAdapter {
       onTokenUsage,
       // Security: headless investigations are locked to read-only tools
       readOnlyTools,
+      // Pre-filtered investigation-scoped skills
+      skills,
     };
 
     const workflow = createInvestigationWorkflow(workflowConfig, template);
@@ -380,6 +383,7 @@ export class MastraDiscoverAdapter implements IDiscoverAgent {
     onIteration?: OnIteration,
     onToolCall?: OnToolCallEnriched,
     onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void,
+    skills?: import("../skills/store.js").Skill[],
   ): Promise<ValidatedServiceConfig[]> {
     return runDiscovery({
       model: this.deps.model,
@@ -389,6 +393,7 @@ export class MastraDiscoverAdapter implements IDiscoverAgent {
       onIteration,
       onToolCall,
       onTokenUsage,
+      skills,
     });
   }
 

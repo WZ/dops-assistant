@@ -25,12 +25,24 @@ import {
   debug,
 } from "../tool-utils.js";
 import { PlanningOutputSchema, EvidenceOutputSchema } from "../schemas.js";
+import type { Skill } from "../../skills/store.js";
 import { safeJsonParse } from "../../agents/shared/processors.js";
 import { createMetricsAgent } from "../../agents/metrics.js";
 import { createLogsAgent } from "../../agents/logs.js";
 import { createInfraAgent } from "../../agents/infra.js";
 import { createChangesAgent } from "../../agents/changes.js";
 import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
+
+/** Format skills for injection into evidence step prompts.
+ *  Uses workflowConfig.skills if available, falls back to anomalyContext.skillContext string. */
+function getSkillPrompt(workflowConfig: WorkflowConfig, anomalySkillContext?: string): string {
+  const skills = workflowConfig.skills;
+  if (skills && skills.length > 0) {
+    const sections = skills.map((s: Skill) => `### Skill: ${s.title}\n${s.body.length > 2000 ? s.body.slice(0, 2000) + "\n...[truncated]" : s.body}`);
+    return `## Team Knowledge (Skills)\nThe following runbooks were found for this service. Use them to inform your investigation:\n\n${sections.join("\n\n")}`;
+  }
+  return anomalySkillContext ?? "";
+}
 
 // ── EvidenceStepConfig ────────────────────────────────────────────────────────
 
@@ -266,8 +278,8 @@ export function buildMetricsStep(config: WorkflowConfig) {
         metricsHint,
         `Known issue: ${wrapUntrusted("user_message", anomalyContext.userMessage)}`,
         anomalyContext.serviceName ? `Service: ${wrapUntrusted("service", anomalyContext.serviceName)}` : "",
-        anomalyContext.skillContext
-          ? `${anomalyContext.skillContext}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
+        getSkillPrompt(workflowConfig, anomalyContext.skillContext)
+          ? `${getSkillPrompt(workflowConfig, anomalyContext.skillContext)}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
           : "",
         inputData.metricFocus?.length
           ? `Focus areas: ${inputData.metricFocus.join(", ")}`
@@ -322,8 +334,8 @@ export function buildLogsStep(config: WorkflowConfig) {
         keywordsHint,
         `Known issue: ${wrapUntrusted("user_message", anomalyContext.userMessage)}`,
         anomalyContext.serviceName ? `Service: ${wrapUntrusted("service", anomalyContext.serviceName)}` : "",
-        anomalyContext.skillContext
-          ? `${anomalyContext.skillContext}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
+        getSkillPrompt(workflowConfig, anomalyContext.skillContext)
+          ? `${getSkillPrompt(workflowConfig, anomalyContext.skillContext)}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
           : "",
         inputData.logFocus?.length
           ? `Focus areas from investigation plan:\n  ${inputData.logFocus.join("\n  ")}`
@@ -364,8 +376,8 @@ export function buildInfraStep(config: WorkflowConfig) {
         `Known issue: ${wrapUntrusted("user_message", anomalyContext.userMessage)}`,
         anomalyContext.serviceName ? `Service: ${wrapUntrusted("service", anomalyContext.serviceName)}` : "",
         namespace ? `Kubernetes namespace: ${namespace}` : "",
-        anomalyContext.skillContext
-          ? `${anomalyContext.skillContext}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
+        getSkillPrompt(workflowConfig, anomalyContext.skillContext)
+          ? `${getSkillPrompt(workflowConfig, anomalyContext.skillContext)}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
           : "",
         inputData.infraFocus?.length
           ? `Focus areas: ${inputData.infraFocus.join(", ")}`
@@ -400,8 +412,8 @@ export function buildChangesStep(config: WorkflowConfig) {
         anomalyContext.serviceName ? `Service: ${wrapUntrusted("service", anomalyContext.serviceName)}` : "",
         "Search for recent deployments, merge requests, and pipeline runs related to this service.",
         "Focus on changes that happened within 6 hours before the incident started.",
-        anomalyContext.skillContext
-          ? `${anomalyContext.skillContext}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
+        getSkillPrompt(workflowConfig, anomalyContext.skillContext)
+          ? `${getSkillPrompt(workflowConfig, anomalyContext.skillContext)}\nFollow the investigation steps from matched skills when they're relevant to your current evidence-gathering focus.`
           : "",
       ].filter(Boolean).join("\n");
     },
