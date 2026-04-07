@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { SkillStore } from "./store.js";
+import { SkillStore, filterSkillsByScope, DEFAULT_SCOPE } from "./store.js";
+import type { Skill, SkillScope } from "./store.js";
 import { mkdir, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -242,6 +243,7 @@ Some body content`,
         services: [],
         alerts: [],
         tags: [],
+        scope: ["investigation"],
         filePath: "/fake",
         body: longBody,
       }]);
@@ -250,6 +252,179 @@ Some body content`,
 
     it("returns empty string for no skills", () => {
       expect(store.formatForPrompt([])).toBe("");
+    });
+  });
+
+  describe("scope", () => {
+    it("materializes default scope when frontmatter has no scope", async () => {
+      await writeFile(
+        join(dir, "no-scope.md"),
+        `---
+title: No Scope Skill
+services: []
+alerts: []
+tags: [test]
+---
+Body`,
+      );
+      await store.loadAll();
+      const skill = store.getById("no-scope");
+      expect(skill).toBeDefined();
+      expect(skill!.scope).toEqual(DEFAULT_SCOPE);
+    });
+
+    it("parses explicit scope from frontmatter", async () => {
+      await writeFile(
+        join(dir, "discovery-skill.md"),
+        `---
+title: Discovery Skill
+services: []
+alerts: []
+tags: [bare-metal]
+scope: [discovery]
+---
+Discovery body`,
+      );
+      await store.loadAll();
+      const skill = store.getById("discovery-skill");
+      expect(skill!.scope).toEqual(["discovery"]);
+    });
+
+    it("parses multi-scope from frontmatter", async () => {
+      await writeFile(
+        join(dir, "multi-scope.md"),
+        `---
+title: Multi Scope
+services: []
+alerts: []
+tags: []
+scope: [chat, discovery]
+---
+Body`,
+      );
+      await store.loadAll();
+      const skill = store.getById("multi-scope");
+      expect(skill!.scope).toEqual(["chat", "discovery"]);
+    });
+
+    it("falls back to default on invalid scope values", async () => {
+      await writeFile(
+        join(dir, "bad-scope.md"),
+        `---
+title: Bad Scope
+services: []
+alerts: []
+tags: []
+scope: [nonexistent, bogus]
+---
+Body`,
+      );
+      await store.loadAll();
+      const skill = store.getById("bad-scope");
+      expect(skill!.scope).toEqual(DEFAULT_SCOPE);
+    });
+
+    it("filterSkillsByScope returns correct subset", () => {
+      const skills: Skill[] = [
+        { id: "a", title: "A", services: [], alerts: [], tags: [], scope: ["investigation"], filePath: "", body: "" },
+        { id: "b", title: "B", services: [], alerts: [], tags: [], scope: ["discovery"], filePath: "", body: "" },
+        { id: "c", title: "C", services: [], alerts: [], tags: [], scope: ["chat", "investigation"], filePath: "", body: "" },
+      ];
+      expect(filterSkillsByScope(skills, "investigation")).toHaveLength(2);
+      expect(filterSkillsByScope(skills, "discovery")).toHaveLength(1);
+      expect(filterSkillsByScope(skills, "chat")).toHaveLength(1);
+    });
+
+    it("getAllForScope returns matching skills sorted by title", async () => {
+      await writeFile(join(dir, "z-skill.md"), `---\ntitle: Zebra Skill\nservices: []\nalerts: []\ntags: []\nscope: [discovery]\n---\nBody`);
+      await writeFile(join(dir, "a-skill.md"), `---\ntitle: Alpha Skill\nservices: []\nalerts: []\ntags: []\nscope: [discovery]\n---\nBody`);
+      await writeFile(join(dir, "inv-skill.md"), `---\ntitle: Investigation Only\nservices: []\nalerts: []\ntags: []\nscope: [investigation]\n---\nBody`);
+      await store.loadAll();
+
+      const discovery = store.getAllForScope("discovery");
+      expect(discovery).toHaveLength(2);
+      expect(discovery[0]!.title).toBe("Alpha Skill");
+      expect(discovery[1]!.title).toBe("Zebra Skill");
+
+      const inv = store.getAllForScope("investigation");
+      expect(inv).toHaveLength(1);
+      expect(inv[0]!.title).toBe("Investigation Only");
+    });
+
+    it("getAllForScope respects maxPerQuery cap", async () => {
+      const smallStore = new SkillStore({ dir, maxPerQuery: 1, maxCharsPerSkill: 2000 });
+      await writeFile(join(dir, "d1.md"), `---\ntitle: D1\nservices: []\nalerts: []\ntags: []\nscope: [discovery]\n---\nBody`);
+      await writeFile(join(dir, "d2.md"), `---\ntitle: D2\nservices: []\nalerts: []\ntags: []\nscope: [discovery]\n---\nBody`);
+      await smallStore.loadAll();
+      expect(smallStore.getAllForScope("discovery")).toHaveLength(1);
+    });
+
+    it("search with scope filters before relevance cap", async () => {
+      // Create 4 skills: 3 investigation, 1 chat. All match service "api-gateway"
+      for (let i = 0; i < 3; i++) {
+        await writeFile(join(dir, `inv-${i}.md`), `---\ntitle: Inv ${i}\nservices: [api-gateway]\nalerts: []\ntags: []\nscope: [investigation]\n---\nBody`);
+      }
+      await writeFile(join(dir, "chat-skill.md"), `---\ntitle: Chat Skill\nservices: [api-gateway]\nalerts: []\ntags: []\nscope: [chat]\n---\nChat body`);
+      await store.loadAll();
+
+      // Without scope filter, maxPerQuery=3 might cap before chat skill
+      const chatResults = store.search({ service: "api-gateway", scope: "chat" });
+      expect(chatResults).toHaveLength(1);
+      expect(chatResults[0]!.id).toBe("chat-skill");
+    });
+
+    it("save persists scope in frontmatter", async () => {
+      await store.save("scoped", {
+        title: "Scoped Skill",
+        services: [],
+        alerts: [],
+        tags: [],
+        scope: ["chat", "discovery"],
+      }, "Body");
+
+      // Reload from disk
+      const fresh = new SkillStore({ dir, maxPerQuery: 3, maxCharsPerSkill: 2000 });
+      await fresh.loadAll();
+      const skill = fresh.getById("scoped");
+      expect(skill!.scope).toEqual(["chat", "discovery"]);
+    });
+
+    it("save defaults scope to investigation when not provided", async () => {
+      await store.save("no-scope-save", {
+        title: "No Scope Save",
+        services: [],
+        alerts: [],
+        tags: [],
+      }, "Body");
+
+      const fresh = new SkillStore({ dir, maxPerQuery: 3, maxCharsPerSkill: 2000 });
+      await fresh.loadAll();
+      const skill = fresh.getById("no-scope-save");
+      expect(skill!.scope).toEqual(DEFAULT_SCOPE);
+    });
+
+    it("backward compat: existing skills without scope default to investigation", async () => {
+      // Simulate an existing skill file without scope field
+      await writeFile(
+        join(dir, "legacy.md"),
+        `---
+title: Legacy Runbook
+services: [my-service]
+alerts: [HighLatency]
+tags: [latency]
+---
+Check dashboards`,
+      );
+      await store.loadAll();
+
+      // Still found by service search
+      const results = store.search({ service: "my-service" });
+      expect(results).toHaveLength(1);
+      expect(results[0]!.scope).toEqual(DEFAULT_SCOPE);
+
+      // Not found by chat or discovery scope
+      const chatResults = store.search({ service: "my-service", scope: "chat" });
+      expect(chatResults).toHaveLength(0);
     });
   });
 });
