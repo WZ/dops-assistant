@@ -23,6 +23,7 @@ import type {
   InfrastructureSection,
   BriefDependencyNode,
   BriefDependencyEdge,
+  DependencyGraphSource,
   AISummary,
   ContainerStatus,
   K8sEvent,
@@ -427,18 +428,212 @@ async function fetchInfrastructure(
   return null;
 }
 
+// ── Coroot dependency helpers ────────────────────────────────────────────────
+
+/** Extract the short service name from a Coroot app ID (e.g. "default:Deployment:ingestion-server" → "ingestion-server") */
+function extractServiceName(corootId: string): string {
+  const parts = corootId.split(":");
+  return parts[parts.length - 1];
+}
+
+/** Map Coroot icon to BriefDependencyNode type */
+function mapCorootIcon(icon: string | undefined): BriefDependencyNode["type"] {
+  const map: Record<string, BriefDependencyNode["type"]> = {
+    postgres: "database", mysql: "database", mongodb: "database",
+    kafka: "queue", rabbitmq: "queue", nats: "queue",
+    redis: "cache", memcached: "cache",
+    consul: "external",
+  };
+  return map[icon ?? ""] ?? "service";
+}
+
+/** Classify noise nodes — returns a dimmed type instead of filtering them out */
+function classifyCorootNode(corootId: string, icon: string | undefined): BriefDependencyNode["type"] {
+  if (corootId.startsWith("external:ExternalService:")) return "external";
+  if (corootId.startsWith("_:Unknown:")) {
+    const name = extractServiceName(corootId);
+    if (["kubelet", "containerd", "kube-proxy", "systemd-logind", "dbus", "firewalld"].includes(name)) return "external";
+  }
+  return mapCorootIcon(icon);
+}
+
+/** Extract per-client request rate from the SLO report table if available */
+function extractSloRates(reports: unknown[]): Map<string, { reqs?: string; latency?: string }> {
+  const rates = new Map<string, { reqs?: string; latency?: string }>();
+  if (!Array.isArray(reports)) return rates;
+  const sloReport = reports.find((r: unknown) => (r as { name?: string }).name === "SLO");
+  if (!sloReport) return rates;
+  const widgets = (sloReport as { widgets?: unknown[] }).widgets;
+  if (!Array.isArray(widgets)) return rates;
+  for (const w of widgets) {
+    const table = (w as { table?: { rows?: unknown[] } }).table;
+    if (!table?.rows) continue;
+    for (const row of table.rows) {
+      const cells = (row as { cells?: unknown[] }).cells;
+      if (!Array.isArray(cells) || cells.length < 4) continue;
+      const clientCell = cells[0] as { value?: string; link?: { params?: { id?: string } } };
+      const reqCell = cells[2] as { value?: string };
+      const latCell = cells[3] as { value?: string };
+      const clientName = clientCell.value ?? "";
+      if (clientName) {
+        rates.set(clientName, { reqs: reqCell.value, latency: latCell.value });
+      }
+    }
+  }
+  return rates;
+}
+
+/**
+ * Fetch dependency graph from a Coroot MCP provider.
+ * Returns null if no Coroot provider or no mapping for this service.
+ * On failure, logs a warning and returns null (caller falls back to inferred).
+ */
+async function fetchDependenciesFromCoroot(
+  serviceName: string,
+  providers: MastraProvider[],
+  services: ServiceConfig[],
+): Promise<{ nodes: BriefDependencyNode[]; edges: BriefDependencyEdge[]; source: "coroot" } | null> {
+  const tools = await getToolsByRole(providers, "dependencies") as Record<string, unknown>;
+  if (Object.keys(tools).length === 0) return null;
+
+  const appTool = findTool(tools, ["get_application", "application"]);
+  if (!appTool) return null;
+
+  // Resolve Coroot app ID: prefer stored corootAppId, else try lazy resolution
+  const svcConfig = services.find(s => s.name === serviceName);
+  let appId = svcConfig?.corootAppId;
+
+  if (!appId) {
+    // Lazy resolution: look up via get_applications_overview
+    const overviewTool = findTool(tools, ["applications_overview", "overview"]);
+    if (overviewTool) {
+      try {
+        const overviewRaw = await withTimeout(
+          overviewTool.execute({}),
+          SECTION_TIMEOUT_MS,
+          "fetchDeps:coroot:overview",
+        );
+        const overviewParsed = parseMcpResult(overviewRaw) as {
+          overview?: { context?: { search?: { applications?: { id: string; status: string }[] } } };
+        } | null;
+        const apps = overviewParsed?.overview?.context?.search?.applications ?? [];
+        // Match by service name (last segment of the Coroot ID)
+        const match = apps.find(a => extractServiceName(a.id) === serviceName);
+        if (match) {
+          appId = match.id;
+          logger.info({ service: serviceName, corootAppId: appId }, "service-brief: lazy-resolved Coroot app ID");
+        }
+      } catch (err) {
+        logger.debug({ err, service: serviceName }, "service-brief: Coroot overview lookup failed");
+      }
+    }
+  }
+
+  if (!appId) return null;
+
+  // Call get_application
+  const raw = await withTimeout(
+    appTool.execute({ app_id: appId }),
+    SECTION_TIMEOUT_MS,
+    "fetchDeps:coroot:get_application",
+  );
+  const parsed = parseMcpResult(raw) as {
+    success?: boolean;
+    application?: { data?: { app_map?: unknown; reports?: unknown[] } };
+  } | null;
+
+  if (!parsed?.success || !parsed?.application?.data) return null;
+
+  const appMap = parsed.application.data.app_map as {
+    application: { icon?: string };
+    clients?: { id: string; icon?: string; link_status?: string; link_direction?: string }[];
+    dependencies?: { id: string; icon?: string; link_status?: string; link_direction?: string }[];
+  } | null;
+  if (!appMap) return null;
+
+  // Extract SLO rates for edge labels
+  const sloRates = extractSloRates(parsed.application.data.reports ?? []);
+
+  const nodes: BriefDependencyNode[] = [];
+  const edges: BriefDependencyEdge[] = [];
+  const seenNodes = new Set<string>();
+
+  // Target node
+  const addNode = (name: string, icon: string | undefined, corootId: string) => {
+    if (seenNodes.has(name)) return;
+    seenNodes.add(name);
+    nodes.push({
+      id: name,
+      name,
+      type: classifyCorootNode(corootId, icon),
+      status: "unknown", // node health from Prometheus healthPoller, not Coroot
+    });
+  };
+
+  addNode(serviceName, appMap.application.icon, appId);
+
+  // Clients: services that CALL this service (upstream callers)
+  for (const client of appMap.clients ?? []) {
+    const clientName = extractServiceName(client.id);
+    addNode(clientName, client.icon, client.id);
+    const slo = sloRates.get(clientName);
+    const label = slo?.reqs ? `${slo.reqs} req/s` : undefined;
+    edges.push({ source: clientName, target: serviceName, label });
+  }
+
+  // Dependencies: services this service CALLS (downstream callees)
+  for (const dep of appMap.dependencies ?? []) {
+    const depName = extractServiceName(dep.id);
+    addNode(depName, dep.icon, dep.id);
+    edges.push({ source: serviceName, target: depName });
+  }
+
+  return { nodes, edges, source: "coroot" as const };
+}
+
+/** Enrich dependency nodes with health status from the Prometheus-based health poller. */
+function enrichWithHealth(nodes: BriefDependencyNode[], healthPoller?: ServiceHealthPoller): void {
+  if (!healthPoller) return;
+  const healthMap = healthPoller.getHealth();
+  const statusMap: Record<HealthStatus, BriefDependencyNode["status"]> = {
+    healthy: "healthy",
+    degraded: "degraded",
+    down: "unhealthy",
+    unknown: "unknown",
+  };
+  for (const node of nodes) {
+    const status = healthMap.get(node.name);
+    if (status) node.status = statusMap[status];
+  }
+}
+
 async function fetchDependencies(
   serviceName: string,
   services: ServiceConfig[],
   healthPoller?: ServiceHealthPoller,
-): Promise<{ nodes: BriefDependencyNode[]; edges: BriefDependencyEdge[]; source: "inferred" }> {
+  providers?: MastraProvider[],
+): Promise<{ nodes: BriefDependencyNode[]; edges: BriefDependencyEdge[]; source: DependencyGraphSource }> {
   // Check cache first
-  const cached = getCached<{ nodes: BriefDependencyNode[]; edges: BriefDependencyEdge[]; source: "inferred" }>(serviceName, "dependencies");
+  const cached = getCached<{ nodes: BriefDependencyNode[]; edges: BriefDependencyEdge[]; source: DependencyGraphSource }>(serviceName, "dependencies");
   if (cached && cached.status === "ok") return cached.data;
 
+  // Try Coroot first if dependencies-role providers exist
+  if (providers && providers.length > 0) {
+    try {
+      const corootResult = await fetchDependenciesFromCoroot(serviceName, providers, services);
+      if (corootResult) {
+        enrichWithHealth(corootResult.nodes, healthPoller);
+        setCache(serviceName, "dependencies", corootResult);
+        return corootResult;
+      }
+    } catch (err) {
+      logger.warn({ err, service: serviceName }, "service-brief: Coroot dependency fetch failed, falling back to inferred");
+    }
+  }
+
+  // Fallback: inferred graph from text matching
   const graph = inferDependencyGraph(services);
 
-  // Filter to just the requested service and its neighbors
   const related = new Set<string>([serviceName]);
   for (const edge of graph.edges) {
     if (edge.source === serviceName) related.add(edge.target);
@@ -448,23 +643,7 @@ async function fetchDependencies(
   const filteredNodes = graph.nodes.filter(n => related.has(n.id));
   const filteredEdges = graph.edges.filter(e => related.has(e.source) && related.has(e.target));
 
-  // Enrich with health status from the poller
-  if (healthPoller) {
-    const healthMap = healthPoller.getHealth();
-    for (const node of filteredNodes) {
-      const status = healthMap.get(node.name);
-      if (status) {
-        // Map HealthStatus → BriefDependencyNode status
-        const statusMap: Record<HealthStatus, BriefDependencyNode["status"]> = {
-          healthy: "healthy",
-          degraded: "degraded",
-          down: "unhealthy",
-          unknown: "unknown",
-        };
-        node.status = statusMap[status];
-      }
-    }
-  }
+  enrichWithHealth(filteredNodes, healthPoller);
 
   const result = { nodes: filteredNodes, edges: filteredEdges, source: "inferred" as const };
   setCache(serviceName, "dependencies", result);
@@ -580,7 +759,7 @@ async function doBuildServiceBrief(
 
   const staleChanges = getCached<ChangesSection>(serviceName, "changes");
   const staleInfra = getCached<InfrastructureSection>(serviceName, "infrastructure");
-  const staleDeps = getCached<{ nodes: BriefDependencyNode[]; edges: BriefDependencyEdge[]; source: "inferred" }>(serviceName, "dependencies");
+  const staleDeps = getCached<{ nodes: BriefDependencyNode[]; edges: BriefDependencyEdge[]; source: DependencyGraphSource }>(serviceName, "dependencies");
   const staleSummary = getCached<AISummary>(serviceName, "summary");
 
   // If every section has a fresh cache hit, skip all fetches and return immediately.
@@ -612,7 +791,7 @@ async function doBuildServiceBrief(
   // also fire a background refresh so the caller gets stale data immediately
   // while revalidation runs in the background.
 
-  type DepsResult = { nodes: BriefDependencyNode[]; edges: BriefDependencyEdge[]; source: "inferred" };
+  type DepsResult = { nodes: BriefDependencyNode[]; edges: BriefDependencyEdge[]; source: DependencyGraphSource };
 
   // Background refresh for stale sections — fire-and-forget
   if (staleChanges?.status === "stale") {
@@ -626,7 +805,7 @@ async function doBuildServiceBrief(
     );
   }
   if (staleDeps?.status === "stale") {
-    void fetchDependencies(serviceName, services, healthPoller).catch(err =>
+    void fetchDependencies(serviceName, services, healthPoller, providers).catch(err =>
       logger.debug({ err, service: serviceName }, "service-brief: background dependencies refresh failed"),
     );
   }
@@ -650,7 +829,7 @@ async function doBuildServiceBrief(
   const [changesResult, infraResult, depsResult] = await Promise.allSettled([
     needChanges ? fetchChanges(serviceName, providers) : Promise.resolve(changesData),
     needInfra ? fetchInfrastructure(serviceName, providers, namespace, services) : Promise.resolve(infraData),
-    needDeps ? fetchDependencies(serviceName, services, healthPoller) : Promise.resolve(depsData),
+    needDeps ? fetchDependencies(serviceName, services, healthPoller, providers) : Promise.resolve(depsData),
   ]);
 
   // Process changes result

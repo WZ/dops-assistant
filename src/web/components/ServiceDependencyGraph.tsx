@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { ReactFlow, Background, Controls, type Node, type Edge } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useStackContext } from "../contexts/StackContext";
+import type { DependencyGraphSource } from "../../types/service-brief";
 
 interface DependencyNode {
   id: string;
@@ -26,7 +27,7 @@ interface ServiceDependencyGraphProps {
   serviceName: string;
   onViewService: (name: string) => void;
   healthMap?: Record<string, HealthStatus>;
-  dependencySource?: "prometheus" | "kubernetes" | "inferred";
+  dependencySource?: DependencyGraphSource;
   /** When provided, skip the internal fetch and use this data directly. */
   initialData?: DependencyData;
   /** When provided alongside initialData, skip the internal healthMap fetch. */
@@ -232,20 +233,20 @@ export function ServiceDependencyGraph({
         </ReactFlow>
       </div>
 
-      {/* Estimated topology disclaimer */}
-      {isInferred && (
-        <p
-          style={{
-            fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
-            fontSize: 10,
-            color: "hsl(var(--muted-foreground) / 0.5)",
-            margin: 0,
-            paddingLeft: 2,
-          }}
-        >
-          Estimated topology — based on query and log analysis
-        </p>
-      )}
+      {/* Topology source badge */}
+      <p
+        style={{
+          fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
+          fontSize: 10,
+          color: isInferred ? "hsl(var(--muted-foreground) / 0.5)" : "hsl(var(--primary) / 0.7)",
+          margin: 0,
+          paddingLeft: 2,
+        }}
+      >
+        {dependencySource === "coroot"
+          ? "Live topology — powered by Coroot"
+          : "Estimated topology — based on query and log analysis"}
+      </p>
 
       {/* Accessible dependency table (collapsible) */}
       <div>
