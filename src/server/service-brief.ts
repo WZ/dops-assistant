@@ -499,6 +499,23 @@ async function fetchDependenciesFromCoroot(
   const appTool = findTool(tools, ["get_application", "application"]);
   if (!appTool) return null;
 
+  // Resolve Coroot project ID (needed for all Coroot API calls)
+  const projectsTool = findTool(tools, ["list_projects"]);
+  let projectId: string | undefined;
+  if (projectsTool) {
+    try {
+      const projRaw = await withTimeout(projectsTool.execute({}), SECTION_TIMEOUT_MS, "fetchDeps:coroot:projects");
+      const projParsed = parseMcpResult(projRaw) as { projects?: { id: string; name: string }[] } | null;
+      projectId = projParsed?.projects?.[0]?.id;
+    } catch (err) {
+      logger.debug({ err, service: serviceName }, "service-brief: Coroot list_projects failed");
+    }
+  }
+  if (!projectId) {
+    logger.debug({ service: serviceName }, "service-brief: no Coroot project ID, skipping");
+    return null;
+  }
+
   // Resolve Coroot app ID: prefer stored corootAppId, else try lazy resolution
   const svcConfig = services.find(s => s.name === serviceName);
   let appId = svcConfig?.corootAppId;
@@ -509,7 +526,7 @@ async function fetchDependenciesFromCoroot(
     if (overviewTool) {
       try {
         const overviewRaw = await withTimeout(
-          overviewTool.execute({}),
+          overviewTool.execute({ project_id: projectId }),
           SECTION_TIMEOUT_MS,
           "fetchDeps:coroot:overview",
         );
@@ -522,6 +539,8 @@ async function fetchDependenciesFromCoroot(
         if (match) {
           appId = match.id;
           logger.info({ service: serviceName, corootAppId: appId }, "service-brief: lazy-resolved Coroot app ID");
+        } else {
+          logger.debug({ service: serviceName, appCount: apps.length }, "service-brief: no Coroot app match for service");
         }
       } catch (err) {
         logger.debug({ err, service: serviceName }, "service-brief: Coroot overview lookup failed");
@@ -533,7 +552,7 @@ async function fetchDependenciesFromCoroot(
 
   // Call get_application
   const raw = await withTimeout(
-    appTool.execute({ app_id: appId }),
+    appTool.execute({ project_id: projectId, app_id: appId }),
     SECTION_TIMEOUT_MS,
     "fetchDeps:coroot:get_application",
   );

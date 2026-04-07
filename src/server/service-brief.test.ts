@@ -372,10 +372,24 @@ describe("Coroot dependency graph", () => {
     }) }],
   };
 
+  const corootProjectsResponse = {
+    content: [{ type: "text", text: JSON.stringify({
+      success: true,
+      count: 1,
+      projects: [{ id: "test-proj-id", name: "default" }],
+    }) }],
+  };
+
+  function makeCorootTools(appResponse: unknown = corootAppMapResponse) {
+    return {
+      coroot_list_projects: makeTool(corootProjectsResponse),
+      coroot_get_application: makeTool(appResponse),
+    };
+  }
+
   it("returns Coroot graph when dependencies provider and corootAppId are available", async () => {
-    const corootTool = makeTool(corootAppMapResponse);
     mockGetToolsByRole.mockImplementation((_providers: unknown, role: string) => {
-      if (role === "dependencies") return { coroot_get_application: corootTool };
+      if (role === "dependencies") return makeCorootTools();
       return {};
     });
 
@@ -469,9 +483,8 @@ describe("Coroot dependency graph", () => {
   });
 
   it("enriches Coroot nodes with Prometheus health data", async () => {
-    const corootTool = makeTool(corootAppMapResponse);
     mockGetToolsByRole.mockImplementation((_providers: unknown, role: string) => {
-      if (role === "dependencies") return { coroot_get_application: corootTool };
+      if (role === "dependencies") return makeCorootTools();
       return {};
     });
 
