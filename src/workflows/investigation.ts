@@ -42,6 +42,8 @@ export interface WorkflowConfig {
   readOnlyTools?: boolean;
   /** Pre-filtered skills for this investigation (investigation-scoped). */
   skills?: Skill[];
+  /** Max chars per skill body for truncation (from config). */
+  maxCharsPerSkill?: number;
   /** Progress callbacks for streaming to UI */
   onPhase?: (phase: string) => void;
   onIteration?: (phase: string, iteration: number, maxIterations: number, label: string) => void;

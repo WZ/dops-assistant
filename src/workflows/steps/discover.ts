@@ -17,6 +17,7 @@ export interface DiscoverStepConfig {
   onIteration?: OnIteration;
   onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
   skills?: Skill[];
+  maxCharsPerSkill?: number;
 }
 
 const MAX_RETRIES = 3;
@@ -99,8 +100,9 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
   // Format discovery-scoped skills once (outside retry loop — skills don't change between retries)
   let fullHints = recipeHints;
   if (config.skills && config.skills.length > 0) {
+    const maxChars = config.maxCharsPerSkill ?? 2000;
     const skillSections = config.skills.map((s) => {
-      const body = s.body.length > 2000 ? s.body.slice(0, 2000) + "\n...[truncated]" : s.body;
+      const body = s.body.length > maxChars ? s.body.slice(0, maxChars) + "\n...[truncated]" : s.body;
       return `### ${wrapUntrusted("skill", s.title)}\n${wrapUntrusted("skill_body", body)}`;
     });
     fullHints += `\n\n## Team Knowledge (Discovery Skills)\n${skillSections.join("\n\n")}`;

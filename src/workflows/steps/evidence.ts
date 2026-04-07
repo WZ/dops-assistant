@@ -38,7 +38,11 @@ import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
 function getSkillPrompt(workflowConfig: WorkflowConfig, anomalySkillContext?: string): string {
   const skills = workflowConfig.skills;
   if (skills && skills.length > 0) {
-    const sections = skills.map((s: Skill) => `### Skill: ${s.title}\n${s.body.length > 2000 ? s.body.slice(0, 2000) + "\n...[truncated]" : s.body}`);
+    const maxChars = workflowConfig.maxCharsPerSkill ?? 2000;
+    const sections = skills.map((s: Skill) => {
+      const body = s.body.length > maxChars ? s.body.slice(0, maxChars) + "\n...[truncated]" : s.body;
+      return `### Skill: ${wrapUntrusted("skill_title", s.title)}\n${wrapUntrusted("skill_body", body)}`;
+    });
     return `## Team Knowledge (Skills)\nThe following runbooks were found for this service. Use them to inform your investigation:\n\n${sections.join("\n\n")}`;
   }
   return anomalySkillContext ?? "";

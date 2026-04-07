@@ -659,8 +659,12 @@ export async function handleClientMessage(
         scope: "chat",
       });
       if (matched.length > 0) {
-        // Use simpler framing for chat (not investigation-flavored)
-        chatSkillContext = `## Relevant Knowledge\n${matched.map(s => `### ${s.title}\n${s.body.length > 2000 ? s.body.slice(0, 2000) + "\n...[truncated]" : s.body}`).join("\n\n")}`;
+        // Use simpler framing for chat (not investigation-flavored), wrap for prompt safety
+        const maxChars = deps.skillStore.maxCharsPerSkill;
+        chatSkillContext = `## Relevant Knowledge\n${matched.map(s => {
+          const body = s.body.length > maxChars ? s.body.slice(0, maxChars) + "\n...[truncated]" : s.body;
+          return `### ${wrapUntrusted("skill_title", s.title)}\n${wrapUntrusted("skill_body", body)}`;
+        }).join("\n\n")}`;
       }
     }
 
