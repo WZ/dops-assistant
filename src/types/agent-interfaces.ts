@@ -9,6 +9,7 @@ import type { RcaReport } from "./rca-types.js";
 import type { ValidatedServiceConfig } from "./discovery-types.js";
 import type { ServiceConfig, DiscoveryConfig, InvestigationTemplate } from "../config/schema.js";
 import type { TokenUsage } from "./llm-types.js";
+import type { Skill } from "../skills/store.js";
 
 export interface IChatAgent {
   chat(task: ChatRequest): Promise<ChatResponse>;
@@ -43,6 +44,7 @@ export interface IInvestigationAgent {
     skillContext?: string,
     template?: InvestigationTemplate,
     readOnlyTools?: boolean,
+    skills?: Skill[],
   ): Promise<RcaReport>;
 }
 
@@ -53,6 +55,7 @@ export interface IDiscoverAgent {
     onIteration?: OnIteration,
     onToolCall?: OnToolCallEnriched,
     onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void,
+    skills?: Skill[],
   ): Promise<ValidatedServiceConfig[]>;
 
   accept(services: ServiceConfig[], source: "discovery" | "manual"): Promise<string>;

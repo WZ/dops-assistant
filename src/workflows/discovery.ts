@@ -5,6 +5,7 @@ import type { MastraProvider } from "../mcp/provider.js";
 import type { DiscoveryConfig } from "../config/schema.js";
 import type { ValidatedServiceConfig } from "../types/discovery-types.js";
 import type { OnToolCallEnriched, OnIteration } from "../types/agent-interfaces.js";
+import type { Skill } from "../skills/store.js";
 
 export interface DiscoveryWorkflowConfig {
   model: LanguageModel;
@@ -14,6 +15,7 @@ export interface DiscoveryWorkflowConfig {
   onIteration?: OnIteration;
   onToolCall?: OnToolCallEnriched;
   onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
+  skills?: Skill[];
 }
 
 export async function runDiscovery(config: DiscoveryWorkflowConfig): Promise<ValidatedServiceConfig[]> {
@@ -25,6 +27,7 @@ export async function runDiscovery(config: DiscoveryWorkflowConfig): Promise<Val
     onToolCall: config.onToolCall,
     onIteration: config.onIteration,
     onTokenUsage: config.onTokenUsage,
+    skills: config.skills,
   });
 
   if (discovered.length === 0) return [];
