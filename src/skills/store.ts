@@ -11,7 +11,7 @@ export type SkillScope = "investigation" | "discovery" | "chat";
 
 export const VALID_SCOPES: readonly SkillScope[] = ["investigation", "discovery", "chat"] as const;
 
-export const DEFAULT_SCOPE: SkillScope[] = ["investigation"];
+export const DEFAULT_SCOPE: readonly SkillScope[] = ["investigation"] as const;
 
 export interface SkillMetadata {
   id: string;
@@ -228,7 +228,7 @@ export class SkillStore {
     // Ensure directory exists
     await mkdir(this.dir, { recursive: true });
 
-    const scope = frontmatter.scope ?? [...DEFAULT_SCOPE];
+    const scope = frontmatter.scope?.length ? frontmatter.scope : [...DEFAULT_SCOPE];
     const content = matter.stringify(body, {
       title: frontmatter.title,
       services: frontmatter.services,

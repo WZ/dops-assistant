@@ -96,17 +96,17 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
     ? wrapToolsWithCallbacks(discoveryTools, wrappedOnToolCall, "discovery")
     : discoveryTools;
 
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    // Format discovery-scoped skills and append after recipe hints
-    let fullHints = recipeHints;
-    if (config.skills && config.skills.length > 0) {
-      const skillSections = config.skills.map((s) => {
-        const body = s.body.length > 2000 ? s.body.slice(0, 2000) + "\n...[truncated]" : s.body;
-        return `### ${wrapUntrusted("skill", s.title)}\n${wrapUntrusted("skill_body", body)}`;
-      });
-      fullHints += `\n\n## Team Knowledge (Discovery Skills)\n${skillSections.join("\n\n")}`;
-    }
+  // Format discovery-scoped skills once (outside retry loop — skills don't change between retries)
+  let fullHints = recipeHints;
+  if (config.skills && config.skills.length > 0) {
+    const skillSections = config.skills.map((s) => {
+      const body = s.body.length > 2000 ? s.body.slice(0, 2000) + "\n...[truncated]" : s.body;
+      return `### ${wrapUntrusted("skill", s.title)}\n${wrapUntrusted("skill_body", body)}`;
+    });
+    fullHints += `\n\n## Team Knowledge (Discovery Skills)\n${skillSections.join("\n\n")}`;
+  }
 
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     const agent = createDiscoverAgent({
       model: config.model,
       tools,
