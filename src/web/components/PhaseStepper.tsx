@@ -265,7 +265,7 @@ export function PhaseStepper({ phases, events = [], evidence = {}, isComplete = 
                     )}>
                       {phase.label}
                     </p>
-                    {phase.stats && phase.status === "complete" && (
+                    {phase.stats && (phase.status === "complete" || phase.status === "failed") && (
                       <div className="flex gap-1 ml-auto">
                         {phase.stats.toolCalls > 0 && (
                           <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-secondary/30 text-muted-foreground/65 border border-border/15">
@@ -285,13 +285,17 @@ export function PhaseStepper({ phases, events = [], evidence = {}, isComplete = 
                       </div>
                     )}
                   </CollapsibleTrigger>
-                  {(phase.substatus || (phase.status === "running" && phaseStartTimes.current[phase.name])) && (
+                  {(phase.substatus || phase.stats?.error || (phase.status === "running" && phaseStartTimes.current[phase.name])) && (
                     <div className="flex items-center gap-2 mt-0.5 ml-5 animate-fade-in">
-                      {phase.substatus && (
+                      {phase.stats?.error ? (
+                        <p className="text-[10px] font-mono text-destructive/80">
+                          {phase.stats.error === "llm_unreachable" ? "LLM unreachable" : phase.stats.error}
+                        </p>
+                      ) : phase.substatus ? (
                         <p className="text-[10px] font-mono text-muted-foreground/70">
                           {phase.substatus}
                         </p>
-                      )}
+                      ) : null}
                       {phase.status === "running" && phaseStartTimes.current[phase.name] && (
                         <ElapsedTimer startTime={phaseStartTimes.current[phase.name]} />
                       )}
