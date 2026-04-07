@@ -140,24 +140,43 @@ export function buildSynthesisStep(config: WorkflowConfig) {
       let confidence: "low" | "medium" | "high" = "low";
       let confidenceScore = 0.5;
 
-      let synthesisText = agentResult.text;
-      if (!synthesisText?.trim()) {
-        // Synthesis agent has no tools so agentResult.text should normally be populated.
-        // As a fallback, re-prompt with the same content using a fresh extractor agent.
-        debug("SYNTHESIS: empty text, re-prompting with extractor agent");
+      const extractorInstructions = 'You are a root cause analysis summarizer. Given investigation evidence, produce a JSON summary. Return ONLY valid JSON: {"severity": "low"|"medium"|"high"|"critical", "summary": "string", "impact": {"duration": "string", "description": "string"}, "rootCause": "string", "trigger": "string", "contributingFactors": ["string"], "timeline": [{"time": "string", "event": "string"}], "evidence": {"metrics": ["string"], "logs": ["string"], "infra": ["string"]}, "dashboardLinks": ["string"], "recommendedActions": ["string"], "confidence": "low"|"medium"|"high", "confidenceScore": number}';
+
+      // Helper: create a one-shot extractor agent for synthesis fallbacks
+      const runExtractor = async (input: string): Promise<string> => {
         const { Agent: ExtractAgent } = await import("@mastra/core/agent");
         const extractor = new ExtractAgent({
           name: "synthesis-extractor",
           id: "synthesis-extractor",
-          instructions: 'You are a root cause analysis summarizer. Given investigation evidence, produce a JSON summary. Return ONLY valid JSON: {"severity": "low"|"medium"|"high"|"critical", "summary": "string", "impact": {"duration": "string", "description": "string"}, "rootCause": "string", "trigger": "string", "contributingFactors": ["string"], "timeline": [{"time": "string", "event": "string"}], "evidence": {"metrics": ["string"], "logs": ["string"], "infra": ["string"]}, "dashboardLinks": ["string"], "recommendedActions": ["string"], "confidence": "low"|"medium"|"high", "confidenceScore": number}',
+          instructions: extractorInstructions,
           model: config.model as any,
         });
-        try {
-          const extraction = await extractor.generate(prompt);
-          synthesisText = extraction.text ?? "";
-        } catch { /* keep empty */ }
+        const extraction = await extractor.generate(input);
+        return extraction.text ?? "";
+      };
+
+      let synthesisText = agentResult.text;
+      if (!synthesisText?.trim()) {
+        debug("SYNTHESIS: empty text, re-prompting with extractor");
+        try { synthesisText = await runExtractor(prompt); } catch { /* keep empty */ }
       }
-      const synthesisParsed = safeJsonParse(synthesisText);
+      let synthesisParsed = safeJsonParse(synthesisText);
+
+      // If parsed but rootCause is missing/vague, re-extract from the full text
+      const isIncomplete = synthesisParsed && (
+        !synthesisParsed.rootCause ||
+        /^unable to determine$/i.test(synthesisParsed.rootCause?.trim?.() ?? "")
+      );
+      if (isIncomplete && synthesisText && synthesisText.length > 200) {
+        debug("SYNTHESIS: rootCause missing/vague, re-extracting from", synthesisText.length, "chars");
+        try {
+          const reParsed = safeJsonParse(await runExtractor(synthesisText.slice(0, 12000)));
+          if (reParsed?.rootCause && !/^unable to determine$/i.test(reParsed.rootCause.trim())) {
+            synthesisParsed = reParsed;
+          }
+        } catch { /* keep original */ }
+      }
+
       if (synthesisParsed) {
         severity = synthesisParsed.severity ?? severity;
         summary = synthesisParsed.summary ?? summary;
