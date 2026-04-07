@@ -18,6 +18,7 @@ export type PhaseStats = {
   toolCalls: number;
   iterations: number;
   durationMs: number;
+  error?: string;
 };
 
 // Server to Client

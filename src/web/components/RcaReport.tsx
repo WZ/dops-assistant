@@ -123,8 +123,15 @@ export function RcaReport({ report }: { report: RcaReportData }) {
         )}
       </div>
 
+      {/* Error banner — LLM/infrastructure failure (distinct from low confidence) */}
+      {report.confidenceScore === 0 && (
+        <div className="px-5 py-2.5 bg-destructive/10 border-b border-destructive/20 flex items-center gap-2">
+          <span className="text-destructive text-sm">✕</span>
+          <span className="text-[11px] font-body text-destructive/80">Investigation could not run — LLM API is unreachable. Check Settings &gt; Health.</span>
+        </div>
+      )}
       {/* Low confidence banner */}
-      {report.confidenceScore != null && report.confidenceScore < 0.5 && (
+      {report.confidenceScore != null && report.confidenceScore > 0 && report.confidenceScore < 0.5 && (
         <div className="px-5 py-2.5 bg-warning/8 border-b border-warning/15 flex items-center gap-2">
           <span className="text-warning text-sm">⚠</span>
           <span className="text-[11px] font-body text-warning/80">Low confidence — insufficient data to determine root cause</span>

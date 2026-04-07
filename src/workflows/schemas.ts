@@ -61,6 +61,8 @@ export const EvidenceOutputSchema = z.object({
   observations: z.array(z.unknown()).optional(),
   // Pass-through: injected by buildEvidenceStep factory, not produced by agents
   timeRange: TimeRangeSchema.optional(),
+  // Error classification when evidence gathering failed (e.g. LLM unreachable)
+  error: z.string().optional(),
 });
 
 export const ParallelEvidenceSchema = z.object({
