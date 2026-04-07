@@ -27,7 +27,7 @@ const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
 
 export interface InvestigationCallbacks {
   /** Called when a phase starts or completes */
-  onPhase?(phase: string, status: "running" | "complete", stats?: PhaseStats): void;
+  onPhase?(phase: string, status: "running" | "complete" | "failed", stats?: PhaseStats): void;
   /** Called on each tool invocation (calling, success, error) */
   onToolCall?(phase: string, tool: string, args: Record<string, unknown>, status: string, result?: string, durationMs?: number): void;
   /** Called on each agent iteration within a phase */
@@ -78,6 +78,8 @@ export function mapBackendPhase(backendPhase: string): string[] {
 /** Map raw LLM errors to user-friendly messages. */
 export function friendlyError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
+  if (/ECONNREFUSED|ENOTFOUND|connect.*refused/i.test(raw))
+    return "LLM API is unreachable. Check network connectivity.";
   if (/bad gateway|service unavailable|502|503/i.test(raw))
     return "LLM API is currently unavailable. Please try again later.";
   if (/timeout|timed out|ETIMEDOUT/i.test(raw))
@@ -155,6 +157,8 @@ export class InvestigationRunner {
     // Track which phase last reported an iteration — used to attribute token usage
     // to the correct phase when multiple evidence phases run in parallel.
     let lastIterationPhase = "";
+    // Track LLM errors per phase for error visibility
+    const phaseErrors = new Map<string, string>();
     const investigationStartMs = Date.now();
 
     // Helper: emit + persist event to DB
@@ -185,6 +189,11 @@ export class InvestigationRunner {
           const stats = phaseStats.get(activePhase);
           if (stats && (result !== undefined || error !== undefined)) stats.toolCalls++;
 
+          // Track LLM errors emitted by evidence steps
+          if (name === "llm_error" && error) {
+            phaseErrors.set(activePhase, error);
+          }
+
           const status = error ? "error" : result !== undefined ? "success" : "calling";
           callbacks?.onToolCall?.(activePhase, name, args, status, error ?? result, durationMs);
           persistEvent("investigation:tool_call", { phase: activePhase, tool: name, args, status, result: error ?? result, durationMs });
@@ -198,11 +207,14 @@ export class InvestigationRunner {
             if (!frontendPhases.includes(prev)) {
               const stats = phaseStats.get(prev);
               const durationMs = stats ? Date.now() - stats.startMs : 0;
-              callbacks?.onPhase?.(prev, "complete", stats ? {
+              const phaseError = phaseErrors.get(prev);
+              const phaseStatus = phaseError ? "failed" : "complete";
+              callbacks?.onPhase?.(prev, phaseStatus, stats ? {
                 observationCount: 0, criticalCount: 0,
                 toolCalls: stats.toolCalls, iterations: stats.iterations, durationMs,
+                error: phaseError,
               } : undefined);
-              persistEvent("investigation:phase", { phase: prev, status: "complete" });
+              persistEvent("investigation:phase", { phase: prev, status: phaseStatus });
               callbacks?.onPhaseUsage?.(invId, prev, stats?.inputTokens ?? 0, stats?.outputTokens ?? 0, durationMs);
               runningPhases.delete(prev);
             }
@@ -236,9 +248,12 @@ export class InvestigationRunner {
       for (const fp of runningPhases) {
         const stats = phaseStats.get(fp);
         const durationMs = stats ? Date.now() - stats.startMs : 0;
-        callbacks?.onPhase?.(fp, "complete", stats ? {
+        const phaseError = phaseErrors.get(fp);
+        const phaseStatus = phaseError ? "failed" : "complete";
+        callbacks?.onPhase?.(fp, phaseStatus, stats ? {
           observationCount: 0, criticalCount: 0,
           toolCalls: stats.toolCalls, iterations: stats.iterations, durationMs,
+          error: phaseError,
         } : undefined);
         callbacks?.onPhaseUsage?.(invId, fp, stats?.inputTokens ?? 0, stats?.outputTokens ?? 0, durationMs);
       }
@@ -249,7 +264,11 @@ export class InvestigationRunner {
       const totalEvidence = (report.evidence?.metrics?.length ?? 0) + (report.evidence?.logs?.length ?? 0) + (report.evidence?.infra?.length ?? 0);
       // Also check if the report summary contains real analysis (not just "Investigation complete")
       const hasMeaningfulSummary = report.summary && report.summary.length > 30 && !/^investigation complete$/i.test(report.summary.trim());
-      if (totalEvidence === 0 && !hasMeaningfulSummary) {
+      const hasLlmErrors = phaseErrors.size > 0;
+      if (totalEvidence === 0 && hasLlmErrors) {
+        report.confidenceScore = 0;
+        logger.info({ invId, service: service.name, errors: [...phaseErrors.entries()] }, "Confidence gate: LLM errors, forcing score to 0");
+      } else if (totalEvidence === 0 && !hasMeaningfulSummary) {
         report.confidenceScore = Math.min(report.confidenceScore ?? 1, 0.2);
         logger.info({ invId, service: service.name }, "Confidence gate: no evidence and no meaningful summary, forcing score to 0.2");
       } else if (vagueRootCause) {

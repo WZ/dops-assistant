@@ -124,6 +124,7 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
       let agentResult: { text: string } = { text: "" };
       const toolData: string[] = [];
       let iterationCount = 0;
+      let llmError: string | undefined;
       try {
         agentResult = await agent.generate(prompt, {
           onStepFinish: (step: any) => {
@@ -157,7 +158,11 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
           },
         });
       } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
         debug(`${phaseName.toUpperCase()} agent.generate error:`, err);
+        if (/ECONNREFUSED|ETIMEDOUT|ENOTFOUND|502|503/i.test(errMsg)) {
+          llmError = errMsg;
+        }
       }
 
       // 5. If agent text is empty, extract from captured tool results
@@ -210,19 +215,27 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
         ? { from: ac.timeRangeFrom, to: ac.timeRangeTo }
         : undefined;
 
-      // 8. Return findings, agent text as summary, or fallback
+      // 8. Classify error: only report if LLM failed AND no observations recovered
+      const hasEvidence = !!(parsed?.observations?.length);
+      const phaseError = (llmError && !hasEvidence) ? "llm_unreachable" : undefined;
+      if (phaseError) {
+        workflowConfig.onToolCall?.("llm_error", {}, undefined, undefined, `LLM unreachable: ${llmError}`, phaseName);
+      }
+
+      // 9. Return findings, agent text as summary, or fallback
       if (parsed) {
         return {
           summary: parsed.summary ?? fallbackMessage,
           observations: parsed.observations ?? [],
           timeRange,
+          error: phaseError,
         };
       }
       if (agentText?.trim()) {
         debug(`${phaseName.toUpperCase()}: using agent text as summary (${agentText.length} chars)`);
-        return { summary: agentText.slice(0, 3000), observations: [], timeRange };
+        return { summary: agentText.slice(0, 3000), observations: [], timeRange, error: phaseError };
       }
-      return { summary: fallbackMessage, observations: [], timeRange };
+      return { summary: fallbackMessage, observations: [], timeRange, error: phaseError };
     },
   });
 }
