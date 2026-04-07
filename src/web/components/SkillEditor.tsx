@@ -74,12 +74,22 @@ export function SkillEditor({ skill, isNew, onSave, onDelete, onCancel }: SkillE
   const [services, setServices] = useState(skill.services);
   const [alerts, setAlerts] = useState(skill.alerts);
   const [tags, setTags] = useState(skill.tags);
+  const [scope, setScope] = useState<string[]>(skill.scope ?? ["investigation"]);
   const [body, setBody] = useState(skill.body);
   const [preview, setPreview] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
+  const ALL_SCOPES = ["investigation", "discovery", "chat"] as const;
+
+  const toggleScope = (s: string) => {
+    setScope(prev => {
+      const next = prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s];
+      return next.length > 0 ? next : prev; // prevent empty scope
+    });
+  };
+
   const handleSave = () => {
-    onSave({ id: skill.id, title, services, alerts, tags, body });
+    onSave({ id: skill.id, title, services, alerts, tags, scope, body });
   };
 
   return (
@@ -153,22 +163,28 @@ export function SkillEditor({ skill, isNew, onSave, onDelete, onCancel }: SkillE
             <TagInput label="Tags" values={tags} onChange={setTags} />
           </div>
 
-          {/* Scope (read-only) */}
-          {skill.scope && skill.scope.length > 0 && (
-            <div>
-              <label className="block text-[10px] font-mono font-semibold uppercase tracking-[0.12em] text-muted-foreground/60 mb-1.5">
-                Scope
-              </label>
-              <div className="flex gap-1.5">
-                {skill.scope.map((s) => (
-                  <span key={s} className={`px-2 py-1 text-[10px] font-mono rounded border ${SCOPE_COLORS[s] ?? "bg-secondary/50 text-muted-foreground/60 border-border/30"}`}>
+          {/* Scope */}
+          <div>
+            <label className="block text-[10px] font-mono font-semibold uppercase tracking-[0.12em] text-muted-foreground/60 mb-1.5">
+              Scope
+            </label>
+            <div className="flex gap-1.5">
+              {ALL_SCOPES.map((s) => {
+                const active = scope.includes(s);
+                return (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => toggleScope(s)}
+                    className={`px-2.5 py-1 text-[10px] font-mono rounded border transition-all ${active ? SCOPE_COLORS[s] ?? "" : "bg-secondary/20 text-muted-foreground/30 border-border/20 hover:border-border/40"}`}
+                  >
                     {s}
-                  </span>
-                ))}
-              </div>
-              <p className="text-[9px] font-mono text-muted-foreground/40 mt-1">Set via frontmatter scope field in the markdown file</p>
+                  </button>
+                );
+              })}
             </div>
-          )}
+            <p className="text-[9px] font-mono text-muted-foreground/40 mt-1">Which agents receive this skill (at least one required)</p>
+          </div>
 
           {/* Body */}
           <div>
