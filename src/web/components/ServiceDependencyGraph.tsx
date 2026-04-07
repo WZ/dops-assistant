@@ -244,8 +244,8 @@ export function ServiceDependencyGraph({
 
   // Build accessible table rows
   const tableRows = graphData.nodes.map((n) => {
-    const outgoing = data.edges.filter((e) => e.source === n.id);
-    const incoming = data.edges.filter((e) => e.target === n.id);
+    const outgoing = graphData.edges.filter((e) => e.source === n.id);
+    const incoming = graphData.edges.filter((e) => e.target === n.id);
     let connection = "none";
     if (outgoing.length > 0 && incoming.length > 0) connection = "upstream + downstream";
     else if (outgoing.length > 0) connection = "upstream";

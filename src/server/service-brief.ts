@@ -581,9 +581,9 @@ async function fetchDependenciesFromCoroot(
   if (!parsed?.success || !parsed?.application?.data) return null;
 
   const appMap = parsed.application.data.app_map as {
-    application: { icon?: string };
-    clients?: { id: string; icon?: string; link_status?: string; link_direction?: string }[];
-    dependencies?: { id: string; icon?: string; link_status?: string; link_direction?: string }[];
+    application: { icon?: string; status?: string };
+    clients?: { id: string; icon?: string; status?: string; link_status?: string; link_direction?: string }[];
+    dependencies?: { id: string; icon?: string; status?: string; link_status?: string; link_direction?: string }[];
   } | null;
   if (!appMap) return null;
 
@@ -594,24 +594,34 @@ async function fetchDependenciesFromCoroot(
   const edges: BriefDependencyEdge[] = [];
   const seenNodes = new Set<string>();
 
-  // Target node
-  const addNode = (name: string, icon: string | undefined, corootId: string) => {
+  /** Map Coroot app status to BriefDependencyNode status as a fallback
+   *  when the Prometheus health poller has no data for a node. */
+  function mapCorootStatus(corootStatus: string | undefined): BriefDependencyNode["status"] {
+    if (corootStatus === "ok") return "healthy";
+    if (corootStatus === "warning") return "degraded";
+    if (corootStatus === "critical") return "unhealthy";
+    return "unknown";
+  }
+
+  const addNode = (name: string, icon: string | undefined, corootId: string, corootStatus?: string) => {
     if (seenNodes.has(name)) return;
     seenNodes.add(name);
     nodes.push({
       id: name,
       name,
       type: classifyCorootNode(corootId, icon),
-      status: "unknown", // node health from Prometheus healthPoller, not Coroot
+      // Use Coroot status as initial value; enrichWithHealth overwrites with
+      // Prometheus data when available (Prometheus takes priority).
+      status: mapCorootStatus(corootStatus),
     });
   };
 
-  addNode(serviceName, appMap.application.icon, appId);
+  addNode(serviceName, appMap.application.icon, appId, appMap.application.status);
 
   // Clients: services that CALL this service (upstream callers)
   for (const client of appMap.clients ?? []) {
     const clientName = extractServiceName(client.id);
-    addNode(clientName, client.icon, client.id);
+    addNode(clientName, client.icon, client.id, client.status);
     const slo = sloRates.get(clientName);
     const label = slo?.reqs ? `${slo.reqs} req/s` : undefined;
     edges.push({ source: clientName, target: serviceName, label });
@@ -620,7 +630,7 @@ async function fetchDependenciesFromCoroot(
   // Dependencies: services this service CALLS (downstream callees)
   for (const dep of appMap.dependencies ?? []) {
     const depName = extractServiceName(dep.id);
-    addNode(depName, dep.icon, dep.id);
+    addNode(depName, dep.icon, dep.id, dep.status);
     edges.push({ source: serviceName, target: depName });
   }
 
@@ -639,7 +649,9 @@ function enrichWithHealth(nodes: BriefDependencyNode[], healthPoller?: ServiceHe
   };
   for (const node of nodes) {
     const status = healthMap.get(node.name);
-    if (status) node.status = statusMap[status];
+    // Only overwrite if Prometheus has a definitive status (not "unknown"),
+    // otherwise keep the Coroot-derived status as fallback.
+    if (status && status !== "unknown") node.status = statusMap[status];
   }
 }
 
