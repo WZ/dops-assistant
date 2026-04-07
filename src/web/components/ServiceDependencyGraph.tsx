@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { ReactFlow, Background, Controls, type Node, type Edge } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useStackContext } from "../contexts/StackContext";
@@ -61,6 +61,8 @@ export function ServiceDependencyGraph({
   const [loading, setLoading] = useState(initialData === undefined);
   const [error, setError] = useState<string | null>(null);
   const [tableOpen, setTableOpen] = useState(false);
+  const [graphHeight, setGraphHeight] = useState(500);
+  const isDragging = React.useRef(false);
 
   // Merge: initialHealthMap takes precedence when initialData is provided;
   // otherwise fall back to the healthMap prop passed from parent.
@@ -105,7 +107,7 @@ export function ServiceDependencyGraph({
 
   if (loading) {
     return (
-      <div className="rounded-lg border border-border/25 bg-card/40 overflow-hidden shimmer-skeleton" style={{ height: 400 }}>
+      <div className="rounded-lg border border-border/25 bg-card/40 overflow-hidden shimmer-skeleton" style={{ height: graphHeight }}>
         <div className="h-full w-full bg-muted/30" />
       </div>
     );
@@ -115,7 +117,7 @@ export function ServiceDependencyGraph({
     return (
       <div
         className="rounded-lg border border-border/25 bg-card/40 flex items-center justify-center"
-        style={{ height: 400 }}
+        style={{ height: graphHeight }}
       >
         <span className="font-mono text-[11px] text-muted-foreground/60">{error}</span>
       </div>
@@ -126,7 +128,7 @@ export function ServiceDependencyGraph({
     return (
       <div
         className="rounded-lg border border-border/25 bg-card/40 flex items-center justify-center text-center px-8"
-        style={{ height: 400 }}
+        style={{ height: graphHeight }}
       >
         <span className="font-mono text-[11px] text-muted-foreground/60">
           No dependencies detected. Run discovery to map service relationships.
@@ -173,11 +175,14 @@ export function ServiceDependencyGraph({
 
   /** Shorten long service names for display (keep full name as tooltip) */
   function shortenName(name: string): string {
-    if (name.length <= 24) return name;
-    // Truncate FQDN: "fazbdregistry.service.consul" → "fazbdregistry…consul"
-    const parts = name.split(".");
-    if (parts.length >= 3) return `${parts[0]}…${parts[parts.length - 1]}`;
-    return name.slice(0, 22) + "…";
+    if (name.length <= 20) return name;
+    // FQDN: "fazbdregistry.service.consul" → "fazbdregistry…consul"
+    const dotParts = name.split(".");
+    if (dotParts.length >= 3) return `${dotParts[0]}…${dotParts[dotParts.length - 1]}`;
+    // Hyphenated: "stream-kafka-cluster-kafka" → "stream-kafka…kafka"
+    const dashParts = name.split("-");
+    if (dashParts.length >= 4) return `${dashParts.slice(0, 2).join("-")}…${dashParts[dashParts.length - 1]}`;
+    return name.slice(0, 18) + "…";
   }
 
   const nodes: Node[] = graphData.nodes.map((n, i) => {
@@ -239,7 +244,10 @@ export function ServiceDependencyGraph({
     target: e.target,
     label: e.label,
     style: { stroke: border },
-    labelStyle: { fontSize: 9, fill: mutedFg },
+    labelStyle: { fontSize: 9, fill: fg, fontFamily: "var(--font-mono)" },
+    labelBgStyle: { fill: secondary, fillOpacity: 0.9 },
+    labelBgPadding: [4, 6] as [number, number],
+    labelBgBorderRadius: 4,
   }));
 
   // Build accessible table rows
@@ -258,18 +266,48 @@ export function ServiceDependencyGraph({
     <div className="flex flex-col gap-2">
       <div
         className="rounded-lg border border-border/25 bg-card/40 overflow-hidden"
-        style={{ height: 400 }}
+        style={{ height: graphHeight }}
       >
         <ReactFlow
           nodes={nodes}
           edges={edges}
           onNodeClick={(_, node) => onViewService((node.data._labelText ?? node.data.label) as string)}
           fitView
-          fitViewOptions={{ maxZoom: 0.8 }}
+          fitViewOptions={{ maxZoom: 1.2, minZoom: 0.3, padding: 0.2 }}
         >
           <Background color={border} gap={16} />
           <Controls />
         </ReactFlow>
+      </div>
+      {/* Drag-to-resize handle */}
+      <div
+        style={{
+          height: 6,
+          cursor: "ns-resize",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          userSelect: "none",
+        }}
+        onMouseDown={(e) => {
+          e.preventDefault();
+          isDragging.current = true;
+          const startY = e.clientY;
+          const startH = graphHeight;
+          const onMove = (ev: MouseEvent) => {
+            if (!isDragging.current) return;
+            setGraphHeight(Math.max(250, Math.min(900, startH + ev.clientY - startY)));
+          };
+          const onUp = () => {
+            isDragging.current = false;
+            document.removeEventListener("mousemove", onMove);
+            document.removeEventListener("mouseup", onUp);
+          };
+          document.addEventListener("mousemove", onMove);
+          document.addEventListener("mouseup", onUp);
+        }}
+      >
+        <span style={{ width: 32, height: 3, borderRadius: 2, background: "hsl(var(--muted-foreground) / 0.3)" }} />
       </div>
 
       {/* Topology source badge */}

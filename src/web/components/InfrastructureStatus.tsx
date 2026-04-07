@@ -277,15 +277,6 @@ export function InfrastructureStatus({
           const { workloadType, replicas, containers, recentEvents } =
             infrastructure;
 
-          // Empty: infrastructure present but no containers
-          if (containers.length === 0) {
-            return (
-              <div className="px-4 py-8 text-center text-[13px] text-muted-foreground">
-                No workload data available
-              </div>
-            );
-          }
-
           return (
             <div>
               {/* Workload info row */}
