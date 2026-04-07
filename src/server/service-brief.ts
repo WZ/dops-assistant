@@ -292,10 +292,55 @@ function extractInfraFromYaml(yaml: string, kind: string): InfrastructureSection
     }
   }
 
+  // Extract resource limits/requests per container from YAML
+  // Pattern: resources: > limits: > cpu/memory and requests: > cpu/memory
+  const containerResources = new Map<string, { cpuLimit?: string; memLimit?: string; cpuRequest?: string; memRequest?: string }>();
+  {
+    let currentContainer: string | undefined;
+    let inResources = false;
+    let inLimits = false;
+    let inRequests = false;
+    for (const line of lines) {
+      // Track which container we're in
+      if (containerNames.includes(line.match(/^\s*name:\s*(\S+)/)?.[1] ?? "")) {
+        currentContainer = line.match(/^\s*name:\s*(\S+)/)?.[1];
+        if (currentContainer && !containerResources.has(currentContainer)) {
+          containerResources.set(currentContainer, {});
+        }
+      }
+      if (/^\s*resources:\s*$/.test(line)) { inResources = true; inLimits = false; inRequests = false; continue; }
+      if (inResources && /^\s*limits:\s*$/.test(line)) { inLimits = true; inRequests = false; continue; }
+      if (inResources && /^\s*requests:\s*$/.test(line)) { inRequests = true; inLimits = false; continue; }
+      if (inResources && /^\s*\S+:/.test(line) && !/^\s*(cpu|memory|limits|requests):/.test(line)) {
+        inResources = false; inLimits = false; inRequests = false;
+      }
+      if (currentContainer && inResources) {
+        const res = containerResources.get(currentContainer);
+        if (!res) continue;
+        const cpuMatch = line.match(/^\s*cpu:\s*["']?(\S+?)["']?\s*$/);
+        const memMatch = line.match(/^\s*memory:\s*["']?(\S+?)["']?\s*$/);
+        if (cpuMatch && inLimits) res.cpuLimit = cpuMatch[1];
+        if (memMatch && inLimits) res.memLimit = memMatch[1];
+        if (cpuMatch && inRequests) res.cpuRequest = cpuMatch[1];
+        if (memMatch && inRequests) res.memRequest = memMatch[1];
+      }
+    }
+  }
+
   return {
     workloadType: (yaml.match(/^kind:\s*(\S+)/m)?.[1]) ?? kind,
     replicas: { desired: replicas, ready: readyReplicas, available: availableReplicas },
-    containers: containerNames.map(name => coerceContainer({ name, restarts: 0 })),
+    containers: containerNames.map(name => {
+      const res = containerResources.get(name);
+      return coerceContainer({
+        name,
+        cpuLimit: res?.cpuLimit,
+        memLimit: res?.memLimit,
+        cpuUsage: res?.cpuRequest ?? "0", // requests as rough usage proxy
+        memUsage: res?.memRequest ?? "0",
+        restarts: 0,
+      });
+    }),
     recentEvents: [],
   };
 }
