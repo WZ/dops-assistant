@@ -160,7 +160,7 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
         debug(`${phaseName.toUpperCase()} agent.generate error:`, err);
       }
 
-      // 5. If agent text is empty, create fallback extractor agent
+      // 5. If agent text is empty, extract from captured tool results
       let agentText = agentResult.text;
       if (!agentText?.trim() && toolData.length > 0) {
         debug(`${phaseName.toUpperCase()}: empty text, extracting from`, toolData.length, "captured tool results");
@@ -179,8 +179,30 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
 
       // 6. Parse JSON with safeJsonParse
       debug(`${phaseName.toUpperCase()} text to parse (first 500):`, agentText?.slice(0, 500));
-      const parsed = safeJsonParse(agentText);
+      let parsed = safeJsonParse(agentText);
       debug(`${phaseName.toUpperCase()} parsed:`, parsed ? "OK" : "FAILED");
+
+      // 6b. If parsed but observations empty, or not parsed at all, re-extract
+      // from the agent's natural language text to get structured output.
+      const needsExtraction = (!parsed || !parsed.observations?.length) && agentText?.trim() && agentText.length > 50;
+      if (needsExtraction) {
+        debug(`${phaseName.toUpperCase()}: re-extracting from ${agentText.length} chars`);
+        const { Agent: ExtractAgent } = await import("@mastra/core/agent");
+        const extractor = new ExtractAgent({
+          name: `${phaseName}-extractor`,
+          id: `${phaseName}-extractor`,
+          instructions: `Convert this investigation analysis into structured JSON. Return ONLY valid JSON matching this schema: ${extractorSchema}`,
+          model: workflowConfig.model as any,
+        });
+        try {
+          const extraction = await extractor.generate(agentText.slice(0, 8000));
+          const reParsed = safeJsonParse(extraction.text ?? "");
+          if (reParsed?.observations?.length) {
+            parsed = reParsed;
+            debug(`${phaseName.toUpperCase()}: re-extraction succeeded`);
+          }
+        } catch { /* fall through */ }
+      }
 
       // 7. Build timeRange pass-through from anomaly context
       const ac = inputData.anomalyContext;
@@ -188,13 +210,17 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
         ? { from: ac.timeRangeFrom, to: ac.timeRangeTo }
         : undefined;
 
-      // 8. Return findings or empty fallback
+      // 8. Return findings, agent text as summary, or fallback
       if (parsed) {
         return {
           summary: parsed.summary ?? fallbackMessage,
           observations: parsed.observations ?? [],
           timeRange,
         };
+      }
+      if (agentText?.trim()) {
+        debug(`${phaseName.toUpperCase()}: using agent text as summary (${agentText.length} chars)`);
+        return { summary: agentText.slice(0, 3000), observations: [], timeRange };
       }
       return { summary: fallbackMessage, observations: [], timeRange };
     },
