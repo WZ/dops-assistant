@@ -173,8 +173,17 @@ function parseMcpResult(raw: unknown): unknown {
 function coerceInfrastructureResult(parsed: unknown, kind: string): InfrastructureSection | null {
   if (!parsed) return null;
 
-  // If it's a string (YAML from K8s MCP), try to extract key fields with regex
+  // If it's a string, try JSON parse first (MCP sometimes wraps JSON as text),
+  // then fall back to YAML regex extraction.
   if (typeof parsed === "string") {
+    try {
+      const asJson = JSON.parse(parsed);
+      if (typeof asJson === "object" && asJson !== null) {
+        return coerceInfrastructureResult(asJson, kind);
+      }
+    } catch {
+      // Not JSON, treat as YAML
+    }
     return extractInfraFromYaml(parsed, kind);
   }
 
@@ -233,12 +242,54 @@ function extractInfraFromYaml(yaml: string, kind: string): InfrastructureSection
   const readyReplicas = Number(yaml.match(/readyReplicas:\s*(\d+)/)?.[1]) || 0;
   const availableReplicas = Number(yaml.match(/availableReplicas:\s*(\d+)/)?.[1]) || 0;
 
-  // Extract container names from the template spec
+  // Extract container names from K8s YAML. The challenge:
+  //   containers:
+  //   - command: [/bin/sh]     <-- list item starts with command, not name
+  //     env:
+  //     - name: POD_IP         <-- this is an env var, NOT a container name
+  //     name: grafana           <-- THIS is the container name (same indent as command)
+  //
+  // Strategy: find the "containers:" block, identify the container-level indent
+  // (first "- " dash), then look for "name:" at that indent + 2 (the key indent
+  // within a list item), ignoring nested "- name:" at deeper indents.
   const containerNames: string[] = [];
-  const containerRegex = /containers:\s*\n((?:\s+-\s+.*\n?)*)/;
-  const containersBlock = yaml.match(containerRegex)?.[1] ?? "";
-  for (const m of containersBlock.matchAll(/name:\s*(\S+)/g)) {
-    containerNames.push(m[1]);
+  const lines = yaml.split("\n");
+  let inContainers = false;
+  let containerDashIndent = -1; // indent of "- " at container level
+  let itemKeyIndent = -1;       // indent of keys within a container item (dash + 2)
+  for (const line of lines) {
+    if (/^\s*containers:\s*$/.test(line)) {
+      inContainers = true;
+      containerDashIndent = -1;
+      itemKeyIndent = -1;
+      continue;
+    }
+    if (!inContainers) continue;
+
+    // Detect end of containers block: a line at same or lesser indent as "containers:" that isn't blank
+    const lineIndent = line.match(/^(\s*)/)?.[1].length ?? 0;
+    if (containerDashIndent >= 0 && lineIndent <= containerDashIndent && /\S/.test(line) && !line.match(/^\s*-/)) {
+      // Check if this is a key at same level as containers: (e.g. "volumes:", "restartPolicy:")
+      // If so, we've left the containers block
+      if (lineIndent < containerDashIndent) { inContainers = false; continue; }
+    }
+
+    // Find the first "- " to set the container dash indent
+    const dashMatch = line.match(/^(\s*)-\s/);
+    if (dashMatch && containerDashIndent < 0) {
+      containerDashIndent = dashMatch[1].length;
+      itemKeyIndent = containerDashIndent + 2; // keys are 2 spaces after the dash
+    }
+
+    // Look for "name:" at the item key indent level (container name, not env var)
+    // Container name: "        name: grafana"  (at itemKeyIndent)
+    // Env var name:   "          - name: POD_IP" (deeper, starts with "- ")
+    if (itemKeyIndent >= 0) {
+      const nameMatch = line.match(/^(\s*)name:\s*(\S+)/);
+      if (nameMatch && nameMatch[1].length === itemKeyIndent) {
+        containerNames.push(nameMatch[2]);
+      }
+    }
   }
 
   return {
