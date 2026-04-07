@@ -480,7 +480,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
     services: config.services,
     projectRoot: deps.noHistory ? undefined : process.cwd(),
     useQuirkHandling: true, // Enable wind-down: disables tools on last 2 iterations to force text output
-    maxCharsPerSkill: config.skills.maxCharsPerSkill,
+    maxCharsPerSkill: config.skills?.maxCharsPerSkill,
   };
 
   const investigationAgent = new MastraInvestigationAdapter(workflowConfig);
