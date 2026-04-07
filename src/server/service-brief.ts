@@ -302,11 +302,16 @@ function extractInfraFromYaml(yaml: string, kind: string): InfrastructureSection
     let inRequests = false;
     let resourcesIndent = 0;
     for (const line of lines) {
-      // Track which container we're in
-      if (containerNames.includes(line.match(/^\s*name:\s*(\S+)/)?.[1] ?? "")) {
-        currentContainer = line.match(/^\s*name:\s*(\S+)/)?.[1];
-        if (currentContainer && !containerResources.has(currentContainer)) {
-          containerResources.set(currentContainer, {});
+      // Track which container we're in — only match "name:" at the container
+      // item-key indentation level (same logic as first pass) to avoid matching
+      // env var names that happen to equal a container name.
+      if (itemKeyIndent >= 0) {
+        const nameMatch = line.match(/^(\s*)name:\s*(\S+)/);
+        if (nameMatch && nameMatch[1].length === itemKeyIndent && containerNames.includes(nameMatch[2])) {
+          currentContainer = nameMatch[2];
+          if (!containerResources.has(currentContainer)) {
+            containerResources.set(currentContainer, {});
+          }
         }
       }
       // Track resources: > limits:/requests: > cpu:/memory: state machine
@@ -604,7 +609,8 @@ let cachedCorootProjectId: string | undefined;
 let cachedCorootAppRegistry: { id: string; status: string }[] | undefined;
 let corootRegistryPromise: Promise<void> | undefined;
 
-/** Resolve Coroot project ID and app registry once, cache for server lifetime. */
+/** Resolve Coroot project ID and app registry, cache on success.
+ *  On transient failure, leaves cache undefined so next request retries. */
 async function ensureCorootRegistry(tools: Record<string, unknown>): Promise<void> {
   if (cachedCorootProjectId !== undefined) return;
 
@@ -613,16 +619,20 @@ async function ensureCorootRegistry(tools: Record<string, unknown>): Promise<voi
   corootRegistryPromise = (async () => {
     // 1. Get project ID
     const projectsTool = findTool(tools, ["list_projects"]);
-    if (!projectsTool) { cachedCorootProjectId = ""; return; }
+    if (!projectsTool) { cachedCorootProjectId = ""; return; } // permanent: no tool available
     try {
       const projRaw = await withTimeout(projectsTool.execute({}), SECTION_TIMEOUT_MS, "coroot:list_projects");
       const projParsed = parseMcpResult(projRaw) as { projects?: { id: string; name: string }[] } | null;
-      cachedCorootProjectId = projParsed?.projects?.[0]?.id ?? "";
-    } catch {
-      cachedCorootProjectId = "";
-      return;
+      const id = projParsed?.projects?.[0]?.id;
+      if (!id) {
+        logger.warn("service-brief: Coroot list_projects returned no projects, will retry next request");
+        return; // leave undefined so we retry
+      }
+      cachedCorootProjectId = id;
+    } catch (err) {
+      logger.warn({ err }, "service-brief: Coroot list_projects failed, will retry next request");
+      return; // leave undefined so we retry
     }
-    if (!cachedCorootProjectId) return;
 
     // 2. Get app registry for lazy resolution
     const overviewTool = findTool(tools, ["applications_overview", "overview"]);
@@ -640,6 +650,7 @@ async function ensureCorootRegistry(tools: Record<string, unknown>): Promise<voi
       logger.info({ projectId: cachedCorootProjectId, appCount: cachedCorootAppRegistry.length }, "service-brief: cached Coroot app registry");
     } catch (err) {
       logger.debug({ err }, "service-brief: Coroot app registry fetch failed");
+      // Project ID is cached but registry failed — will retry registry on next call
     }
   })();
   await corootRegistryPromise;
@@ -729,6 +740,7 @@ async function fetchDependenciesFromCoroot(
 
   // Clients: services that CALL this service (upstream callers)
   for (const client of appMap.clients ?? []) {
+    if (!client.id) continue; // defensive: skip malformed entries
     const clientName = extractServiceName(client.id);
     addNode(clientName, client.icon, client.id, client.status);
     const slo = sloRates.get(clientName);
@@ -738,6 +750,7 @@ async function fetchDependenciesFromCoroot(
 
   // Dependencies: services this service CALLS (downstream callees)
   for (const dep of appMap.dependencies ?? []) {
+    if (!dep.id) continue; // defensive: skip malformed entries
     const depName = extractServiceName(dep.id);
     addNode(depName, dep.icon, dep.id, dep.status);
     edges.push({ source: serviceName, target: depName });

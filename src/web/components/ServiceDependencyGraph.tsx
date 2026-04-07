@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect } from "react";
 import { ReactFlow, Background, Controls, type Node, type Edge } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useStackContext } from "../contexts/StackContext";
@@ -63,6 +63,10 @@ export function ServiceDependencyGraph({
   const [tableOpen, setTableOpen] = useState(false);
   const [graphHeight, setGraphHeight] = useState(500);
   const isDragging = React.useRef(false);
+  const dragCleanup = React.useRef<(() => void) | undefined>(undefined);
+
+  // Clean up drag listeners on unmount
+  useEffect(() => () => { dragCleanup.current?.(); }, []);
 
   // Merge: initialHealthMap takes precedence when initialData is provided;
   // otherwise fall back to the healthMap prop passed from parent.
@@ -302,9 +306,11 @@ export function ServiceDependencyGraph({
             isDragging.current = false;
             document.removeEventListener("mousemove", onMove);
             document.removeEventListener("mouseup", onUp);
+            dragCleanup.current = undefined;
           };
           document.addEventListener("mousemove", onMove);
           document.addEventListener("mouseup", onUp);
+          dragCleanup.current = onUp;
         }}
       >
         <span style={{ width: 32, height: 3, borderRadius: 2, background: "hsl(var(--muted-foreground) / 0.3)" }} />
