@@ -488,6 +488,55 @@ function extractSloRates(reports: unknown[]): Map<string, { reqs?: string; laten
  * Returns null if no Coroot provider or no mapping for this service.
  * On failure, logs a warning and returns null (caller falls back to inferred).
  */
+// ── Coroot resolution cache (server-lifetime) ──────────────────────────────
+// These avoid repeated list_projects and get_applications_overview calls.
+
+let cachedCorootProjectId: string | undefined;
+let cachedCorootAppRegistry: { id: string; status: string }[] | undefined;
+let corootRegistryPromise: Promise<void> | undefined;
+
+/** Resolve Coroot project ID and app registry once, cache for server lifetime. */
+async function ensureCorootRegistry(tools: Record<string, unknown>): Promise<void> {
+  if (cachedCorootProjectId !== undefined) return;
+
+  // Deduplicate concurrent calls
+  if (corootRegistryPromise) { await corootRegistryPromise; return; }
+  corootRegistryPromise = (async () => {
+    // 1. Get project ID
+    const projectsTool = findTool(tools, ["list_projects"]);
+    if (!projectsTool) { cachedCorootProjectId = ""; return; }
+    try {
+      const projRaw = await withTimeout(projectsTool.execute({}), SECTION_TIMEOUT_MS, "coroot:list_projects");
+      const projParsed = parseMcpResult(projRaw) as { projects?: { id: string; name: string }[] } | null;
+      cachedCorootProjectId = projParsed?.projects?.[0]?.id ?? "";
+    } catch {
+      cachedCorootProjectId = "";
+      return;
+    }
+    if (!cachedCorootProjectId) return;
+
+    // 2. Get app registry for lazy resolution
+    const overviewTool = findTool(tools, ["applications_overview", "overview"]);
+    if (!overviewTool) return;
+    try {
+      const overviewRaw = await withTimeout(
+        overviewTool.execute({ project_id: cachedCorootProjectId }),
+        SECTION_TIMEOUT_MS,
+        "coroot:applications_overview",
+      );
+      const overviewParsed = parseMcpResult(overviewRaw) as {
+        overview?: { context?: { search?: { applications?: { id: string; status: string }[] } } };
+      } | null;
+      cachedCorootAppRegistry = overviewParsed?.overview?.context?.search?.applications ?? [];
+      logger.info({ projectId: cachedCorootProjectId, appCount: cachedCorootAppRegistry.length }, "service-brief: cached Coroot app registry");
+    } catch (err) {
+      logger.debug({ err }, "service-brief: Coroot app registry fetch failed");
+    }
+  })();
+  await corootRegistryPromise;
+  corootRegistryPromise = undefined;
+}
+
 async function fetchDependenciesFromCoroot(
   serviceName: string,
   providers: MastraProvider[],
@@ -499,52 +548,20 @@ async function fetchDependenciesFromCoroot(
   const appTool = findTool(tools, ["get_application", "application"]);
   if (!appTool) return null;
 
-  // Resolve Coroot project ID (needed for all Coroot API calls)
-  const projectsTool = findTool(tools, ["list_projects"]);
-  let projectId: string | undefined;
-  if (projectsTool) {
-    try {
-      const projRaw = await withTimeout(projectsTool.execute({}), SECTION_TIMEOUT_MS, "fetchDeps:coroot:projects");
-      const projParsed = parseMcpResult(projRaw) as { projects?: { id: string; name: string }[] } | null;
-      projectId = projParsed?.projects?.[0]?.id;
-    } catch (err) {
-      logger.debug({ err, service: serviceName }, "service-brief: Coroot list_projects failed");
-    }
-  }
-  if (!projectId) {
-    logger.debug({ service: serviceName }, "service-brief: no Coroot project ID, skipping");
-    return null;
-  }
+  // Ensure project ID and app registry are cached (one-time per server lifetime)
+  await ensureCorootRegistry(tools);
+  const projectId = cachedCorootProjectId;
+  if (!projectId) return null;
 
-  // Resolve Coroot app ID: prefer stored corootAppId, else try lazy resolution
+  // Resolve Coroot app ID: prefer stored corootAppId, else lazy resolution from cached registry
   const svcConfig = services.find(s => s.name === serviceName);
   let appId = svcConfig?.corootAppId;
 
-  if (!appId) {
-    // Lazy resolution: look up via get_applications_overview
-    const overviewTool = findTool(tools, ["applications_overview", "overview"]);
-    if (overviewTool) {
-      try {
-        const overviewRaw = await withTimeout(
-          overviewTool.execute({ project_id: projectId }),
-          SECTION_TIMEOUT_MS,
-          "fetchDeps:coroot:overview",
-        );
-        const overviewParsed = parseMcpResult(overviewRaw) as {
-          overview?: { context?: { search?: { applications?: { id: string; status: string }[] } } };
-        } | null;
-        const apps = overviewParsed?.overview?.context?.search?.applications ?? [];
-        // Match by service name (last segment of the Coroot ID)
-        const match = apps.find(a => extractServiceName(a.id) === serviceName);
-        if (match) {
-          appId = match.id;
-          logger.info({ service: serviceName, corootAppId: appId }, "service-brief: lazy-resolved Coroot app ID");
-        } else {
-          logger.debug({ service: serviceName, appCount: apps.length }, "service-brief: no Coroot app match for service");
-        }
-      } catch (err) {
-        logger.debug({ err, service: serviceName }, "service-brief: Coroot overview lookup failed");
-      }
+  if (!appId && cachedCorootAppRegistry) {
+    const match = cachedCorootAppRegistry.find(a => extractServiceName(a.id) === serviceName);
+    if (match) {
+      appId = match.id;
+      logger.info({ service: serviceName, corootAppId: appId }, "service-brief: lazy-resolved Coroot app ID");
     }
   }
 
@@ -953,6 +970,9 @@ async function doBuildServiceBrief(
 export function clearBriefCache(): void {
   cache.clear();
   inflight.clear();
+  cachedCorootProjectId = undefined;
+  cachedCorootAppRegistry = undefined;
+  corootRegistryPromise = undefined;
 }
 
 /** Manually set a cache entry (useful in tests). */
