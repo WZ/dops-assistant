@@ -16,6 +16,7 @@ import type { LanguageModel } from "ai";
 import { WorkflowInputSchema, PostSynthesisOutputSchema } from "./schemas.js";
 import type { MastraProvider } from "../mcp/provider.js";
 import type { ServiceConfig, InvestigationTemplate } from "../config/schema.js";
+import type { Skill } from "../skills/store.js";
 import { buildPrefetchStep } from "./steps/prefetch-step.js";
 import { buildAnomalyStep } from "./steps/anomaly.js";
 import { buildPlanningStep } from "./steps/planning.js";
@@ -39,6 +40,10 @@ export interface WorkflowConfig {
   /** When true, only read-only MCP tools are available to workflow steps.
    *  Used by headless investigations (webhook/poller) to prevent write operations. */
   readOnlyTools?: boolean;
+  /** Pre-filtered skills for this investigation (investigation-scoped). */
+  skills?: Skill[];
+  /** Max chars per skill body for truncation (from config). */
+  maxCharsPerSkill?: number;
   /** Progress callbacks for streaming to UI */
   onPhase?: (phase: string) => void;
   onIteration?: (phase: string, iteration: number, maxIterations: number, label: string) => void;

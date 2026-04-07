@@ -139,13 +139,14 @@ export class InvestigationRunner {
     // 1. Create DB record
     this.db.createInvestigation(stackId ?? "", { id: invId, service: service.name, query: message, status: "running" });
 
-    // 2. Search for matching skills
+    // 2. Search for matching skills — pass both string (for planning step) and Skill[] (for evidence steps)
     let skillContext: string | undefined;
+    let investigationSkills: import("../skills/store.js").Skill[] | undefined;
     if (this.skillStore) {
-      const matchedSkills = this.skillStore.search({ service: service.name, query: message });
+      const matchedSkills = this.skillStore.search({ service: service.name, query: message, scope: "investigation" });
       if (matchedSkills.length > 0) {
-        const rawSkillContext = this.skillStore.formatForPrompt(matchedSkills);
-        skillContext = rawSkillContext;
+        skillContext = this.skillStore.formatForPrompt(matchedSkills);
+        investigationSkills = matchedSkills;
         logger.debug({ skillCount: matchedSkills.length, skills: matchedSkills.map(s => s.id) }, "Injecting skills into investigation");
       }
     }
@@ -242,6 +243,7 @@ export class InvestigationRunner {
         skillContext,
         template,
         readOnlyTools,
+        investigationSkills,
       );
 
       // 5. Complete remaining phases

@@ -6,6 +6,8 @@ import type { LanguageModel } from "ai";
 import type { MastraProvider } from "../../mcp/provider.js";
 import type { ServiceConfig, DiscoveryConfig, DiscoveryRecipe } from "../../config/schema.js";
 import type { OnToolCallEnriched, OnIteration } from "../../types/agent-interfaces.js";
+import type { Skill } from "../../skills/store.js";
+import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
 
 export interface DiscoverStepConfig {
   model: LanguageModel;
@@ -14,6 +16,8 @@ export interface DiscoverStepConfig {
   onToolCall?: OnToolCallEnriched;
   onIteration?: OnIteration;
   onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
+  skills?: Skill[];
+  maxCharsPerSkill?: number;
 }
 
 const MAX_RETRIES = 3;
@@ -93,6 +97,17 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
     ? wrapToolsWithCallbacks(discoveryTools, wrappedOnToolCall, "discovery")
     : discoveryTools;
 
+  // Format discovery-scoped skills once (outside retry loop — skills don't change between retries)
+  let fullHints = recipeHints;
+  if (config.skills && config.skills.length > 0) {
+    const maxChars = config.maxCharsPerSkill ?? 2000;
+    const skillSections = config.skills.map((s) => {
+      const body = s.body.length > maxChars ? s.body.slice(0, maxChars) + "\n...[truncated]" : s.body;
+      return `### ${wrapUntrusted("skill", s.title)}\n${wrapUntrusted("skill_body", body)}`;
+    });
+    fullHints += `\n\n## Team Knowledge (Discovery Skills)\n${skillSections.join("\n\n")}`;
+  }
+
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     const agent = createDiscoverAgent({
       model: config.model,
@@ -100,7 +115,7 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
       maxSteps,
       excludeServices: config.discoveryConfig.excludeServices,
       useQuirkHandling: true,
-      discoveryRecipes: recipeHints,
+      discoveryRecipes: fullHints,
     });
 
     const toolCount = Object.keys(tools).length;

@@ -470,6 +470,11 @@ export async function handleClientMessage(
 
     try {
       const discoveryConfig = deps.config.discovery;
+      // Load discovery-scoped skills
+      const discoverySkills = deps.skillStore?.getAllForScope("discovery") ?? [];
+      if (discoverySkills.length > 0) {
+        logger.debug({ skillCount: discoverySkills.length, skills: discoverySkills.map(s => s.id) }, "Injecting discovery skills");
+      }
       const services = await agents.discoverAgent.discover(
         discoveryConfig ?? { autoRefresh: false, excludeServices: [], maxIterations: 40, discoveryRecipes: [] },
         (phase) => {
@@ -502,6 +507,7 @@ export async function handleClientMessage(
             durationMs,
           }),
         onTokenUsage,
+        discoverySkills.length > 0 ? discoverySkills : undefined,
       );
       send({ type: "discover:phase", phase: "validation", status: "complete" });
       if (services.length === 0) {
@@ -644,15 +650,21 @@ export async function handleClientMessage(
       contextService ??
       resolveServiceFromHistory(db.listRecentMessages(stackId, 10), visibleServices);
 
-    // Search for matching skills in conversational mode
+    // Search for matching chat-scoped skills
     let chatSkillContext: string | undefined;
     if (deps.skillStore) {
       const matched = deps.skillStore.search({
         service: chatService?.name,
         query: msg.message,
+        scope: "chat",
       });
       if (matched.length > 0) {
-        chatSkillContext = deps.skillStore.formatForPrompt(matched);
+        // Use simpler framing for chat (not investigation-flavored), wrap for prompt safety
+        const maxChars = deps.skillStore.maxCharsPerSkill;
+        chatSkillContext = `## Relevant Knowledge\n${matched.map(s => {
+          const body = s.body.length > maxChars ? s.body.slice(0, maxChars) + "\n...[truncated]" : s.body;
+          return `### ${wrapUntrusted("skill_title", s.title)}\n${wrapUntrusted("skill_body", body)}`;
+        }).join("\n\n")}`;
       }
     }
 
