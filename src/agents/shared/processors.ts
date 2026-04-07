@@ -1,14 +1,13 @@
 /**
  * Attempt to parse JSON from a string that may be free-form text.
  *
- * Tries five strategies in order:
+ * Tries four strategies in order:
  *   1. Direct JSON.parse
  *   2. Extract JSON from a markdown code block (```json ... ```)
  *   3. Extract the LAST top-level {...} object (agents are instructed to
  *      end their response with JSON, so the last object is most likely
  *      the structured output rather than an embedded snippet)
  *   4. Extract the FIRST top-level {...} object
- *   5. Greedy first-{ to last-} span (legacy fallback)
  *
  * Returns null if all strategies fail.
  */
@@ -43,15 +42,6 @@ export function safeJsonParse(text: string): any | null {
   if (firstObj) {
     try {
       return JSON.parse(firstObj);
-    } catch { /* fall through */ }
-  }
-
-  // 5. Greedy fallback: first { to last } (can produce garbage on mixed text)
-  const firstBrace = text.indexOf("{");
-  const lastBrace = text.lastIndexOf("}");
-  if (firstBrace !== -1 && lastBrace > firstBrace) {
-    try {
-      return JSON.parse(text.slice(firstBrace, lastBrace + 1));
     } catch { /* fall through */ }
   }
 
@@ -100,19 +90,9 @@ function extractFirstJsonObject(text: string): string | null {
 function findMatchingOpen(text: string, end: number): number {
   let depth = 0;
   let inString = false;
-  let escapeNext = false;
 
   for (let i = end; i >= 0; i--) {
     const ch = text[i]!;
-
-    if (escapeNext) {
-      escapeNext = false;
-      continue;
-    }
-
-    // Backwards scanning: a backslash BEFORE the current char means
-    // the previous char was escaped. Check if char at i-1 is backslash.
-    // (This is a simplification — deeply nested escapes are rare in LLM output)
 
     if (ch === '"' && (i === 0 || text[i - 1] !== "\\")) {
       inString = !inString;

@@ -160,7 +160,7 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
         debug(`${phaseName.toUpperCase()} agent.generate error:`, err);
       }
 
-      // 5. If agent text is empty, create fallback extractor agent
+      // 5. If agent text is empty, extract from captured tool results
       let agentText = agentResult.text;
       if (!agentText?.trim() && toolData.length > 0) {
         debug(`${phaseName.toUpperCase()}: empty text, extracting from`, toolData.length, "captured tool results");
@@ -179,18 +179,14 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
 
       // 6. Parse JSON with safeJsonParse
       debug(`${phaseName.toUpperCase()} text to parse (first 500):`, agentText?.slice(0, 500));
-      const parsed = safeJsonParse(agentText);
+      let parsed = safeJsonParse(agentText);
       debug(`${phaseName.toUpperCase()} parsed:`, parsed ? "OK" : "FAILED");
 
-      // 6b. If agent text has no useful structured data, run extractor.
-      // This covers two cases:
-      //   a) safeJsonParse returned null (text isn't JSON at all)
-      //   b) safeJsonParse matched a {…} span but observations is empty — common
-      //      when the agent mixes natural language with JSON fragments and
-      //      safeJsonParse grabs a wide span that parses but lacks real content
-      const parsedIsEmpty = parsed && (!parsed.observations || parsed.observations.length === 0);
-      if ((!parsed || parsedIsEmpty) && agentText?.trim() && agentText.length > 50) {
-        debug(`${phaseName.toUpperCase()}: non-JSON text (${agentText.length} chars), re-extracting`);
+      // 6b. If parsed but observations empty, or not parsed at all, re-extract
+      // from the agent's natural language text to get structured output.
+      const needsExtraction = (!parsed || !parsed.observations?.length) && agentText?.trim() && agentText.length > 50;
+      if (needsExtraction) {
+        debug(`${phaseName.toUpperCase()}: re-extracting from ${agentText.length} chars`);
         const { Agent: ExtractAgent } = await import("@mastra/core/agent");
         const extractor = new ExtractAgent({
           name: `${phaseName}-extractor`,
@@ -201,17 +197,9 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
         try {
           const extraction = await extractor.generate(agentText.slice(0, 8000));
           const reParsed = safeJsonParse(extraction.text ?? "");
-          if (reParsed) {
+          if (reParsed?.observations?.length) {
+            parsed = reParsed;
             debug(`${phaseName.toUpperCase()}: re-extraction succeeded`);
-            const ac = inputData.anomalyContext;
-            const timeRange = ac?.timeRangeFrom && ac?.timeRangeTo
-              ? { from: ac.timeRangeFrom, to: ac.timeRangeTo }
-              : undefined;
-            return {
-              summary: reParsed.summary ?? fallbackMessage,
-              observations: reParsed.observations ?? [],
-              timeRange,
-            };
           }
         } catch { /* fall through */ }
       }
@@ -222,7 +210,7 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
         ? { from: ac.timeRangeFrom, to: ac.timeRangeTo }
         : undefined;
 
-      // 8. Return findings or empty fallback
+      // 8. Return findings, agent text as summary, or fallback
       if (parsed) {
         return {
           summary: parsed.summary ?? fallbackMessage,
@@ -230,24 +218,10 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
           timeRange,
         };
       }
-
-      // 9. Fallback: use agent text or raw tool data as summary so synthesis
-      // can still work with real evidence instead of "unavailable".
       if (agentText?.trim()) {
-        // Agent produced natural language analysis — use it as the summary
         debug(`${phaseName.toUpperCase()}: using agent text as summary (${agentText.length} chars)`);
         return { summary: agentText.slice(0, 3000), observations: [], timeRange };
       }
-      if (toolData.length > 0) {
-        const toolSummary = toolData
-          .filter((d) => d.startsWith("Tool:"))
-          .map((d) => d.slice(0, 500))
-          .join("\n---\n")
-          .slice(0, 3000);
-        debug(`${phaseName.toUpperCase()}: forwarding ${toolData.length} raw tool results as summary`);
-        return { summary: `${phaseName} tools returned data but structured extraction failed. Raw results:\n${toolSummary}`, observations: [], timeRange };
-      }
-
       return { summary: fallbackMessage, observations: [], timeRange };
     },
   });

@@ -72,11 +72,10 @@ describe("safeJsonParse", () => {
     expect(result.observations[0].resource).toBe("pod");
   });
 
-  it("returns null for text with only small inline JSON snippets and no structured output", () => {
-    // Braces exist but no substantial JSON object
+  it("ignores small inline JSON snippets that aren't structured output", () => {
+    // Small inline {key: value} fragments are noise, not structured output
     const text = 'The config uses {"a": 1} settings.';
-    // This should still parse the small object (it is valid JSON)
     const result = safeJsonParse(text);
-    expect(result).toEqual({ a: 1 });
+    expect(result).toBeNull();
   });
 });
