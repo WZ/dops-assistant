@@ -113,6 +113,21 @@ export function ServiceOverview({ serviceName, onViewService }: ServiceOverviewP
         )}
       </section>
 
+      {/* ── Dependencies — depends on brief ── */}
+      <section>
+        <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/50 mb-3">
+          Dependencies
+        </div>
+        <div className="h-px bg-border/25 mb-4" />
+        <ServiceDependencyGraph
+          serviceName={serviceName}
+          onViewService={onViewService}
+          dependencySource={dependencySource}
+          initialData={initialDepData}
+          initialHealthMap={initialHealthMap}
+        />
+      </section>
+
       {/* ── Recent Changes — depends on brief ── */}
       <section>
         <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/50 mb-3">
@@ -127,23 +142,6 @@ export function ServiceOverview({ serviceName, onViewService }: ServiceOverviewP
             sectionStatus={brief?.sections.changes ?? fallbackStatus}
           />
         )}
-      </section>
-
-      {/* ── Dependencies — renders immediately, fetches its own data ── */}
-      <section>
-        <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/50 mb-3">
-          Dependencies
-        </div>
-        <div className="h-px bg-border/25 mb-4" />
-        <div style={{ height: 300 }}>
-          <ServiceDependencyGraph
-            serviceName={serviceName}
-            onViewService={onViewService}
-            dependencySource={dependencySource}
-            initialData={initialDepData}
-            initialHealthMap={initialHealthMap}
-          />
-        </div>
       </section>
     </div>
   );

@@ -107,7 +107,7 @@ export interface InfrastructureSection {
 
 // ── Dependency graph source ───────────────────────────────────────────────────
 
-export type DependencyGraphSource = "prometheus" | "kubernetes" | "inferred";
+export type DependencyGraphSource = "inferred" | "coroot";
 
 // ── Section freshness ─────────────────────────────────────────────────────────
 
