@@ -119,6 +119,7 @@ export const SkillInputSchema = z.object({
   services: z.array(boundedString(200)).max(100).optional(),
   alerts: z.array(boundedString(200)).max(100).optional(),
   tags: z.array(boundedString(200)).max(100).optional(),
+  scope: z.array(z.enum(["investigation", "discovery", "chat"])).optional(),
   body: boundedString(MAX_SKILL_BODY_LENGTH).optional(),
 });
 

@@ -500,8 +500,8 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
           res.status(400).json({ error: "Invalid skill input", details: errors });
           return;
         }
-        const { title, services: svcs, alerts, tags, body } = parsed.data;
-        const skill = await skillStore.save(undefined, { title, services: svcs ?? [], alerts: alerts ?? [], tags: tags ?? [] }, body ?? "");
+        const { title, services: svcs, alerts, tags, scope, body } = parsed.data;
+        const skill = await skillStore.save(undefined, { title, services: svcs ?? [], alerts: alerts ?? [], tags: tags ?? [], scope }, body ?? "");
         res.status(201).json(skill);
       } catch (err) {
         res.status(500).json({ error: err instanceof Error ? err.message : "Failed to create skill" });
@@ -517,8 +517,8 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
           res.status(400).json({ error: "Invalid skill input", details: errors });
           return;
         }
-        const { title, services: svcs, alerts, tags, body } = parsed.data;
-        const skill = await skillStore.save(id, { title, services: svcs ?? [], alerts: alerts ?? [], tags: tags ?? [] }, body ?? "");
+        const { title, services: svcs, alerts, tags, scope, body } = parsed.data;
+        const skill = await skillStore.save(id, { title, services: svcs ?? [], alerts: alerts ?? [], tags: tags ?? [], scope }, body ?? "");
         res.json(skill);
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to update skill";
