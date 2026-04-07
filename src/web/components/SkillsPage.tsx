@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { Plus, FilePlus } from "lucide-react";
 import { SkillEditor } from "./SkillEditor";
 import { useStackContext } from "../contexts/StackContext";
@@ -10,6 +11,7 @@ interface SkillMeta {
   services: string[];
   alerts: string[];
   tags: string[];
+  enabled?: boolean;
 }
 
 interface SkillFull extends SkillMeta {
@@ -136,6 +138,17 @@ export function SkillsPage() {
     } catch { /* ignore */ }
   };
 
+  const handleToggle = async (id: string, currentEnabled: boolean) => {
+    try {
+      await stackFetch(`/api/skills/${id}/enabled`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: !currentEnabled }),
+      });
+      setSkills(prev => prev.map(s => s.id === id ? { ...s, enabled: !currentEnabled } : s));
+    } catch { /* ignore */ }
+  };
+
   if (editing) {
     return (
       <SkillEditor
@@ -192,39 +205,54 @@ export function SkillsPage() {
             </div>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
-              {skills.map((skill) => (
-                <Button
-                  key={skill.id}
-                  variant="ghost"
-                  onClick={() => handleEdit(skill.id)}
-                  className="h-auto text-left items-start flex-col p-4 rounded-xl border border-border/40 bg-card/30 hover:border-primary/30 hover:bg-card/60 transition-all group whitespace-normal"
-                >
-                  <h3 className="text-sm font-display font-semibold text-foreground/80 group-hover:text-foreground transition-colors mb-1.5">
-                    {skill.title}
-                  </h3>
-                  {skill.services.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mb-2">
-                      {skill.services.map((s) => (
-                        <span key={s} className="px-1.5 py-0.5 text-[9px] font-mono rounded bg-primary/10 text-primary/70 border border-primary/15">
-                          {s}
-                        </span>
-                      ))}
+              {skills.map((skill) => {
+                const enabled = skill.enabled !== false;
+                return (
+                  <div
+                    key={skill.id}
+                    className={`relative rounded-xl border p-4 transition-all ${enabled ? "border-border/40 bg-card/30 hover:border-primary/30 hover:bg-card/60" : "border-border/20 bg-card/10 opacity-50"}`}
+                  >
+                    <div className="flex items-start justify-between gap-2 mb-1.5">
+                      <button
+                        onClick={() => handleEdit(skill.id)}
+                        className="text-left flex-1 min-w-0"
+                      >
+                        <h3 className={`text-sm font-display font-semibold transition-colors ${enabled ? "text-foreground/80 hover:text-foreground" : "text-foreground/40"}`}>
+                          {skill.title}
+                        </h3>
+                      </button>
+                      <Switch
+                        checked={enabled}
+                        onCheckedChange={() => handleToggle(skill.id, enabled)}
+                        className="shrink-0"
+                      />
                     </div>
-                  )}
-                  {skill.tags.length > 0 && (
-                    <div className="flex flex-wrap gap-1">
-                      {skill.tags.slice(0, 5).map((t) => (
-                        <span key={t} className="px-1.5 py-0.5 text-[9px] font-mono rounded bg-secondary/50 text-muted-foreground/60">
-                          {t}
-                        </span>
-                      ))}
-                      {skill.tags.length > 5 && (
-                        <span className="text-[9px] font-mono text-muted-foreground/70">+{skill.tags.length - 5}</span>
+                    <button onClick={() => handleEdit(skill.id)} className="text-left w-full">
+                      {skill.services.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mb-2">
+                          {skill.services.map((s) => (
+                            <span key={s} className="px-1.5 py-0.5 text-[9px] font-mono rounded bg-primary/10 text-primary/70 border border-primary/15">
+                              {s}
+                            </span>
+                          ))}
+                        </div>
                       )}
-                    </div>
-                  )}
-                </Button>
-              ))}
+                      {skill.tags.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {skill.tags.slice(0, 5).map((t) => (
+                            <span key={t} className="px-1.5 py-0.5 text-[9px] font-mono rounded bg-secondary/50 text-muted-foreground/60">
+                              {t}
+                            </span>
+                          ))}
+                          {skill.tags.length > 5 && (
+                            <span className="text-[9px] font-mono text-muted-foreground/70">+{skill.tags.length - 5}</span>
+                          )}
+                        </div>
+                      )}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
