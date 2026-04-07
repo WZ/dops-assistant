@@ -10,6 +10,8 @@ const ServiceSchema = z.object({
   metrics: z.array(MetricSchema).optional().default([]),
   logLabels: z.record(z.string()).optional().default({}),
   gitlabProject: z.string().optional(),
+  /** Coroot application ID (e.g. "default:Deployment:ingestion-server"). Set by discovery. */
+  corootAppId: z.string().optional(),
 });
 
 const McpServerSchema = z.discriminatedUnion("transport", [

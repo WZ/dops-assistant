@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { ReactFlow, Background, Controls, type Node, type Edge } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useStackContext } from "../contexts/StackContext";
+import type { DependencyGraphSource } from "../../types/service-brief";
 
 interface DependencyNode {
   id: string;
@@ -26,7 +27,7 @@ interface ServiceDependencyGraphProps {
   serviceName: string;
   onViewService: (name: string) => void;
   healthMap?: Record<string, HealthStatus>;
-  dependencySource?: "prometheus" | "kubernetes" | "inferred";
+  dependencySource?: DependencyGraphSource;
   /** When provided, skip the internal fetch and use this data directly. */
   initialData?: DependencyData;
   /** When provided alongside initialData, skip the internal healthMap fetch. */
@@ -60,6 +61,12 @@ export function ServiceDependencyGraph({
   const [loading, setLoading] = useState(initialData === undefined);
   const [error, setError] = useState<string | null>(null);
   const [tableOpen, setTableOpen] = useState(false);
+  const [graphHeight, setGraphHeight] = useState(500);
+  const isDragging = React.useRef(false);
+  const dragCleanup = React.useRef<(() => void) | undefined>(undefined);
+
+  // Clean up drag listeners on unmount
+  useEffect(() => () => { dragCleanup.current?.(); }, []);
 
   // Merge: initialHealthMap takes precedence when initialData is provided;
   // otherwise fall back to the healthMap prop passed from parent.
@@ -104,7 +111,7 @@ export function ServiceDependencyGraph({
 
   if (loading) {
     return (
-      <div className="rounded-lg border border-border/25 bg-card/40 overflow-hidden shimmer-skeleton" style={{ height: 400 }}>
+      <div className="rounded-lg border border-border/25 bg-card/40 overflow-hidden shimmer-skeleton" style={{ height: graphHeight }}>
         <div className="h-full w-full bg-muted/30" />
       </div>
     );
@@ -114,7 +121,7 @@ export function ServiceDependencyGraph({
     return (
       <div
         className="rounded-lg border border-border/25 bg-card/40 flex items-center justify-center"
-        style={{ height: 400 }}
+        style={{ height: graphHeight }}
       >
         <span className="font-mono text-[11px] text-muted-foreground/60">{error}</span>
       </div>
@@ -125,7 +132,7 @@ export function ServiceDependencyGraph({
     return (
       <div
         className="rounded-lg border border-border/25 bg-card/40 flex items-center justify-center text-center px-8"
-        style={{ height: 400 }}
+        style={{ height: graphHeight }}
       >
         <span className="font-mono text-[11px] text-muted-foreground/60">
           No dependencies detected. Run discovery to map service relationships.
@@ -144,30 +151,72 @@ export function ServiceDependencyGraph({
 
   const isInferred = !dependencySource || dependencySource === "inferred";
 
-  const nodes: Node[] = data.nodes.map((n, i) => {
+  // Hierarchical layout: clients (top) → target (center) → dependencies (bottom)
+  // All positions centered around origin (0,0) — fitView handles viewport centering.
+  // data is guaranteed non-null here (early return above)
+  const graphData = data!;
+  const clientList = graphData.edges.filter(e => e.target === serviceName).map(e => e.source);
+  const depList = graphData.edges.filter(e => e.source === serviceName).map(e => e.target);
+  const clientSet = new Set(clientList);
+  const depSet = new Set(depList);
+
+  function nodePosition(name: string, index: number): { x: number; y: number } {
+    const COL_GAP = 250;
+    const ROW_GAP = 120;
+    if (name === serviceName) return { x: 0, y: ROW_GAP };
+    if (clientSet.has(name)) {
+      const ci = clientList.indexOf(name);
+      const offset = (ci - (clientList.length - 1) / 2) * COL_GAP;
+      return { x: offset, y: 0 };
+    }
+    if (depSet.has(name)) {
+      const di = depList.indexOf(name);
+      const offset = (di - (depList.length - 1) / 2) * COL_GAP;
+      return { x: offset, y: ROW_GAP * 2 };
+    }
+    return { x: (index - graphData.nodes.length / 2) * COL_GAP, y: ROW_GAP * 3 };
+  }
+
+  /** Shorten long service names for display (keep full name as tooltip) */
+  function shortenName(name: string): string {
+    if (name.length <= 20) return name;
+    // FQDN: "fazbdregistry.service.consul" → "fazbdregistry…consul"
+    const dotParts = name.split(".");
+    if (dotParts.length >= 3) return `${dotParts[0]}…${dotParts[dotParts.length - 1]}`;
+    // Hyphenated: "stream-kafka-cluster-kafka" → "stream-kafka…kafka"
+    const dashParts = name.split("-");
+    if (dashParts.length >= 4) return `${dashParts.slice(0, 2).join("-")}…${dashParts[dashParts.length - 1]}`;
+    return name.slice(0, 18) + "…";
+  }
+
+  const nodes: Node[] = graphData.nodes.map((n, i) => {
     const health: HealthStatus = healthMap?.[n.name] ?? "unknown";
     const dotColor = healthDotColor(health);
     const showDot = !!healthMap;
 
     return {
       id: n.id,
-      position: { x: 150 * (i % 4), y: 120 * Math.floor(i / 4) },
+      position: nodePosition(n.name, i),
       data: {
-        label: showDot ? (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            <span
-              style={{
-                display: "inline-block",
-                width: 6,
-                height: 6,
-                borderRadius: 9999,
-                background: dotColor,
-                flexShrink: 0,
-              }}
-            />
-            {n.name}
+        label: (
+          <span title={n.name} style={{ display: "inline-flex", alignItems: "center", gap: 6, maxWidth: 180, overflow: "hidden" }}>
+            {showDot && (
+              <span
+                style={{
+                  display: "inline-block",
+                  width: 6,
+                  height: 6,
+                  borderRadius: 9999,
+                  background: dotColor,
+                  flexShrink: 0,
+                }}
+              />
+            )}
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {shortenName(n.name)}
+            </span>
           </span>
-        ) : n.name,
+        ),
         _labelText: n.name,
       },
       style:
@@ -193,19 +242,22 @@ export function ServiceDependencyGraph({
     };
   });
 
-  const edges: Edge[] = data.edges.map((e) => ({
+  const edges: Edge[] = graphData.edges.map((e) => ({
     id: `${e.source}->${e.target}`,
     source: e.source,
     target: e.target,
     label: e.label,
     style: { stroke: border },
-    labelStyle: { fontSize: 9, fill: mutedFg },
+    labelStyle: { fontSize: 9, fill: fg, fontFamily: "var(--font-mono)" },
+    labelBgStyle: { fill: secondary, fillOpacity: 0.9 },
+    labelBgPadding: [4, 6] as [number, number],
+    labelBgBorderRadius: 4,
   }));
 
   // Build accessible table rows
-  const tableRows = data.nodes.map((n) => {
-    const outgoing = data.edges.filter((e) => e.source === n.id);
-    const incoming = data.edges.filter((e) => e.target === n.id);
+  const tableRows = graphData.nodes.map((n) => {
+    const outgoing = graphData.edges.filter((e) => e.source === n.id);
+    const incoming = graphData.edges.filter((e) => e.target === n.id);
     let connection = "none";
     if (outgoing.length > 0 && incoming.length > 0) connection = "upstream + downstream";
     else if (outgoing.length > 0) connection = "upstream";
@@ -218,34 +270,66 @@ export function ServiceDependencyGraph({
     <div className="flex flex-col gap-2">
       <div
         className="rounded-lg border border-border/25 bg-card/40 overflow-hidden"
-        style={{ height: 400 }}
+        style={{ height: graphHeight }}
       >
         <ReactFlow
           nodes={nodes}
           edges={edges}
           onNodeClick={(_, node) => onViewService((node.data._labelText ?? node.data.label) as string)}
           fitView
-          fitViewOptions={{ maxZoom: 0.8 }}
+          fitViewOptions={{ maxZoom: 1.2, minZoom: 0.3, padding: 0.2 }}
         >
           <Background color={border} gap={16} />
           <Controls />
         </ReactFlow>
       </div>
+      {/* Drag-to-resize handle */}
+      <div
+        style={{
+          height: 6,
+          cursor: "ns-resize",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          userSelect: "none",
+        }}
+        onMouseDown={(e) => {
+          e.preventDefault();
+          isDragging.current = true;
+          const startY = e.clientY;
+          const startH = graphHeight;
+          const onMove = (ev: MouseEvent) => {
+            if (!isDragging.current) return;
+            setGraphHeight(Math.max(250, Math.min(900, startH + ev.clientY - startY)));
+          };
+          const onUp = () => {
+            isDragging.current = false;
+            document.removeEventListener("mousemove", onMove);
+            document.removeEventListener("mouseup", onUp);
+            dragCleanup.current = undefined;
+          };
+          document.addEventListener("mousemove", onMove);
+          document.addEventListener("mouseup", onUp);
+          dragCleanup.current = onUp;
+        }}
+      >
+        <span style={{ width: 32, height: 3, borderRadius: 2, background: "hsl(var(--muted-foreground) / 0.3)" }} />
+      </div>
 
-      {/* Estimated topology disclaimer */}
-      {isInferred && (
-        <p
-          style={{
-            fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
-            fontSize: 10,
-            color: "hsl(var(--muted-foreground) / 0.5)",
-            margin: 0,
-            paddingLeft: 2,
-          }}
-        >
-          Estimated topology — based on query and log analysis
-        </p>
-      )}
+      {/* Topology source badge */}
+      <p
+        style={{
+          fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
+          fontSize: 10,
+          color: isInferred ? "hsl(var(--muted-foreground) / 0.5)" : "hsl(var(--primary) / 0.7)",
+          margin: 0,
+          paddingLeft: 2,
+        }}
+      >
+        {dependencySource === "coroot"
+          ? "Live topology — powered by Coroot"
+          : "Estimated topology — based on query and log analysis"}
+      </p>
 
       {/* Accessible dependency table (collapsible) */}
       <div>

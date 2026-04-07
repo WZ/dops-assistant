@@ -277,15 +277,6 @@ export function InfrastructureStatus({
           const { workloadType, replicas, containers, recentEvents } =
             infrastructure;
 
-          // Empty: infrastructure present but no containers
-          if (containers.length === 0) {
-            return (
-              <div className="px-4 py-8 text-center text-[13px] text-muted-foreground">
-                No workload data available
-              </div>
-            );
-          }
-
           return (
             <div>
               {/* Workload info row */}
@@ -318,11 +309,17 @@ export function InfrastructureStatus({
               <div className="border-t border-border/25" />
 
               {/* Container resource cards */}
-              <div className="divide-y divide-border/25">
-                {containers.map((container) => (
-                  <ContainerCard key={container.name} container={container} />
-                ))}
-              </div>
+              {containers.length > 0 ? (
+                <div className="divide-y divide-border/25">
+                  {containers.map((container) => (
+                    <ContainerCard key={container.name} container={container} />
+                  ))}
+                </div>
+              ) : (
+                <div className="px-4 py-4 text-center text-[11px] text-muted-foreground/50">
+                  No container details available
+                </div>
+              )}
 
               {/* Warning events */}
               <WarningEvents events={recentEvents} />

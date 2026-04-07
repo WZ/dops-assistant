@@ -23,6 +23,7 @@ import type {
   InfrastructureSection,
   BriefDependencyNode,
   BriefDependencyEdge,
+  DependencyGraphSource,
   AISummary,
   ContainerStatus,
   K8sEvent,
@@ -172,8 +173,17 @@ function parseMcpResult(raw: unknown): unknown {
 function coerceInfrastructureResult(parsed: unknown, kind: string): InfrastructureSection | null {
   if (!parsed) return null;
 
-  // If it's a string (YAML from K8s MCP), try to extract key fields with regex
+  // If it's a string, try JSON parse first (MCP sometimes wraps JSON as text),
+  // then fall back to YAML regex extraction.
   if (typeof parsed === "string") {
+    try {
+      const asJson = JSON.parse(parsed);
+      if (typeof asJson === "object" && asJson !== null) {
+        return coerceInfrastructureResult(asJson, kind);
+      }
+    } catch {
+      // Not JSON, treat as YAML
+    }
     return extractInfraFromYaml(parsed, kind);
   }
 
@@ -232,18 +242,123 @@ function extractInfraFromYaml(yaml: string, kind: string): InfrastructureSection
   const readyReplicas = Number(yaml.match(/readyReplicas:\s*(\d+)/)?.[1]) || 0;
   const availableReplicas = Number(yaml.match(/availableReplicas:\s*(\d+)/)?.[1]) || 0;
 
-  // Extract container names from the template spec
+  // Extract container names from K8s YAML. The challenge:
+  //   containers:
+  //   - command: [/bin/sh]     <-- list item starts with command, not name
+  //     env:
+  //     - name: POD_IP         <-- this is an env var, NOT a container name
+  //     name: grafana           <-- THIS is the container name (same indent as command)
+  //
+  // Strategy: find the "containers:" block, identify the container-level indent
+  // (first "- " dash), then look for "name:" at that indent + 2 (the key indent
+  // within a list item), ignoring nested "- name:" at deeper indents.
   const containerNames: string[] = [];
-  const containerRegex = /containers:\s*\n((?:\s+-\s+.*\n?)*)/;
-  const containersBlock = yaml.match(containerRegex)?.[1] ?? "";
-  for (const m of containersBlock.matchAll(/name:\s*(\S+)/g)) {
-    containerNames.push(m[1]);
+  const lines = yaml.split("\n");
+  let inContainers = false;
+  let containerDashIndent = -1; // indent of "- " at container level
+  let itemKeyIndent = -1;       // indent of keys within a container item (dash + 2)
+  for (const line of lines) {
+    if (/^\s*containers:\s*$/.test(line)) {
+      inContainers = true;
+      containerDashIndent = -1;
+      itemKeyIndent = -1;
+      continue;
+    }
+    if (!inContainers) continue;
+
+    // Detect end of containers block: a line at same or lesser indent as "containers:" that isn't blank
+    const lineIndent = line.match(/^(\s*)/)?.[1].length ?? 0;
+    if (containerDashIndent >= 0 && lineIndent <= containerDashIndent && /\S/.test(line) && !line.match(/^\s*-/)) {
+      // Check if this is a key at same level as containers: (e.g. "volumes:", "restartPolicy:")
+      // If so, we've left the containers block
+      if (lineIndent < containerDashIndent) { inContainers = false; continue; }
+    }
+
+    // Find the first "- " to set the container dash indent
+    const dashMatch = line.match(/^(\s*)-\s/);
+    if (dashMatch && containerDashIndent < 0) {
+      containerDashIndent = dashMatch[1].length;
+      itemKeyIndent = containerDashIndent + 2; // keys are 2 spaces after the dash
+    }
+
+    // Look for "name:" at the item key indent level (container name, not env var)
+    // Container name: "        name: grafana"  (at itemKeyIndent)
+    // Env var name:   "          - name: POD_IP" (deeper, starts with "- ")
+    if (itemKeyIndent >= 0) {
+      const nameMatch = line.match(/^(\s*)name:\s*(\S+)/);
+      if (nameMatch && nameMatch[1].length === itemKeyIndent) {
+        containerNames.push(nameMatch[2]);
+      }
+    }
+  }
+
+  // Extract resource limits/requests per container from YAML
+  // Pattern: resources: > limits: > cpu/memory and requests: > cpu/memory
+  const containerResources = new Map<string, { cpuLimit?: string; memLimit?: string; cpuRequest?: string; memRequest?: string }>();
+  {
+    let currentContainer: string | undefined;
+    let inResources = false;
+    let inLimits = false;
+    let inRequests = false;
+    let resourcesIndent = 0;
+    for (const line of lines) {
+      // Track which container we're in — only match "name:" at the container
+      // item-key indentation level (same logic as first pass) to avoid matching
+      // env var names that happen to equal a container name.
+      if (itemKeyIndent >= 0) {
+        const nameMatch = line.match(/^(\s*)name:\s*(\S+)/);
+        if (nameMatch && nameMatch[1].length === itemKeyIndent && containerNames.includes(nameMatch[2])) {
+          currentContainer = nameMatch[2];
+          if (!containerResources.has(currentContainer)) {
+            containerResources.set(currentContainer, {});
+          }
+        }
+      }
+      // Track resources: > limits:/requests: > cpu:/memory: state machine
+      // Use indentation to know when we've left the resources block
+      if (/^\s*resources:\s*$/.test(line)) {
+        inResources = true; inLimits = false; inRequests = false;
+        resourcesIndent = (line.match(/^(\s*)/)?.[1].length ?? 0);
+        continue;
+      }
+      if (inResources) {
+        const thisIndent = line.match(/^(\s*)/)?.[1].length ?? 0;
+        // Left the resources block if indent is at or before resources level
+        if (/\S/.test(line) && thisIndent <= resourcesIndent) {
+          inResources = false; inLimits = false; inRequests = false;
+          // Don't continue — this line might be a container-level key
+        } else {
+          if (/^\s*limits:\s*$/.test(line)) { inLimits = true; inRequests = false; continue; }
+          if (/^\s*requests:\s*$/.test(line)) { inRequests = true; inLimits = false; continue; }
+        }
+      }
+      if (currentContainer && inResources) {
+        const res = containerResources.get(currentContainer);
+        if (!res) continue;
+        const cpuMatch = line.match(/^\s*cpu:\s*["']?([^"'\s]+)["']?\s*$/);
+        const memMatch = line.match(/^\s*memory:\s*["']?([^"'\s]+)["']?\s*$/);
+        if (cpuMatch && inLimits) res.cpuLimit = cpuMatch[1];
+        if (memMatch && inLimits) res.memLimit = memMatch[1];
+        if (cpuMatch && inRequests) res.cpuRequest = cpuMatch[1];
+        if (memMatch && inRequests) res.memRequest = memMatch[1];
+      }
+    }
   }
 
   return {
     workloadType: (yaml.match(/^kind:\s*(\S+)/m)?.[1]) ?? kind,
     replicas: { desired: replicas, ready: readyReplicas, available: availableReplicas },
-    containers: containerNames.map(name => coerceContainer({ name, restarts: 0 })),
+    containers: containerNames.map(name => {
+      const res = containerResources.get(name);
+      return coerceContainer({
+        name,
+        cpuLimit: res?.cpuLimit,
+        memLimit: res?.memLimit,
+        cpuUsage: res?.cpuRequest ?? "0", // requests as rough usage proxy
+        memUsage: res?.memRequest ?? "0",
+        restarts: 0,
+      });
+    }),
     recentEvents: [],
   };
 }
@@ -427,18 +542,268 @@ async function fetchInfrastructure(
   return null;
 }
 
+// ── Coroot dependency helpers ────────────────────────────────────────────────
+
+/** Extract the short service name from a Coroot app ID (e.g. "default:Deployment:ingestion-server" → "ingestion-server") */
+function extractServiceName(corootId: string): string {
+  const parts = corootId.split(":");
+  return parts[parts.length - 1];
+}
+
+/** Map Coroot icon to BriefDependencyNode type */
+function mapCorootIcon(icon: string | undefined): BriefDependencyNode["type"] {
+  const map: Record<string, BriefDependencyNode["type"]> = {
+    postgres: "database", mysql: "database", mongodb: "database",
+    kafka: "queue", rabbitmq: "queue", nats: "queue",
+    redis: "cache", memcached: "cache",
+    consul: "external",
+  };
+  return map[icon ?? ""] ?? "service";
+}
+
+/** Classify noise nodes — returns a dimmed type instead of filtering them out */
+function classifyCorootNode(corootId: string, icon: string | undefined): BriefDependencyNode["type"] {
+  if (corootId.startsWith("external:ExternalService:")) return "external";
+  if (corootId.startsWith("_:Unknown:")) {
+    const name = extractServiceName(corootId);
+    if (["kubelet", "containerd", "kube-proxy", "systemd-logind", "dbus", "firewalld"].includes(name)) return "external";
+  }
+  return mapCorootIcon(icon);
+}
+
+/** Extract per-client request rate from the SLO report table if available */
+function extractSloRates(reports: unknown[]): Map<string, { reqs?: string; latency?: string }> {
+  const rates = new Map<string, { reqs?: string; latency?: string }>();
+  if (!Array.isArray(reports)) return rates;
+  const sloReport = reports.find((r: unknown) => (r as { name?: string }).name === "SLO");
+  if (!sloReport) return rates;
+  const widgets = (sloReport as { widgets?: unknown[] }).widgets;
+  if (!Array.isArray(widgets)) return rates;
+  for (const w of widgets) {
+    const table = (w as { table?: { rows?: unknown[] } }).table;
+    if (!table?.rows) continue;
+    for (const row of table.rows) {
+      const cells = (row as { cells?: unknown[] }).cells;
+      if (!Array.isArray(cells) || cells.length < 4) continue;
+      const clientCell = cells[0] as { value?: string; link?: { params?: { id?: string } } };
+      const reqCell = cells[2] as { value?: string };
+      const latCell = cells[3] as { value?: string };
+      const clientName = clientCell.value ?? "";
+      if (clientName) {
+        rates.set(clientName, { reqs: reqCell.value, latency: latCell.value });
+      }
+    }
+  }
+  return rates;
+}
+
+/**
+ * Fetch dependency graph from a Coroot MCP provider.
+ * Returns null if no Coroot provider or no mapping for this service.
+ * On failure, logs a warning and returns null (caller falls back to inferred).
+ */
+// ── Coroot resolution cache (server-lifetime) ──────────────────────────────
+// These avoid repeated list_projects and get_applications_overview calls.
+
+let cachedCorootProjectId: string | undefined;
+let cachedCorootAppRegistry: { id: string; status: string }[] | undefined;
+let corootRegistryPromise: Promise<void> | undefined;
+
+/** Resolve Coroot project ID and app registry, cache on success.
+ *  On transient failure, leaves cache undefined so next request retries. */
+async function ensureCorootRegistry(tools: Record<string, unknown>): Promise<void> {
+  if (cachedCorootProjectId !== undefined) return;
+
+  // Deduplicate concurrent calls
+  if (corootRegistryPromise) { await corootRegistryPromise; return; }
+  corootRegistryPromise = (async () => {
+    // 1. Get project ID
+    const projectsTool = findTool(tools, ["list_projects"]);
+    if (!projectsTool) { cachedCorootProjectId = ""; return; } // permanent: no tool available
+    try {
+      const projRaw = await withTimeout(projectsTool.execute({}), SECTION_TIMEOUT_MS, "coroot:list_projects");
+      const projParsed = parseMcpResult(projRaw) as { projects?: { id: string; name: string }[] } | null;
+      const id = projParsed?.projects?.[0]?.id;
+      if (!id) {
+        logger.warn("service-brief: Coroot list_projects returned no projects, will retry next request");
+        return; // leave undefined so we retry
+      }
+      cachedCorootProjectId = id;
+    } catch (err) {
+      logger.warn({ err }, "service-brief: Coroot list_projects failed, will retry next request");
+      return; // leave undefined so we retry
+    }
+
+    // 2. Get app registry for lazy resolution
+    const overviewTool = findTool(tools, ["applications_overview", "overview"]);
+    if (!overviewTool) return;
+    try {
+      const overviewRaw = await withTimeout(
+        overviewTool.execute({ project_id: cachedCorootProjectId }),
+        SECTION_TIMEOUT_MS,
+        "coroot:applications_overview",
+      );
+      const overviewParsed = parseMcpResult(overviewRaw) as {
+        overview?: { context?: { search?: { applications?: { id: string; status: string }[] } } };
+      } | null;
+      cachedCorootAppRegistry = overviewParsed?.overview?.context?.search?.applications ?? [];
+      logger.info({ projectId: cachedCorootProjectId, appCount: cachedCorootAppRegistry.length }, "service-brief: cached Coroot app registry");
+    } catch (err) {
+      logger.debug({ err }, "service-brief: Coroot app registry fetch failed");
+      // Project ID is cached but registry failed — will retry registry on next call
+    }
+  })();
+  await corootRegistryPromise;
+  corootRegistryPromise = undefined;
+}
+
+async function fetchDependenciesFromCoroot(
+  serviceName: string,
+  providers: MastraProvider[],
+  services: ServiceConfig[],
+): Promise<{ nodes: BriefDependencyNode[]; edges: BriefDependencyEdge[]; source: "coroot" } | null> {
+  const tools = await getToolsByRole(providers, "dependencies") as Record<string, unknown>;
+  if (Object.keys(tools).length === 0) return null;
+
+  const appTool = findTool(tools, ["get_application", "application"]);
+  if (!appTool) return null;
+
+  // Ensure project ID and app registry are cached (one-time per server lifetime)
+  await ensureCorootRegistry(tools);
+  const projectId = cachedCorootProjectId;
+  if (!projectId) return null;
+
+  // Resolve Coroot app ID: prefer stored corootAppId, else lazy resolution from cached registry
+  const svcConfig = services.find(s => s.name === serviceName);
+  let appId = svcConfig?.corootAppId;
+
+  if (!appId && cachedCorootAppRegistry) {
+    const match = cachedCorootAppRegistry.find(a => extractServiceName(a.id) === serviceName);
+    if (match) {
+      appId = match.id;
+      logger.info({ service: serviceName, corootAppId: appId }, "service-brief: lazy-resolved Coroot app ID");
+    }
+  }
+
+  if (!appId) return null;
+
+  // Call get_application
+  const raw = await withTimeout(
+    appTool.execute({ project_id: projectId, app_id: appId }),
+    SECTION_TIMEOUT_MS,
+    "fetchDeps:coroot:get_application",
+  );
+  const parsed = parseMcpResult(raw) as {
+    success?: boolean;
+    application?: { data?: { app_map?: unknown; reports?: unknown[] } };
+  } | null;
+
+  if (!parsed?.success || !parsed?.application?.data) return null;
+
+  const appMap = parsed.application.data.app_map as {
+    application: { icon?: string; status?: string };
+    clients?: { id: string; icon?: string; status?: string; link_status?: string; link_direction?: string }[];
+    dependencies?: { id: string; icon?: string; status?: string; link_status?: string; link_direction?: string }[];
+  } | null;
+  if (!appMap) return null;
+
+  // Extract SLO rates for edge labels
+  const sloRates = extractSloRates(parsed.application.data.reports ?? []);
+
+  const nodes: BriefDependencyNode[] = [];
+  const edges: BriefDependencyEdge[] = [];
+  const seenNodes = new Set<string>();
+
+  /** Map Coroot app status to BriefDependencyNode status as a fallback
+   *  when the Prometheus health poller has no data for a node. */
+  function mapCorootStatus(corootStatus: string | undefined): BriefDependencyNode["status"] {
+    if (corootStatus === "ok") return "healthy";
+    if (corootStatus === "warning") return "degraded";
+    if (corootStatus === "critical") return "unhealthy";
+    return "unknown";
+  }
+
+  const addNode = (name: string, icon: string | undefined, corootId: string, corootStatus?: string) => {
+    if (seenNodes.has(name)) return;
+    seenNodes.add(name);
+    nodes.push({
+      id: name,
+      name,
+      type: classifyCorootNode(corootId, icon),
+      // Use Coroot status as initial value; enrichWithHealth overwrites with
+      // Prometheus data when available (Prometheus takes priority).
+      status: mapCorootStatus(corootStatus),
+    });
+  };
+
+  addNode(serviceName, appMap.application.icon, appId, appMap.application.status);
+
+  // Clients: services that CALL this service (upstream callers)
+  for (const client of appMap.clients ?? []) {
+    if (!client.id) continue; // defensive: skip malformed entries
+    const clientName = extractServiceName(client.id);
+    addNode(clientName, client.icon, client.id, client.status);
+    const slo = sloRates.get(clientName);
+    const label = slo?.reqs ? `${slo.reqs} req/s` : undefined;
+    edges.push({ source: clientName, target: serviceName, label });
+  }
+
+  // Dependencies: services this service CALLS (downstream callees)
+  for (const dep of appMap.dependencies ?? []) {
+    if (!dep.id) continue; // defensive: skip malformed entries
+    const depName = extractServiceName(dep.id);
+    addNode(depName, dep.icon, dep.id, dep.status);
+    edges.push({ source: serviceName, target: depName });
+  }
+
+  return { nodes, edges, source: "coroot" as const };
+}
+
+/** Enrich dependency nodes with health status from the Prometheus-based health poller. */
+function enrichWithHealth(nodes: BriefDependencyNode[], healthPoller?: ServiceHealthPoller): void {
+  if (!healthPoller) return;
+  const healthMap = healthPoller.getHealth();
+  const statusMap: Record<HealthStatus, BriefDependencyNode["status"]> = {
+    healthy: "healthy",
+    degraded: "degraded",
+    down: "unhealthy",
+    unknown: "unknown",
+  };
+  for (const node of nodes) {
+    const status = healthMap.get(node.name);
+    // Only overwrite if Prometheus has a definitive status (not "unknown"),
+    // otherwise keep the Coroot-derived status as fallback.
+    if (status && status !== "unknown") node.status = statusMap[status];
+  }
+}
+
 async function fetchDependencies(
   serviceName: string,
   services: ServiceConfig[],
   healthPoller?: ServiceHealthPoller,
-): Promise<{ nodes: BriefDependencyNode[]; edges: BriefDependencyEdge[]; source: "inferred" }> {
+  providers?: MastraProvider[],
+): Promise<{ nodes: BriefDependencyNode[]; edges: BriefDependencyEdge[]; source: DependencyGraphSource }> {
   // Check cache first
-  const cached = getCached<{ nodes: BriefDependencyNode[]; edges: BriefDependencyEdge[]; source: "inferred" }>(serviceName, "dependencies");
+  const cached = getCached<{ nodes: BriefDependencyNode[]; edges: BriefDependencyEdge[]; source: DependencyGraphSource }>(serviceName, "dependencies");
   if (cached && cached.status === "ok") return cached.data;
 
+  // Try Coroot first if dependencies-role providers exist
+  if (providers && providers.length > 0) {
+    try {
+      const corootResult = await fetchDependenciesFromCoroot(serviceName, providers, services);
+      if (corootResult) {
+        enrichWithHealth(corootResult.nodes, healthPoller);
+        setCache(serviceName, "dependencies", corootResult);
+        return corootResult;
+      }
+    } catch (err) {
+      logger.warn({ err, service: serviceName }, "service-brief: Coroot dependency fetch failed, falling back to inferred");
+    }
+  }
+
+  // Fallback: inferred graph from text matching
   const graph = inferDependencyGraph(services);
 
-  // Filter to just the requested service and its neighbors
   const related = new Set<string>([serviceName]);
   for (const edge of graph.edges) {
     if (edge.source === serviceName) related.add(edge.target);
@@ -448,23 +813,7 @@ async function fetchDependencies(
   const filteredNodes = graph.nodes.filter(n => related.has(n.id));
   const filteredEdges = graph.edges.filter(e => related.has(e.source) && related.has(e.target));
 
-  // Enrich with health status from the poller
-  if (healthPoller) {
-    const healthMap = healthPoller.getHealth();
-    for (const node of filteredNodes) {
-      const status = healthMap.get(node.name);
-      if (status) {
-        // Map HealthStatus → BriefDependencyNode status
-        const statusMap: Record<HealthStatus, BriefDependencyNode["status"]> = {
-          healthy: "healthy",
-          degraded: "degraded",
-          down: "unhealthy",
-          unknown: "unknown",
-        };
-        node.status = statusMap[status];
-      }
-    }
-  }
+  enrichWithHealth(filteredNodes, healthPoller);
 
   const result = { nodes: filteredNodes, edges: filteredEdges, source: "inferred" as const };
   setCache(serviceName, "dependencies", result);
@@ -580,7 +929,7 @@ async function doBuildServiceBrief(
 
   const staleChanges = getCached<ChangesSection>(serviceName, "changes");
   const staleInfra = getCached<InfrastructureSection>(serviceName, "infrastructure");
-  const staleDeps = getCached<{ nodes: BriefDependencyNode[]; edges: BriefDependencyEdge[]; source: "inferred" }>(serviceName, "dependencies");
+  const staleDeps = getCached<{ nodes: BriefDependencyNode[]; edges: BriefDependencyEdge[]; source: DependencyGraphSource }>(serviceName, "dependencies");
   const staleSummary = getCached<AISummary>(serviceName, "summary");
 
   // If every section has a fresh cache hit, skip all fetches and return immediately.
@@ -612,7 +961,7 @@ async function doBuildServiceBrief(
   // also fire a background refresh so the caller gets stale data immediately
   // while revalidation runs in the background.
 
-  type DepsResult = { nodes: BriefDependencyNode[]; edges: BriefDependencyEdge[]; source: "inferred" };
+  type DepsResult = { nodes: BriefDependencyNode[]; edges: BriefDependencyEdge[]; source: DependencyGraphSource };
 
   // Background refresh for stale sections — fire-and-forget
   if (staleChanges?.status === "stale") {
@@ -626,7 +975,7 @@ async function doBuildServiceBrief(
     );
   }
   if (staleDeps?.status === "stale") {
-    void fetchDependencies(serviceName, services, healthPoller).catch(err =>
+    void fetchDependencies(serviceName, services, healthPoller, providers).catch(err =>
       logger.debug({ err, service: serviceName }, "service-brief: background dependencies refresh failed"),
     );
   }
@@ -650,7 +999,7 @@ async function doBuildServiceBrief(
   const [changesResult, infraResult, depsResult] = await Promise.allSettled([
     needChanges ? fetchChanges(serviceName, providers) : Promise.resolve(changesData),
     needInfra ? fetchInfrastructure(serviceName, providers, namespace, services) : Promise.resolve(infraData),
-    needDeps ? fetchDependencies(serviceName, services, healthPoller) : Promise.resolve(depsData),
+    needDeps ? fetchDependencies(serviceName, services, healthPoller, providers) : Promise.resolve(depsData),
   ]);
 
   // Process changes result
@@ -755,6 +1104,9 @@ async function doBuildServiceBrief(
 export function clearBriefCache(): void {
   cache.clear();
   inflight.clear();
+  cachedCorootProjectId = undefined;
+  cachedCorootAppRegistry = undefined;
+  corootRegistryPromise = undefined;
 }
 
 /** Manually set a cache entry (useful in tests). */

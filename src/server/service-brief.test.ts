@@ -302,10 +302,10 @@ describe("buildServiceBrief", () => {
     expect(brief1.changes).toEqual(brief2.changes);
     expect(brief1.infrastructure).toEqual(brief2.infrastructure);
 
-    // getToolsByRole should have been called for the "changes" and "infrastructure" roles
-    // only once each (2 total) — not doubled (4 total)
+    // getToolsByRole should have been called for "changes", "infrastructure", and
+    // "dependencies" roles only once each (3 total) — not doubled (6 total).
     // The first call owns the fetch; the second joins the same inflight promise.
-    expect(callCount).toBe(2);
+    expect(callCount).toBe(3);
   });
 
   // 8. AI summary fails → summary=null, 3 data sections still returned
@@ -326,5 +326,189 @@ describe("buildServiceBrief", () => {
     expect(brief.sections.changes.status).toBe("ok");
     expect(brief.sections.infrastructure.status).toBe("ok");
     expect(brief.sections.dependencies.status).toBe("ok");
+  });
+});
+
+// ── Coroot dependency integration tests ────────────────────────────────────
+
+describe("Coroot dependency graph", () => {
+  const corootAppMapResponse = {
+    content: [{ type: "text", text: JSON.stringify({
+      success: true,
+      application: {
+        data: {
+          app_map: {
+            application: { id: "default:Deployment:api-service", icon: "java" },
+            clients: [
+              { id: "default:Deployment:web-frontend", icon: "nodejs", link_status: "ok", link_direction: "to" },
+            ],
+            dependencies: [
+              { id: "db:StatefulSet:stolon-keeper", icon: "postgres", link_status: "ok", link_direction: "to" },
+              { id: "stream:StrimziPodSet:kafka", icon: "kafka", link_status: "unknown", link_direction: "to" },
+            ],
+          },
+          reports: [
+            {
+              name: "SLO",
+              status: "ok",
+              widgets: [{
+                table: {
+                  header: ["Client", "", "Requests", "Latency", "Errors"],
+                  rows: [{
+                    cells: [
+                      { value: "web-frontend", link: { params: { id: "default:Deployment:web-frontend" } } },
+                      {},
+                      { value: "42" },
+                      { value: "3.2" },
+                      { value: "" },
+                    ],
+                  }],
+                },
+              }],
+            },
+          ],
+        },
+      },
+    }) }],
+  };
+
+  const corootProjectsResponse = {
+    content: [{ type: "text", text: JSON.stringify({
+      success: true,
+      count: 1,
+      projects: [{ id: "test-proj-id", name: "default" }],
+    }) }],
+  };
+
+  function makeCorootTools(appResponse: unknown = corootAppMapResponse) {
+    return {
+      coroot_list_projects: makeTool(corootProjectsResponse),
+      coroot_get_application: makeTool(appResponse),
+    };
+  }
+
+  it("returns Coroot graph when dependencies provider and corootAppId are available", async () => {
+    mockGetToolsByRole.mockImplementation((_providers: unknown, role: string) => {
+      if (role === "dependencies") return makeCorootTools();
+      return {};
+    });
+
+    const services = makeServices(["api-service"]);
+    services[0].corootAppId = "default:Deployment:api-service";
+
+    const brief = await buildServiceBrief("api-service", baseDeps({
+      providers: [makeProvider("coroot", ["dependencies"])],
+      services,
+    }));
+
+    expect(brief.dependencies).not.toBeNull();
+    expect(brief.dependencies!.source).toBe("coroot");
+    expect(brief.dependencies!.nodes.length).toBe(4); // api-service + web-frontend + stolon-keeper + kafka
+    expect(brief.dependencies!.edges.length).toBe(3); // web-frontend→api, api→stolon, api→kafka
+
+    // SLO rate extracted as edge label
+    const webEdge = brief.dependencies!.edges.find(e => e.source === "web-frontend");
+    expect(webEdge?.label).toBe("42 req/s");
+
+    // Node types mapped from Coroot icons
+    const pgNode = brief.dependencies!.nodes.find(n => n.name === "stolon-keeper");
+    expect(pgNode?.type).toBe("database");
+    const kafkaNode = brief.dependencies!.nodes.find(n => n.name === "kafka");
+    expect(kafkaNode?.type).toBe("queue");
+  });
+
+  it("falls back to inferred when no dependencies provider exists", async () => {
+    mockGetToolsByRole.mockResolvedValue({});
+
+    const services = makeServices(["api-service", "db-service"]);
+    // Cross-reference in metric query to produce an inferred edge
+    services[0].metrics = [{ query: 'up{job="db-service"}', description: "test" }];
+
+    const brief = await buildServiceBrief("api-service", baseDeps({
+      providers: [makeProvider("grafana", ["metrics"])],
+      services,
+    }));
+
+    expect(brief.dependencies).not.toBeNull();
+    expect(brief.dependencies!.source).toBe("inferred");
+  });
+
+  it("falls back to inferred when corootAppId is missing and lazy resolution fails", async () => {
+    // Return empty overview (no apps to match)
+    const overviewTool = makeTool({
+      content: [{ type: "text", text: JSON.stringify({
+        success: true,
+        overview: { context: { search: { applications: [] } } },
+      }) }],
+    });
+    mockGetToolsByRole.mockImplementation((_providers: unknown, role: string) => {
+      if (role === "dependencies") return {
+        coroot_get_application: makeTool(corootAppMapResponse),
+        coroot_get_applications_overview: overviewTool,
+      };
+      return {};
+    });
+
+    const services = makeServices(["api-service"]);
+    // No corootAppId set
+
+    const brief = await buildServiceBrief("api-service", baseDeps({
+      providers: [makeProvider("coroot", ["dependencies"])],
+      services,
+    }));
+
+    expect(brief.dependencies).not.toBeNull();
+    expect(brief.dependencies!.source).toBe("inferred");
+  });
+
+  it("falls back to inferred when Coroot tool call throws", async () => {
+    const failingTool = {
+      execute: vi.fn().mockRejectedValue(new Error("Coroot connection refused")),
+    };
+    mockGetToolsByRole.mockImplementation((_providers: unknown, role: string) => {
+      if (role === "dependencies") return { coroot_get_application: failingTool };
+      return {};
+    });
+
+    const services = makeServices(["api-service"]);
+    services[0].corootAppId = "default:Deployment:api-service";
+
+    const brief = await buildServiceBrief("api-service", baseDeps({
+      providers: [makeProvider("coroot", ["dependencies"])],
+      services,
+    }));
+
+    expect(brief.dependencies).not.toBeNull();
+    expect(brief.dependencies!.source).toBe("inferred");
+  });
+
+  it("enriches Coroot nodes with Prometheus health data", async () => {
+    mockGetToolsByRole.mockImplementation((_providers: unknown, role: string) => {
+      if (role === "dependencies") return makeCorootTools();
+      return {};
+    });
+
+    const services = makeServices(["api-service"]);
+    services[0].corootAppId = "default:Deployment:api-service";
+
+    const healthPoller = makeHealthPoller({
+      "api-service": "healthy",
+      "web-frontend": "degraded",
+    });
+
+    const brief = await buildServiceBrief("api-service", baseDeps({
+      providers: [makeProvider("coroot", ["dependencies"])],
+      services,
+      healthPoller,
+    }));
+
+    expect(brief.dependencies!.source).toBe("coroot");
+    const apiNode = brief.dependencies!.nodes.find(n => n.name === "api-service");
+    expect(apiNode?.status).toBe("healthy");
+    const webNode = brief.dependencies!.nodes.find(n => n.name === "web-frontend");
+    expect(webNode?.status).toBe("degraded");
+    // Node not in health poller stays "unknown"
+    const pgNode = brief.dependencies!.nodes.find(n => n.name === "stolon-keeper");
+    expect(pgNode?.status).toBe("unknown");
   });
 });
