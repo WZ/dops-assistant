@@ -150,6 +150,7 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
       const llmToolCalls: ToolCallEvent[] = [];
       let iterationCount = 0;
       let llmError: string | undefined;
+      let generateError: string | undefined;
       let totalInputTokens = 0;
       let totalOutputTokens = 0;
       const callId = newCallId();
@@ -192,7 +193,11 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         debug(`${phaseName.toUpperCase()} agent.generate error:`, err);
-        llmError = /ECONNREFUSED|ETIMEDOUT|ENOTFOUND|502|503/i.test(errMsg) ? errMsg : undefined;
+        generateError = errMsg;
+        // Only set llmError for network errors (controls phase UI state)
+        if (/ECONNREFUSED|ETIMEDOUT|ENOTFOUND|502|503/i.test(errMsg)) {
+          llmError = errMsg;
+        }
       }
 
       // Log the LLM call
@@ -208,7 +213,7 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
         outputTokens: totalOutputTokens,
         durationMs: Date.now() - generateStartMs,
         toolCalls: llmToolCalls,
-        error: llmError,
+        error: generateError,
       });
 
       // 5. If agent text is empty, extract from captured tool results

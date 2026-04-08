@@ -123,7 +123,6 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
       discoveryRecipes: fullHints,
     });
 
-    const toolCount = Object.keys(tools).length;
     const discoverCallId = newCallId();
     const discoverPrompt = "Discover all monitored services using the available tools. Return the complete list as JSON.";
     const discoverStartMs = Date.now();
@@ -161,6 +160,8 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
       if (parsed?.services && Array.isArray(parsed.services) && parsed.services.length > 0) {
         return parsed.services;
       }
+      // Always log empty results to stderr (visible even when LLM_LOG_LEVEL=silent)
+      console.error(`[DISCOVER] Empty result on attempt ${attempt}/${MAX_RETRIES}`);
     } catch (err) {
       console.error(`[DISCOVER] Error on attempt ${attempt}: ${err instanceof Error ? err.message : err}`);
       if (attempt === MAX_RETRIES) throw err;
