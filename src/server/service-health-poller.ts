@@ -289,9 +289,15 @@ export class ServiceHealthPoller {
       // Detect transitions and persist
       for (const [service, status] of newHealth) {
         const previous = this.cachedHealth.get(service);
-        if (previous !== undefined && previous !== status && this.onTransition) {
+        // Fire transition when status changes. On first poll (previous=undefined),
+        // treat "down" or "degraded" as a transition from "unknown" so pre-existing
+        // failures trigger auto-investigation instead of being silently cached.
+        const isTransition = previous !== undefined
+          ? previous !== status
+          : (status === "down" || status === "degraded");
+        if (isTransition && this.onTransition) {
           try {
-            this.onTransition(service, previous, status);
+            this.onTransition(service, previous ?? "unknown", status);
           } catch (err) {
             logger.warn({ err, service }, "ServiceHealthPoller: onTransition callback threw");
           }
