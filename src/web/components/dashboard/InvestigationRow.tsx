@@ -52,20 +52,20 @@ export const InvestigationRow = memo(function InvestigationRow({
 
   const totalTokens = (inv.total_input_tokens ?? 0) + (inv.total_output_tokens ?? 0);
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLAnchorElement>) => {
     if (e.key === "Enter") {
       onClick(inv.id);
     }
   };
 
   return (
-    <div
-      role="link"
+    <a
+      href={`/investigations/${inv.id}`}
       tabIndex={0}
-      onClick={() => onClick(inv.id)}
+      onClick={(e) => { e.preventDefault(); onClick(inv.id); }}
       onKeyDown={handleKeyDown}
       className={cn(
-        "group cursor-pointer rounded-lg border border-border/40 border-l-[3px] hover:bg-card/70 hover:border-t-primary/25 hover:border-r-primary/25 hover:border-b-primary/25 px-4 py-3 transition-all card-lift",
+        "group block cursor-pointer rounded-lg border border-border/40 border-l-[3px] hover:bg-card/70 hover:border-t-primary/25 hover:border-r-primary/25 hover:border-b-primary/25 px-4 py-3 transition-all card-lift no-underline",
         severityTint || "bg-card/40",
         statusBorder,
         className,
@@ -127,6 +127,6 @@ export const InvestigationRow = memo(function InvestigationRow({
           {rootCause}
         </p>
       )}
-    </div>
+    </a>
   );
 });

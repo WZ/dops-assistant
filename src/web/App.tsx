@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { safeGetItem, safeSetItem } from "./lib/utils";
 import {
   ResizablePanelGroup,
@@ -13,6 +13,7 @@ import { Sidebar } from "./components/Sidebar";
 import type { SidebarPage } from "./components/Sidebar";
 import { ServicesPage } from "./components/ServicesPage";
 import { SettingsPage } from "./components/SettingsPage";
+import { useRoute } from "./hooks/useRoute";
 import { StackSwitcher } from "./components/StackSwitcher";
 import { StackProvider } from "./contexts/StackContext";
 import { useWebSocket } from "./hooks/useWebSocket";
@@ -45,9 +46,22 @@ function useTheme() {
 }
 
 export function App() {
-  const [leftPane, setLeftPane] = useState<LeftPaneView>({
-    type: "dashboard",
-  });
+  const [leftPane, setLeftPaneRaw] = useState<LeftPaneView>({ type: "dashboard" });
+  const { initialView, navigate } = useRoute(setLeftPaneRaw);
+  // Use navigate() for all pane changes — it syncs URL + state
+  const setLeftPane = useCallback((view: LeftPaneView) => navigate(view), [navigate]);
+
+  // Set initial view from URL on first render
+  const initialViewApplied = useRef(false);
+  if (!initialViewApplied.current) {
+    initialViewApplied.current = true;
+    if (initialView.type !== "dashboard" || leftPane.type !== "dashboard") {
+      // Only override if URL points somewhere other than dashboard
+      if (initialView.type !== leftPane.type || (initialView.type === "investigation" && leftPane.type === "investigation" && initialView.id !== leftPane.id)) {
+        setLeftPaneRaw(initialView);
+      }
+    }
+  }
   const { stacks, activeStackId, activeStack, switchStack, refetch: refetchStacks } = useStacks();
   const ws = useWebSocket(activeStackId);
   const theme = useTheme();
@@ -254,7 +268,7 @@ export function App() {
                       ws={ws}
                       onViewInvestigation={(id) => setLeftPane({ type: "investigation", id })}
                       initialService={leftPane.initialService}
-                      onInitialServiceConsumed={() => setLeftPane((prev) => prev.type === "services" ? { ...prev, initialService: undefined } : prev)}
+                      onInitialServiceConsumed={() => { if (leftPane.type === "services") setLeftPane({ ...leftPane, initialService: undefined }); }}
                       discoveryState={discoveryState}
                       onStartDiscovery={() => { ws.send({ type: "discover" }); }}
                       onResetDiscovery={() => setDiscoveryState({ phase: "", status: "complete", iteration: { current: 0, max: 0, description: "" }, toolCalls: [], results: [], error: null, phaseTokens: {}, totalUsage: null })}

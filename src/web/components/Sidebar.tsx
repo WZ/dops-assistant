@@ -26,9 +26,10 @@ export function Sidebar({ activePage, onNavigate, dark, onToggleTheme }: Sidebar
           return (
             <Tooltip key={page}>
               <TooltipTrigger asChild>
-                <button
+                <a
+                  href={page === "dashboard" ? "/" : `/${page}`}
                   title={label}
-                  onClick={() => onNavigate(page)}
+                  onClick={(e) => { e.preventDefault(); onNavigate(page); }}
                   className={`relative w-9 h-9 rounded-lg flex items-center justify-center transition-all ${
                     isActive
                       ? "bg-primary/8 text-primary"
@@ -39,7 +40,7 @@ export function Sidebar({ activePage, onNavigate, dark, onToggleTheme }: Sidebar
                     isActive ? "opacity-100 scale-y-100" : "opacity-0 scale-y-0"
                   }`} />
                   <Icon size={18} strokeWidth={1.8} />
-                </button>
+                </a>
               </TooltipTrigger>
               <TooltipContent side="right" className="font-mono text-[10px] tracking-wide">
                 {label}
