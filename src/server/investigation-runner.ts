@@ -110,6 +110,8 @@ export interface RunOptions {
   /** When true, restrict MCP tool access to read-only tools.
    *  Used by headless investigations (webhook/poller) to prevent write operations. */
   readOnlyTools?: boolean;
+  /** Skill IDs disabled for this stack (per-stack toggle). */
+  disabledSkillIds?: Set<string>;
   callbacks?: InvestigationCallbacks;
 }
 
@@ -133,7 +135,7 @@ export class InvestigationRunner {
    * agent with phase/tool/token tracking, persists results, and emits callbacks.
    */
   async run(opts: RunOptions): Promise<RcaReport> {
-    const { service, message, callbacks, template, stackId, readOnlyTools } = opts;
+    const { service, message, callbacks, template, stackId, readOnlyTools, disabledSkillIds } = opts;
     const invId = opts.investigationId ?? `inv_${ulid()}`;
 
     // 1. Create DB record
@@ -143,7 +145,10 @@ export class InvestigationRunner {
     let skillContext: string | undefined;
     let investigationSkills: import("../skills/store.js").Skill[] | undefined;
     if (this.skillStore) {
-      const matchedSkills = this.skillStore.search({ service: service.name, query: message, scope: "investigation" });
+      const searchMethod = disabledSkillIds ? "searchEnabled" : "search";
+      const matchedSkills = disabledSkillIds
+        ? this.skillStore.searchEnabled({ service: service.name, query: message, scope: "investigation" }, disabledSkillIds)
+        : this.skillStore.search({ service: service.name, query: message, scope: "investigation" });
       if (matchedSkills.length > 0) {
         skillContext = this.skillStore.formatForPrompt(matchedSkills);
         investigationSkills = matchedSkills;

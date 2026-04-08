@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.7.0] - 2026-04-07
+
+### Added
+- Per-stack skill enable/disable toggles: each stack can independently turn skills on or off via a toggle switch in the Skills page. Disabled skills are excluded from investigations, discovery, and chat.
+- Consul bare-metal discovery skill: teaches the discover agent to find services registered in Consul via `consul_catalog_service_node_healthy`, deduplicate against K8s services, and use `app_fortidata_name` log labels.
+- Scope badges on skill cards and in the skill editor, color-coded by type (investigation, discovery, chat).
+- Editable scope in the skill editor: toggle which agents receive each skill.
+- Taller skill body textarea for easier editing.
+
 ## [0.0.6.0] - 2026-04-04
 
 ### Fixed

@@ -478,8 +478,9 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
   // ── Skills REST API ─────────────────────────────────────────────────────
   if (skillStore) {
-    app.get("/api/skills", (_req: Request, res: Response) => {
-      res.json(skillStore.getAll());
+    app.get("/api/skills", (req: Request, res: Response) => {
+      const disabledIds = db.getDisabledSkills(req.stackId!);
+      res.json(skillStore.getAll().map(s => ({ ...s, enabled: !disabledIds.has(s.id) })));
     });
 
     app.get("/api/skills/:id", (req: Request, res: Response) => {
@@ -534,6 +535,26 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       } catch (err) {
         res.status(500).json({ error: err instanceof Error ? err.message : "Failed to delete skill" });
       }
+    });
+
+    app.put("/api/skills/:id/enabled", (req: Request, res: Response) => {
+      const id = Array.isArray(req.params["id"]) ? req.params["id"][0]! : req.params["id"]!;
+      const skill = skillStore.getById(id);
+      if (!skill) {
+        res.status(404).json({ error: "Skill not found" });
+        return;
+      }
+      const { enabled } = req.body as { enabled?: boolean };
+      if (typeof enabled !== "boolean") {
+        res.status(400).json({ error: "Body must include { enabled: boolean }" });
+        return;
+      }
+      if (enabled) {
+        db.enableSkill(req.stackId!, id);
+      } else {
+        db.disableSkill(req.stackId!, id);
+      }
+      res.json({ id, enabled });
     });
 
     app.post("/api/skills/generate", (req: Request, res: Response) => {

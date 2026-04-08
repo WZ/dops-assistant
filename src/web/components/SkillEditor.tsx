@@ -9,8 +9,15 @@ interface SkillData {
   services: string[];
   alerts: string[];
   tags: string[];
+  scope?: string[];
   body: string;
 }
+
+const SCOPE_COLORS: Record<string, string> = {
+  investigation: "bg-blue-500/15 text-blue-400 border-blue-500/20",
+  discovery: "bg-amber-500/15 text-amber-400 border-amber-500/20",
+  chat: "bg-emerald-500/15 text-emerald-400 border-emerald-500/20",
+};
 
 interface SkillEditorProps {
   skill: SkillData;
@@ -67,12 +74,22 @@ export function SkillEditor({ skill, isNew, onSave, onDelete, onCancel }: SkillE
   const [services, setServices] = useState(skill.services);
   const [alerts, setAlerts] = useState(skill.alerts);
   const [tags, setTags] = useState(skill.tags);
+  const [scope, setScope] = useState<string[]>(skill.scope ?? ["investigation"]);
   const [body, setBody] = useState(skill.body);
   const [preview, setPreview] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
+  const ALL_SCOPES = ["investigation", "discovery", "chat"] as const;
+
+  const toggleScope = (s: string) => {
+    setScope(prev => {
+      const next = prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s];
+      return next.length > 0 ? next : prev; // prevent empty scope
+    });
+  };
+
   const handleSave = () => {
-    onSave({ id: skill.id, title, services, alerts, tags, body });
+    onSave({ id: skill.id, title, services, alerts, tags, scope, body });
   };
 
   return (
@@ -146,20 +163,43 @@ export function SkillEditor({ skill, isNew, onSave, onDelete, onCancel }: SkillE
             <TagInput label="Tags" values={tags} onChange={setTags} />
           </div>
 
+          {/* Scope */}
+          <div>
+            <label className="block text-[10px] font-mono font-semibold uppercase tracking-[0.12em] text-muted-foreground/60 mb-1.5">
+              Scope
+            </label>
+            <div className="flex gap-1.5">
+              {ALL_SCOPES.map((s) => {
+                const active = scope.includes(s);
+                return (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => toggleScope(s)}
+                    className={`px-2.5 py-1 text-[10px] font-mono rounded border transition-all ${active ? SCOPE_COLORS[s] ?? "" : "bg-secondary/20 text-muted-foreground/30 border-border/20 hover:border-border/40"}`}
+                  >
+                    {s}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[9px] font-mono text-muted-foreground/40 mt-1">Which agents receive this skill (at least one required)</p>
+          </div>
+
           {/* Body */}
           <div>
             <label className="block text-[10px] font-mono font-semibold uppercase tracking-[0.12em] text-muted-foreground/60 mb-1.5">
               Body
             </label>
             {preview ? (
-              <div className="px-4 py-3 rounded-lg border border-border/30 bg-card/30 text-sm font-body min-h-[300px]">
+              <div className="px-4 py-3 rounded-lg border border-border/30 bg-card/30 text-sm font-body min-h-[500px]">
                 {renderMarkdown(body || "*No content*")}
               </div>
             ) : (
               <textarea
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
-                className="w-full px-3 py-2.5 text-sm font-mono rounded-md border border-border/40 bg-secondary/20 text-foreground/80 placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary/30 min-h-[300px] resize-y leading-relaxed"
+                className="w-full px-3 py-2.5 text-sm font-mono rounded-md border border-border/40 bg-secondary/20 text-foreground/80 placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary/30 min-h-[500px] resize-y leading-relaxed"
                 placeholder="## When to use&#10;&#10;## Investigation steps&#10;1. &#10;&#10;## Known gotchas&#10;- "
               />
             )}

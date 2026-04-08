@@ -203,6 +203,16 @@ export class SkillStore {
     return matching.slice(0, this.maxPerQuery);
   }
 
+  /** Like search() but excludes disabled skills. Used in per-stack contexts. */
+  searchEnabled(opts: SkillSearchOpts, disabledIds: Set<string>): Skill[] {
+    return this.search(opts).filter(s => !disabledIds.has(s.id));
+  }
+
+  /** Like getAllForScope() but excludes disabled skills. Used in per-stack contexts. */
+  getAllForScopeEnabled(target: SkillScope, disabledIds: Set<string>): Skill[] {
+    return this.getAllForScope(target).filter(s => !disabledIds.has(s.id));
+  }
+
   /** Get all skill metadata (without body). */
   getAll(): SkillMetadata[] {
     return [...this.skills.values()].map(({ body: _, ...meta }) => meta);
