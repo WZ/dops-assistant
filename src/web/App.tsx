@@ -245,6 +245,9 @@ export function App() {
                       wsMessages={ws.messages}
                       onBack={() => setLeftPane({ type: "dashboard" })}
                       onNavigateSkills={() => setLeftPane({ type: "settings", initialTab: "skills" })}
+                      onRerun={(invId, template) => {
+                        ws.send({ type: "rerun", investigationId: invId, template: template as any });
+                      }}
                     />
                   ) : leftPane.type === "services" ? (
                     <ServicesPage

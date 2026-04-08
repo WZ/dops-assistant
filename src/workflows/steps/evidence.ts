@@ -129,7 +129,7 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
         const timeRange = ac?.timeRangeFrom && ac?.timeRangeTo
           ? { from: ac.timeRangeFrom, to: ac.timeRangeTo }
           : undefined;
-        return { summary: noToolsMsg, observations: [], timeRange };
+        return { summary: noToolsMsg, observations: [], timeRange, toolCalls: [] };
       }
 
       const tools = wrapToolsWithCallbacks(rawTools, workflowConfig.onToolCall, phaseName);
@@ -273,20 +273,24 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
         workflowConfig.onToolCall?.("llm_error", {}, undefined, undefined, `LLM unreachable: ${llmError}`, phaseName);
       }
 
-      // 9. Return findings, agent text as summary, or fallback
+      // 9. Build stripped tool call records for deep links (only query-relevant fields)
+      const toolCallRecords = llmToolCalls.map(tc => ({ tool: tc.tool, args: tc.args ?? "{}", resultChars: tc.resultChars }));
+
+      // 10. Return findings, agent text as summary, or fallback
       if (parsed) {
         return {
           summary: parsed.summary ?? fallbackMessage,
           observations: parsed.observations ?? [],
           timeRange,
           error: phaseError,
+          toolCalls: toolCallRecords,
         };
       }
       if (agentText?.trim()) {
         debug(`${phaseName.toUpperCase()}: using agent text as summary (${agentText.length} chars)`);
-        return { summary: agentText.slice(0, 3000), observations: [], timeRange, error: phaseError };
+        return { summary: agentText.slice(0, 3000), observations: [], timeRange, error: phaseError, toolCalls: toolCallRecords };
       }
-      return { summary: fallbackMessage, observations: [], timeRange, error: phaseError };
+      return { summary: fallbackMessage, observations: [], timeRange, error: phaseError, toolCalls: toolCallRecords };
     },
   });
 }

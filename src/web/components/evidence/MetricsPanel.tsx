@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ExternalLink } from "lucide-react";
 import { MetricChart, type TimeSeriesData } from "../MetricChart";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -17,6 +18,8 @@ interface MetricsPanelProps {
   structuredObservations?: StructuredMetricObs[];
   service: string;
   timeRange?: { from: string; to: string };
+  /** URL builder for per-chart Grafana links. Called with the PromQL query. */
+  buildChartUrl?: (query: string) => string;
 }
 
 interface ExtractionResult {
@@ -28,7 +31,7 @@ interface ExtractionResult {
 
 const MAX_EXTRACTIONS = 5;
 
-export function MetricsPanel({ timeSeries, textObservations, structuredObservations, service, timeRange }: MetricsPanelProps) {
+export function MetricsPanel({ timeSeries, textObservations, structuredObservations, service, timeRange, buildChartUrl }: MetricsPanelProps) {
   const { stackFetch } = useStackContext();
   const [extractions, setExtractions] = useState<ExtractionResult[]>([]);
   const abortRef = useRef<AbortController | null>(null);
@@ -91,9 +94,26 @@ export function MetricsPanel({ timeSeries, textObservations, structuredObservati
     <div className="space-y-2">
       {allSeries.length > 0 && (
         <div className="grid grid-cols-1 @[500px]:grid-cols-2 gap-2">
-          {allSeries.map((ts, i) => (
-            <MetricChart key={`ts-${i}`} series={ts} />
-          ))}
+          {allSeries.map((ts, i) => {
+            const chartUrl = buildChartUrl && ts.query ? buildChartUrl(ts.query) : undefined;
+            return (
+              <div key={`ts-${i}`} className="relative group">
+                <MetricChart series={ts} />
+                {chartUrl && (
+                  <a
+                    href={chartUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="absolute top-1 right-1 p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity text-primary/50 hover:text-primary hover:bg-primary/10"
+                    aria-label="Open this query in Grafana Explore"
+                    title="Open in Grafana"
+                  >
+                    <ExternalLink size={11} />
+                  </a>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 

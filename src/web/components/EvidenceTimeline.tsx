@@ -1,8 +1,10 @@
 import { useMemo } from "react";
+import { ExternalLink } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MetricsPanel } from "./evidence/MetricsPanel";
 import { TimelineEntry, type TimelineEntryData } from "./evidence/TimelineEntry";
 import type { TimeSeriesData } from "./MetricChart";
+import type { EvidenceAction } from "../../types/evidence.js";
 
 interface StructuredLog {
   pattern: string;
@@ -39,6 +41,8 @@ export interface EvidenceTimelineProps {
   timeSeries: TimeSeriesData[];
   service: string;
   timeRange?: { from: string; to: string };
+  /** Phase-level Grafana actions keyed by role (metrics, logs, infrastructure) */
+  phaseActions?: Record<string, EvidenceAction>;
 }
 
 function isStructuredLog(obs: Observation): obs is StructuredLog {
@@ -84,7 +88,7 @@ function tryParseTimestamp(ts: string | undefined): number {
   }
 }
 
-export function EvidenceTimeline({ evidence, timeSeries, service, timeRange }: EvidenceTimelineProps) {
+export function EvidenceTimeline({ evidence, timeSeries, service, timeRange, phaseActions }: EvidenceTimelineProps) {
   // Parse metric observations — objects stay as structured, strings get parsed if they match
   // the pattern "metric_name (instance) = value (baseline value) – severity"
   const METRIC_TEXT_RE = /^(.+?)\s*\(([^)]+)\)\s*=\s*([^\s]+)\s*\(baseline\s+([^)]+)\)\s*[–-]\s*(\w+)$/;
@@ -299,14 +303,66 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange }: E
 
       {hasTimeline && (
         <TabsContent value="timeline" className="mt-3">
-          <div
-            role="list"
-            className="relative border-l border-border/30 ml-1 pl-1"
-          >
-            {timelineEntries.map((entry) => (
-              <TimelineEntry key={entry.id} entry={entry} />
-            ))}
-          </div>
+          {/* Phase headers with Grafana links */}
+          {(() => {
+            const infraEntries = timelineEntries.filter(e => e.type === "infra");
+            const logEntries = timelineEntries.filter(e => e.type === "log");
+            const infraAction = phaseActions?.["infrastructure"] ?? phaseActions?.["infra"];
+            const logsAction = phaseActions?.["logs"];
+
+            // Inject phase actions into entries
+            const enrichedInfra = infraEntries.map(e => ({ ...e, phaseAction: infraAction }));
+            const enrichedLogs = logEntries.map(e => ({ ...e, phaseAction: logsAction }));
+
+            return (
+              <>
+                {enrichedInfra.length > 0 && (
+                  <div className="mb-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
+                        Infrastructure ({enrichedInfra.length})
+                      </span>
+                      {infraAction && (
+                        <a
+                          href={infraAction.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 font-mono text-[9px] text-muted-foreground/40 hover:text-primary transition-colors"
+                        >
+                          Open in Grafana <ExternalLink size={9} />
+                        </a>
+                      )}
+                    </div>
+                    <div role="list" className="relative border-l border-border/30 ml-1 pl-1">
+                      {enrichedInfra.map(entry => <TimelineEntry key={entry.id} entry={entry} />)}
+                    </div>
+                  </div>
+                )}
+                {enrichedLogs.length > 0 && (
+                  <div className="mb-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
+                        Logs ({enrichedLogs.length})
+                      </span>
+                      {logsAction && (
+                        <a
+                          href={logsAction.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 font-mono text-[9px] text-muted-foreground/40 hover:text-primary transition-colors"
+                        >
+                          Open in Grafana <ExternalLink size={9} />
+                        </a>
+                      )}
+                    </div>
+                    <div role="list" className="relative border-l border-border/30 ml-1 pl-1">
+                      {enrichedLogs.map(entry => <TimelineEntry key={entry.id} entry={entry} />)}
+                    </div>
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </TabsContent>
       )}
     </Tabs>

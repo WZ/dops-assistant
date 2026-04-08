@@ -1,7 +1,14 @@
-import { useEffect, useState, useRef, useMemo } from "react";
+import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowLeft, FilePlus } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { ArrowLeft, FilePlus, RotateCw, ChevronDown } from "lucide-react";
 import { PhaseStepper, type PhaseState } from "./PhaseStepper";
 import { EvidenceTimeline } from "./EvidenceTimeline";
 import { RcaReport } from "./RcaReport";
@@ -19,7 +26,7 @@ const DEFAULT_PHASES: PhaseState[] = [
   { name: "synthesis", label: "Synthesis", status: "pending" },
 ];
 
-export function InvestigationPane({ investigationId, wsMessages, onBack, onNavigateSkills }: { investigationId: string; wsMessages: ServerMessage[]; onBack: () => void; onNavigateSkills?: () => void }) {
+export function InvestigationPane({ investigationId, wsMessages, onBack, onNavigateSkills, onRerun }: { investigationId: string; wsMessages: ServerMessage[]; onBack: () => void; onNavigateSkills?: () => void; onRerun?: (investigationId: string, template?: string) => void }) {
   const { stackFetch } = useStackContext();
   const [phases, setPhases] = useState<PhaseState[]>(DEFAULT_PHASES);
   const [evidence, setEvidence] = useState<Record<string, unknown>>({});
@@ -298,6 +305,36 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
           )}
           {isRunning && (
             <span className="text-[10px] font-mono text-primary/60 uppercase tracking-[0.12em]">investigating...</span>
+          )}
+          {isComplete && onRerun && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  disabled={isRunning}
+                  className="h-auto px-2.5 py-1 text-[10px] font-mono border-primary/30 text-primary/70 hover:bg-primary/8 hover:text-primary gap-1"
+                >
+                  <RotateCw size={10} className="!size-auto" />
+                  Re-investigate
+                  <ChevronDown size={8} className="!size-auto opacity-50" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-[180px]">
+                <DropdownMenuItem onClick={() => onRerun(investigationId)} className="font-mono text-[11px]">
+                  Re-run (current config)
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => onRerun(investigationId, "quick")} className="font-mono text-[11px] text-muted-foreground">
+                  Quick (metrics only)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onRerun(investigationId, "standard")} className="font-mono text-[11px] text-muted-foreground">
+                  Standard (metrics + logs)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onRerun(investigationId, "full")} className="font-mono text-[11px] text-muted-foreground">
+                  Full (all phases)
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
         </div>
       </div>

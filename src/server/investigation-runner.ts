@@ -112,6 +112,8 @@ export interface RunOptions {
   readOnlyTools?: boolean;
   /** Skill IDs disabled for this stack (per-stack toggle). */
   disabledSkillIds?: Set<string>;
+  /** ID of the parent investigation (for re-runs). Stored for lineage tracking. */
+  parentInvestigationId?: string;
   callbacks?: InvestigationCallbacks;
 }
 

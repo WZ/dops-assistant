@@ -31,14 +31,14 @@ function makeTempDb(): { db: Database; cleanup: () => void } {
 describe("InvestigationDedup.shouldInvestigate", () => {
   it("returns true for a never-seen service", () => {
     const dedup = makeDedup();
-    expect(dedup.shouldInvestigate(S, "my-service")).toBe(true);
+    expect(dedup.shouldInvestigate(S, "my-service").allowed).toBe(true);
   });
 
   it("returns false for a service within the dedup window", () => {
     const dedup = makeDedup(300, 3);
     dedup.markStarted(S, "my-service");
     // Same service — should be suppressed
-    expect(dedup.shouldInvestigate(S, "my-service")).toBe(false);
+    expect(dedup.shouldInvestigate(S, "my-service").allowed).toBe(false);
   });
 
   it("returns true for a service after the dedup window has expired", () => {
@@ -50,7 +50,7 @@ describe("InvestigationDedup.shouldInvestigate", () => {
     // Advance time past the window
     vi.advanceTimersByTime(61_000);
 
-    expect(dedup.shouldInvestigate(S, "my-service")).toBe(true);
+    expect(dedup.shouldInvestigate(S, "my-service").allowed).toBe(true);
     vi.useRealTimers();
   });
 
@@ -60,16 +60,16 @@ describe("InvestigationDedup.shouldInvestigate", () => {
     dedup.markStarted(S, "service-b");
 
     // Both slots occupied — a new (unseen) service should be denied
-    expect(dedup.shouldInvestigate(S, "service-c")).toBe(false);
+    expect(dedup.shouldInvestigate(S, "service-c").allowed).toBe(false);
   });
 
   it("returns true once an active slot is freed", () => {
     const dedup = makeDedup(300, 1); // max 1 concurrent
     dedup.markStarted(S, "service-a");
-    expect(dedup.shouldInvestigate(S, "service-b")).toBe(false);
+    expect(dedup.shouldInvestigate(S, "service-b").allowed).toBe(false);
 
     dedup.markCompleted();
-    expect(dedup.shouldInvestigate(S, "service-b")).toBe(true);
+    expect(dedup.shouldInvestigate(S, "service-b").allowed).toBe(true);
   });
 
   it("treats different services independently within the dedup window", () => {
@@ -77,7 +77,7 @@ describe("InvestigationDedup.shouldInvestigate", () => {
     dedup.markStarted(S, "service-a");
 
     // service-b was never started — should be allowed
-    expect(dedup.shouldInvestigate(S, "service-b")).toBe(true);
+    expect(dedup.shouldInvestigate(S, "service-b").allowed).toBe(true);
   });
 
   it("isolates dedup by stackId", () => {
@@ -85,9 +85,9 @@ describe("InvestigationDedup.shouldInvestigate", () => {
     dedup.markStarted("stack-a", "my-service");
 
     // Same service on a different stack — should be allowed
-    expect(dedup.shouldInvestigate("stack-b", "my-service")).toBe(true);
+    expect(dedup.shouldInvestigate("stack-b", "my-service").allowed).toBe(true);
     // Same service on the same stack — should be suppressed
-    expect(dedup.shouldInvestigate("stack-a", "my-service")).toBe(false);
+    expect(dedup.shouldInvestigate("stack-a", "my-service").allowed).toBe(false);
   });
 });
 
@@ -136,11 +136,11 @@ describe("InvestigationDedup dedup window expiry", () => {
 
     // Still within window
     vi.advanceTimersByTime(5_000);
-    expect(dedup.shouldInvestigate(S, "api")).toBe(false);
+    expect(dedup.shouldInvestigate(S, "api").allowed).toBe(false);
 
     // Past the window
     vi.advanceTimersByTime(6_000); // total 11s
-    expect(dedup.shouldInvestigate(S, "api")).toBe(true);
+    expect(dedup.shouldInvestigate(S, "api").allowed).toBe(true);
   });
 
   it("does not clean entries that are still within the window", () => {
@@ -149,7 +149,7 @@ describe("InvestigationDedup dedup window expiry", () => {
     dedup.markCompleted();
 
     vi.advanceTimersByTime(100_000); // 100s — still within 300s window
-    expect(dedup.shouldInvestigate(S, "api")).toBe(false);
+    expect(dedup.shouldInvestigate(S, "api").allowed).toBe(false);
   });
 });
 
@@ -158,7 +158,7 @@ describe("InvestigationDedup dedup window expiry", () => {
 describe("InvestigationDedup edge cases", () => {
   it("maxConcurrent=0 always denies", () => {
     const dedup = makeDedup(300, 0);
-    expect(dedup.shouldInvestigate(S, "any-service")).toBe(false);
+    expect(dedup.shouldInvestigate(S, "any-service").allowed).toBe(false);
   });
 
   it("dedupWindowSeconds=0 never deduplicates by time (relies only on concurrency)", () => {
@@ -166,7 +166,7 @@ describe("InvestigationDedup edge cases", () => {
     dedup.markStarted(S, "api");
     dedup.markCompleted();
     // With 0s window, the entry expires immediately — next shouldInvestigate sees clean slate
-    expect(dedup.shouldInvestigate(S, "api")).toBe(true);
+    expect(dedup.shouldInvestigate(S, "api").allowed).toBe(true);
   });
 
   it("multiple services tracked independently", () => {
@@ -174,9 +174,61 @@ describe("InvestigationDedup edge cases", () => {
     dedup.markStarted(S, "svc-a");
     dedup.markStarted(S, "svc-b");
 
-    expect(dedup.shouldInvestigate(S, "svc-a")).toBe(false);
-    expect(dedup.shouldInvestigate(S, "svc-b")).toBe(false);
-    expect(dedup.shouldInvestigate(S, "svc-c")).toBe(true);
+    expect(dedup.shouldInvestigate(S, "svc-a").allowed).toBe(false);
+    expect(dedup.shouldInvestigate(S, "svc-b").allowed).toBe(false);
+    expect(dedup.shouldInvestigate(S, "svc-c").allowed).toBe(true);
+  });
+});
+
+// ── force parameter (re-run support) ────────────────────────────────────────
+
+describe("InvestigationDedup force (re-run)", () => {
+  it("force=true bypasses dedup window", () => {
+    const dedup = makeDedup(300, 3);
+    dedup.markStarted(S, "api");
+    // Normal check — suppressed by dedup window
+    expect(dedup.shouldInvestigate(S, "api").allowed).toBe(false);
+    // Force — bypasses window
+    expect(dedup.shouldInvestigate(S, "api", true).allowed).toBe(true);
+  });
+
+  it("force=true still respects maxConcurrent", () => {
+    const dedup = makeDedup(300, 1);
+    dedup.markStarted(S, "api");
+    // Max concurrent reached — force can't bypass this
+    expect(dedup.shouldInvestigate(S, "api", true).allowed).toBe(false);
+    expect(dedup.shouldInvestigate(S, "api", true).reason).toBe("max_concurrent");
+  });
+
+  it("force=true enforces 30s rerun cooldown", () => {
+    vi.useFakeTimers();
+    const dedup = makeDedup(300, 5);
+    dedup.markStarted(S, "api", true); // isRerun=true tracks cooldown
+    dedup.markCompleted();
+
+    // Within 30s cooldown
+    vi.advanceTimersByTime(10_000);
+    const result = dedup.shouldInvestigate(S, "api", true);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toBe("rerun_cooldown");
+    expect(result.retryAfterMs).toBeGreaterThan(0);
+    expect(result.retryAfterMs).toBeLessThanOrEqual(20_000);
+
+    // Past 30s cooldown
+    vi.advanceTimersByTime(21_000);
+    expect(dedup.shouldInvestigate(S, "api", true).allowed).toBe(true);
+
+    vi.useRealTimers();
+  });
+
+  it("returns DedupResult with reason and retryAfterMs", () => {
+    const dedup = makeDedup(300, 3);
+    dedup.markStarted(S, "api");
+
+    const result = dedup.shouldInvestigate(S, "api");
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toBe("dedup_window");
+    expect(result.retryAfterMs).toBeGreaterThan(0);
   });
 });
 
@@ -193,7 +245,7 @@ describe("InvestigationDedup DB fallback", () => {
       const dedup = new InvestigationDedup({ dedupWindowSeconds: 300, maxConcurrent: 3, db });
 
       // Should be rejected because DB shows a recent investigation
-      expect(dedup.shouldInvestigate(S, "payments-api")).toBe(false);
+      expect(dedup.shouldInvestigate(S, "payments-api").allowed).toBe(false);
     } finally {
       cleanup();
     }
@@ -204,7 +256,7 @@ describe("InvestigationDedup DB fallback", () => {
     try {
       // No investigations in DB at all
       const dedup = new InvestigationDedup({ dedupWindowSeconds: 300, maxConcurrent: 3, db });
-      expect(dedup.shouldInvestigate(S, "payments-api")).toBe(true);
+      expect(dedup.shouldInvestigate(S, "payments-api").allowed).toBe(true);
     } finally {
       cleanup();
     }
@@ -225,7 +277,7 @@ describe("InvestigationDedup DB fallback", () => {
       const dedup1 = new InvestigationDedup({ dedupWindowSeconds: 1, maxConcurrent: 3, db });
       // With 0-second window, DB fallback is skipped (dedupWindowSeconds > 0 check)
       const dedup0 = new InvestigationDedup({ dedupWindowSeconds: 0, maxConcurrent: 3, db });
-      expect(dedup0.shouldInvestigate(S, "payments-api")).toBe(true);
+      expect(dedup0.shouldInvestigate(S, "payments-api").allowed).toBe(true);
     } finally {
       cleanup();
     }
@@ -241,7 +293,7 @@ describe("InvestigationDedup DB fallback", () => {
 
       // Even though DB also has this, the in-memory check handles it
       // (DB is only consulted when lastRun === undefined)
-      expect(dedup.shouldInvestigate(S, "payments-api")).toBe(false);
+      expect(dedup.shouldInvestigate(S, "payments-api").allowed).toBe(false);
     } finally {
       cleanup();
     }
@@ -250,9 +302,9 @@ describe("InvestigationDedup DB fallback", () => {
   it("works without DB (backwards compatible)", () => {
     // No db param — should work exactly as before
     const dedup = new InvestigationDedup({ dedupWindowSeconds: 300, maxConcurrent: 3 });
-    expect(dedup.shouldInvestigate(S, "my-service")).toBe(true);
+    expect(dedup.shouldInvestigate(S, "my-service").allowed).toBe(true);
     dedup.markStarted(S, "my-service");
-    expect(dedup.shouldInvestigate(S, "my-service")).toBe(false);
+    expect(dedup.shouldInvestigate(S, "my-service").allowed).toBe(false);
   });
 });
 

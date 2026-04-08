@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
+import { ExternalLink, Copy, Check } from "lucide-react";
+import type { EvidenceAction } from "../../../types/evidence.js";
 
 export interface TimelineEntryData {
   id: string;
@@ -10,6 +12,8 @@ export interface TimelineEntryData {
   count?: number;
   severity?: string;
   expandedContent?: string;
+  actions?: EvidenceAction[];
+  phaseAction?: EvidenceAction;
 }
 
 function formatTime(iso: string): string {
@@ -25,6 +29,7 @@ function formatTime(iso: string): string {
 
 export function TimelineEntry({ entry }: { entry: TimelineEntryData }) {
   const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const dotColor = entry.type === "log" ? "bg-warning" : "bg-destructive";
   const badgeBg =
@@ -37,8 +42,22 @@ export function TimelineEntry({ entry }: { entry: TimelineEntryData }) {
     ? `${formatTime(entry.timestamp)} – ${formatTime(entry.timestampEnd)}`
     : formatTime(entry.timestamp);
 
+  // Use observation-level action if available, fall back to phase-level
+  const primaryAction = entry.actions?.[0] ?? entry.phaseAction;
+  const isPhaseOnly = !entry.actions?.length && !!entry.phaseAction;
+  const hasActions = !!primaryAction;
+
+  const handleCopy = useCallback(() => {
+    // Copy the query from the action URL (extract from panes param) or the summary
+    const text = entry.summary;
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    }).catch(() => {});
+  }, [entry.summary]);
+
   return (
-    <div className="relative pl-5" role="listitem" tabIndex={0}>
+    <div className="group relative pl-5" role="listitem" tabIndex={0}>
       <div className={`absolute left-0 top-[10px] w-[7px] h-[7px] rounded-full ${dotColor}`} />
       <div className="pb-4">
         <div className="flex items-center gap-2 flex-wrap">
@@ -57,6 +76,33 @@ export function TimelineEntry({ entry }: { entry: TimelineEntryData }) {
           )}
         </div>
         <p className="font-mono text-[11px] text-foreground/80 mt-1 leading-relaxed">{entry.summary}</p>
+
+        {/* Action bar: visible on hover/focus, always visible on touch */}
+        {hasActions && (
+          <div className="flex items-center gap-1.5 mt-1.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 touch-device:opacity-100 transition-opacity duration-150">
+            <a
+              href={primaryAction.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`inline-flex items-center gap-1 font-mono text-[9px] px-1.5 py-0.5 rounded bg-primary/8 hover:bg-primary/15 transition-colors ${
+                isPhaseOnly ? "text-primary/40 hover:text-primary/60" : "text-primary/60 hover:text-primary"
+              }`}
+              aria-label={isPhaseOnly ? "Explore this phase in Grafana" : "Open in Grafana Explore"}
+            >
+              <ExternalLink size={10} />
+              {isPhaseOnly ? "Explore phase" : "Grafana"}
+            </a>
+            <button
+              onClick={handleCopy}
+              className="inline-flex items-center gap-1 font-mono text-[9px] text-primary/40 hover:text-primary/60 px-1.5 py-0.5 rounded bg-primary/8 hover:bg-primary/15 transition-colors"
+              aria-label="Copy summary"
+            >
+              {copied ? <Check size={10} /> : <Copy size={10} />}
+              {copied ? "Copied" : "Copy"}
+            </button>
+          </div>
+        )}
+
         {entry.expandedContent && (
           <button
             onClick={() => setExpanded(!expanded)}
