@@ -25,6 +25,7 @@ import type { TokenUsage } from "../types/llm-types.js";
 import type { ValidatedServiceConfig } from "../types/discovery-types.js";
 import { createChatAgent } from "../agents/chat.js";
 import { wrapUntrusted } from "../agents/shared/prompt-helpers.js";
+import { logLlmCall, logToolCall, newCallId, type ToolCallEvent } from "./llm-logger.js";
 import { createInvestigationWorkflow, type WorkflowConfig } from "../workflows/investigation.js";
 import { runDiscovery } from "../workflows/discovery.js";
 import { createModel } from "../mastra/index.js";
@@ -174,6 +175,11 @@ export class MastraChatAgentAdapter {
     task.onStreamStart?.();
 
     let responseText = "";
+    const chatCallId = newCallId();
+    const chatToolCalls: ToolCallEvent[] = [];
+    let chatInputTokens = 0;
+    let chatOutputTokens = 0;
+    const chatStartMs = Date.now();
     try {
       const stream = await mastraAgent.stream(streamInput);
 
@@ -195,7 +201,8 @@ export class MastraChatAgentAdapter {
           const rawName = p.toolName ?? "unknown";
           const idx = rawName.indexOf("_");
           const toolName = idx > 0 ? rawName.slice(idx + 1) : rawName;
-          console.error(`[MASTRA_CHAT] tool-call: ${toolName} args=${JSON.stringify(p.args ?? {}).slice(0, 500)}`);
+          const argsStr = JSON.stringify(p.args ?? {}).slice(0, 2000);
+          logToolCall(chatCallId, "chat", { tool: toolName, argsChars: argsStr.length, args: argsStr, resultChars: 0 });
           task.onToolCall?.(toolName, p.args ?? {});
         } else if (c.type === "tool-result") {
           const rawName = p.toolName ?? "unknown";
@@ -204,23 +211,20 @@ export class MastraChatAgentAdapter {
           const result = p.result ?? "";
           const resultStr = unwrapToolText(result);
           collectedImages.push(...extractToolImages(toolName, result));
-          console.error(`[MASTRA_CHAT] tool-result: ${toolName} resultLen=${resultStr.length}`);
+          chatToolCalls.push({ tool: toolName, argsChars: 0, resultChars: resultStr.length, result: resultStr.slice(0, 500) });
           task.onToolCall?.(toolName, p.args ?? {}, resultStr);
         }
       }
 
       // Emit token usage from the stream (available after stream is consumed)
-      if (task.onTokenUsage) {
-        try {
-          const usage = await (stream as any).totalUsage ?? await (stream as any).usage;
-          if (usage && (usage.inputTokens || usage.outputTokens)) {
-            task.onTokenUsage({
-              inputTokens: usage.inputTokens ?? 0,
-              outputTokens: usage.outputTokens ?? 0,
-            });
-          }
-        } catch { /* usage not available — ignore */ }
-      }
+      try {
+        const usage = await (stream as any).totalUsage ?? await (stream as any).usage;
+        if (usage && (usage.inputTokens || usage.outputTokens)) {
+          chatInputTokens = usage.inputTokens ?? 0;
+          chatOutputTokens = usage.outputTokens ?? 0;
+          task.onTokenUsage?.({ inputTokens: chatInputTokens, outputTokens: chatOutputTokens });
+        }
+      } catch { /* usage not available — ignore */ }
     } catch (err) {
       console.error("[MASTRA_CHAT] stream error:", err);
       if (!responseText) {
@@ -243,6 +247,19 @@ export class MastraChatAgentAdapter {
         }
       }
     }
+
+    logLlmCall({
+      callId: chatCallId,
+      agent: "chat",
+      promptChars: prompt.length,
+      prompt,
+      responseChars: responseText.length,
+      response: responseText,
+      inputTokens: chatInputTokens,
+      outputTokens: chatOutputTokens,
+      durationMs: Date.now() - chatStartMs,
+      toolCalls: chatToolCalls,
+    });
 
     return {
       response: responseText,
