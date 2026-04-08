@@ -8,6 +8,7 @@ import type { ServiceConfig, DiscoveryConfig, DiscoveryRecipe } from "../../conf
 import type { OnToolCallEnriched, OnIteration } from "../../types/agent-interfaces.js";
 import type { Skill } from "../../skills/store.js";
 import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
+import { logLlmCall, newCallId } from "../../server/llm-logger.js";
 
 export interface DiscoverStepConfig {
   model: LanguageModel;
@@ -122,35 +123,45 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
       discoveryRecipes: fullHints,
     });
 
-    const toolCount = Object.keys(tools).length;
-    console.error(`[DISCOVER] Attempt ${attempt}/${MAX_RETRIES} with ${toolCount} tools, maxSteps=${maxSteps}`);
+    const discoverCallId = newCallId();
+    const discoverPrompt = "Discover all monitored services using the available tools. Return the complete list as JSON.";
+    const discoverStartMs = Date.now();
 
     try {
-      const result = await agent.generate("Discover all monitored services using the available tools. Return the complete list as JSON.", {
+      const result = await agent.generate(discoverPrompt, {
         providerOptions: { "openai-compatible": { max_tokens: 16384 } },
       } as any);
 
-      console.error(`[DISCOVER] Agent returned ${result.text?.length ?? 0} chars: ${JSON.stringify(result.text?.slice(0, 500))}`);
-
       const usage = (result as any).totalUsage ?? (result as any).usage;
+      const inTok = usage?.inputTokens ?? 0;
+      const outTok = usage?.outputTokens ?? 0;
       if (usage && config.onTokenUsage) {
-        config.onTokenUsage({
-          inputTokens: usage.inputTokens ?? 0,
-          outputTokens: usage.outputTokens ?? 0,
-        });
+        config.onTokenUsage({ inputTokens: inTok, outputTokens: outTok });
       }
+
+      logLlmCall({
+        callId: discoverCallId,
+        agent: "discover",
+        phase: `attempt-${attempt}`,
+        promptChars: discoverPrompt.length + fullHints.length,
+        prompt: `${discoverPrompt}\n\n[hints: ${fullHints.length} chars]`,
+        responseChars: result.text?.length ?? 0,
+        response: result.text,
+        inputTokens: inTok,
+        outputTokens: outTok,
+        durationMs: Date.now() - discoverStartMs,
+        toolCalls: [],
+      });
 
       const parsed = safeJsonParse(result.text);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        console.error(`[DISCOVER] Parsed ${parsed.length} services (attempt ${attempt})`);
         return parsed;
       }
       if (parsed?.services && Array.isArray(parsed.services) && parsed.services.length > 0) {
-        console.error(`[DISCOVER] Parsed ${parsed.services.length} services from .services (attempt ${attempt})`);
         return parsed.services;
       }
-
-      console.error(`[DISCOVER] Empty result on attempt ${attempt}, ${attempt < MAX_RETRIES ? "retrying..." : "giving up"}`);
+      // Always log empty results to stderr (visible even when LLM_LOG_LEVEL=silent)
+      console.error(`[DISCOVER] Empty result on attempt ${attempt}/${MAX_RETRIES}`);
     } catch (err) {
       console.error(`[DISCOVER] Error on attempt ${attempt}: ${err instanceof Error ? err.message : err}`);
       if (attempt === MAX_RETRIES) throw err;
