@@ -104,6 +104,7 @@ export class Database {
     this.migrate();
     this.migrateServiceMetadata();
     this.migrateStacks();
+    this.migrateDisabledSkills();
   }
 
   private migrate(): void {
@@ -310,6 +311,7 @@ export class Database {
     const tx = this.db.transaction(() => {
       this.db.prepare("DELETE FROM service_metadata WHERE stack_id = ?").run(id);
       this.db.prepare("DELETE FROM hidden_services WHERE stack_id = ?").run(id);
+      this.db.prepare("DELETE FROM disabled_skills WHERE stack_id = ?").run(id);
       this.db.prepare("DELETE FROM incident_patterns WHERE stack_id = ?").run(id);
       this.db.prepare("DELETE FROM investigation_feedback WHERE stack_id = ?").run(id);
       this.db.prepare("DELETE FROM service_health_checks WHERE stack_id = ?").run(id);
@@ -618,6 +620,39 @@ export class Database {
        )
        AND service NOT IN (SELECT service FROM hidden_services WHERE stack_id = ?)`
     ).all(stackId, stackId, cutoff, stackId) as Array<{ service: string }>).map(r => r.service);
+  }
+
+  // ── Disabled skills (per-stack) ─────────────────────────────────────────
+
+  private migrateDisabledSkills(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS disabled_skills (
+        stack_id    TEXT NOT NULL,
+        skill_id    TEXT NOT NULL,
+        disabled_at TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (stack_id, skill_id)
+      );
+    `);
+  }
+
+  disableSkill(stackId: string, skillId: string): void {
+    this.db.prepare(
+      "INSERT OR REPLACE INTO disabled_skills (stack_id, skill_id) VALUES (?, ?)"
+    ).run(stackId, skillId);
+  }
+
+  enableSkill(stackId: string, skillId: string): void {
+    this.db.prepare("DELETE FROM disabled_skills WHERE stack_id = ? AND skill_id = ?").run(stackId, skillId);
+  }
+
+  getDisabledSkills(stackId: string): Set<string> {
+    const rows = this.db.prepare("SELECT skill_id FROM disabled_skills WHERE stack_id = ?").all(stackId) as Array<{ skill_id: string }>;
+    return new Set(rows.map(r => r.skill_id));
+  }
+
+  isSkillDisabled(stackId: string, skillId: string): boolean {
+    const row = this.db.prepare("SELECT 1 FROM disabled_skills WHERE stack_id = ? AND skill_id = ?").get(stackId, skillId);
+    return row !== undefined;
   }
 
   // ── Service metadata ────────────────────────────────────────────────────

@@ -74,6 +74,7 @@ function mockDeps(): WsDeps {
       listRecentMessages: vi.fn(() => []),
       listMessages: vi.fn(() => []),
       getHiddenServices: vi.fn(() => new Set()),
+      getDisabledSkills: vi.fn(() => new Set()),
     },
     stackManager: {
       resolveStackId: vi.fn().mockReturnValue(S),

@@ -470,8 +470,9 @@ export async function handleClientMessage(
 
     try {
       const discoveryConfig = deps.config.discovery;
-      // Load discovery-scoped skills
-      const discoverySkills = deps.skillStore?.getAllForScope("discovery") ?? [];
+      // Load discovery-scoped skills (filtered by per-stack toggles)
+      const disabledSkillIds = deps.db.getDisabledSkills(stackId);
+      const discoverySkills = deps.skillStore?.getAllForScopeEnabled("discovery", disabledSkillIds) ?? [];
       if (discoverySkills.length > 0) {
         logger.debug({ skillCount: discoverySkills.length, skills: discoverySkills.map(s => s.id) }, "Injecting discovery skills");
       }
@@ -637,7 +638,7 @@ export async function handleClientMessage(
 
     const runner = new InvestigationRunner({ db, investigationAgent, skillStore: deps.skillStore, globalOnComplete: deps.globalOnComplete });
     try {
-      await runner.run({ service, message: msg.message, investigationId: invId, stackId, callbacks: wsCallbacks });
+      await runner.run({ service, message: msg.message, investigationId: invId, stackId, disabledSkillIds: deps.db.getDisabledSkills(stackId), callbacks: wsCallbacks });
     } catch {
       // Error already handled by runner's onFailed callback
     }
@@ -650,14 +651,15 @@ export async function handleClientMessage(
       contextService ??
       resolveServiceFromHistory(db.listRecentMessages(stackId, 10), visibleServices);
 
-    // Search for matching chat-scoped skills
+    // Search for matching chat-scoped skills (filtered by per-stack toggles)
     let chatSkillContext: string | undefined;
     if (deps.skillStore) {
-      const matched = deps.skillStore.search({
+      const chatDisabledIds = deps.db.getDisabledSkills(stackId);
+      const matched = deps.skillStore.searchEnabled({
         service: chatService?.name,
         query: msg.message,
         scope: "chat",
-      });
+      }, chatDisabledIds);
       if (matched.length > 0) {
         // Use simpler framing for chat (not investigation-flavored), wrap for prompt safety
         const maxChars = deps.skillStore.maxCharsPerSkill;

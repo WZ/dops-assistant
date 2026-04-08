@@ -97,16 +97,20 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
     ? wrapToolsWithCallbacks(discoveryTools, wrappedOnToolCall, "discovery")
     : discoveryTools;
 
-  // Format discovery-scoped skills once (outside retry loop — skills don't change between retries)
-  let fullHints = recipeHints;
+  // Format discovery-scoped skills BEFORE recipes so the LLM sees them first.
+  // Skills contain stack-specific knowledge (e.g., bare-metal services via Consul)
+  // that the default K8s recipes don't cover. If skills come after recipes,
+  // the model exhausts iterations on K8s queries and never reaches skill queries.
+  let fullHints = "";
   if (config.skills && config.skills.length > 0) {
     const maxChars = config.maxCharsPerSkill ?? 2000;
     const skillSections = config.skills.map((s) => {
       const body = s.body.length > maxChars ? s.body.slice(0, maxChars) + "\n...[truncated]" : s.body;
       return `### ${wrapUntrusted("skill", s.title)}\n${wrapUntrusted("skill_body", body)}`;
     });
-    fullHints += `\n\n## Team Knowledge (Discovery Skills)\n${skillSections.join("\n\n")}`;
+    fullHints += `## PRIORITY: Team Knowledge (Discovery Skills)\nThese skills describe services that CANNOT be found via standard K8s queries. You MUST run these discovery queries IN ADDITION to the standard recipes below.\n\n${skillSections.join("\n\n")}\n\n`;
   }
+  fullHints += recipeHints;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     const agent = createDiscoverAgent({
