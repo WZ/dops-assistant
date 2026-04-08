@@ -17,6 +17,7 @@ import { createStep } from "@mastra/core/workflows";
 import type { WorkflowConfig } from "../investigation.js";
 import { getToolsByRole, filterToReadOnlyTools } from "../../mcp/provider.js";
 import { TOOL_RESULT_TRUNCATION_LIMIT } from "../../constants.js";
+import { logLlmCall, newCallId, type ToolCallEvent } from "../../server/llm-logger.js";
 import type { ProviderRole } from "../../config/schema.js";
 import {
   wrapToolsWithCallbacks,
@@ -146,8 +147,14 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
       // 4. Run agent.generate() with onStepFinish to collect tool data
       let agentResult: { text: string } = { text: "" };
       const toolData: string[] = [];
+      const llmToolCalls: ToolCallEvent[] = [];
       let iterationCount = 0;
       let llmError: string | undefined;
+      let generateError: string | undefined;
+      let totalInputTokens = 0;
+      let totalOutputTokens = 0;
+      const callId = newCallId();
+      const generateStartMs = Date.now();
       try {
         agentResult = await agent.generate(prompt, {
           onStepFinish: (step: any) => {
@@ -164,16 +171,19 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
                   const resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
                   const truncated = resultStr.length > TOOL_RESULT_TRUNCATION_LIMIT ? resultStr.slice(0, TOOL_RESULT_TRUNCATION_LIMIT) + "..." : resultStr;
                   toolData.push(`Tool: ${toolName}\nResult: ${truncated}`);
+                  const argsStr = JSON.stringify(payload.args ?? {});
+                  llmToolCalls.push({ tool: toolName, argsChars: argsStr.length, args: argsStr, resultChars: resultStr.length, result: truncated });
                   // Tool call already emitted by wrapToolsWithCallbacks — don't double-emit
                 }
               }
               if (step.text) toolData.push(`Model: ${step.text}`);
               // Emit token usage if available
-              if (step.usage && workflowConfig.onTokenUsage) {
-                workflowConfig.onTokenUsage({
-                  inputTokens: step.usage.inputTokens ?? 0,
-                  outputTokens: step.usage.outputTokens ?? 0,
-                });
+              if (step.usage) {
+                const inp = step.usage.inputTokens ?? 0;
+                const out = step.usage.outputTokens ?? 0;
+                totalInputTokens += inp;
+                totalOutputTokens += out;
+                workflowConfig.onTokenUsage?.({ inputTokens: inp, outputTokens: out });
               }
             } catch (err) {
               debug(`${phaseName.toUpperCase()} onStepFinish error:`, err);
@@ -183,10 +193,28 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         debug(`${phaseName.toUpperCase()} agent.generate error:`, err);
+        generateError = errMsg;
+        // Only set llmError for network errors (controls phase UI state)
         if (/ECONNREFUSED|ETIMEDOUT|ENOTFOUND|502|503/i.test(errMsg)) {
           llmError = errMsg;
         }
       }
+
+      // Log the LLM call
+      logLlmCall({
+        callId,
+        agent: phaseName,
+        phase: phaseName,
+        promptChars: prompt.length,
+        prompt,
+        responseChars: agentResult.text?.length ?? 0,
+        response: agentResult.text,
+        inputTokens: totalInputTokens,
+        outputTokens: totalOutputTokens,
+        durationMs: Date.now() - generateStartMs,
+        toolCalls: llmToolCalls,
+        error: generateError,
+      });
 
       // 5. If agent text is empty, extract from captured tool results
       let agentText = agentResult.text;
