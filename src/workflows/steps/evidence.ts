@@ -195,7 +195,7 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
         debug(`${phaseName.toUpperCase()} agent.generate error:`, err);
         generateError = errMsg;
         // Only set llmError for network errors (controls phase UI state)
-        if (/ECONNREFUSED|ETIMEDOUT|ENOTFOUND|502|503/i.test(errMsg)) {
+        if (/ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ENETUNREACH|EHOSTUNREACH|ECONNRESET|Cannot connect to API|502|503/i.test(errMsg)) {
           llmError = errMsg;
         }
       }
