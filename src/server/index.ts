@@ -154,7 +154,7 @@ async function main() {
       messageParts.push(`Log selector: {${labels}}`);
     }
 
-    logger.info({ service, stackId }, "ServiceHealthPoller: triggering auto-investigate (template=quick)");
+    logger.info({ service, stackId }, "ServiceHealthPoller: triggering auto-investigate (template=standard)");
     sharedDedup.markStarted(stackId, service);
 
     // Create agents lazily for the investigation
@@ -165,7 +165,7 @@ async function main() {
         return runner.run({
           service: serviceConfig,
           message: messageParts.join("\n"),
-          template: "quick",
+          template: "standard",
           stackId,
           readOnlyTools: true,
         });
