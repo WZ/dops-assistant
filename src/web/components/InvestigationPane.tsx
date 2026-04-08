@@ -8,7 +8,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ArrowLeft, FilePlus, RotateCw, ChevronDown } from "lucide-react";
+import { ArrowLeft, FilePlus, RotateCw, ChevronDown, Share2, Check } from "lucide-react";
 import { PhaseStepper, type PhaseState } from "./PhaseStepper";
 import { EvidenceTimeline } from "./EvidenceTimeline";
 import { RcaReport } from "./RcaReport";
@@ -25,6 +25,26 @@ const DEFAULT_PHASES: PhaseState[] = [
   { name: "infra", label: "Infrastructure", status: "pending" },
   { name: "synthesis", label: "Synthesis", status: "pending" },
 ];
+
+function ShareButton() {
+  const [copied, setCopied] = useState(false);
+  return (
+    <Button
+      variant="ghost"
+      onClick={() => {
+        navigator.clipboard.writeText(window.location.href).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1200);
+        }).catch(() => {});
+      }}
+      className="h-auto px-2 py-1 text-[10px] font-mono text-muted-foreground/60 hover:text-primary hover:bg-transparent transition-colors gap-1"
+      title="Copy shareable link"
+    >
+      {copied ? <Check size={10} className="!size-auto text-success" /> : <Share2 size={10} className="!size-auto" />}
+      {copied ? "Copied" : "Share"}
+    </Button>
+  );
+}
 
 export function InvestigationPane({ investigationId, wsMessages, onBack, onNavigateSkills, onRerun }: { investigationId: string; wsMessages: ServerMessage[]; onBack: () => void; onNavigateSkills?: () => void; onRerun?: (investigationId: string, template?: string) => void }) {
   const { stackFetch } = useStackContext();
@@ -305,6 +325,9 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
           )}
           {isRunning && (
             <span className="text-[10px] font-mono text-primary/60 uppercase tracking-[0.12em]">investigating...</span>
+          )}
+          {isComplete && (
+            <ShareButton />
           )}
           {isComplete && onRerun && (
             <DropdownMenu>
