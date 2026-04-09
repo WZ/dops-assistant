@@ -12,7 +12,9 @@ export function buildExploreUrl(params: {
   to: string;
 }): string {
   const { webUrl, datasource, query, from, to } = params;
-  const base = webUrl.replace(/\/+$/, "");
+  // Separate base path from query params — webUrl may include ?orgId=1
+  const [basePath, existingQuery] = webUrl.split("?");
+  const base = basePath!.replace(/\/+$/, "");
 
   const fromMs = toEpochMs(from);
   const toMs = toEpochMs(to);
@@ -24,7 +26,9 @@ export function buildExploreUrl(params: {
     range: { from: String(fromMs), to: String(toMs) },
   });
 
-  return `${base}/explore?schemaVersion=1&panes=${encodeURIComponent(`{"a":${pane}}`)}`;
+  // Preserve existing query params (e.g. orgId=1) alongside explore params
+  const extraParams = existingQuery ? `&${existingQuery}` : "";
+  return `${base}/explore?schemaVersion=1&panes=${encodeURIComponent(`{"a":${pane}}`)}${extraParams}`;
 }
 
 /**
