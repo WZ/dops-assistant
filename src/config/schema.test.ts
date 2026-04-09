@@ -145,14 +145,14 @@ describe("ConfigSchema – providers", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects config with no providers", () => {
+  it("accepts config with no providers (defaults to empty array)", () => {
     const result = ConfigSchema.safeParse({ llm });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
-  it("rejects config with empty providers array", () => {
+  it("accepts config with empty providers array (GUI providers supplement)", () => {
     const result = ConfigSchema.safeParse({ llm, providers: [] });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   it("rejects provider name with invalid characters", () => {

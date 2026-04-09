@@ -120,7 +120,7 @@ function UnreadMarker() {
 }
 
 export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, activeInvestigationId, serviceContext }: ChatPaneProps) {
-  const { stackFetch } = useStackContext();
+  const { stackFetch, activeStackId } = useStackContext();
   const { status, messages: wsMessages, send } = ws;
   const [input, setInput] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -166,7 +166,16 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
     return () => window.removeEventListener("focus", onFocus);
   }, []);
 
-  // Load historical messages on mount
+  // Reset chat history when stack changes
+  useEffect(() => {
+    historyLoaded.current = false;
+    setChatMessages([]);
+    setDeepMessages([]);
+    processedCount.current = 0;
+    initialScrollDone.current = false;
+  }, [activeStackId]);
+
+  // Load historical messages on mount or stack switch
   useEffect(() => {
     if (historyLoaded.current) return;
     historyLoaded.current = true;

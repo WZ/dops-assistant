@@ -801,6 +801,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       region: p.config.region,
       transport: p.config.mcpServer.transport,
       url: p.config.mcpServer.transport === "http" ? p.config.mcpServer.url : undefined,
+      webUrl: p.config.webUrl,
       source: p.source,
       status: p.status,
       toolCount: p.toolCount,

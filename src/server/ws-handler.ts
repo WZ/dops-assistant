@@ -429,6 +429,96 @@ async function handleDeepInvestigate(
   }
 }
 
+async function handleRerun(
+  msg: { type: "rerun"; investigationId: string; template?: "quick" | "standard" | "full" },
+  send: (m: ServerMessage) => void,
+  deps: WsDeps,
+  threadId: string,
+  stackId: string,
+  ctx: StackContext,
+): Promise<void> {
+  const { db } = deps;
+  const original = db.getInvestigation(stackId, msg.investigationId);
+  if (!original) {
+    send({ type: "error", message: "Investigation not found" });
+    return;
+  }
+
+  const serviceName = original.service;
+  const allServices = ctx.slug === DEFAULT_STACK_SLUG
+    ? [...deps.config.services, ...ctx.serviceRegistry.load().filter((s: ServiceConfig) => !deps.config.services.some((c: ServiceConfig) => c.name === s.name))]
+    : ctx.serviceRegistry.load();
+  const service = allServices.find((s: ServiceConfig) => s.name === serviceName);
+  if (!service) {
+    send({ type: "error", message: `Service '${serviceName}' not found in current configuration` });
+    return;
+  }
+
+  // Dedup check with force=true (bypasses window, enforces 30s cooldown)
+  const dedup = deps.sharedDedup;
+  if (dedup) {
+    const result = dedup.shouldInvestigate(stackId, serviceName, true);
+    if (!result.allowed) {
+      const retryMsg = result.retryAfterMs
+        ? ` Try again in ${Math.ceil(result.retryAfterMs / 1000)}s.`
+        : "";
+      send({ type: "error", message: `Re-run blocked: ${result.reason}.${retryMsg}` });
+      return;
+    }
+  }
+
+  const agents = await getOrCreateAgents(stackId, ctx, deps.config);
+  const investigationAgent = agents.investigationAgent;
+
+  const invId = `inv_${ulid()}`;
+  const query = `Re-run of investigation ${msg.investigationId} for ${serviceName}`;
+
+  send({ type: "investigation:started", id: invId, service: serviceName, query });
+
+  const wsCallbacks: InvestigationCallbacks = {
+    onPhase: (phase, status, stats) => {
+      send({ type: "investigation:phase", id: invId, phase, status, stats });
+    },
+    onToolCall: (phase, tool, args, status, result, durationMs) => {
+      send({ type: "investigation:tool_call", phase, tool, args, status: status as "error" | "success" | "calling", result, durationMs });
+    },
+    onIteration: (phase, iteration, maxIterations, description) => {
+      send({ type: "investigation:iteration", phase, iteration, maxIterations, description });
+    },
+    onPhaseUsage: (investigationId, phase, inputTokens, outputTokens, durationMs) => {
+      send({ type: "investigation:phase_usage", investigationId, phase, inputTokens, outputTokens, durationMs });
+    },
+    onTotalUsage: (investigationId, inputTokens, outputTokens, durationMs) => {
+      send({ type: "investigation:total_usage", investigationId, inputTokens, outputTokens, durationMs });
+    },
+    onComplete: (investigationId, report) => {
+      send({ type: "investigation:complete", id: investigationId, report });
+    },
+    onFailed: (investigationId, error) => {
+      send({ type: "investigation:failed", id: investigationId, error });
+    },
+  };
+
+  dedup?.markStarted(stackId, serviceName, true);
+  const runner = new InvestigationRunner({ db, investigationAgent, skillStore: deps.skillStore, globalOnComplete: deps.globalOnComplete });
+  try {
+    await runner.run({
+      service,
+      message: query,
+      investigationId: invId,
+      stackId,
+      template: msg.template as any,
+      parentInvestigationId: msg.investigationId,
+      disabledSkillIds: db.getDisabledSkills(stackId),
+      callbacks: wsCallbacks,
+    });
+  } catch {
+    // Error handled by runner's onFailed callback
+  } finally {
+    dedup?.markCompleted();
+  }
+}
+
 export async function handleClientMessage(
   msg: ClientMessage,
   send: (m: ServerMessage) => void,
@@ -449,6 +539,11 @@ export async function handleClientMessage(
 
   if (msg.type === "deep_investigate") {
     await handleDeepInvestigate(msg, send, deps, threadId, stackId, ctx);
+    return;
+  }
+
+  if (msg.type === "rerun") {
+    await handleRerun(msg, send, deps, threadId, stackId, ctx);
     return;
   }
 

@@ -1,7 +1,14 @@
-import { useEffect, useState, useRef, useMemo } from "react";
+import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowLeft, FilePlus } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { ArrowLeft, FilePlus, RotateCw, ChevronDown, Share2, Check } from "lucide-react";
 import { PhaseStepper, type PhaseState } from "./PhaseStepper";
 import { EvidenceTimeline } from "./EvidenceTimeline";
 import { RcaReport } from "./RcaReport";
@@ -10,6 +17,7 @@ import type { TimelineEvent } from "./ActivityTimeline";
 import type { TimeSeriesData } from "./MetricChart";
 import type { ServerMessage } from "../../types/ws-types.js";
 import { formatTokens } from "../lib/formatTokens.js";
+import { buildPhaseActions } from "../lib/grafana-links.js";
 
 const DEFAULT_PHASES: PhaseState[] = [
   { name: "planning", label: "Planning", status: "pending" },
@@ -19,7 +27,27 @@ const DEFAULT_PHASES: PhaseState[] = [
   { name: "synthesis", label: "Synthesis", status: "pending" },
 ];
 
-export function InvestigationPane({ investigationId, wsMessages, onBack, onNavigateSkills }: { investigationId: string; wsMessages: ServerMessage[]; onBack: () => void; onNavigateSkills?: () => void }) {
+function ShareButton() {
+  const [copied, setCopied] = useState(false);
+  return (
+    <Button
+      variant="ghost"
+      onClick={() => {
+        navigator.clipboard.writeText(window.location.href).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1200);
+        }).catch(() => {});
+      }}
+      className="h-auto px-2 py-1 text-[10px] font-mono text-muted-foreground/60 hover:text-primary hover:bg-transparent transition-colors gap-1"
+      title="Copy shareable link"
+    >
+      {copied ? <Check size={10} className="!size-auto text-success" /> : <Share2 size={10} className="!size-auto" />}
+      {copied ? "Copied" : "Share"}
+    </Button>
+  );
+}
+
+export function InvestigationPane({ investigationId, wsMessages, onBack, onNavigateSkills, onRerun }: { investigationId: string; wsMessages: ServerMessage[]; onBack: () => void; onNavigateSkills?: () => void; onRerun?: (investigationId: string, template?: string) => void }) {
   const { stackFetch } = useStackContext();
   const [phases, setPhases] = useState<PhaseState[]>(DEFAULT_PHASES);
   const [evidence, setEvidence] = useState<Record<string, unknown>>({});
@@ -29,8 +57,25 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
   const [phaseTokens, setPhaseTokens] = useState<Record<string, { inputTokens: number; outputTokens: number }>>({});
   const [totalUsage, setTotalUsage] = useState<{ inputTokens: number; outputTokens: number; durationMs: number } | null>(null);
+  const [providers, setProviders] = useState<Array<{ role: string; webUrl: string; datasource?: string }>>([]);
   const processedCount = useRef(0);
   const reportRef = useRef<HTMLDivElement>(null);
+
+  // Fetch providers for deep links
+  useEffect(() => {
+    stackFetch("/api/providers")
+      .then(r => r.ok ? r.json() : [])
+      .then((provs: Array<{ roles?: string[]; webUrl?: string }>) => {
+        const mapped = provs
+          .filter(p => p.webUrl && p.roles?.length)
+          .flatMap(p => (p.roles ?? []).map(role => ({
+            role,
+            webUrl: p.webUrl!,
+          })));
+        setProviders(mapped);
+      })
+      .catch(() => {});
+  }, [stackFetch]);
 
   // Scroll RCA report into center view when it appears
   useEffect(() => {
@@ -299,6 +344,39 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
           {isRunning && (
             <span className="text-[10px] font-mono text-primary/60 uppercase tracking-[0.12em]">investigating...</span>
           )}
+          {isComplete && (
+            <ShareButton />
+          )}
+          {isComplete && onRerun && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  disabled={isRunning}
+                  className="h-auto px-2.5 py-1 text-[10px] font-mono border-primary/30 text-primary/70 hover:bg-primary/8 hover:text-primary gap-1"
+                >
+                  <RotateCw size={10} className="!size-auto" />
+                  Re-investigate
+                  <ChevronDown size={8} className="!size-auto opacity-50" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-[180px]">
+                <DropdownMenuItem onClick={() => onRerun(investigationId)} className="font-mono text-[11px]">
+                  Re-run (current config)
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => onRerun(investigationId, "quick")} className="font-mono text-[11px] text-muted-foreground">
+                  Quick (metrics only)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onRerun(investigationId, "standard")} className="font-mono text-[11px] text-muted-foreground">
+                  Standard (metrics + logs)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onRerun(investigationId, "full")} className="font-mono text-[11px] text-muted-foreground">
+                  Full (all phases)
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
       </div>
 
@@ -326,7 +404,7 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
           {/* Report */}
           {report ? (
             <section ref={reportRef} className="animate-fade-up">
-              <RcaReport report={report as any} />
+              <RcaReport report={report as any} hideOldDashboardLinks={providers.length > 0} />
               {/* Save as Skill */}
               <div className="mt-3 flex justify-end">
                 <Button
@@ -383,6 +461,14 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
                 evidence={evidence as any}
                 timeSeries={timeSeries}
                 service={service}
+                providers={providers}
+                phaseActions={(() => {
+                  const rpt = report as any;
+                  const tr = rpt?.timeRange;
+                  if (!tr || providers.length === 0) return undefined;
+                  const { phaseActions: pa } = buildPhaseActions(undefined, providers, service, tr);
+                  return pa;
+                })()}
               />
             </section>
           )}

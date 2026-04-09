@@ -78,7 +78,7 @@ export function mapBackendPhase(backendPhase: string): string[] {
 /** Map raw LLM errors to user-friendly messages. */
 export function friendlyError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
-  if (/ECONNREFUSED|ENOTFOUND|connect.*refused/i.test(raw))
+  if (/ECONNREFUSED|ENOTFOUND|ENETUNREACH|EHOSTUNREACH|ECONNRESET|Cannot connect to API|connect.*refused/i.test(raw))
     return "LLM API is unreachable. Check network connectivity.";
   if (/bad gateway|service unavailable|502|503/i.test(raw))
     return "LLM API is currently unavailable. Please try again later.";
@@ -112,6 +112,8 @@ export interface RunOptions {
   readOnlyTools?: boolean;
   /** Skill IDs disabled for this stack (per-stack toggle). */
   disabledSkillIds?: Set<string>;
+  /** ID of the parent investigation (for re-runs). Stored for lineage tracking. */
+  parentInvestigationId?: string;
   callbacks?: InvestigationCallbacks;
 }
 

@@ -8,8 +8,8 @@
  * Usage:
  *   const dedup = new InvestigationDedup({ dedupWindowSeconds: 300, maxConcurrent: 3, db });
  *
- *   if (dedup.shouldInvestigate("my-service")) {
- *     dedup.markStarted("my-service");
+ *   if (dedup.shouldInvestigate(stackId, "my-service").allowed) {
+ *     dedup.markStarted(stackId, "my-service");
  *     try {
  *       await runner.run(...);
  *     } finally {
@@ -29,6 +29,13 @@ export interface InvestigationDedupOptions {
   db?: Database;
 }
 
+export interface DedupResult {
+  allowed: boolean;
+  reason?: string;
+  /** Milliseconds until the caller can retry (for cooldown UX) */
+  retryAfterMs?: number;
+}
+
 export class InvestigationDedup {
   private readonly dedupWindowMs: number;
   private readonly dedupWindowSeconds: number;
@@ -37,8 +44,11 @@ export class InvestigationDedup {
 
   /** Maps service name → timestamp (ms) of when the last investigation started */
   private readonly recentInvestigations = new Map<string, number>();
+  /** Maps service key → timestamp (ms) of last re-run (30s cooldown) */
+  private readonly lastRerunAt = new Map<string, number>();
   /** Count of currently active investigations */
   private activeCount = 0;
+  private static readonly RERUN_COOLDOWN_MS = 30_000;
 
   constructor(opts: InvestigationDedupOptions) {
     this.dedupWindowMs = opts.dedupWindowSeconds * 1000;
@@ -48,36 +58,48 @@ export class InvestigationDedup {
   }
 
   /**
-   * Returns true if an investigation for this service should proceed.
+   * Returns whether an investigation for this service should proceed.
    *
-   * Returns false if:
-   *  - The service was investigated within the dedup window (in-memory or DB fallback), OR
-   *  - The active investigation count has reached maxConcurrent
+   * @param force - Bypass dedup window (for user-initiated re-runs). Still enforces
+   *   concurrency limit and a 30s rapid-fire cooldown.
    */
-  shouldInvestigate(stackId: string, service: string): boolean {
+  shouldInvestigate(stackId: string, service: string, force?: boolean): DedupResult {
     this.cleanExpiredEntries();
 
     const key = `${stackId}:${service}`;
+
+    // Concurrency limit always applies, even for force
+    if (this.activeCount >= this.maxConcurrent) {
+      return { allowed: false, reason: "max_concurrent", retryAfterMs: 5_000 };
+    }
+
+    if (force) {
+      // Enforce 30s rapid-fire cooldown for re-runs
+      const lastRerun = this.lastRerunAt.get(key);
+      if (lastRerun !== undefined) {
+        const elapsed = Date.now() - lastRerun;
+        if (elapsed < InvestigationDedup.RERUN_COOLDOWN_MS) {
+          return { allowed: false, reason: "rerun_cooldown", retryAfterMs: InvestigationDedup.RERUN_COOLDOWN_MS - elapsed };
+        }
+      }
+      return { allowed: true };
+    }
+
     const lastRun = this.recentInvestigations.get(key);
 
     // In-memory check (fast path)
     if (lastRun !== undefined && Date.now() - lastRun < this.dedupWindowMs) {
-      return false;
+      return { allowed: false, reason: "dedup_window", retryAfterMs: this.dedupWindowMs - (Date.now() - lastRun) };
     }
 
     // DB fallback check — catches recent investigations lost on server restart.
-    // Only queries DB when in-memory map has no entry for this key.
     if (this.db && lastRun === undefined && this.dedupWindowSeconds > 0) {
       if (this.db.hasRecentInvestigation(stackId, service, this.dedupWindowSeconds)) {
-        return false;
+        return { allowed: false, reason: "dedup_window_db" };
       }
     }
 
-    if (this.activeCount >= this.maxConcurrent) {
-      return false;
-    }
-
-    return true;
+    return { allowed: true };
   }
 
   /**
@@ -85,9 +107,10 @@ export class InvestigationDedup {
    * Records the timestamp and increments the active count.
    * Call this immediately before starting the investigation.
    */
-  markStarted(stackId: string, service: string): void {
+  markStarted(stackId: string, service: string, isRerun?: boolean): void {
     const key = `${stackId}:${service}`;
     this.recentInvestigations.set(key, Date.now());
+    if (isRerun) this.lastRerunAt.set(key, Date.now());
     this.activeCount++;
   }
 

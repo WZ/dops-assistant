@@ -138,7 +138,7 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
     }
 
     // 4. Dedup + concurrency check
-    if (!dedup.shouldInvestigate(stackId, service.name)) {
+    if (!dedup.shouldInvestigate(stackId, service.name).allowed) {
       const activeCount = dedup.getActiveCount();
       if (activeCount >= config.maxConcurrent) {
         logger.warn({ activeCount, maxConcurrent: config.maxConcurrent }, "Alert webhook: concurrency limit reached");
