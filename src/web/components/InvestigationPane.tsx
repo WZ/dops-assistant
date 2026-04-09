@@ -404,7 +404,7 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
           {/* Report */}
           {report ? (
             <section ref={reportRef} className="animate-fade-up">
-              <RcaReport report={report as any} />
+              <RcaReport report={report as any} hideOldDashboardLinks={providers.length > 0} />
               {/* Save as Skill */}
               <div className="mt-3 flex justify-end">
                 <Button
