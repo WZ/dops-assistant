@@ -678,7 +678,21 @@ export async function handleClientMessage(
     send({ type: "context_switch", previousService: contextService.name, newService: mentionedService.name });
   }
 
-  const intent = await deps.router.route(msg.message, serviceNames);
+  const intent: { intent: string; service?: string } = await deps.router.route(msg.message, serviceNames);
+
+  // Downgrade investigation → question when no service is identifiable from the message
+  // AND the user didn't use explicit investigation keywords ("investigate", "diagnose", etc.).
+  // General questions like "What services are unhealthy?" contain symptom words but
+  // don't target a specific service. The chat agent can answer these using health data.
+  const STRONG_INVESTIGATION_WORDS = /\b(investigate|investigation|diagnose|diagnosis|troubleshoot|rca|root[\s-]*cause|postmortem|post[\s-]*mortem)\b/i;
+  if (intent.intent === "investigation" && !pinnedService && !STRONG_INVESTIGATION_WORDS.test(msg.message)) {
+    const fromMessage = deps.matchServiceFromText(msg.message, visibleServices);
+    const fromLlm = deps.validateLlmServiceMatch(intent.service, msg.message, visibleServices);
+    if (!fromMessage && !fromLlm && !intent.service) {
+      logger.info({ message: msg.message }, "Investigation intent but no service in message, downgrading to question");
+      intent.intent = "question";
+    }
+  }
 
   if (intent.intent === "investigation") {
     const service =
