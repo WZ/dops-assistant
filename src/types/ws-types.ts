@@ -6,6 +6,7 @@ import type { StackSummary } from "./stack-types.js";
 export type ClientMessage =
   | { type: "chat"; message: string; serviceContext?: string }
   | { type: "deep_investigate"; investigationId: string; message: string }
+  | { type: "rerun"; investigationId: string; template?: "quick" | "standard" | "full" }
   | { type: "new_session" }
   | { type: "discover" }
   | { type: "discover:accept"; services: ServiceConfig[] }

@@ -83,7 +83,7 @@ function CollapsibleSection({ id, label, count, open, toggle, children }: { id: 
   );
 }
 
-export function RcaReport({ report }: { report: RcaReportData }) {
+export function RcaReport({ report, hideOldDashboardLinks }: { report: RcaReportData; hideOldDashboardLinks?: boolean }) {
   const [open, setOpen] = useState<Set<string>>(new Set(["timeline", "factors", "actions"]));
   const toggle = (s: string) => setOpen((prev) => { const n = new Set(prev); if (n.has(s)) n.delete(s); else n.add(s); return n; });
 
@@ -222,8 +222,8 @@ export function RcaReport({ report }: { report: RcaReportData }) {
           </div>
         )}
 
-        {/* Grafana Links */}
-        {report.dashboardLinks.length > 0 && (
+        {/* Legacy dashboard links — hidden when new evidence-level deep links are available */}
+        {report.dashboardLinks.length > 0 && !hideOldDashboardLinks && (
           <div className="pt-3 border-t border-border/20">
             <h4 className="text-[10px] font-mono font-semibold uppercase tracking-[0.12em] text-muted-foreground mb-2">
               Dashboards

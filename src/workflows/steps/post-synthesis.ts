@@ -29,15 +29,30 @@ function buildGrafanaExploreLinks(
     const toMs = new Date(timeRange.to).getTime();
     if (isNaN(fromMs) || isNaN(toMs)) continue;
 
+    const base = webUrl.replace(/\/+$/, "");
+
     // Build Loki Explore link for providers with "logs" role
     if ((provider as any).roles?.includes("logs")) {
+      const datasource = (provider as any).datasourceName ?? "loki";
       const logql = `{app="${serviceName}"} |~ "(?i)(error|exception|fail)"`;
       const pane = JSON.stringify({
-        datasource: "loki",
+        datasource,
         queries: [{ refId: "A", expr: logql }],
         range: { from: String(fromMs), to: String(toMs) },
       });
-      links.push(`${webUrl}/explore?schemaVersion=1&panes=${encodeURIComponent(`{"a":${pane}}`)}`);
+      links.push(`${base}/explore?schemaVersion=1&panes=${encodeURIComponent(`{"a":${pane}}`)}`);
+    }
+
+    // Build Prometheus Explore link for providers with "metrics" role
+    if ((provider as any).roles?.includes("metrics")) {
+      const datasource = (provider as any).datasourceName ?? "Prometheus";
+      const promql = `up{service="${serviceName}"}`;
+      const pane = JSON.stringify({
+        datasource,
+        queries: [{ refId: "A", expr: promql }],
+        range: { from: String(fromMs), to: String(toMs) },
+      });
+      links.push(`${base}/explore?schemaVersion=1&panes=${encodeURIComponent(`{"a":${pane}}`)}`);
     }
   }
 
@@ -95,6 +110,7 @@ export function buildPostSynthesisStep(config: WorkflowConfig) {
         contributingFactors: inputData.contributingFactors,
         timeline: inputData.timeline,
         evidence: inputData.evidence,
+        evidenceToolCalls: inputData.evidenceToolCalls,
         dashboardLinks,
         recommendedActions: inputData.recommendedActions,
         confidence: inputData.confidence,

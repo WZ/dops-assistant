@@ -161,6 +161,14 @@ describe("friendlyError", () => {
     expect(friendlyError(new Error("502 Bad Gateway"))).toContain("unavailable");
   });
 
+  it("maps ENETUNREACH errors", () => {
+    expect(friendlyError(new Error("Cannot connect to API: connect ENETUNREACH 10.83.127.21:443"))).toContain("unreachable");
+  });
+
+  it("maps 'Cannot connect to API' errors from AI SDK", () => {
+    expect(friendlyError(new Error("Cannot connect to API: fetch failed"))).toContain("unreachable");
+  });
+
   it("passes through unknown errors", () => {
     expect(friendlyError(new Error("Something weird"))).toBe("Something weird");
   });

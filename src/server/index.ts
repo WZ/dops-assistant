@@ -125,7 +125,7 @@ async function main() {
 
     logger.info({ service, from, to, stackId }, "ServiceHealthPoller: service transitioned to down");
 
-    if (!sharedDedup.shouldInvestigate(stackId, service)) {
+    if (!sharedDedup.shouldInvestigate(stackId, service).allowed) {
       logger.info({ service, activeCount: sharedDedup.getActiveCount(), stackId }, "ServiceHealthPoller: auto-investigate suppressed by dedup/concurrency");
       return;
     }
@@ -218,7 +218,7 @@ async function main() {
         const alert = firingAlerts[0]!;
         const serviceLabels = ["service", "service_name", "app", "job", "deployment"];
         const serviceName = serviceLabels.map(k => alert.labels[k]).find(Boolean);
-        if (serviceName && !sharedDedup.shouldInvestigate(stackRow.id, serviceName)) {
+        if (serviceName && !sharedDedup.shouldInvestigate(stackRow.id, serviceName).allowed) {
           res.status(429).json({ error: "Investigation already in progress for this service", service: serviceName });
           return;
         }
@@ -248,10 +248,17 @@ async function main() {
     validateLlmServiceMatch, matchServiceFromText,
   });
 
-  const staticDir = path.resolve(__dirname, "../../dist/web");
+  // Resolve static dir relative to the working directory (worktree-safe), not __dirname
+  const staticDir = path.resolve(process.cwd(), "dist/web");
+  const indexHtml = path.resolve(staticDir, "index.html");
   app.use(express.static(staticDir));
-  app.get(/^(?!\/api\/)/, (_req, res) => {
-    res.sendFile(path.join(staticDir, "index.html"));
+  // SPA catch-all: serve index.html for any non-API route that wasn't matched by static files.
+  // This enables client-side routing (e.g. /investigations/:id, /services, /settings).
+  app.use((req, res, next) => {
+    if (req.path.startsWith("/api/") || req.path.startsWith("/ws")) return next();
+    res.sendFile("index.html", { root: staticDir }, (err) => {
+      if (err) next(err);
+    });
   });
 
   // Start all per-stack health pollers (staggered)

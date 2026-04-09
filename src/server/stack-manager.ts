@@ -106,15 +106,12 @@ export class StackManager {
     const stackConfig = JSON.parse(row.config) as StackConfig;
     const isDefault = row.id === this.defaultStackId;
 
-    // ProviderRegistry: per-stack providers.yaml (same pattern as ServiceRegistryStore)
-    let providersFilePath: string;
-    if (isDefault) {
-      providersFilePath = join(process.cwd(), "providers.yaml");
-    } else {
-      const stackDir = join("data", row.slug);
-      mkdirSync(stackDir, { recursive: true });
-      providersFilePath = join(stackDir, "providers.yaml");
-    }
+    // All stacks (including default) use data/{slug}/ for providers.yaml and services.yaml.
+    // Default stack also merges config.yaml providers (read-only) with GUI providers.
+    const stackDir = join("data", row.slug);
+    mkdirSync(stackDir, { recursive: true });
+
+    const providersFilePath = join(stackDir, "providers.yaml");
     const providerRegistry = new ProviderRegistry(
       isDefault ? this.config.providers : stackConfig.providers,
       providersFilePath,
@@ -128,24 +125,8 @@ export class StackManager {
       ttlMinutes: memOpts.ttlMinutes,
     });
 
-    // ServiceRegistryStore: default stack uses config-relative services.yaml,
-    // non-default stacks use per-stack path data/{slug}/services.yaml
-    let serviceRegistry: ServiceRegistryStore;
-    if (isDefault) {
-      const configPath = process.env["CONFIG_PATH"] ?? "config.yaml";
-      try {
-        serviceRegistry = new ServiceRegistryStore(getServicesFilePath(configPath));
-      } catch {
-        // config.yaml may not exist (CI, tests) — fall back to per-stack path
-        const servicesDir = join("data", row.slug);
-        mkdirSync(servicesDir, { recursive: true });
-        serviceRegistry = new ServiceRegistryStore(join(servicesDir, "services.yaml"));
-      }
-    } else {
-      const servicesDir = join("data", row.slug);
-      mkdirSync(servicesDir, { recursive: true });
-      serviceRegistry = new ServiceRegistryStore(join(servicesDir, "services.yaml"));
-    }
+    // ServiceRegistryStore: all stacks use data/{slug}/services.yaml
+    const serviceRegistry = new ServiceRegistryStore(join(stackDir, "services.yaml"));
 
     // ServiceHealthPoller: per-stack with staggered start offset (0-30s)
     // Prometheus datasource UID is resolved lazily from the provider registry

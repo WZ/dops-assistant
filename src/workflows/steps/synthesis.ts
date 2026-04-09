@@ -135,6 +135,13 @@ export function buildSynthesisStep(config: WorkflowConfig) {
       let contributingFactors: string[] = [];
       let timelineEvents: Array<{ time: string; event: string }> = [];
       let evidence = { metrics: [] as string[], logs: [] as string[], infra: [] as string[], changes: [] as string[] };
+      // Collect tool calls from evidence phases for deep links
+      const evidenceToolCalls: Record<string, Array<{ tool: string; args: string; resultChars: number }>> = {};
+      for (const [key, findings] of [["metrics", metricsFindings], ["logs", logsFindings], ["infra", infraFindings], ["changes", changesFindings]] as const) {
+        if (findings?.toolCalls?.length) {
+          evidenceToolCalls[key] = findings.toolCalls;
+        }
+      }
       let dashboardLinks: string[] = [];
       let recommendedActions: string[] = [];
       let confidence: "low" | "medium" | "high" = "low";
@@ -210,6 +217,7 @@ export function buildSynthesisStep(config: WorkflowConfig) {
         contributingFactors,
         timeline: timelineEvents,
         evidence,
+        evidenceToolCalls: Object.keys(evidenceToolCalls).length > 0 ? evidenceToolCalls : undefined,
         dashboardLinks,
         recommendedActions,
         confidence,

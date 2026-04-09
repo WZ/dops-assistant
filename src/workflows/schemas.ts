@@ -56,6 +56,12 @@ export const PlanningOutputSchema = z.object({
   anomalyContext: AnomalyOutputSchema,
 });
 
+const ToolCallRecordSchema = z.object({
+  tool: z.string(),
+  args: z.string(),
+  resultChars: z.number(),
+});
+
 export const EvidenceOutputSchema = z.object({
   summary: z.string(),
   observations: z.array(z.unknown()).optional(),
@@ -63,6 +69,8 @@ export const EvidenceOutputSchema = z.object({
   timeRange: TimeRangeSchema.optional(),
   // Error classification when evidence gathering failed (e.g. LLM unreachable)
   error: z.string().optional(),
+  // Tool calls made during this evidence phase — used for Grafana deep links
+  toolCalls: z.array(ToolCallRecordSchema).optional(),
 });
 
 export const ParallelEvidenceSchema = z.object({
@@ -93,6 +101,8 @@ export const SynthesisOutputSchema = z.object({
     infra: z.array(z.string()),
     changes: z.array(z.string()).optional().default([]),
   }).default({ metrics: [], logs: [], infra: [], changes: [] }),
+  // Tool calls from evidence phases, keyed by phase — used for Grafana deep links
+  evidenceToolCalls: z.record(z.string(), z.array(ToolCallRecordSchema)).optional(),
   dashboardLinks: z.array(z.string()).default([]),
   recommendedActions: z.array(z.string()).default([]),
   confidence: z.enum(["low", "medium", "high"]).default("low"),
@@ -120,6 +130,7 @@ export const PostSynthesisOutputSchema = z.object({
     infra: z.array(z.string()),
     changes: z.array(z.string()).optional().default([]),
   }),
+  evidenceToolCalls: z.record(z.string(), z.array(ToolCallRecordSchema)).optional(),
   dashboardLinks: z.array(z.string()),
   recommendedActions: z.array(z.string()),
   confidence: z.enum(["low", "medium", "high"]),
