@@ -248,10 +248,17 @@ async function main() {
     validateLlmServiceMatch, matchServiceFromText,
   });
 
-  const staticDir = path.resolve(__dirname, "../../dist/web");
+  // Resolve static dir relative to the working directory (worktree-safe), not __dirname
+  const staticDir = path.resolve(process.cwd(), "dist/web");
+  const indexHtml = path.resolve(staticDir, "index.html");
   app.use(express.static(staticDir));
-  app.get(/^(?!\/api\/)/, (_req, res) => {
-    res.sendFile(path.join(staticDir, "index.html"));
+  // SPA catch-all: serve index.html for any non-API route that wasn't matched by static files.
+  // This enables client-side routing (e.g. /investigations/:id, /services, /settings).
+  app.use((req, res, next) => {
+    if (req.path.startsWith("/api/") || req.path.startsWith("/ws")) return next();
+    res.sendFile("index.html", { root: staticDir }, (err) => {
+      if (err) next(err);
+    });
   });
 
   // Start all per-stack health pollers (staggered)
