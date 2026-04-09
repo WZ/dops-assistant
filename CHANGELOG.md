@@ -2,19 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.0.8.0] - 2026-04-08
+## [0.0.8.0] - 2026-04-09
 
 ### Added
 - Grafana Explore deep links on investigation evidence items: hover to reveal "Grafana" and "Copy" action buttons on timeline entries, external-link icons on metric charts, and phase-level "Open in Grafana" links on section headers (Infrastructure, Logs).
 - Re-investigate dropdown button in the investigation header with template options (Quick, Standard, Full). Re-runs use WebSocket for live progress streaming, with 30s cooldown and parent investigation lineage tracking.
-- Unified Grafana URL builder (`src/web/lib/grafana-links.ts`) supporting both panes (Grafana 10+) and left= (Grafana 9) URL formats.
-- Two-tier evidence metadata: phase-level tool call lists always available for deep links, observation-level query correlation best-effort for metric charts.
-- Evidence tool calls propagated through the workflow pipeline (evidence steps, synthesis, post-synthesis) and embedded in stored investigation reports for frontend consumption.
+- Shareable investigation URLs: each investigation has a unique URL (`/investigations/:id`) that can be copy-pasted to share with teammates. Share button in investigation header copies the link to clipboard.
+- Client-side routing for all pages (`/services`, `/settings/:tab`, `/investigations/:id`). Browser back/forward works. Right-click to copy link on investigation rows and sidebar nav items.
+- Unified Grafana URL builder supporting both panes (Grafana 10+) and left= (Grafana 9) formats. Preserves `orgId` and other query params from provider `webUrl`.
+
+### Changed
+- Default stack now uses `data/default/` for providers.yaml and services.yaml, consistent with all other stacks. Previously read from project root and config-relative paths.
+- Config validation allows empty `providers` array (GUI-only stacks where all providers are added via the UI).
+- `/api/providers` response now includes `webUrl` field for deep link generation.
 
 ### Fixed
 - LLM connection errors with `ENETUNREACH` (network unreachable) now correctly surface as "LLM unreachable" in the investigation UI instead of silently producing empty results. Also catches `EHOSTUNREACH`, `ECONNRESET`, and AI SDK's "Cannot connect to API" prefix.
-- Post-synthesis now generates Prometheus Explore links alongside Loki links, and uses the provider's configured datasource name instead of hardcoded "loki".
-- Investigation dedup `shouldInvestigate()` returns structured `DedupResult` with reason and `retryAfterMs` instead of plain boolean, enabling proper cooldown UX for re-runs.
+- SPA catch-all route uses explicit `{ root }` option for `sendFile`, fixing 404 on direct URL access (e.g. opening `/investigations/:id` in a new tab).
+- Grafana deep link URLs no longer break when provider `webUrl` includes query params like `?orgId=1`.
 
 ## [0.0.7.0] - 2026-04-07
 
