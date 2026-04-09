@@ -1,10 +1,11 @@
-import { useMemo } from "react";
+import { useMemo, useCallback } from "react";
 import { ExternalLink } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MetricsPanel } from "./evidence/MetricsPanel";
 import { TimelineEntry, type TimelineEntryData } from "./evidence/TimelineEntry";
 import type { TimeSeriesData } from "./MetricChart";
 import type { EvidenceAction } from "../../types/evidence.js";
+import { buildExploreUrl } from "../lib/grafana-links.js";
 
 interface StructuredLog {
   pattern: string;
@@ -43,6 +44,8 @@ export interface EvidenceTimelineProps {
   timeRange?: { from: string; to: string };
   /** Phase-level Grafana actions keyed by role (metrics, logs, infrastructure) */
   phaseActions?: Record<string, EvidenceAction>;
+  /** Provider configs for building chart-level deep links */
+  providers?: Array<{ role: string; webUrl: string; datasource?: string }>;
 }
 
 function isStructuredLog(obs: Observation): obs is StructuredLog {
@@ -88,7 +91,9 @@ function tryParseTimestamp(ts: string | undefined): number {
   }
 }
 
-export function EvidenceTimeline({ evidence, timeSeries, service, timeRange, phaseActions }: EvidenceTimelineProps) {
+export function EvidenceTimeline({ evidence, timeSeries, service, timeRange, phaseActions, providers }: EvidenceTimelineProps) {
+  const metricsProvider = providers?.find(p => p.role === "metrics");
+
   // Parse metric observations — objects stay as structured, strings get parsed if they match
   // the pattern "metric_name (instance) = value (baseline value) – severity"
   const METRIC_TEXT_RE = /^(.+?)\s*\(([^)]+)\)\s*=\s*([^\s]+)\s*\(baseline\s+([^)]+)\)\s*[–-]\s*(\w+)$/;
@@ -297,6 +302,13 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange, pha
             structuredObservations={structuredMetricObs as any}
             service={service}
             timeRange={timeRange}
+            buildChartUrl={metricsProvider ? (query: string) => buildExploreUrl({
+              webUrl: metricsProvider.webUrl,
+              datasource: metricsProvider.datasource,
+              query,
+              from: timeRange?.from ?? "",
+              to: timeRange?.to ?? "",
+            }) : undefined}
           />
         </TabsContent>
       )}

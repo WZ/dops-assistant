@@ -17,6 +17,7 @@ import type { TimelineEvent } from "./ActivityTimeline";
 import type { TimeSeriesData } from "./MetricChart";
 import type { ServerMessage } from "../../types/ws-types.js";
 import { formatTokens } from "../lib/formatTokens.js";
+import { buildPhaseActions } from "../lib/grafana-links.js";
 
 const DEFAULT_PHASES: PhaseState[] = [
   { name: "planning", label: "Planning", status: "pending" },
@@ -56,8 +57,25 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
   const [phaseTokens, setPhaseTokens] = useState<Record<string, { inputTokens: number; outputTokens: number }>>({});
   const [totalUsage, setTotalUsage] = useState<{ inputTokens: number; outputTokens: number; durationMs: number } | null>(null);
+  const [providers, setProviders] = useState<Array<{ role: string; webUrl: string; datasource?: string }>>([]);
   const processedCount = useRef(0);
   const reportRef = useRef<HTMLDivElement>(null);
+
+  // Fetch providers for deep links
+  useEffect(() => {
+    stackFetch("/api/providers")
+      .then(r => r.ok ? r.json() : [])
+      .then((provs: Array<{ roles?: string[]; webUrl?: string }>) => {
+        const mapped = provs
+          .filter(p => p.webUrl && p.roles?.length)
+          .flatMap(p => (p.roles ?? []).map(role => ({
+            role,
+            webUrl: p.webUrl!,
+          })));
+        setProviders(mapped);
+      })
+      .catch(() => {});
+  }, [stackFetch]);
 
   // Scroll RCA report into center view when it appears
   useEffect(() => {
@@ -443,6 +461,14 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
                 evidence={evidence as any}
                 timeSeries={timeSeries}
                 service={service}
+                providers={providers}
+                phaseActions={(() => {
+                  const rpt = report as any;
+                  const tr = rpt?.timeRange;
+                  if (!tr || providers.length === 0) return undefined;
+                  const { phaseActions: pa } = buildPhaseActions(undefined, providers, service, tr);
+                  return pa;
+                })()}
               />
             </section>
           )}
