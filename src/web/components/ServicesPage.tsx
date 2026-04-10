@@ -52,6 +52,7 @@ interface ServicesPageProps {
   onStartDiscovery: () => void;
   onResetDiscovery: () => void;
   grafanaUrl?: string;
+  prometheusDatasource?: string;
   stackName?: string;
 }
 
@@ -66,6 +67,7 @@ export function ServicesPage({
   onStartDiscovery,
   onResetDiscovery,
   grafanaUrl,
+  prometheusDatasource,
   stackName,
 }: ServicesPageProps) {
   const { stackFetch } = useStackContext();
@@ -348,6 +350,7 @@ export function ServicesPage({
         onViewInvestigation={onViewInvestigation}
         onViewService={(name) => setSubView({ type: "detail", serviceName: name })}
         grafanaUrl={grafanaUrl}
+        prometheusDatasource={prometheusDatasource}
         metricQuery={firstMetricQuery}
       />
     );

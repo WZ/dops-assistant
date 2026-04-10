@@ -296,13 +296,18 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
   app.get("/api/branding", (req: Request, res: Response) => {
     const base = config.branding ?? { title: "dops", subtitle: "assistant" };
-    let grafanaUrl: string | undefined;
     const providerRegistry = req.stackContext.providerRegistry;
     const dashProvider = providerRegistry.getAll().find(
       (p: { config: { roles: string[]; webUrl?: string } }) => p.config.roles.includes("dashboards") && p.config.webUrl,
     );
-    grafanaUrl = dashProvider?.config.webUrl;
-    res.json({ ...base, grafanaUrl });
+    const metricsProvider = providerRegistry.getAll().find(
+      (p: { config: { roles: string[] } }) => p.config.roles.includes("metrics"),
+    );
+    res.json({
+      ...base,
+      grafanaUrl: dashProvider?.config.webUrl,
+      prometheusDatasource: metricsProvider?.prometheusDatasourceUid,
+    });
   });
 
   app.get("/api/services/graph", (req: Request, res: Response) => {
