@@ -14,6 +14,7 @@ interface ServiceDetailProps {
   onViewInvestigation: (id: string) => void;
   onViewService: (name: string) => void;
   grafanaUrl?: string;
+  prometheusDatasource?: string;
   metricQuery?: string;
 }
 
@@ -36,6 +37,7 @@ export function ServiceDetail({
   onViewInvestigation,
   onViewService,
   grafanaUrl,
+  prometheusDatasource,
   metricQuery,
 }: ServiceDetailProps) {
   const { stackFetch } = useStackContext();
@@ -136,6 +138,7 @@ export function ServiceDetail({
         onAliasEditorOpenChange={setAliasEditorOpen}
         onTagEditorOpenChange={setTagEditorOpen}
         grafanaUrl={grafanaUrl}
+        prometheusDatasource={prometheusDatasource}
         metricQuery={metricQuery}
       />
 
