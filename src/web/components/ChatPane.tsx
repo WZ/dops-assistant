@@ -432,15 +432,6 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
     } catch { /* ignore */ }
   }, [stackFetch]);
 
-  const handleClearAll = useCallback(async () => {
-    if (!window.confirm("Clear all console messages? This cannot be undone.")) return;
-    try {
-      const res = await stackFetch("/api/messages", { method: "DELETE" });
-      if (res.ok) {
-        setChatMessages([]);
-      }
-    } catch { /* ignore */ }
-  }, [stackFetch]);
 
   // Compute unread marker index (insert before first message newer than lastVisitedAt)
   const unreadMarkerIndex = (() => {
@@ -640,17 +631,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
           )}
         </div>
         {!isDeepMode && chatMessages.length > 0 && (
-          <div className="flex items-center gap-1.5">
-            <Button
-              variant="ghost"
-              disabled={isLoading || !!streamingMessage}
-              onClick={handleClearAll}
-              className={`h-9 px-4 text-[12px] font-mono rounded-lg border border-border/50 text-muted-foreground hover:text-foreground/70 hover:bg-secondary/30 transition-colors${isLoading || !!streamingMessage ? " opacity-40 pointer-events-none" : ""}`}
-            >
-              <Trash2 size={13} className="!size-auto" />
-              Clear
-            </Button>
-            <Button
+          <Button
               variant="ghost"
               disabled={isLoading || !!streamingMessage}
               onClick={() => { send({ type: "new_session" }); }}
@@ -659,7 +640,6 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
               <Plus size={13} className="!size-auto" />
               New chat
             </Button>
-          </div>
         )}
       </div>
 
