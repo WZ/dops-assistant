@@ -74,10 +74,10 @@ export function App() {
     : leftPane.type === "settings" ? "settings"
     : "dashboard";
 
-  const [branding, setBranding] = useState<{ title: string; subtitle: string; grafanaUrl?: string }>({ title: "dops", subtitle: "assistant" });
+  const [branding, setBranding] = useState<{ title: string; subtitle: string; grafanaUrl?: string; prometheusDatasource?: string }>({ title: "dops", subtitle: "assistant" });
   useEffect(() => {
-    fetch("/api/branding").then((r) => r.json()).then((data) => setBranding((prev) => ({ ...prev, ...data }))).catch(() => {});
-  }, []);
+    fetch("/api/branding", { headers: { "X-Stack-Id": activeStackId } }).then((r) => r.json()).then((data) => setBranding((prev) => ({ ...prev, ...data }))).catch(() => {});
+  }, [activeStackId]);
 
   const [discoveryState, setDiscoveryState] = useState({
     phase: "",
@@ -273,6 +273,7 @@ export function App() {
                       onStartDiscovery={() => { ws.send({ type: "discover" }); }}
                       onResetDiscovery={() => setDiscoveryState({ phase: "", status: "complete", iteration: { current: 0, max: 0, description: "" }, toolCalls: [], results: [], error: null, phaseTokens: {}, totalUsage: null })}
                       grafanaUrl={branding.grafanaUrl}
+                      prometheusDatasource={branding.prometheusDatasource}
                       stackName={hasMultipleStacks ? activeStack?.name : undefined}
                     />
                   ) : leftPane.type === "settings" ? (

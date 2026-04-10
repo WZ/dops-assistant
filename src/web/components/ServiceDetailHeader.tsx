@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Search, ExternalLink, Pencil, Plus } from "lucide-react";
 import { AliasEditor, TagEditor } from "./ServiceAliasEditor";
+import { buildExploreUrl } from "../lib/grafana-links";
 
 interface ServiceDetailHeaderProps {
   serviceName: string;
@@ -12,6 +13,7 @@ interface ServiceDetailHeaderProps {
   aliasEditorOpen: boolean;
   tagEditorOpen: boolean;
   grafanaUrl?: string;
+  prometheusDatasource?: string;
   metricQuery?: string;
   onBack: () => void;
   onInvestigate: () => void;
@@ -45,14 +47,14 @@ function healthLabel(status?: string): string {
   }
 }
 
-function buildGrafanaExploreUrl(baseUrl: string, query: string): string {
-  const stripped = baseUrl.replace(/\/+$/, "");
-  const left = JSON.stringify({
-    datasource: "Prometheus",
-    queries: [{ refId: "A", expr: query, datasource: { type: "prometheus", uid: "" } }],
-    range: { from: "now-1h", to: "now" },
+function buildGrafanaExploreLink(baseUrl: string, query: string, datasource?: string): string {
+  return buildExploreUrl({
+    webUrl: baseUrl,
+    datasource,
+    query,
+    from: new Date(Date.now() - 3600_000).toISOString(),
+    to: new Date().toISOString(),
   });
-  return `${stripped}/explore?orgId=1&left=${encodeURIComponent(left)}`;
 }
 
 function formatCheckedAgo(ts: number | null | undefined): string | null {
@@ -76,6 +78,7 @@ export function ServiceDetailHeader({
   aliasEditorOpen,
   tagEditorOpen,
   grafanaUrl,
+  prometheusDatasource,
   metricQuery,
   onBack,
   onInvestigate,
@@ -174,7 +177,7 @@ export function ServiceDetailHeader({
 
           {grafanaUrl && metricQuery ? (
             <a
-              href={buildGrafanaExploreUrl(grafanaUrl, metricQuery)}
+              href={buildGrafanaExploreLink(grafanaUrl, metricQuery, prometheusDatasource)}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center h-9 px-4 text-[12px] font-mono bg-secondary border border-border rounded-lg text-foreground/70 hover:text-foreground/90 hover:bg-secondary/80 transition-colors"
