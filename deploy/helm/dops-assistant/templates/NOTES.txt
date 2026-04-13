@@ -1,0 +1,44 @@
+dops-assistant {{ .Chart.AppVersion }} has been installed in namespace {{ .Release.Namespace }}.
+
+Release: {{ .Release.Name }}
+
+1. Service:
+
+     kubectl --namespace {{ .Release.Namespace }} get svc {{ include "dops-assistant.fullname" . }}
+
+{{- if .Values.ingress.enabled }}
+
+2. Access via Ingress:
+{{- $scheme := "http" }}
+{{- if .Values.ingress.tls }}{{ $scheme = "https" }}{{ end }}
+{{- range .Values.ingress.hosts }}
+{{- $host := .host }}
+{{- range .paths }}
+     {{ $scheme }}://{{ $host }}{{ .path }}
+{{- end }}
+{{- end }}
+
+{{- else }}
+
+2. Port-forward to reach the UI locally:
+
+     kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "dops-assistant.fullname" . }} {{ .Values.service.httpPort }}:{{ .Values.service.httpPort }}
+
+   Then open http://localhost:{{ .Values.service.httpPort }}
+
+{{- end }}
+
+3. Health check:
+
+     kubectl --namespace {{ .Release.Namespace }} exec deploy/{{ include "dops-assistant.fullname" . }} -- \
+       wget -q -O - http://localhost:{{ .Values.service.httpPort }}/api/health
+
+{{- if and .Values.secrets.create (not .Values.secrets.existingSecret) (not .Values.secrets.data.OPENAI_API_KEY) }}
+
+WARNING: secrets.data.OPENAI_API_KEY is empty. The pod will crash on startup
+because config.yaml references ${OPENAI_API_KEY}. Set it with:
+
+     helm upgrade {{ .Release.Name }} <chart> --reuse-values \
+       --set secrets.data.OPENAI_API_KEY=sk-your-key
+
+{{- end }}

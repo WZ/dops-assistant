@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dops-assistant.configMapName" . }}
+  labels:
+    {{- include "dops-assistant.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+{{ toYaml .Values.config | indent 4 }}
