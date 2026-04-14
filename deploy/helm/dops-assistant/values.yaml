@@ -166,3 +166,21 @@ config:
   observability:
     port: 9090
     logLevel: info
+
+# ---------------------------------------------------------------------------
+# providers.yaml (rendered into the same ConfigMap as config.yaml)
+# ---------------------------------------------------------------------------
+# An array of MCP provider configs matching ProviderSchema in
+# src/config/schema.ts. The init container stages this into
+# /app/data/default/providers.yaml on every pod start, so Helm-declared
+# providers survive pod restarts even when persistence is disabled.
+#
+# Format is a flat array — do NOT wrap in a `providers:` key. If you're
+# adding providers via the GUI instead, leave this as [] and turn on
+# persistence so providers.yaml survives on a PVC.
+providers: []
+# - name: grafana
+#   roles: [metrics, logs, dashboards]
+#   mcpServer:
+#     transport: http
+#     url: http://grafana-mcp.default.svc.cluster.local:8000/mcp

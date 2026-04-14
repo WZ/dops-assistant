@@ -45,14 +45,24 @@ spec:
       initContainers:
         # The config loader expects services.yaml next to config.yaml in a
         # writable directory (src/config/loader.ts). ConfigMaps are read-only,
-        # so we copy the rendered config onto the PVC at startup.
+        # so we copy the rendered config onto the data volume at startup.
+        #
+        # We also stage providers.yaml into data/default/ so the provider
+        # registry picks up Helm-declared MCP providers on every boot —
+        # important when persistence is disabled, because the GUI-backed
+        # providers.yaml would otherwise vanish on every pod restart and
+        # leave the discovery agent with no tools.
         - name: init-config
           image: {{ include "dops-assistant.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command:
             - sh
             - -c
-            - cp /config-src/config.yaml {{ .Values.persistence.mountPath }}/config.yaml
+            - |
+              set -e
+              cp /config-src/config.yaml {{ .Values.persistence.mountPath }}/config.yaml
+              mkdir -p {{ .Values.persistence.mountPath }}/default
+              cp /config-src/providers.yaml {{ .Values.persistence.mountPath }}/default/providers.yaml
           volumeMounts:
             - name: config
               mountPath: /config-src
