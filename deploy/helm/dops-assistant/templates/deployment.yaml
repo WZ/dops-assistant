@@ -38,6 +38,10 @@ spec:
       securityContext:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.hostAliases }}
+      hostAliases:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       initContainers:
         # The config loader expects services.yaml next to config.yaml in a
         # writable directory (src/config/loader.ts). ConfigMaps are read-only,

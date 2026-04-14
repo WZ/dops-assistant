@@ -35,6 +35,14 @@ podLabels: {}
 podSecurityContext: {}
 securityContext: {}
 
+# Pod-level /etc/hosts entries. Use when the LLM endpoint or an MCP server
+# is reachable only by IP and the cluster DNS can't resolve the hostname.
+# Format matches Kubernetes PodSpec.hostAliases.
+hostAliases: []
+# - ip: 10.0.0.42
+#   hostnames:
+#     - llm.internal.example
+
 service:
   type: ClusterIP
   httpPort: 3000
