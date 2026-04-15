@@ -149,8 +149,25 @@ function unwrapMcpResult(result: unknown): string {
 }
 
 /**
+ * The symbol Mastra's Tool class uses to identify its own instances. We strip
+ * this from wrapped tools so Mastra's CoreToolBuilder treats them as Vercel
+ * tools and skips its input schema validation — otherwise the LLM's `null`
+ * args for instant Prometheus queries get rejected by Mastra BEFORE our
+ * execute runs, defeating the whole point of coercePrometheusArgs.
+ * See: node_modules/@mastra/core/dist/chunk-FNVUZ3S2.js createExecute().
+ */
+const MASTRA_TOOL_MARKER = Symbol.for("mastra.core.tool.Tool");
+
+/**
  * Wrap each tool's execute function to emit onToolCall before/after invocation.
  * If no onToolCall callback is provided, tools are returned unchanged.
+ *
+ * Intentionally strips the Mastra tool marker so Mastra's framework treats the
+ * wrapped object as a Vercel/AI-SDK tool. This bypasses Mastra's
+ * validateToolInput step, which is what lets our coercion hooks actually run
+ * before the underlying MCP tool is invoked. The Vercel path still runs output
+ * validation, so we also drop outputSchema to avoid false negatives on the
+ * permissive MCP response shape.
  */
 export function wrapToolsWithCallbacks(
   tools: Record<string, any>,
@@ -159,8 +176,15 @@ export function wrapToolsWithCallbacks(
 ): Record<string, any> {
   const wrapped: Record<string, any> = {};
   for (const [name, tool] of Object.entries(tools)) {
+    // Spread everything, then explicitly drop the Mastra class marker and
+    // the output schema. inputSchema stays so the LLM-facing tool spec is
+    // unchanged — only the server-side input validation is bypassed.
+    const { outputSchema: _outputSchema, ...toolRest } = tool;
+    const wrappedTool: Record<string | symbol, any> = { ...toolRest };
+    // Spread copies symbol-keyed properties; delete the marker explicitly.
+    delete wrappedTool[MASTRA_TOOL_MARKER];
     wrapped[name] = {
-      ...tool,
+      ...wrappedTool,
       execute: async (...execArgs: any[]) => {
         // Fill null prometheus time args BEFORE schema coercion — LLMs send null
         // on instant queries but the MCP schema requires strings, wasting a retry.
