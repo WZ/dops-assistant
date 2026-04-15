@@ -66,7 +66,27 @@ Infrastructure often dominates basic health check queries. Make sure to also dis
 Return a JSON array. Each object must have:
 - "name": string — the service name
 - "metrics": array of { "query": string, "description": string } — a health check query for this service
-- "logLabels": object — key/value pairs identifying this service in log systems (e.g. {"app": "api-gateway", "namespace": "default"}). If infrastructure tools reveal pod labels, namespace, or container names, include them here. Use {} if no label info is available.
+- "logLabels": object — key/value pairs identifying this service in whatever log
+  system is wired up (Loki, Elasticsearch, Splunk, CloudWatch, etc.). These must
+  match the actual stream labels / index fields the log provider exposes — NOT
+  the labels from metric systems like kube-state-metrics. A common mistake is
+  copying \`deployment\`/\`statefulset\`/\`daemonset\` from Prometheus metrics when
+  the log provider only indexes \`container\`/\`pod\`/\`namespace\`/\`app\`.
+
+  HOW TO CHOOSE:
+    1. If a log-listing or log-label-discovery tool is available (e.g.
+       \`list_loki_label_names\`, \`list_indices\`, \`describe_log_groups\`), call it
+       once up front and prefer labels that actually exist in the result.
+    2. If an infrastructure tool reveals pod names, container names, app labels,
+       or namespaces, use those.
+    3. Otherwise fall back to the most widely-supported identifiers — \`container\`
+       and \`pod\` tend to work across most k8s log pipelines; \`namespace\` +
+       workload-name narrows ambiguous cases.
+    4. For statefulsets and daemonsets specifically: the \`container\` name
+       usually matches the workload name, while the kube-state-metrics label
+       (\`statefulset\`/\`daemonset\`) almost never exists in logs.
+    5. Use {} if no label info is available. A wrong label is worse than none —
+       the logs agent will query with it and get empty results.
 
 Be thorough — discover ALL services. Return valid JSON.${excludeList}`,
     model: config.model as any,

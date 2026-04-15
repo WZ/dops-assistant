@@ -50,6 +50,34 @@ export function newCallId(): string {
 
 // ── Logging functions ───────────────────────────────────────────────────────
 
+/**
+ * Log the start of an LLM call, before the request is sent. Emitted at info
+ * level so hangs before first chunk are visible without enabling debug.
+ */
+export function logLlmCallStart(event: {
+  callId: string;
+  agent: string;
+  phase?: string;
+  promptChars: number;
+}): void {
+  if (!llmLogger.isLevelEnabled("info")) return;
+  llmLogger.info({
+    callId: event.callId,
+    agent: event.agent,
+    phase: event.phase,
+    promptChars: event.promptChars,
+  }, `LLM ${event.agent} start: ${event.promptChars}chars prompt`);
+}
+
+/**
+ * Log when the first streaming chunk arrives from the LLM. Lets you tell a
+ * slow-but-live request apart from a completely stalled one.
+ */
+export function logLlmCallFirstChunk(callId: string, agent: string, elapsedMs: number): void {
+  if (!llmLogger.isLevelEnabled("info")) return;
+  llmLogger.info({ callId, agent, elapsedMs }, `LLM ${agent} first chunk: ${elapsedMs}ms`);
+}
+
 /** Log a complete LLM call (info: summary, debug: full content). */
 export function logLlmCall(event: LlmCallEvent): void {
   if (!llmLogger.isLevelEnabled("info")) return;

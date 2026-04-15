@@ -31,11 +31,17 @@ function resolveGrafanaTime(value: string): string {
   return new Date(now - Number(amt) * (multipliers[unit!] ?? 0)).toISOString();
 }
 
+/** Shared check: does a property name look like a time field? */
+function isTimeField(key: string): boolean {
+  const k = key.toLowerCase();
+  return k.includes("time") || k.includes("rfc3339") || k.includes("start") || k.includes("end");
+}
+
 /**
  * Coerce tool arguments to match expected schema types.
  * LLMs often pass strings where arrays are expected (e.g., matches: "{...}" instead of ["{...}"]).
  */
-function coerceToolArgs(args: Record<string, unknown>, toolSchema: any): Record<string, unknown> {
+export function coerceToolArgs(args: Record<string, unknown>, toolSchema: any): Record<string, unknown> {
   if (!toolSchema?.properties) return args;
   const coerced = { ...args };
   for (const [key, value] of Object.entries(coerced)) {
@@ -47,12 +53,48 @@ function coerceToolArgs(args: Record<string, unknown>, toolSchema: any): Record<
       if (!isNaN(num)) coerced[key] = num;
     }
     // Convert "now", "now-1h" etc. to RFC3339 for time fields
-    if (typeof value === "string" && /^now(?:-\d+[smhdw])?$/.test(value) &&
-        (key.toLowerCase().includes("time") || key.toLowerCase().includes("rfc3339") ||
-         key.toLowerCase().includes("start") || key.toLowerCase().includes("end"))) {
+    if (typeof value === "string" && /^now(?:-\d+[smhdw])?$/.test(value) && isTimeField(key)) {
       coerced[key] = resolveGrafanaTime(value);
     }
+    // Normalize malformed RFC3339 that LLMs produce on time fields:
+    //   "2026-04-15T20:27:00.Z"    → "2026-04-15T20:27:00Z"   (empty fraction + dot — INVALID)
+    //   "2026-04-15T20:27:00."     → "2026-04-15T20:27:00Z"   (dangling dot, no Z)
+    //   "2026-04-15T20:27:00"      → "2026-04-15T20:27:00Z"   (missing Z entirely)
+    // Note: "2026-04-15T20:27:00.000Z", ".0Z", ".00Z" etc. are all VALID RFC3339
+    // (zero fraction of second), so leave them alone. Only the empty-fraction
+    // case (bare dot before Z) is malformed.
+    const current = coerced[key];
+    if (typeof current === "string" && isTimeField(key)) {
+      let cleaned = current;
+      // Empty fraction + Z: "20:27:00.Z" → "20:27:00Z"
+      cleaned = cleaned.replace(/\.Z$/, "Z");
+      // Dangling dot at the end (no Z at all): "20:27:00." → "20:27:00Z"
+      cleaned = cleaned.replace(/\.$/, "Z");
+      // Naive RFC3339-looking string missing its Z: "20:27:00" → "20:27:00Z"
+      if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(cleaned)) {
+        cleaned += "Z";
+      }
+      if (cleaned !== current) coerced[key] = cleaned;
+    }
   }
+  return coerced;
+}
+
+/**
+ * Fill in Grafana query_prometheus time arguments that LLMs default to null.
+ *
+ * The Grafana MCP tool's schema requires startTime/endTime as strings and
+ * stepSeconds as a number — even for instant queries where these are logically
+ * meaningless. LLMs pass null for them on instant queries, which fails schema
+ * validation and costs a retry round-trip. Default to "now" / 0 so the request
+ * goes through on the first attempt. The "now" string is then converted to
+ * RFC3339 by coerceToolArgs in the normal path.
+ */
+export function coercePrometheusArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const coerced = { ...args };
+  if (coerced.startTime == null) coerced.startTime = "now";
+  if (coerced.endTime == null) coerced.endTime = "now";
+  if (coerced.stepSeconds == null) coerced.stepSeconds = 0;
   return coerced;
 }
 
@@ -65,6 +107,9 @@ function coerceToolArgs(args: Record<string, unknown>, toolSchema: any): Record<
  */
 export function coerceLokiArgs(args: Record<string, unknown>): Record<string, unknown> {
   const coerced = { ...args };
+  // stepSeconds is a Prometheus concept — Loki's query_loki_logs doesn't accept it.
+  // LLMs consistently pass it; drop it so the tool call isn't rejected.
+  delete coerced.stepSeconds;
   // Always use backward (newest-first) — errors at the end of a window are more relevant
   if (coerced.direction === "forward" || !coerced.direction) {
     coerced.direction = "backward";
@@ -117,6 +162,11 @@ export function wrapToolsWithCallbacks(
     wrapped[name] = {
       ...tool,
       execute: async (...execArgs: any[]) => {
+        // Fill null prometheus time args BEFORE schema coercion — LLMs send null
+        // on instant queries but the MCP schema requires strings, wasting a retry.
+        if (name.includes("query_prometheus") && execArgs[0] && typeof execArgs[0] === "object") {
+          execArgs[0] = coercePrometheusArgs(execArgs[0] as Record<string, unknown>);
+        }
         // Coerce args to match schema (fixes LLM type mismatches)
         if (execArgs[0] && typeof execArgs[0] === "object" && tool.inputSchema) {
           execArgs[0] = coerceToolArgs(execArgs[0], tool.inputSchema);

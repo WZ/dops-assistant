@@ -8,7 +8,7 @@ import type { ServiceConfig, DiscoveryConfig, DiscoveryRecipe } from "../../conf
 import type { OnToolCallEnriched, OnIteration } from "../../types/agent-interfaces.js";
 import type { Skill } from "../../skills/store.js";
 import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
-import { logLlmCall, newCallId } from "../../server/llm-logger.js";
+import { logLlmCall, logLlmCallStart, newCallId, type ToolCallEvent } from "../../server/llm-logger.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("discover");
@@ -129,10 +129,42 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
     const discoverCallId = newCallId();
     const discoverPrompt = "Discover all monitored services using the available tools. Return the complete list as JSON.";
     const discoverStartMs = Date.now();
+    const discoverToolCalls: ToolCallEvent[] = [];
+    logLlmCallStart({
+      callId: discoverCallId,
+      agent: "discover",
+      phase: `attempt-${attempt}`,
+      promptChars: discoverPrompt.length + fullHints.length,
+    });
 
     try {
       const result = await agent.generate(discoverPrompt, {
         providerOptions: { "openai-compatible": { max_tokens: 16384 } },
+        onStepFinish: (step: any) => {
+          if (!step.toolResults?.length) return;
+          for (const tr of step.toolResults) {
+            try {
+              const payload = tr.payload ?? tr;
+              const toolName = payload.toolName ?? payload.name ?? tr.toolName ?? "unknown";
+              const nestedContent = payload.result?.content?.[0]?.text;
+              const rawResult = nestedContent ?? payload.result ?? tr.result ?? tr.output ?? "";
+              const resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
+              // JSON.stringify can throw on BigInt / circular / exotic return types.
+              // Slice args/results to 500 chars to bound memory on long discovery runs.
+              const argsStr = JSON.stringify(payload.args ?? {});
+              discoverToolCalls.push({
+                tool: toolName,
+                argsChars: argsStr.length,
+                args: argsStr.slice(0, 500),
+                resultChars: resultStr.length,
+                result: resultStr.slice(0, 500),
+              });
+            } catch (err) {
+              // Never let observability crash the discover step.
+              logger.warn({ err }, "discover: onStepFinish failed to record tool call");
+            }
+          }
+        },
       } as any);
 
       const usage = (result as any).totalUsage ?? (result as any).usage;
@@ -153,7 +185,7 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
         inputTokens: inTok,
         outputTokens: outTok,
         durationMs: Date.now() - discoverStartMs,
-        toolCalls: [],
+        toolCalls: discoverToolCalls,
       });
 
       const parsed = safeJsonParse(result.text);
@@ -166,6 +198,19 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
       logger.warn({ attempt, maxRetries: MAX_RETRIES }, "discovery returned empty result");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      logLlmCall({
+        callId: discoverCallId,
+        agent: "discover",
+        phase: `attempt-${attempt}`,
+        promptChars: discoverPrompt.length + fullHints.length,
+        prompt: `${discoverPrompt}\n\n[hints: ${fullHints.length} chars]`,
+        responseChars: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        durationMs: Date.now() - discoverStartMs,
+        toolCalls: discoverToolCalls,
+        error: message,
+      });
       logger.warn({ attempt, err: message }, "discovery attempt failed");
       if (attempt === MAX_RETRIES) throw err;
     }

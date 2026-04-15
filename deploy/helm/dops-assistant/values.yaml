@@ -111,6 +111,15 @@ probes:
 env: []
 # - name: LOG_LEVEL
 #   value: info
+#
+# TRUST_PROXY_HOPS controls Express's `trust proxy` setting, which decides how
+# req.ip is resolved from X-Forwarded-For (affects per-client rate limiting).
+# Default is 1 (single k8s ingress hop that overwrites XFF). Set to:
+#   - 1 : single ingress that overwrites XFF (nginx-ingress default)
+#   - 2 : ingress + upstream CDN, or ingress + service mesh
+# WARNING: too-high values let clients spoof XFF and bypass rate limits.
+# - name: TRUST_PROXY_HOPS
+#   value: "1"
 
 # ---------------------------------------------------------------------------
 # Secrets
