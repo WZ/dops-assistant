@@ -1,6 +1,9 @@
 import { createLogger } from "../logger.js";
 import type { MastraProvider } from "../mcp/provider.js";
 import { queryServiceMetrics, type MetricSeries } from "./prometheus-query.js";
+import { extractMetricExpression } from "../lib/prom-metric.js";
+
+export { extractMetricExpression };
 
 const logger = createLogger();
 
@@ -18,26 +21,6 @@ const METRIC_KEYWORDS = [
 
 const TIME_PATTERN = /\b(\d{1,2}:\d{2})\b/g;
 const TIME_RANGE_PATTERN = /between\s+(\d{1,2}:\d{2})\s+and\s+(\d{1,2}:\d{2})/i;
-
-/** Match a Prometheus metric expression at the start of an observation string.
- *  Handles: "metric_name", "metric_name{labels}", "sum(metric_name{...})".
- *  Underscores are word chars in JS regex, so we match explicitly without \b. */
-const PROM_METRIC_RE = /^(?:sum|avg|max|min|count|rate|irate|increase|histogram_quantile)?\s*\(?\s*([a-zA-Z_:][a-zA-Z0-9_:]*)(\{[^}]*\})?/;
-
-/** Extract a concrete PromQL metric expression from an observation. Returns the
- *  expression with its label selector if present, or just the metric name. Used
- *  as the primary extraction path — the keyword-based path below is a fallback. */
-export function extractMetricExpression(text: string): string | undefined {
-  const m = text.match(PROM_METRIC_RE);
-  if (!m) return undefined;
-  const metricName = m[1];
-  const selector = m[2] ?? "";
-  // Reject common English words that happen to match the pattern.
-  // Must contain an underscore or colon to be a real Prometheus metric name,
-  // OR be followed by a label selector.
-  if (!selector && !/[_:]/.test(metricName!)) return undefined;
-  return `${metricName}${selector}`;
-}
 
 export function parseMetricHints(text: string): MetricHints {
   const lower = text.toLowerCase();
