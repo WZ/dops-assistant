@@ -9,6 +9,18 @@ All notable changes to this project will be documented in this file.
 - **Setup-aware empty state on Dashboard.** When no providers are configured, the Operations Desk shows guidance text and a "Resume setup" button instead of zero-filled stat cards.
 - **Shared `createStackFetch` utility.** Extracted from StackContext so both the StackProvider and the new setup hook can make stack-scoped API calls. Also fixes the branding fetch which was manually constructing headers.
 
+## [0.1.5] - 2026-04-15
+
+### Fixed
+- **Discovery agent tool-arg coercion was silently dead.** Mastra's `CoreToolBuilder` validates tool input against the tool's schema BEFORE calling the wrapped execute, but only for Mastra-native tools (detected via the `Symbol.for("mastra.core.tool.Tool")` marker). Our `wrapToolsWithCallbacks` spread was copying that symbol, so Mastra rejected LLM-emitted `startTime: null` on instant Prometheus queries with "Tool input validation failed" before our `coercePrometheusArgs` ever ran. Fix: strip the marker from wrapped tools so Mastra takes the Vercel/AI-SDK path, which skips input validation and calls our execute directly. `coerceLokiArgs` was silently affected too, but its existing fixes were shape-valid (`"forward" → "backward"`) so validation passed and the wrapper still ran, masking the problem.
+- **Discovery could crash on JSONC comments in LLM output.** `safeJsonParse` now strips `//` and `/* */` style comments and trailing commas while respecting JSON string boundaries, and falls back to extracting a top-level JSON array (in addition to objects) when direct parse fails. The discover agent was producing `[ {...}, /* StatefulSets */ {...}, /* DaemonSets */ {...} ]` which silently failed parse and dropped the whole discovery result.
+- **Discovery made the agent hallucinate datasource UIDs.** Evidence agents get datasource hints pre-injected; the discover agent didn't, so it would invent `"prometheus-k8s"` or `"loki"` short names and eat 2-3 retry round-trips. Fix: `runDiscoverStep` pre-fetches datasource UIDs via `list_datasources` and prepends them to the prompt as an `<untrusted_datasource_hints>` block.
+- **Discovery tool-arg coercion only ran when an `onToolCall` callback was wired.** Auto-discovery on cold start has no user-facing callback, so `wrapToolsWithCallbacks` was skipped entirely. Fix: always wrap, even when there's no callback.
+- **Discover agent's `onStepFinish` could crash on exotic tool results.** `JSON.stringify` throws on circular refs and BigInts; an unguarded call could kill the discovery step. Wrapped in try/catch with a 500-char slice on args.
+
+### Changed
+- **Helm chart default `imagePullPolicy` is now `Always`** so re-pushing a fixed tag actually picks up the new digest instead of reusing the node's cached copy. Override per-environment if you never re-push tags.
+
 ## [0.1.4] - 2026-04-15
 
 ### Added
