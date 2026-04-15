@@ -1,4 +1,7 @@
 import type { ProcessInputStepArgs, ProcessInputStepResult } from "@mastra/core/processors";
+import { createLogger } from "../../logger.js";
+
+const logger = createLogger("prepare-step");
 
 /**
  * The shape of a Mastra prepareStep function.
@@ -51,11 +54,11 @@ export function createQuirkPrepareStep(config: QuirkPrepareStepConfig): PrepareS
 
   return function quirkPrepareStep(args: ProcessInputStepArgs): ProcessInputStepResult | undefined {
     const step = args.stepNumber; // 0-indexed
-    console.error(`[PREPARE_STEP] step=${step} maxSteps=${maxSteps} windDown=${windDownStartStep} args keys=${Object.keys(args)}`);
+    logger.debug({ step, maxSteps, windDownStartStep, argKeys: Object.keys(args) }, "prepareStep");
 
     // Wind-down phase: disable tools so the model produces a final answer
     if (step >= windDownStartStep) {
-      console.error(`[PREPARE_STEP] WIND-DOWN step=${step}, disabling tools`);
+      logger.debug({ step }, "wind-down: disabling tools");
       return {
         tools: {},
         activeTools: [],
@@ -65,7 +68,7 @@ export function createQuirkPrepareStep(config: QuirkPrepareStepConfig): PrepareS
 
     // Midpoint nudge: inject a reminder message AND keep toolChoice as "auto"
     if (step === midpointStep) {
-      console.error(`[PREPARE_STEP] MIDPOINT NUDGE step=${step}`);
+      logger.debug({ step }, "midpoint nudge");
       return {
         toolChoice: "auto" as const,
         messages: [

@@ -10,12 +10,12 @@
  * directly to avoid duplicating response parsing logic.
  */
 
-import pino from "pino";
+import { createLogger } from "../logger.js";
 import type { MastraProvider } from "../mcp/provider.js";
 import { getToolsByRole } from "../mcp/provider.js";
 import { parsePrometheusResult } from "./service-health-poller.js";
 
-const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
+const logger = createLogger();
 
 export interface MetricSeries {
   name: string;

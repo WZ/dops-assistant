@@ -9,11 +9,11 @@
  */
 
 import type { Request, Response } from "express";
-import pino from "pino";
+import { createLogger } from "../logger.js";
 import type { MastraProvider } from "../mcp/provider.js";
 import type { Database } from "./db.js";
 
-const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
+const logger = createLogger();
 
 export interface ProbeResult {
   status: "ok" | "error";

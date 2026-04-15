@@ -20,7 +20,7 @@
 
 import { mkdirSync } from "fs";
 import { join } from "path";
-import pino from "pino";
+import { createLogger } from "../logger.js";
 import { ulid } from "ulid";
 
 import type { Config } from "../config/schema.js";
@@ -34,7 +34,7 @@ import type { StackRow, StackSummary, StackConfig } from "../types/stack-types.j
 import { DEFAULT_STACK_SLUG } from "../types/stack-types.js";
 import { clearStackCaches } from "./ws-handler.js";
 
-const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
+const logger = createLogger();
 
 export interface StackContext {
   id: string;

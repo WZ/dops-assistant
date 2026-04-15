@@ -8,7 +8,7 @@ import express from "express";
 import { createServer } from "http";
 import path from "path";
 import { fileURLToPath } from "url";
-import pino from "pino";
+import { createLogger } from "../logger.js";
 import { Database } from "./db.js";
 import { registerRoutes } from "./routes.js";
 import { setupWebSocket } from "./ws-handler.js";
@@ -27,7 +27,7 @@ import { createMastraAdapters } from "./agents.js";
 import { notifySlack } from "./slack-notifier.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
+const logger = createLogger();
 
 async function main() {
   const configPath = process.env["CONFIG_PATH"] ?? "config.yaml";

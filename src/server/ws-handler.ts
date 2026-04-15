@@ -1,7 +1,7 @@
 import { Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { ulid } from "ulid";
-import pino from "pino";
+import { createLogger } from "../logger.js";
 import type { Database } from "./db.js";
 import type { IChatAgent, IInvestigationAgent, IDiscoverAgent } from "../types/agent-interfaces.js";
 import type { IntentRouter } from "../agents/intent.js";
@@ -21,7 +21,7 @@ import { ChatMessageSchema, DeepInvestigateMessageSchema } from "./sanitize.js";
 import { wrapUntrusted } from "../agents/shared/prompt-helpers.js";
 import { WsRateLimiter, classifyWsMessage } from "./rate-limit.js";
 
-const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
+const logger = createLogger();
 
 const MAX_CHART_SERIES = 4;
 

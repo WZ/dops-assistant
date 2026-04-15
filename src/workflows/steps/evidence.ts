@@ -33,6 +33,9 @@ import { createLogsAgent } from "../../agents/logs.js";
 import { createInfraAgent } from "../../agents/infra.js";
 import { createChangesAgent } from "../../agents/changes.js";
 import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
+import { createLogger } from "../../logger.js";
+
+const logger = createLogger("evidence");
 
 /** Format skills for injection into evidence step prompts.
  *  Uses workflowConfig.skills if available, falls back to anomalyContext.skillContext string. */
@@ -124,7 +127,7 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
       if (Object.keys(rawTools).length === 0) {
         const roleStr = Array.isArray(toolRole) ? toolRole.join('" or "') : toolRole;
         const noToolsMsg = `No MCP tools available for ${phaseName} role — skipping. Configure a provider with role "${roleStr}" to enable.`;
-        console.error(`[EVIDENCE] ${noToolsMsg}`);
+        logger.warn({ phaseName, role: roleStr }, noToolsMsg);
         const ac = inputData.anomalyContext;
         const timeRange = ac?.timeRangeFrom && ac?.timeRangeTo
           ? { from: ac.timeRangeFrom, to: ac.timeRangeTo }

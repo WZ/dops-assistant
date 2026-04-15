@@ -14,7 +14,7 @@
  */
 
 import type { Request, Response } from "express";
-import pino from "pino";
+import { createLogger } from "../logger.js";
 import type { WebhookConfig, ServiceConfig, InvestigationTemplate } from "../config/schema.js";
 import type { InvestigationRunner } from "./investigation-runner.js";
 import { InvestigationDedup } from "./investigation-dedup.js";
@@ -22,7 +22,7 @@ import { matchServiceFromText } from "../agents/intent.js";
 import { AlertPayloadSchema, type ValidatedAlertPayload } from "./sanitize.js";
 import { wrapUntrusted } from "../agents/shared/prompt-helpers.js";
 
-const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
+const logger = createLogger();
 
 // ── Alertmanager payload types ──────────────────────────────────────────────
 
