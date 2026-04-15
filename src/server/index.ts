@@ -74,6 +74,23 @@ async function main() {
   await skillStore.loadAll();
 
   const app = express();
+  // Trust proxy configuration for Express.
+  //
+  // Default: 1 (trust one hop — correct for a single k8s ingress that
+  // overwrites X-Forwarded-For, which is the nginx-ingress default when
+  // `use-forwarded-headers: false`).
+  //
+  // Override with TRUST_PROXY_HOPS env var when the topology has more hops
+  // (e.g., CDN + ingress = 2, service mesh + ingress = 2). Setting a wrong
+  // value has consequences:
+  //   - Too low: real clients share a single rate-limit bucket (false 429s).
+  //   - Too high: attackers can spoof X-Forwarded-For and bypass rate limits.
+  //
+  // If the ingress is configured with `use-forwarded-headers: true` (pass
+  // through client XFF unchanged), set TRUST_PROXY_HOPS to the number of
+  // trusted hops in front of the application, NOT counting the client.
+  const trustProxyHops = Number(process.env["TRUST_PROXY_HOPS"] ?? 1);
+  app.set("trust proxy", Number.isFinite(trustProxyHops) && trustProxyHops >= 0 ? trustProxyHops : 1);
   app.use(express.json({ limit: "1mb" }));
 
   // ── Rate limiting (applied before auth so abusive traffic is rejected early) ──

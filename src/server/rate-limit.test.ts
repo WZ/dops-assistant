@@ -140,6 +140,37 @@ describe("HTTP rate limiting", () => {
       expect(res.body).toEqual({ ok: true });
     }
   });
+
+  // Fix #3 (plan-eng-review 2026-04-15): the server runs behind a k8s ingress
+  // that sets X-Forwarded-For. Without `trust proxy`, req.ip resolves to the
+  // proxy IP and every client shares one rate-limit bucket. Setting trust proxy
+  // to 1 makes req.ip resolve to the first forwarded hop (the real client).
+  it("trust proxy = 1 resolves req.ip from X-Forwarded-For", async () => {
+    const app = express();
+    app.set("trust proxy", 1);
+    app.get("/whoami", (req, res) => res.json({ ip: req.ip }));
+
+    const res = await request(app)
+      .get("/whoami")
+      .set("X-Forwarded-For", "203.0.113.42");
+
+    expect(res.status).toBe(200);
+    expect(res.body.ip).toBe("203.0.113.42");
+  });
+
+  it("without trust proxy, req.ip ignores X-Forwarded-For (regression baseline)", async () => {
+    const app = express();
+    // No app.set("trust proxy", ...) — Express defaults to false.
+    app.get("/whoami", (req, res) => res.json({ ip: req.ip }));
+
+    const res = await request(app)
+      .get("/whoami")
+      .set("X-Forwarded-For", "203.0.113.42");
+
+    expect(res.status).toBe(200);
+    // req.ip falls back to the socket's remote address — not the forwarded one.
+    expect(res.body.ip).not.toBe("203.0.113.42");
+  });
 });
 
 // ── WebSocket Rate Limiting Tests ───────────────────────────────────────────

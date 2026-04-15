@@ -17,7 +17,7 @@ import { createStep } from "@mastra/core/workflows";
 import type { WorkflowConfig } from "../investigation.js";
 import { getToolsByRole, filterToReadOnlyTools } from "../../mcp/provider.js";
 import { TOOL_RESULT_TRUNCATION_LIMIT } from "../../constants.js";
-import { logLlmCall, newCallId, type ToolCallEvent } from "../../server/llm-logger.js";
+import { logLlmCall, logLlmCallStart, newCallId, type ToolCallEvent } from "../../server/llm-logger.js";
 import type { ProviderRole } from "../../config/schema.js";
 import {
   wrapToolsWithCallbacks,
@@ -158,6 +158,7 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
       let totalOutputTokens = 0;
       const callId = newCallId();
       const generateStartMs = Date.now();
+      logLlmCallStart({ callId, agent: phaseName, phase: phaseName, promptChars: prompt.length });
       try {
         agentResult = await agent.generate(prompt, {
           onStepFinish: (step: any) => {

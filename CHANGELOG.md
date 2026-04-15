@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.4] - 2026-04-15
+
+### Added
+- **Full LLM observability.** Every LLM call now emits `start`, optional `first-chunk`, and `summary` log lines at info level. Enable with `LLM_LOG_LEVEL=info` (summaries) or `LLM_LOG_LEVEL=debug` (full prompts, responses, and tool-call detail). Before this, mid-stream hangs were invisible because logging was post-hoc.
+- Red-square favicon so the browser tab is identifiable.
+- Configurable `TRUST_PROXY_HOPS` env var (defaults to `1`) for deployments with non-standard proxy topology (CDN + ingress, service mesh + ingress).
+
+### Fixed
+- **False-positive auto-investigations on scaled-to-zero services.** The health poller treated `kube_deployment_status_replicas = 0` as "down", causing up to 5 concurrent auto-investigations to fire per poll cycle against workloads that were intentionally not deployed. Each burned ~60s and 25k+ LLM tokens producing misleading "severity: high" reports. Now classified as `unknown` for replica metrics, while `up = 0` scrape failures still correctly fire as `down` (metric-aware classification). The first-poll transition gate from v0.0.8.0 is preserved for real outages.
+- **Express `trust proxy` not set.** Behind a k8s ingress, `req.ip` was resolving to the ingress pod's IP, causing `express-rate-limit` to share one bucket across all clients (and log `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` on every request). Now per-client rate limiting works correctly.
+- **LLM call hangs looked like silent failures.** Post-hoc LLM logging only emitted after the stream completed, so hangs produced no log output at all. Call-start + first-chunk logging lets you distinguish "never left the pod" from "LLM stalled" from "stream broke mid-flight".
+- **Metrics agent flagged scaled-to-zero workloads as anomalies.** Added a prompt carveout telling the metrics agent that a flat-zero replica series across the full investigation window is "not deployed", not an outage. Defense-in-depth for the health-poller fix.
+- **Discover agent emitted Loki-incompatible log labels for statefulsets.** `{"statefulset": "yb-master"}` doesn't match any Loki stream label in most environments. Rewrote the prompt to prefer `{"container"}` / `{"pod"}` / `{"app"}`. Existing `services.yaml` entries need regeneration via `npm run discover`.
+- **Wasted LLM round-trip on Grafana query_prometheus instant queries.** LLMs passed `startTime: null` on instant queries, which the MCP tool schema rejected. Now defaulted to `"now"` before the request is sent.
+- **Malformed RFC3339 from LLMs.** The logs agent truncated `2026-04-15T20:27:00.000Z` to `2026-04-15T20:27:00.Z` (empty fraction) or dropped the `Z` entirely. Time-field coercion now repairs these variants automatically.
+- **Stray `stepSeconds` passed to `grafana_query_loki_logs`.** Dropped before the tool sees it (it's a Prometheus concept).
+- **Discover error-path LLM calls weren't logged.** On 502s and retries, the `LLM ... start:` line had no matching completion line, breaking call-correlation tooling. Error-path `logLlmCall` now fires in both `discover.ts` and `agents.ts` chat with the error captured in the `error` field.
+- **`discover.ts` hardcoded `toolCalls: []` in its log record.** Every discover investigation reported 0 tool calls regardless of what the agent actually did. Now collects real tool events via `onStepFinish`.
+- **Unbounded `argsStr` accumulation in discover's `onStepFinish`.** A long discovery run with large tool arguments could balloon memory. Now sliced to 500 chars and wrapped in try/catch so JSON.stringify exceptions (BigInt, circular refs) don't crash the step.
+- **Dockerfile failed to build on corporate networks.** Added `NPM_STRICT_SSL` build arg so `npm ci` can tolerate MITM proxy CA chains.
+
+### Changed
+- Removed dead `observability.port` / `observability.logLevel` fields from `config.yaml.example`. Neither was ever read by runtime code.
+
 ## [0.0.8.0] - 2026-04-09
 
 ### Added

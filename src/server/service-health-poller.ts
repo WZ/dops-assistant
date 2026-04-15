@@ -127,11 +127,31 @@ export function parsePrometheusResult(raw: unknown): PrometheusResultEntry[] {
  * Label precedence for name matching (in order):
  *   deployment → statefulset → job → instance → service
  *
+ * `zeroMeans` controls how `value === 0` is classified — the three batch queries
+ * (replicas vs. `up`) have OPPOSITE semantics for zero:
+ *
+ *                    matchResultsToServices (per-batch)
+ *                              │
+ *                              v
+ *                 entry.value > 0 ? ─────── healthy
+ *                              │
+ *                              no
+ *                              │
+ *                 entry.value == 0 ? ────── zeroMeans
+ *                              │           ("down" for up, "unknown" for replicas)
+ *                              no (NaN / missing)
+ *                              │
+ *                              v
+ *                          unknown
+ *
+ * The merge across batches (in pollOnce) uses priority: healthy > down > unknown.
+ *
  * Returns a map of { serviceName → status } for any matched services.
  */
 export function matchResultsToServices(
   entries: PrometheusResultEntry[],
   serviceNames: Set<string>,
+  zeroMeans: "down" | "unknown",
 ): Map<string, HealthStatus> {
   const result = new Map<string, HealthStatus>();
 
@@ -159,11 +179,20 @@ export function matchResultsToServices(
         // Get the scalar value — for instant vectors it's entry.value[1]
         const valStr = entry.value?.[1];
         const val = valStr !== undefined ? parseFloat(valStr) : NaN;
-        const isUp = !isNaN(val) && val > 0;
 
-        // If already marked healthy, keep it; don't downgrade
+        // Never downgrade an already-healthy status within this batch.
         if (result.get(matchedName) === "healthy") break;
-        result.set(matchedName, isUp ? "healthy" : "down");
+
+        if (isNaN(val)) {
+          if (!result.has(matchedName)) result.set(matchedName, "unknown");
+        } else if (val > 0) {
+          result.set(matchedName, "healthy");
+        } else {
+          // val === 0 — semantics depend on the metric family (zeroMeans).
+          // `up = 0` is a real scrape failure (down). `replicas = 0` is a
+          // scaled-down workload (unknown, not a failure).
+          result.set(matchedName, zeroMeans);
+        }
         break;
       }
     }
@@ -265,17 +294,38 @@ export class ServiceHealthPoller {
       // Run the 3 batch queries in parallel — query raw metrics (not > 0 / == 1)
       // so that zero-replica or down services appear in results with value 0.
       // matchResultsToServices handles value-based health classification.
+      // Each batch has different semantics for value=0:
+      //   - replicas metrics: 0 = intentionally scaled down (unknown)
+      //   - up metric:        0 = scrape target is down (down)
       const [deploymentEntries, statefulsetEntries, upEntries] = await Promise.all([
         this.runQuery(queryTool, "kube_deployment_status_replicas", promDsUid),
         this.runQuery(queryTool, "kube_statefulset_status_replicas", promDsUid),
         this.runQuery(queryTool, "up", promDsUid),
       ]);
 
-      // Merge all result entries
-      const allEntries = [...deploymentEntries, ...statefulsetEntries, ...upEntries];
-
-      // Match entries to known services
-      const newHealth = matchResultsToServices(allEntries, serviceNames);
+      // Match each batch separately with its own zero-semantics, then merge
+      // with priority healthy > down > unknown.
+      const batches = [
+        { entries: deploymentEntries, zeroMeans: "unknown" as const },
+        { entries: statefulsetEntries, zeroMeans: "unknown" as const },
+        { entries: upEntries, zeroMeans: "down" as const },
+      ];
+      const newHealth = new Map<string, HealthStatus>();
+      for (const { entries, zeroMeans } of batches) {
+        const partial = matchResultsToServices(entries, serviceNames, zeroMeans);
+        for (const [service, status] of partial) {
+          const existing = newHealth.get(service);
+          if (existing === "healthy") continue;
+          if (status === "healthy") {
+            newHealth.set(service, "healthy");
+          } else if (status === "down") {
+            newHealth.set(service, "down");
+          } else if (existing === undefined) {
+            newHealth.set(service, "unknown");
+          }
+          // else: existing === "down" and status === "unknown" → keep "down"
+        }
+      }
 
       // Services with no match → "unknown"
       for (const name of serviceNames) {

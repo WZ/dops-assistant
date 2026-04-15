@@ -34,6 +34,15 @@ TOOL USAGE GUIDANCE:
 - If you need to discover what metrics exist, look for a metric listing or catalog tool.
 - Prioritize error rates, latency, throughput, and resource utilization metrics.
 
+INTENTIONALLY-DISABLED SERVICES:
+If a replica metric (kube_deployment_status_replicas, kube_statefulset_status_replicas,
+kube_daemonset_status_desired_number_scheduled) reports a flat value of 0 across the
+ENTIRE investigation window with no transitions, the workload is not deployed in this
+environment. That is NOT an anomaly. Report summary: "Workload is not deployed (0
+desired replicas throughout window)" and observations: []. Only report severity >=
+medium when you see a transition from >0 to 0 inside the window, or ready < desired
+for a non-zero desired count.
+
 For each observation, provide the EXACT metric queried, current value, baseline value, and timestamp.
 Keep observations concise — max 8 observations. Summary should be 1-3 sentences.
 Be efficient — make at most 3 tool calls per round.

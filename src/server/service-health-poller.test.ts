@@ -166,6 +166,7 @@ describe("matchResultsToServices", () => {
     const result = matchResultsToServices(
       entries as ReturnType<typeof makePrometheusEntry>[],
       new Set(["api-service"]),
+      "unknown",
     );
     expect(result.get("api-service")).toBe("healthy");
   });
@@ -175,6 +176,7 @@ describe("matchResultsToServices", () => {
     const result = matchResultsToServices(
       entries as ReturnType<typeof makePrometheusEntry>[],
       new Set(["api-service"]),
+      "unknown",
     );
     expect(result.get("api-service")).toBe("healthy");
   });
@@ -184,6 +186,7 @@ describe("matchResultsToServices", () => {
     const result = matchResultsToServices(
       entries as ReturnType<typeof makePrometheusEntry>[],
       new Set(["postgres"]),
+      "unknown",
     );
     expect(result.get("postgres")).toBe("healthy");
   });
@@ -193,20 +196,42 @@ describe("matchResultsToServices", () => {
     const result = matchResultsToServices(
       entries as ReturnType<typeof makePrometheusEntry>[],
       new Set(["prometheus"]),
+      "down",
     );
     expect(result.get("prometheus")).toBe("healthy");
   });
 
-  it("marks service as down when value is 0", () => {
-    const entries = [makePrometheusEntry({ deployment: "api-service" }, "0")];
+  it("value=0 with zeroMeans=unknown → unknown (replicas semantics)", () => {
+    const entries = [makePrometheusEntry({ deployment: "scaled-down" }, "0")];
     const result = matchResultsToServices(
       entries as ReturnType<typeof makePrometheusEntry>[],
-      new Set(["api-service"]),
+      new Set(["scaled-down"]),
+      "unknown",
     );
-    expect(result.get("api-service")).toBe("down");
+    expect(result.get("scaled-down")).toBe("unknown");
   });
 
-  it("does not downgrade healthy to down when duplicate entries exist", () => {
+  it("value=0 with zeroMeans=down → down (up semantics)", () => {
+    const entries = [makePrometheusEntry({ job: "dead-target" }, "0")];
+    const result = matchResultsToServices(
+      entries as ReturnType<typeof makePrometheusEntry>[],
+      new Set(["dead-target"]),
+      "down",
+    );
+    expect(result.get("dead-target")).toBe("down");
+  });
+
+  it("NaN / missing value → unknown regardless of zeroMeans", () => {
+    const entries = [{ metric: { deployment: "api" }, value: [Date.now() / 1000, "NaN"] }];
+    const result = matchResultsToServices(
+      entries as ReturnType<typeof makePrometheusEntry>[],
+      new Set(["api"]),
+      "down",
+    );
+    expect(result.get("api")).toBe("unknown");
+  });
+
+  it("does not downgrade healthy when a 0-value entry follows", () => {
     const entries = [
       makePrometheusEntry({ deployment: "api-service" }, "3"), // healthy
       makePrometheusEntry({ job: "api-service" }, "0"),         // down — should not override
@@ -214,6 +239,7 @@ describe("matchResultsToServices", () => {
     const result = matchResultsToServices(
       entries as ReturnType<typeof makePrometheusEntry>[],
       new Set(["api-service"]),
+      "down",
     );
     expect(result.get("api-service")).toBe("healthy");
   });
@@ -223,6 +249,7 @@ describe("matchResultsToServices", () => {
     const result = matchResultsToServices(
       entries as ReturnType<typeof makePrometheusEntry>[],
       new Set(),
+      "unknown",
     );
     expect(result.size).toBe(0);
   });
@@ -232,6 +259,7 @@ describe("matchResultsToServices", () => {
     const result = matchResultsToServices(
       entries as ReturnType<typeof makePrometheusEntry>[],
       new Set(["api-service"]),
+      "unknown",
     );
     expect(result.has("api-service")).toBe(false);
   });
@@ -267,7 +295,7 @@ describe("ServiceHealthPoller", () => {
       expect(summary.total).toBe(3);
     });
 
-    it("marks service as down when replicas = 0", async () => {
+    it("marks service as unknown when replicas = 0 (scaled-down workload is not an outage)", async () => {
       const { poller } = makePoller(
         ["api"],
         {
@@ -276,6 +304,52 @@ describe("ServiceHealthPoller", () => {
           ],
           "kube_statefulset_status_replicas": [],
           "up": [],
+        },
+      );
+
+      await poller.poll();
+      expect(poller.getHealth().get("api")).toBe("unknown");
+    });
+
+    it("marks service as down when up = 0 (real scrape failure)", async () => {
+      const { poller } = makePoller(
+        ["prometheus"],
+        {
+          "kube_deployment_status_replicas": [],
+          "kube_statefulset_status_replicas": [],
+          "up": [makePrometheusEntry({ job: "prometheus" }, "0")],
+        },
+      );
+
+      await poller.poll();
+      expect(poller.getHealth().get("prometheus")).toBe("down");
+    });
+
+    it("merge priority: healthy (from replicas) wins over down (from up)", async () => {
+      const { poller } = makePoller(
+        ["api"],
+        {
+          "kube_deployment_status_replicas": [
+            makePrometheusEntry({ deployment: "api" }, "3"),
+          ],
+          "kube_statefulset_status_replicas": [],
+          "up": [makePrometheusEntry({ job: "api" }, "0")],
+        },
+      );
+
+      await poller.poll();
+      expect(poller.getHealth().get("api")).toBe("healthy");
+    });
+
+    it("merge priority: down (from up) wins over unknown (from replicas)", async () => {
+      const { poller } = makePoller(
+        ["api"],
+        {
+          "kube_deployment_status_replicas": [
+            makePrometheusEntry({ deployment: "api" }, "0"),
+          ],
+          "kube_statefulset_status_replicas": [],
+          "up": [makePrometheusEntry({ job: "api" }, "0")],
         },
       );
 
@@ -306,7 +380,7 @@ describe("ServiceHealthPoller", () => {
   });
 
   describe("transition detection", () => {
-    it("fires onTransition when status changes", async () => {
+    it("fires onTransition when a healthy service later reports replicas=0 (healthy → unknown)", async () => {
       const { poller, transitions } = makePoller(
         ["api"],
         {
@@ -316,20 +390,56 @@ describe("ServiceHealthPoller", () => {
         },
       );
 
-      // First poll — no previous status, no transition
+      // First poll — no previous status, healthy → no transition
       await poller.poll();
       expect(transitions).toHaveLength(0);
 
-      // Second poll — simulate service going down by replacing query results
+      // Second poll — simulate service being scaled down by replacing query results
       const queryTool = (poller as unknown as {
         resolveProviders: () => MastraProvider[];
       }).resolveProviders()[0]!.client.listTools as ReturnType<typeof vi.fn>;
       queryTool.mockResolvedValue({
         prom_query_prometheus: {
-          execute: vi.fn().mockResolvedValue({
-            data: {
-              result: [makePrometheusEntry({ deployment: "api" }, "0")],
-            },
+          execute: vi.fn(async (args: unknown) => {
+            const { expr } = args as { expr: string };
+            // Only replicas reports 0 — up returns nothing
+            if (expr === "kube_deployment_status_replicas") {
+              return { data: { result: [makePrometheusEntry({ deployment: "api" }, "0")] } };
+            }
+            return { data: { result: [] } };
+          }),
+        },
+      });
+
+      await poller.poll();
+      expect(transitions).toHaveLength(1);
+      expect(transitions[0]).toEqual(["api", "healthy", "unknown"]);
+    });
+
+    it("fires onTransition when a healthy service later reports up=0 (healthy → down)", async () => {
+      const { poller, transitions } = makePoller(
+        ["api"],
+        {
+          "kube_deployment_status_replicas": [],
+          "kube_statefulset_status_replicas": [],
+          "up": [makePrometheusEntry({ job: "api" }, "1")],
+        },
+      );
+
+      await poller.poll();
+      expect(transitions).toHaveLength(0);
+
+      const queryTool = (poller as unknown as {
+        resolveProviders: () => MastraProvider[];
+      }).resolveProviders()[0]!.client.listTools as ReturnType<typeof vi.fn>;
+      queryTool.mockResolvedValue({
+        prom_query_prometheus: {
+          execute: vi.fn(async (args: unknown) => {
+            const { expr } = args as { expr: string };
+            if (expr === "up") {
+              return { data: { result: [makePrometheusEntry({ job: "api" }, "0")] } };
+            }
+            return { data: { result: [] } };
           }),
         },
       });
@@ -337,6 +447,38 @@ describe("ServiceHealthPoller", () => {
       await poller.poll();
       expect(transitions).toHaveLength(1);
       expect(transitions[0]).toEqual(["api", "healthy", "down"]);
+    });
+
+    it("does NOT fire onTransition on first poll when a service has replicas=0 (scaled-down is not a failure)", async () => {
+      const { poller, transitions } = makePoller(
+        ["scaled-down-svc"],
+        {
+          "kube_deployment_status_replicas": [
+            makePrometheusEntry({ deployment: "scaled-down-svc" }, "0"),
+          ],
+          "kube_statefulset_status_replicas": [],
+          "up": [],
+        },
+      );
+
+      await poller.poll();
+      expect(transitions).toHaveLength(0);
+      expect(poller.getHealth().get("scaled-down-svc")).toBe("unknown");
+    });
+
+    it("DOES fire onTransition on first poll when up=0 (regression test: commit 72fa3de)", async () => {
+      const { poller, transitions } = makePoller(
+        ["real-outage"],
+        {
+          "kube_deployment_status_replicas": [],
+          "kube_statefulset_status_replicas": [],
+          "up": [makePrometheusEntry({ job: "real-outage" }, "0")],
+        },
+      );
+
+      await poller.poll();
+      expect(transitions).toHaveLength(1);
+      expect(transitions[0]).toEqual(["real-outage", "unknown", "down"]);
     });
 
     it("does not fire onTransition when status is unchanged", async () => {
@@ -562,11 +704,12 @@ describe("ServiceHealthPoller", () => {
         {
           "kube_deployment_status_replicas": [
             makePrometheusEntry({ deployment: "a" }, "1"), // healthy
-            makePrometheusEntry({ deployment: "b" }, "0"), // down
           ],
           "kube_statefulset_status_replicas": [],
-          "up": [],
-          // c and d → unknown
+          "up": [
+            makePrometheusEntry({ job: "b" }, "0"), // real scrape failure → down
+          ],
+          // c and d → unknown (no matching entries)
         },
       );
 

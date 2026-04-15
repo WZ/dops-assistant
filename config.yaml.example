@@ -125,10 +125,6 @@ retry:
   maxAttempts: 3
   baseDelayMs: 500
 
-observability:
-  port: 9090
-  logLevel: info
-
 # UI branding — shown in the web header
 branding:
   title: dops
