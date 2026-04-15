@@ -350,6 +350,7 @@ export class MastraInvestigationAdapter {
       savedToHistory: boolean;
       investigatedAt: string;
       timeRange?: { from: string; to: string };
+      neighbors?: import("../types/workflow-state.js").Neighbor[];
     } | undefined;
 
     // createRun() returns a Promise<Run>, then we call .start() on the Run
@@ -386,6 +387,9 @@ export class MastraInvestigationAdapter {
       confidenceScore: output?.confidenceScore ?? 0.5,
       investigatedAt,
       timeRange: output?.timeRange,
+      // Pass-through for the Dependency Evidence section in RcaReport.tsx.
+      // Empty array (not undefined) when no dependencies-role provider configured.
+      neighbors: output?.neighbors ?? [],
     };
 
     return report;

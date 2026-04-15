@@ -53,6 +53,7 @@ CRITICAL — EVIDENCE REQUIREMENTS (FAILURE TO FOLLOW = BROKEN REPORT):
 - evidence.logs: MUST copy EVERY sampleLine from the log observations into evidence.logs. Copy the FULL line verbatim — timestamp, level, message, everything. If log observations contain 12 sampleLines total, evidence.logs MUST have 12 items. Do NOT summarize log lines — copy them exactly. An empty evidence.logs array when sampleLines exist in the input is a CRITICAL BUG.
 - evidence.infra: Include ALL infra observations. Each item: "resource_name: status (detail) at TIMESTAMP".
 - If a category has NO findings at all in the input, use an empty array — do NOT fabricate.
+- If a "Dependency Evidence" section is present in the input, you MUST cite it in rootCause, contributingFactors, or timeline when its evidence supports a hypothesis. Neighbors with unhealthy status whose metric or log samples show anomalies are strong candidates for the root cause — name the specific neighbor service and the specific metric/log pattern that incriminates it.
 
 SELF-CHECK before outputting JSON:
 1. Count metric observations in the input. Does evidence.metrics have at least that many items?

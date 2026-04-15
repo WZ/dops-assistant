@@ -230,6 +230,9 @@ Rules:
         panelQueryHints: inputData.panelQueryHints,
         logLabelHints: inputData.logLabelHints,
         workingLogSelectors: inputData.workingLogSelectors,
+        // Pass through Coroot neighbors from prefetch → planning → synthesis.
+        // See design doc Option 3 / F-Eng-2 alternative (schema passthrough).
+        neighbors: inputData.neighbors ?? [],
       };
 
       return {

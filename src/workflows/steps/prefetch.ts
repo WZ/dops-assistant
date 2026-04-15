@@ -64,6 +64,7 @@ export async function executePrefetch(
     panelQueryHints: "",
     logLabelHints: "",
     workingLogSelectors: [],
+    neighbors: [],
   };
 
   if (providers.length === 0) return emptyContext;
@@ -113,5 +114,9 @@ export async function executePrefetch(
     panelQueryHints,
     logLabelHints,
     workingLogSelectors,
+    // Neighbors are populated by buildPrefetchStep (alongside executePrefetch),
+    // not inside executePrefetch itself. executePrefetch owns the datasource/
+    // dashboard/log prefetch; coroot neighbor discovery runs in parallel with it.
+    neighbors: [],
   };
 }

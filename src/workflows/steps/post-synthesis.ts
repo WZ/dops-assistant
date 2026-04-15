@@ -118,6 +118,9 @@ export function buildPostSynthesisStep(config: WorkflowConfig) {
         savedToHistory,
         investigatedAt,
         timeRange: inputData.timeRange,
+        // Pass-through for the RCA report UI — neighbors flowed through the
+        // evidence → synthesis → post-synthesis chain via schema fields (F-Eng-2 alt).
+        neighbors: inputData.neighbors ?? [],
       };
     },
   });

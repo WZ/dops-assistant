@@ -132,7 +132,8 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
         const timeRange = ac?.timeRangeFrom && ac?.timeRangeTo
           ? { from: ac.timeRangeFrom, to: ac.timeRangeTo }
           : undefined;
-        return { summary: noToolsMsg, observations: [], timeRange, toolCalls: [] };
+        const neighbors = ac?.prefetchContext?.neighbors ?? [];
+        return { summary: noToolsMsg, observations: [], timeRange, neighbors, toolCalls: [] };
       }
 
       const tools = wrapToolsWithCallbacks(rawTools, workflowConfig.onToolCall, phaseName);
@@ -270,6 +271,10 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
         ? { from: ac.timeRangeFrom, to: ac.timeRangeTo }
         : undefined;
 
+      // 7b. Pass-through: Coroot neighbors with evidence. Injected by the factory
+      // so synthesis can cite them via a fallback chain. See Option 3 design doc.
+      const neighbors = ac?.prefetchContext?.neighbors ?? [];
+
       // 8. Classify error: only report if LLM failed AND no observations recovered
       const hasEvidence = !!(parsed?.observations?.length);
       const phaseError = (llmError && !hasEvidence) ? "llm_unreachable" : undefined;
@@ -286,15 +291,16 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
           summary: parsed.summary ?? fallbackMessage,
           observations: parsed.observations ?? [],
           timeRange,
+          neighbors,
           error: phaseError,
           toolCalls: toolCallRecords,
         };
       }
       if (agentText?.trim()) {
         debug(`${phaseName.toUpperCase()}: using agent text as summary (${agentText.length} chars)`);
-        return { summary: agentText.slice(0, 3000), observations: [], timeRange, error: phaseError, toolCalls: toolCallRecords };
+        return { summary: agentText.slice(0, 3000), observations: [], timeRange, neighbors, error: phaseError, toolCalls: toolCallRecords };
       }
-      return { summary: fallbackMessage, observations: [], timeRange, error: phaseError, toolCalls: toolCallRecords };
+      return { summary: fallbackMessage, observations: [], timeRange, neighbors, error: phaseError, toolCalls: toolCallRecords };
     },
   });
 }

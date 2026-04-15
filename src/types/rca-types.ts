@@ -1,3 +1,5 @@
+import type { Neighbor } from "./workflow-state.js";
+
 // ── Structured observation types ─────────────────────────────────────────────
 
 export type MetricObservation = {
@@ -81,6 +83,12 @@ export type RcaReport = {
   investigatedAt: string;
   skillsUsed?: string[];
   timeRange?: { from: string; to: string };
+  /**
+   * 1-hop Coroot neighbors with pre-fetched evidence. Populated by the
+   * prefetch step of the investigation workflow when a dependencies-role
+   * provider is configured. See design doc for the Option 3 data flow.
+   */
+  neighbors?: Neighbor[];
 };
 
 export type InvestigationIntent =

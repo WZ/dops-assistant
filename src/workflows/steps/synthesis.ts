@@ -40,7 +40,15 @@ export function buildSynthesisStep(config: WorkflowConfig) {
 
       // Extract timeRange pass-through from any evidence output (all carry the same value)
       const timeRange = metricsFindings.timeRange ?? logsFindings?.timeRange ?? infraFindings?.timeRange ?? changesFindings?.timeRange;
-      debug("SYNTHESIS findings:", { metrics: !!metricsFindings, logs: !!logsFindings, infra: !!infraFindings, changes: !!changesFindings });
+      // Same fallback-chain pattern for Coroot neighbors (F-Eng-2 alt: schema passthrough).
+      // All 4 evidence steps inject the same neighbors list from prefetchContext, so
+      // whichever runs wins.
+      const neighbors = metricsFindings.neighbors
+        ?? logsFindings?.neighbors
+        ?? infraFindings?.neighbors
+        ?? changesFindings?.neighbors
+        ?? [];
+      debug("SYNTHESIS findings:", { metrics: !!metricsFindings, logs: !!logsFindings, infra: !!infraFindings, changes: !!changesFindings, neighbors: neighbors.length });
 
       // Build timeline from structured observations
       const metricsForTimeline = {
@@ -95,6 +103,54 @@ export function buildSynthesisStep(config: WorkflowConfig) {
         );
       }
       if (timeline) promptParts.push(`\nTimeline:\n${timeline}`);
+
+      // ── Dependency Evidence section (Option 3, Step A) ──────────────────────
+      // When prefetch fetched any neighbor evidence, inject it into the LLM prompt
+      // so synthesis can cite it in rootCause/contributingFactors/timeline.
+      const neighborsWithEvidence = neighbors.filter(
+        (n) =>
+          n.evidence &&
+          (n.evidence.metrics.length > 0 ||
+            n.evidence.logs.length > 0 ||
+            n.evidence.fetchErrors.length > 0),
+      );
+      if (neighborsWithEvidence.length > 0) {
+        const depLines: string[] = ["\n## Dependency Evidence (pre-fetched from Coroot + Prometheus/Loki)\n"];
+        for (const n of neighborsWithEvidence) {
+          const dir = n.directions.join("+");
+          depLines.push(`### ${n.name} (${dir}, status=${n.status})`);
+          const metricsBlock = n.evidence!.metrics
+            .map((m) => {
+              if (m.error) return `  - ${m.query} → ERROR: ${m.error}`;
+              const samples = m.values
+                .slice(0, 3)
+                .map(([t, v]) => `${v}@${t}`)
+                .join(", ");
+              return `  - ${m.query} → ${samples || "(empty)"}`;
+            })
+            .join("\n");
+          depLines.push(`metrics:\n${metricsBlock || "  (none)"}`);
+          const logsBlock = n.evidence!.logs
+            .map((l) => {
+              if (l.error) return `  - ${l.query} → ERROR: ${l.error}`;
+              const sampleLines = l.lines
+                .slice(0, 3)
+                .map((x) => x.slice(0, 200))
+                .join(" | ");
+              return `  - ${l.query} (${l.count} matches): ${sampleLines || "(empty)"}`;
+            })
+            .join("\n");
+          depLines.push(`logs:\n${logsBlock || "  (none)"}`);
+          if (n.evidence!.fetchErrors.length > 0) {
+            depLines.push(`fetch errors: ${n.evidence!.fetchErrors.join("; ")}`);
+          }
+          depLines.push("");
+        }
+        depLines.push(
+          "These neighbors are upstream callers or downstream callees of the primary service, reported by Coroot's eBPF-based service map. If any neighbor's evidence supports a root-cause hypothesis, cite it explicitly in rootCause, contributingFactors, or timeline. Neighbors with unhealthy status whose evidence shows anomalies are strong candidates for the root cause.",
+        );
+        promptParts.push(depLines.join("\n"));
+      }
 
       // Evidence quality feedback — tell synthesis what's thin
       const metricsCount = (metricsFindings.observations?.length ?? 0);
@@ -199,6 +255,40 @@ export function buildSynthesisStep(config: WorkflowConfig) {
         confidenceScore = synthesisParsed.confidenceScore ?? confidenceScore;
       }
 
+      // ── Dependency Evidence injection (Option 3, Step B — F-Eng-4 CRITICAL) ──
+      // Deterministically append neighbor evidence samples to evidence.metrics/logs
+      // AFTER the LLM call. The eval criterion `mentioned_neighbor_evidence_score`
+      // matches [neighbor:X] substrings here. This MUST run regardless of whether
+      // the LLM remembered to cite neighbor data — the deterministic story depends
+      // on host code, not prompt compliance.
+      for (const n of neighbors) {
+        if (!n.evidence) continue;
+        for (const m of n.evidence.metrics) {
+          if (m.error) {
+            evidence.metrics.push(`[neighbor:${n.name}] ${m.query} → ERROR: ${m.error}`);
+            continue;
+          }
+          const sample = m.values
+            .slice(0, 3)
+            .map(([t, v]) => `${v}@${t}`)
+            .join(", ");
+          evidence.metrics.push(`[neighbor:${n.name}] ${m.query} → ${sample || "(empty)"}`);
+        }
+        for (const l of n.evidence.logs) {
+          if (l.error) {
+            evidence.logs.push(`[neighbor:${n.name}] ${l.query} → ERROR: ${l.error}`);
+            continue;
+          }
+          const firstLines = l.lines
+            .slice(0, 3)
+            .map((x) => x.slice(0, 200))
+            .join(" | ");
+          evidence.logs.push(
+            `[neighbor:${n.name}] ${l.query} (${l.count} matches): ${firstLines || "(empty)"}`,
+          );
+        }
+      }
+
       // Deterministic severity validation
       const correctedSeverity = validateSeverity(
         { severity, summary, rootCause },
@@ -223,6 +313,7 @@ export function buildSynthesisStep(config: WorkflowConfig) {
         confidence,
         confidenceScore,
         timeRange,
+        neighbors,
       };
     },
   });

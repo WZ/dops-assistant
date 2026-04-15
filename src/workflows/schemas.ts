@@ -6,9 +6,21 @@
  */
 
 import { z } from "zod";
-import { PrefetchedContextSchema } from "../types/workflow-state.js";
+import {
+  PrefetchedContextSchema,
+  NeighborSchema,
+  NeighborEvidenceSchema,
+  NeighborMetricSampleSchema,
+  NeighborLogSampleSchema,
+} from "../types/workflow-state.js";
 
-export { PrefetchedContextSchema };
+export {
+  PrefetchedContextSchema,
+  NeighborSchema,
+  NeighborEvidenceSchema,
+  NeighborMetricSampleSchema,
+  NeighborLogSampleSchema,
+};
 
 /** Reusable time range schema for investigation window metadata. */
 export const TimeRangeSchema = z.object({
@@ -71,6 +83,10 @@ export const EvidenceOutputSchema = z.object({
   error: z.string().optional(),
   // Tool calls made during this evidence phase — used for Grafana deep links
   toolCalls: z.array(ToolCallRecordSchema).optional(),
+  // Pass-through: 1-hop Coroot neighbors with pre-fetched evidence. Injected by
+  // buildEvidenceStep factory from inputData.anomalyContext.prefetchContext.neighbors.
+  // Synthesis reads via a fallback chain like timeRange.
+  neighbors: z.array(NeighborSchema).optional(),
 });
 
 export const ParallelEvidenceSchema = z.object({
@@ -108,6 +124,8 @@ export const SynthesisOutputSchema = z.object({
   confidence: z.enum(["low", "medium", "high"]).default("low"),
   confidenceScore: z.number().default(0.5),
   timeRange: TimeRangeSchema.optional(),
+  // Pass-through from evidence outputs (deepest neighbor evidence wins via fallback chain)
+  neighbors: z.array(NeighborSchema).default([]),
 });
 
 export const PostSynthesisOutputSchema = z.object({
@@ -138,4 +156,5 @@ export const PostSynthesisOutputSchema = z.object({
   savedToHistory: z.boolean(),
   investigatedAt: z.string(),
   timeRange: TimeRangeSchema.optional(),
+  neighbors: z.array(NeighborSchema).default([]),
 });
