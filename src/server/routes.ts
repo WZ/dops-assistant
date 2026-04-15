@@ -5,6 +5,7 @@ import { MAX_CACHE_ENTRIES } from "../constants.js";
 import { ProviderSchema, StackConfigSchema } from "../config/schema.js";
 import { DEFAULT_STACK_SLUG } from "../types/stack-types.js";
 import { createMcpProvider, listProviderTools } from "../mcp/provider.js";
+import { clearStackCaches } from "./ws-handler.js";
 import type { SkillStore } from "../skills/store.js";
 import type { ProviderInfo } from "../mcp/provider-registry.js";
 import type { StackManager } from "./stack-manager.js";
@@ -893,6 +894,10 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
           results.push({ name: entry.config.name, status: "failed", error: msg });
         }
       }
+      // Invalidate cached agents if anything was added or overwritten.
+      if (results.some(r => r.status === "added" || r.status === "overwritten")) {
+        clearStackCaches(req.stackId);
+      }
       res.json({ results });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -911,6 +916,8 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         return;
       }
       const info = await providerRegistry.add(parsed.data);
+      // Invalidate cached agents so the next WS request sees the new provider.
+      clearStackCaches(req.stackId);
       res.status(201).json({
         name: info.config.name,
         status: info.status,
@@ -939,6 +946,8 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         return;
       }
       const info = await providerRegistry.update(name, parsed.data);
+      // Invalidate cached agents — config changes may affect tool availability.
+      clearStackCaches(req.stackId);
       res.json({ name: info.config.name, status: info.status, toolCount: info.toolCount });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -954,6 +963,8 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       const providerRegistry = req.stackContext.providerRegistry;
       const name = Array.isArray(req.params["name"]) ? req.params["name"][0]! : req.params["name"]!;
       await providerRegistry.remove(name);
+      // Invalidate cached agents so the next WS request stops using the removed provider.
+      clearStackCaches(req.stackId);
       res.status(204).end();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1025,6 +1036,8 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         return;
       }
       await providerRegistry.updateEnabledTools(name, enabledTools);
+      // Invalidate cached agents so the next WS request respects the updated tool set.
+      clearStackCaches(req.stackId);
       const entry = providerRegistry.getAll().find((p: any) => p.config.name === name);
       res.json({
         ok: true,
