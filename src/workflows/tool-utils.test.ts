@@ -37,6 +37,21 @@ describe("coerceToolArgs — malformed .Z RFC3339 suffix", () => {
     expect(out.startTime).toBe("2026-04-15T20:27:00.000Z");
   });
 
+  it('leaves "2026-04-15T20:27:00.0Z" unchanged (valid zero-fraction)', () => {
+    const out = coerceToolArgs({ startTime: "2026-04-15T20:27:00.0Z" }, timeSchema);
+    expect(out.startTime).toBe("2026-04-15T20:27:00.0Z");
+  });
+
+  it('normalizes "2026-04-15T20:27:00." (dangling dot, no Z)', () => {
+    const out = coerceToolArgs({ startTime: "2026-04-15T20:27:00." }, timeSchema);
+    expect(out.startTime).toBe("2026-04-15T20:27:00Z");
+  });
+
+  it('adds Z to a bare "2026-04-15T20:27:00" (missing Z entirely)', () => {
+    const out = coerceToolArgs({ startTime: "2026-04-15T20:27:00" }, timeSchema);
+    expect(out.startTime).toBe("2026-04-15T20:27:00Z");
+  });
+
   it('does not touch non-time fields even if their value ends in ".Z"', () => {
     const out = coerceToolArgs({ name: "prefix.Z" }, timeSchema);
     expect(out.name).toBe("prefix.Z");

@@ -143,19 +143,26 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
         onStepFinish: (step: any) => {
           if (!step.toolResults?.length) return;
           for (const tr of step.toolResults) {
-            const payload = tr.payload ?? tr;
-            const toolName = payload.toolName ?? payload.name ?? tr.toolName ?? "unknown";
-            const nestedContent = payload.result?.content?.[0]?.text;
-            const rawResult = nestedContent ?? payload.result ?? tr.result ?? tr.output ?? "";
-            const resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
-            const argsStr = JSON.stringify(payload.args ?? {});
-            discoverToolCalls.push({
-              tool: toolName,
-              argsChars: argsStr.length,
-              args: argsStr,
-              resultChars: resultStr.length,
-              result: resultStr.slice(0, 500),
-            });
+            try {
+              const payload = tr.payload ?? tr;
+              const toolName = payload.toolName ?? payload.name ?? tr.toolName ?? "unknown";
+              const nestedContent = payload.result?.content?.[0]?.text;
+              const rawResult = nestedContent ?? payload.result ?? tr.result ?? tr.output ?? "";
+              const resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
+              // JSON.stringify can throw on BigInt / circular / exotic return types.
+              // Slice args/results to 500 chars to bound memory on long discovery runs.
+              const argsStr = JSON.stringify(payload.args ?? {});
+              discoverToolCalls.push({
+                tool: toolName,
+                argsChars: argsStr.length,
+                args: argsStr.slice(0, 500),
+                resultChars: resultStr.length,
+                result: resultStr.slice(0, 500),
+              });
+            } catch (err) {
+              // Never let observability crash the discover step.
+              logger.warn({ err }, "discover: onStepFinish failed to record tool call");
+            }
           }
         },
       } as any);

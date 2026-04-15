@@ -56,13 +56,24 @@ export function coerceToolArgs(args: Record<string, unknown>, toolSchema: any): 
     if (typeof value === "string" && /^now(?:-\d+[smhdw])?$/.test(value) && isTimeField(key)) {
       coerced[key] = resolveGrafanaTime(value);
     }
-    // Normalize malformed RFC3339 like "2026-04-15T20:27:00.Z" → "2026-04-15T20:27:00Z".
-    // LLMs sometimes drop the fractional-seconds digits but leave the dot.
-    // Read from `coerced[key]` so we pick up any value rewritten by the "now"
-    // branch above, and only touch time-looking fields.
+    // Normalize malformed RFC3339 that LLMs produce on time fields:
+    //   "2026-04-15T20:27:00.Z"    → "2026-04-15T20:27:00Z"   (empty fraction + dot — INVALID)
+    //   "2026-04-15T20:27:00."     → "2026-04-15T20:27:00Z"   (dangling dot, no Z)
+    //   "2026-04-15T20:27:00"      → "2026-04-15T20:27:00Z"   (missing Z entirely)
+    // Note: "2026-04-15T20:27:00.000Z", ".0Z", ".00Z" etc. are all VALID RFC3339
+    // (zero fraction of second), so leave them alone. Only the empty-fraction
+    // case (bare dot before Z) is malformed.
     const current = coerced[key];
     if (typeof current === "string" && isTimeField(key)) {
-      const cleaned = current.replace(/\.Z$/, "Z");
+      let cleaned = current;
+      // Empty fraction + Z: "20:27:00.Z" → "20:27:00Z"
+      cleaned = cleaned.replace(/\.Z$/, "Z");
+      // Dangling dot at the end (no Z at all): "20:27:00." → "20:27:00Z"
+      cleaned = cleaned.replace(/\.$/, "Z");
+      // Naive RFC3339-looking string missing its Z: "20:27:00" → "20:27:00Z"
+      if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(cleaned)) {
+        cleaned += "Z";
+      }
       if (cleaned !== current) coerced[key] = cleaned;
     }
   }
