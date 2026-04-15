@@ -1,6 +1,9 @@
 import { createLogger } from "../logger.js";
 import type { MastraProvider } from "../mcp/provider.js";
 import { queryServiceMetrics, type MetricSeries } from "./prometheus-query.js";
+import { extractMetricExpression } from "../lib/prom-metric.js";
+
+export { extractMetricExpression };
 
 const logger = createLogger();
 
@@ -21,10 +24,10 @@ const TIME_RANGE_PATTERN = /between\s+(\d{1,2}:\d{2})\s+and\s+(\d{1,2}:\d{2})/i;
 
 export function parseMetricHints(text: string): MetricHints {
   const lower = text.toLowerCase();
-  const keywords = METRIC_KEYWORDS.filter(kw => {
-    // Use word-boundary match to avoid false positives (e.g. "restarted" matching "restart")
-    return new RegExp(`\\b${kw}\\b`, "i").test(lower);
-  });
+  // Match keywords as substrings (word-boundary was brittle: it failed on
+  // plurals like "replicas" and on underscore-embedded names like
+  // kube_pod_status_phase because underscores are word chars in JS regex).
+  const keywords = METRIC_KEYWORDS.filter(kw => lower.includes(kw));
 
   let timeRef: string | undefined;
   let timeRefEnd: string | undefined;
@@ -102,16 +105,35 @@ export async function extractMetricsFromText(
   providers: MastraProvider[],
   timeRange?: { from: string; to: string },
 ): Promise<MetricSeries[]> {
-  const hints = parseMetricHints(text);
-  if (hints.keywords.length === 0) return [];
+  // Primary path: if the observation starts with a real PromQL metric
+  // expression (what the LLM actually writes when it emits structured metric
+  // findings), use it directly. This is the common case for LLM-generated
+  // metric observations and sidesteps the brittle keyword translation.
+  const directExpr = extractMetricExpression(text);
+  const queries: { query: string; description: string }[] = [];
 
-  const queries = keywordsToQueries(hints.keywords, service);
-  if (queries.length === 0) return [];
+  if (directExpr) {
+    queries.push({ query: directExpr, description: directExpr });
+  } else {
+    // Fallback: keyword-based heuristic for free-text observations like
+    // "CPU spiked to 95% between 08:30 and 09:00".
+    const hints = parseMetricHints(text);
+    if (hints.keywords.length === 0) return [];
+    queries.push(...keywordsToQueries(hints.keywords, service));
+    if (queries.length === 0) return [];
+  }
 
   const range = "1h";
 
   try {
-    return await queryServiceMetrics(service, range, providers, queries);
+    const series = await queryServiceMetrics(service, range, providers, queries);
+    // When we extracted a direct expression, keep only series that actually
+    // match it — queryServiceMetrics also runs default queries we don't care
+    // about in this path.
+    if (directExpr) {
+      return series.filter(s => s.query === directExpr);
+    }
+    return series;
   } catch (err) {
     logger.warn({ err, text, service }, "metric-extraction: failed to query Prometheus");
     return [];

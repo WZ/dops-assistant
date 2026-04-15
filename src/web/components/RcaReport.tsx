@@ -1,9 +1,7 @@
 import { Badge } from "@/components/ui/badge";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { useState, type ReactNode } from "react";
-import { ChevronRight, FileText } from "lucide-react";
+import { type ReactNode } from "react";
+import { FileText } from "lucide-react";
 import { renderInline } from "../lib/renderInline";
-import { renderMarkdown } from "../lib/renderMarkdown";
 
 interface RcaReportData {
   rootCause: string;
@@ -61,7 +59,7 @@ function severityColor(severity: string): string {
   }
 }
 
-function SectionLabel({ children, color = "text-foreground/70" }: { children: ReactNode; color?: string }) {
+function SectionLabel({ children, color = "text-accent" }: { children: ReactNode; color?: string }) {
   return (
     <h4 className={`text-xs font-mono font-semibold uppercase tracking-[0.1em] ${color} mb-1.5`}>
       {children}
@@ -69,23 +67,18 @@ function SectionLabel({ children, color = "text-foreground/70" }: { children: Re
   );
 }
 
-function CollapsibleSection({ id, label, count, open, toggle, children }: { id: string; label: string; count: number; open: boolean; toggle: () => void; children: ReactNode }) {
+function Section({ label, count, children }: { label: string; count?: number; children: ReactNode }) {
   return (
-    <Collapsible open={open} onOpenChange={toggle}>
-      <CollapsibleTrigger className="flex items-center gap-1.5 text-xs font-mono font-semibold uppercase tracking-[0.1em] text-foreground/70 hover:text-foreground transition-colors cursor-pointer">
-        <ChevronRight size={9} className={`!size-auto transition-transform duration-200 ${open ? "rotate-90" : ""}`} />
-        {label} ({count})
-      </CollapsibleTrigger>
-      <CollapsibleContent className="mt-2.5">
-        {children}
-      </CollapsibleContent>
-    </Collapsible>
+    <div>
+      <h4 className="text-xs font-mono font-semibold uppercase tracking-[0.1em] text-accent mb-2">
+        {label}{count != null ? ` (${count})` : ""}
+      </h4>
+      {children}
+    </div>
   );
 }
 
 export function RcaReport({ report, hideOldDashboardLinks }: { report: RcaReportData; hideOldDashboardLinks?: boolean }) {
-  const [open, setOpen] = useState<Set<string>>(new Set(["timeline", "factors", "actions"]));
-  const toggle = (s: string) => setOpen((prev) => { const n = new Set(prev); if (n.has(s)) n.delete(s); else n.add(s); return n; });
 
   const severityGlow =
     report.severity === "critical" ? "glow-red border-destructive/30" :
@@ -138,23 +131,23 @@ export function RcaReport({ report, hideOldDashboardLinks }: { report: RcaReport
         </div>
       )}
 
-      {/* Body */}
+      {/* Body — unified body font size (13px) across every section. */}
       <div className="px-5 py-4 space-y-4">
         {/* Root Cause, Trigger, Impact — aligned as a uniform list */}
         <div className="space-y-4">
           <div>
             <SectionLabel color="text-primary">Root Cause</SectionLabel>
-            <p className={`text-sm font-body leading-relaxed ${report.confidenceScore != null && report.confidenceScore < 0.5 ? "text-foreground/50 italic" : "text-foreground/90"}`}>{renderInline(report.rootCause)}</p>
+            <p className={`text-[13px] font-body leading-relaxed ${report.confidenceScore != null && report.confidenceScore < 0.5 ? "text-foreground/50 italic" : "text-foreground/90"}`}>{renderInline(report.rootCause)}</p>
           </div>
 
           <div>
             <SectionLabel color="text-accent">Trigger</SectionLabel>
-            <p className="text-sm font-body text-foreground/85 leading-relaxed">{renderInline(report.trigger)}</p>
+            <p className="text-[13px] font-body text-foreground/85 leading-relaxed">{renderInline(report.trigger)}</p>
           </div>
 
           <div>
             <SectionLabel>Impact</SectionLabel>
-            <p className="text-sm font-body text-foreground/85 leading-relaxed">{renderInline(report.impact.description)}</p>
+            <p className="text-[13px] font-body text-foreground/85 leading-relaxed">{renderInline(report.impact.description)}</p>
             <span className="text-[10px] font-mono text-muted-foreground mt-1 inline-block">
               Duration: {report.impact.duration}
             </span>
@@ -163,46 +156,51 @@ export function RcaReport({ report, hideOldDashboardLinks }: { report: RcaReport
 
         {/* Timeline */}
         {report.timeline.length > 0 && (
-          <CollapsibleSection id="timeline" label="Timeline" count={report.timeline.length} open={open.has("timeline")} toggle={() => toggle("timeline")}>
+          <Section label="Timeline" count={report.timeline.length}>
             <div className="border-l-2 border-primary/20 pl-4 space-y-2.5 ml-1">
               {report.timeline.map((evt, i) => (
                 <div key={i} className="flex items-start gap-2.5 animate-fade-up" style={{ animationDelay: `${i * 0.04}s` }}>
-                  <span className="text-[10px] font-mono text-primary/70 whitespace-nowrap mt-0.5">{evt.time}</span>
-                  <span className="text-xs font-body text-foreground/75">{renderInline(evt.event)}</span>
+                  <span className="text-[10px] font-mono text-primary/70 whitespace-nowrap mt-[3px]">{evt.time}</span>
+                  <span className="text-[13px] font-body text-foreground/75 leading-relaxed">{renderInline(evt.event)}</span>
                 </div>
               ))}
             </div>
-          </CollapsibleSection>
+          </Section>
         )}
 
         {/* Contributing Factors */}
         {report.contributingFactors.length > 0 && (
-          <CollapsibleSection id="factors" label="Contributing Factors" count={report.contributingFactors.length} open={open.has("factors")} toggle={() => toggle("factors")}>
+          <Section label="Contributing Factors" count={report.contributingFactors.length}>
             <ul className="space-y-1.5 ml-1">
               {report.contributingFactors.map((f, i) => (
-                <li key={i} className="flex items-start gap-2 text-xs font-body text-foreground/75">
+                <li key={i} className="flex items-start gap-2 text-[13px] font-body text-foreground/75 leading-relaxed">
                   <span className="text-accent mt-0.5 shrink-0">&bull;</span>
                   <span>{renderInline(stripLeadingNumber(f))}</span>
                 </li>
               ))}
             </ul>
-          </CollapsibleSection>
+          </Section>
         )}
 
-        {/* Recommended Actions */}
+        {/* Recommended Actions — renderInline (not renderMarkdown) so every item
+            is a uniform single-line body paragraph. Actions from the LLM can
+            contain stray heading markers (##, ###) which previously rendered
+            as font-display uppercase blocks, creating visual size drift. */}
         {report.recommendedActions.length > 0 && (
-          <CollapsibleSection id="actions" label="Recommended Actions" count={report.recommendedActions.length} open={open.has("actions")} toggle={() => toggle("actions")}>
-            <div className="space-y-4 ml-1">
+          <Section label="Recommended Actions" count={report.recommendedActions.length}>
+            <ol className="space-y-2 ml-1">
               {report.recommendedActions.map((a, i) => (
-                <div key={i} className="text-xs font-body animate-fade-up" style={{ animationDelay: `${i * 0.04}s` }}>
-                  <div className="flex items-start gap-2">
-                    <span className="text-[10px] font-mono text-primary/70 shrink-0 mt-px">{i + 1}.</span>
-                    <div className="leading-relaxed min-w-0 flex-1">{renderMarkdown(stripLeadingNumber(a))}</div>
-                  </div>
-                </div>
+                <li
+                  key={i}
+                  className="flex items-start gap-2 text-[13px] font-body text-foreground/85 leading-relaxed animate-fade-up"
+                  style={{ animationDelay: `${i * 0.04}s` }}
+                >
+                  <span className="text-[10px] font-mono text-primary/70 shrink-0 mt-[3px] tabular-nums">{i + 1}.</span>
+                  <span className="min-w-0 flex-1">{renderInline(stripLeadingNumber(a))}</span>
+                </li>
               ))}
-            </div>
-          </CollapsibleSection>
+            </ol>
+          </Section>
         )}
 
         {/* Skills Used */}

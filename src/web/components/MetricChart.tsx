@@ -119,8 +119,11 @@ export function MetricChart({ series, bare }: { series: TimeSeriesData; bare?: b
   const cFg = "hsl(var(--foreground) / 0.8)";
   const cBorderSolid = "hsl(var(--border))";
 
+  // Cap visual width so the SVG (viewBox 360×130) doesn't balloon in wide
+  // columns — at 2x+ upscale the fontSize="7" axis labels visually become
+  // 14-16px, making the chart look blown up relative to surrounding text.
   const chartSvg = (
-      <div className={bare ? "" : "px-2 pt-1 pb-1"}>
+      <div className={bare ? "max-w-[480px]" : "px-2 pt-1 pb-1 max-w-[480px]"}>
         <svg
           viewBox={`0 0 ${CHART_W} ${CHART_H}`}
           className="w-full h-auto select-none"
