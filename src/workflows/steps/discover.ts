@@ -40,6 +40,55 @@ const DEFAULT_PROMETHEUS_RECIPE: DiscoveryRecipe = {
 };
 
 /**
+ * Call `list_datasources` on a discovery tool map and format the result as a
+ * `<untrusted_datasource_hints>` block the agent can consume. Returns empty
+ * string if no such tool is available or the call fails — the agent can still
+ * run without hints, it'll just eat a round-trip discovering uids itself.
+ */
+async function fetchDatasourceHintsForDiscover(
+  tools: Record<string, any>,
+): Promise<string> {
+  // Find any list_datasources tool (e.g., grafana_list_datasources)
+  const entry = Object.entries(tools).find(([name]) => name.includes("list_datasources"));
+  if (!entry) return "";
+  const [toolName, tool] = entry;
+
+  try {
+    const raw = await tool.execute?.({ limit: 100, offset: 0 });
+    if (!raw) return "";
+
+    // MCP tools return { content: [{ type: "text", text: "..." }] }; unwrap.
+    let text: string;
+    if (typeof raw === "string") {
+      text = raw;
+    } else if (raw?.content?.[0]?.text) {
+      text = raw.content[0].text;
+    } else {
+      text = JSON.stringify(raw);
+    }
+
+    const parsed = JSON.parse(text);
+    const datasources = (Array.isArray(parsed) ? parsed : parsed?.datasources ?? []) as Array<{
+      uid: string;
+      name: string;
+      type: string;
+    }>;
+    // Only prometheus + loki are relevant for the queries the discover agent runs.
+    const relevant = datasources.filter((d) => d.type === "prometheus" || d.type === "loki");
+    if (relevant.length === 0) return "";
+
+    const lines = relevant.map((d) => `- ${d.type}: datasourceUid="${d.uid}" (${d.name})`);
+    return (
+      `<untrusted_datasource_hints>Available datasources (use these UIDs directly, do NOT guess or call list_datasources):\n${lines.join("\n")}\n` +
+      `IMPORTANT: You MUST use the exact datasourceUid values above when calling query_prometheus, query_loki_logs, or list_loki_label_names. Do not invent short names like "loki" or "prometheus-k8s" — always use the real UIDs.</untrusted_datasource_hints>\n\n`
+    );
+  } catch {
+    void toolName;
+    return "";
+  }
+}
+
+/**
  * Format discovery recipes into a prompt-friendly string.
  */
 function formatRecipeHints(recipes: DiscoveryRecipe[]): string {
@@ -97,15 +146,27 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
       }
     : undefined;
 
-  const tools = wrappedOnToolCall
-    ? wrapToolsWithCallbacks(discoveryTools, wrappedOnToolCall, "discovery")
-    : discoveryTools;
+  // Always wrap the discovery tools — wrapToolsWithCallbacks applies
+  // coercePrometheusArgs and coerceLokiArgs inside the execute path, and
+  // those coercions MUST run even when no user-facing onToolCall callback
+  // is wired (e.g., auto-discovery on cold start). `wrappedOnToolCall` can
+  // be undefined; the wrapper handles that with optional chaining.
+  const tools = wrapToolsWithCallbacks(discoveryTools, wrappedOnToolCall, "discovery");
 
+  // Pre-fetch datasource UIDs so the agent doesn't hallucinate them.
+  // Evidence agents get this via `<untrusted_datasource_hints>`; discover
+  // needs the same treatment. If list_datasources isn't available or the
+  // call fails, fall back to no hints — the agent can still run, it'll
+  // just eat a round-trip discovering them itself.
+  const datasourceHints = await fetchDatasourceHintsForDiscover(discoveryTools);
+
+  // Datasource hints go first so the agent sees the real UIDs before
+  // constructing its tool call plan. Skills and recipes follow.
+  let fullHints = datasourceHints;
   // Format discovery-scoped skills BEFORE recipes so the LLM sees them first.
   // Skills contain stack-specific knowledge (e.g., bare-metal services via Consul)
   // that the default K8s recipes don't cover. If skills come after recipes,
   // the model exhausts iterations on K8s queries and never reaches skill queries.
-  let fullHints = "";
   if (config.skills && config.skills.length > 0) {
     const maxChars = config.maxCharsPerSkill ?? 2000;
     const skillSections = config.skills.map((s) => {
