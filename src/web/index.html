@@ -4,6 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>dops-assistant</title>
+    <script>
+      // Apply dark class before paint so we don't flash light mode.
+      // Default is dark; only "light" in localStorage opts out.
+      (function () {
+        try {
+          if (localStorage.getItem("theme") !== "light") {
+            document.documentElement.classList.add("dark");
+          }
+        } catch (_) {
+          document.documentElement.classList.add("dark");
+        }
+      })();
+    </script>
   </head>
   <body class="bg-background text-foreground">
     <div id="root"></div>

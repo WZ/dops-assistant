@@ -37,7 +37,7 @@ export type LeftPaneView =
   | { type: "settings"; initialTab?: "providers" | "skills" | "stacks" };
 
 function useTheme() {
-  const [dark, setDark] = useState(() => safeGetItem("theme") === "dark");
+  const [dark, setDark] = useState(() => safeGetItem("theme") !== "light");
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
     safeSetItem("theme", dark ? "dark" : "light");
