@@ -66,7 +66,17 @@ Infrastructure often dominates basic health check queries. Make sure to also dis
 Return a JSON array. Each object must have:
 - "name": string — the service name
 - "metrics": array of { "query": string, "description": string } — a health check query for this service
-- "logLabels": object — key/value pairs identifying this service in log systems (e.g. {"app": "api-gateway", "namespace": "default"}). If infrastructure tools reveal pod labels, namespace, or container names, include them here. Use {} if no label info is available.
+- "logLabels": object — key/value pairs identifying this service in log systems.
+  IMPORTANT: These must match actual Loki stream labels, NOT kube-state-metrics
+  labels. Loki typically does NOT expose \`deployment\`/\`statefulset\`/\`daemonset\`
+  labels. Prefer:
+    - For a single deployment: {"container": "<service-name>"} or {"pod": "<service-name>"}
+    - For a statefulset: {"container": "<service-name>"} (the container usually shares
+      the workload name) — NOT {"statefulset": "..."}
+    - For multiple pods under one app: {"app": "<app-label>"} or {"namespace": "...", "container": "..."}
+  If an infrastructure tool reveals actual pod labels, container names, or namespace,
+  use those. Use {} if no label info is available. A wrong label is worse than none —
+  the logs agent will query Loki with it and get empty results.
 
 Be thorough — discover ALL services. Return valid JSON.${excludeList}`,
     model: config.model as any,
