@@ -57,6 +57,24 @@ function coerceToolArgs(args: Record<string, unknown>, toolSchema: any): Record<
 }
 
 /**
+ * Fill in Grafana query_prometheus time arguments that LLMs default to null.
+ *
+ * The Grafana MCP tool's schema requires startTime/endTime as strings and
+ * stepSeconds as a number — even for instant queries where these are logically
+ * meaningless. LLMs pass null for them on instant queries, which fails schema
+ * validation and costs a retry round-trip. Default to "now" / 0 so the request
+ * goes through on the first attempt. The "now" string is then converted to
+ * RFC3339 by coerceToolArgs in the normal path.
+ */
+export function coercePrometheusArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const coerced = { ...args };
+  if (coerced.startTime == null) coerced.startTime = "now";
+  if (coerced.endTime == null) coerced.endTime = "now";
+  if (coerced.stepSeconds == null) coerced.stepSeconds = 0;
+  return coerced;
+}
+
+/**
  * Override Loki query parameters that LLMs consistently get wrong.
  *
  * The gpt-oss-120b model always sends direction:"forward" (oldest-first) and limit:20,
@@ -117,6 +135,11 @@ export function wrapToolsWithCallbacks(
     wrapped[name] = {
       ...tool,
       execute: async (...execArgs: any[]) => {
+        // Fill null prometheus time args BEFORE schema coercion — LLMs send null
+        // on instant queries but the MCP schema requires strings, wasting a retry.
+        if (name.includes("query_prometheus") && execArgs[0] && typeof execArgs[0] === "object") {
+          execArgs[0] = coercePrometheusArgs(execArgs[0] as Record<string, unknown>);
+        }
         // Coerce args to match schema (fixes LLM type mismatches)
         if (execArgs[0] && typeof execArgs[0] === "object" && tool.inputSchema) {
           execArgs[0] = coerceToolArgs(execArgs[0], tool.inputSchema);
