@@ -10,7 +10,8 @@ AI-powered root cause analysis for DevOps teams. Connects to your monitoring sta
 
 ## Features
 
-- **Automated RCA pipeline** — 6-phase investigation: prefetch → anomaly detection → planning → parallel evidence gathering (metrics + logs + infra) → synthesis → report
+- **Automated RCA pipeline** — 6-phase investigation: prefetch → anomaly detection → planning → parallel evidence gathering (metrics + logs + infra + changes) → synthesis → report
+- **Dependency-aware investigation** — when a Coroot provider is configured, prefetch discovers 1-hop service neighbors and pulls real metrics + logs for the top unhealthy ones. The RCA report's "Dependency Context" section shows what upstream/downstream services were actually doing during the incident, so operators stop at the report instead of context-switching to Coroot mid-triage.
 - **MCP-agnostic** — pluggable provider architecture. Connect any MCP-compatible monitoring backend (Prometheus, Loki, Datadog, etc.) via config
 - **Conversational assistant** — ask questions, get metric values, log excerpts, and dashboard links with inline charts
 - **Intent routing** — regex fast-paths classify most messages without an LLM call. Only ambiguous messages hit the model

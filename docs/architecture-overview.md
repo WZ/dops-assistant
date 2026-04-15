@@ -52,16 +52,16 @@ The investigation workflow (`src/workflows/investigation.ts`) is a 6-phase Mastr
 
 ### Phase 1: Prefetch Context
 
-**Directory**: `src/workflows/steps/prefetch/`
+**Directory**: `src/workflows/steps/prefetch/`, `src/workflows/steps/prefetch-step.ts`
 
-Before any agent runs, the prefetch step discovers the monitoring environment:
-- Datasource UIDs (which metric and log backends are available)
-- Dashboard list with panel queries (scored by relevance to the user's message)
-- Working log selectors (probes candidate selectors to find ones that return real data)
+Before any agent runs, the prefetch step runs three parallel tracks:
+1. **Monitoring environment discovery** — datasource UIDs, dashboard list with scored panel queries, working log selectors (probes candidate selectors to find ones that return real data). Provider-agnostic — `index.ts` dispatches to `grafana.ts` or `generic.ts`.
+2. **Coroot neighbor discovery** (optional, when a `dependencies`-role provider is configured) — `src/server/coroot.ts:fetchCorootNeighbors()` calls the Coroot MCP `get_application` tool and parses 1-hop upstream callers + downstream callees, with worst-wins severity dedup for bidirectional neighbors.
+3. **Per-neighbor evidence fetch** (when neighbors are discovered) — `src/server/neighbor-evidence.ts` ranks unhealthy/degraded/unknown neighbors by severity then request rate, filters to the top 3 that are registered in `services.yaml`, and issues deterministic PromQL + LogQL queries via the existing `metrics` and `logs` role MCP tools. The result is a `NeighborEvidence` structure attached to each neighbor.
 
-The prefetch logic is provider-agnostic — `index.ts` dispatches to provider-specific implementations (`grafana.ts` for Grafana MCP, `generic.ts` as fallback). Type definitions live in `types.ts`.
+Neighbors and their evidence flow through every downstream step via the same schema pass-through pattern the existing `timeRange` field uses — `PrefetchedContextSchema.neighbors` → `AnomalyOutputSchema.prefetchContext.neighbors` → evidence factory injection → synthesis.
 
-This is critical — without prefetching, agents waste iterations calling discovery tools instead of investigating.
+This is critical — without prefetching, agents waste iterations calling discovery tools instead of investigating, and without neighbor evidence the RCA report stops at "probably Kafka" instead of showing actual Kafka broker metrics.
 
 ### Phase 2: Anomaly Detection
 
@@ -102,8 +102,10 @@ Each agent gets only the tools relevant to its role. This is essential — provi
 
 Combines all evidence into a structured RCA report:
 1. Build a chronological timeline from metric, log, and infra observations
-2. Run the synthesis agent to produce root cause, trigger, contributing factors, and recommendations
-3. **Deterministic severity validation** — `validateSeverity()` overrides the LLM's severity when evidence contradicts it (e.g., "no anomaly found" but severity is "critical" → corrected to "low")
+2. **Dependency Evidence section** — when prefetch has gathered neighbor evidence, synthesis inserts a `wrapUntrusted("dependency_evidence", ...)` block into the LLM prompt showing each neighbor's metric and log samples, so the synthesis agent can cite it in `rootCause`, `contributingFactors`, or `timeline`.
+3. Run the synthesis agent to produce root cause, trigger, contributing factors, and recommendations
+4. **Deterministic severity validation** — `validateSeverity()` overrides the LLM's severity when evidence contradicts it (e.g., "no anomaly found" but severity is "critical" → corrected to "low")
+5. **Deterministic neighbor-evidence injection** — after the LLM call, host code appends each neighbor's metric and log samples to `evidence.metrics` / `evidence.logs` as `[neighbor:X]` formatted strings. The LLM writes the narrative; host code writes the structured evidence. This is what makes the "Dependency Evidence" story deterministic end-to-end — the report shows neighbor data whether or not the LLM cited it.
 
 ### Phase 6: Post-Synthesis
 

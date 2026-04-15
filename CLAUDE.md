@@ -56,6 +56,9 @@ npx tsc --noEmit         # Type check
 | Health monitor | `src/server/health-monitor.ts` — background MCP/DB probes, `GET /api/health` |
 | Service health poller | `src/server/service-health-poller.ts` — Prometheus polling, auto-investigate on transitions |
 | Prometheus queries | `src/server/prometheus-query.ts` — shared PromQL execution via MCP, used by metrics API |
+| Coroot neighbor fetch | `src/server/coroot.ts` — `fetchCorootNeighbors()` + registry cache. Self-contained (does NOT import from `service-brief.ts`) — duplicates `withTimeout`/`findTool`/`parseMcpResult` by design to avoid regression surface in the Service Brief path. |
+| Neighbor evidence | `src/server/neighbor-evidence.ts` — `selectNeighborsForEvidenceFetch` (severity rank → rate → registry filter → cap 3) + `fetchNeighborEvidence` (deterministic PromQL + LogQL via `metrics`/`logs` role tools, bounded, LogQL label escaping). Called by the prefetch step. |
+| Dependency Context (UI) | `src/web/components/RcaReport.tsx` — renders `report.neighbors` as a CollapsibleSection with severity dots, linked names (`/services/{name}` via `encodeURIComponent`), status badges, and inline metric/log samples. Sorted by severity without mutating the prop. |
 | Service detail page | `src/web/components/ServiceDetail.tsx` — tabbed service view (metrics, history, dependencies) |
 | Service metadata | `src/server/routes.ts` — GET/PUT `/api/services/:name/metadata`, alias, tags endpoints |
 | Investigation dedup | `src/server/investigation-dedup.ts` — shared dedup + concurrency guard |
@@ -77,7 +80,7 @@ npx tsc --noEmit         # Type check
 - **Run all**: `npx vitest run`
 - **Run one**: `npx vitest run src/agents/chat.test.ts`
 - **Watch mode**: `npx vitest` (alias: `npm run test:watch`)
-- **73 test files** across agents, CLI commands, server, workflows, config, eval, and web components
+- **77 test files** across agents, CLI commands, server, workflows, config, eval, and web components
 
 ## Dev Setup
 
@@ -103,6 +106,7 @@ npx tsc --noEmit         # Type check
 - **Investigation templates**: `quick` (metrics only), `standard` (metrics+logs), `full` (all phases + changes). Configured via `config.yaml` webhook section or GUI. See `src/workflows/investigation.ts`.
 - **Alert webhook**: `POST /api/webhook/alert` receives Alertmanager payloads, validates bearer token, dedup window, and runs headless investigations. See `src/server/webhook-handler.ts`.
 - **Changes evidence**: GitLab MCP provider with `"changes"` role feeds a 4th parallel evidence stream (deployments, MRs, pipelines) into investigations. See `src/agents/changes.ts`.
+- **Dependency-aware investigation**: Coroot MCP provider with `"dependencies"` role gets investigated in prefetch — `src/server/coroot.ts:fetchCorootNeighbors` discovers 1-hop neighbors, `src/server/neighbor-evidence.ts:fetchNeighborEvidence` pulls PromQL + LogQL evidence for the top-3 unhealthy ones. Neighbors flow through every downstream step via `PrefetchedContextSchema.neighbors` → evidence factory injection → synthesis fallback chain. Synthesis both prompts the LLM with a wrapped "Dependency Evidence" section AND deterministically appends `[neighbor:X]` strings into `evidence.metrics`/`evidence.logs` after the LLM call so the report is trustworthy without LLM compliance.
 - **Tool classification**: `classifyToolAccess()` in `src/mcp/provider.ts` classifies MCP tools as read-only or write via name-prefix + keyword-segment heuristic. Read-only tools enabled by default; write tools require explicit opt-in. Supports both `list_pods` and `pods_list` naming conventions.
 
 ## Design System
