@@ -100,7 +100,13 @@ export function MetricsPanel({ timeSeries, textObservations, structuredObservati
 
   const hasStructured = (structuredObservations?.length ?? 0) > 0;
 
-  if (allSeries.length === 0 && !isExtracting && remainingTexts.length === 0 && !hasStructured) {
+  if (
+    allSeries.length === 0 &&
+    !isExtracting &&
+    remainingTexts.length === 0 &&
+    emptyExtractions.length === 0 &&
+    !hasStructured
+  ) {
     return <p className="text-xs text-muted-foreground/65 py-4 text-center font-mono">No metric data collected</p>;
   }
 

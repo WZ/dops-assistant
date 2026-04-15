@@ -74,16 +74,19 @@ function parseRawLogLine(line: string): { timestamp: string; message: string } |
   m = line.match(RAW_LOG_RE_BRACKETED);
   if (m) return { timestamp: m[1]!, message: m[2]!.trim() };
 
-  // Try space-separated Java/Spring format. Normalize to ISO-8601 so formatTime()
+  // Try space-separated Java/Spring format. Normalize to ISO-8601 so Date
   // can parse it uniformly. Comma milliseconds (",309") become period (".309").
   m = line.match(RAW_LOG_RE_SPACE);
   if (m) {
     const date = m[1]!;
     const time = m[2]!;
     const ms = m[3] ? `.${m[3].slice(0, 3).padEnd(3, "0")}` : "";
-    // Assume UTC since the log line doesn't carry a timezone. formatTime uses
-    // getUTCHours so this stays correct regardless of the viewer's locale.
-    return { timestamp: `${date}T${time}${ms}Z`, message: m[4]!.trim() };
+    // Do NOT append 'Z'. Java/Spring servers log in local server time
+    // without a tz marker. If we forced UTC, formatTime (which uses local
+    // getHours) would shift the displayed numbers by the viewer's offset,
+    // so a line reading "09:52:12" would render "02:52:12 PDT". Parsing
+    // as local keeps the as-written numbers intact.
+    return { timestamp: `${date}T${time}${ms}`, message: m[4]!.trim() };
   }
 
   return null;
@@ -304,7 +307,7 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange, pha
     }
 
     return deduped;
-  }, [evidence.logs, evidence.infra, service]);
+  }, [evidence.logs, evidence.infra, service, fallbackTimestamp]);
 
   const hasTimeline = timelineEntries.length > 0;
 
