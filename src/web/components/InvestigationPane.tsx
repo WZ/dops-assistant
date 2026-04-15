@@ -8,7 +8,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ArrowLeft, FilePlus, RotateCw, ChevronDown, Download, Link2, FileText, Image as ImageIcon, ClipboardCopy } from "lucide-react";
+import { ArrowLeft, FilePlus, RotateCw, ChevronDown, Download, Link2, FileText, Image as ImageIcon, ClipboardCopy, Check } from "lucide-react";
 import { PhaseStepper, type PhaseState } from "./PhaseStepper";
 import { EvidenceTimeline } from "./EvidenceTimeline";
 import { RcaReport } from "./RcaReport";
@@ -38,13 +38,23 @@ interface ExportMenuProps {
 
 function ExportMenu({ report, service, reportRef, onSaveAsSkill }: ExportMenuProps) {
   const [busy, setBusy] = useState(false);
+  const [copiedKey, setCopiedKey] = useState<"link" | "md" | null>(null);
+
+  const flashCopied = (key: "link" | "md") => {
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1200);
+  };
 
   const copyLink = () => {
-    navigator.clipboard.writeText(window.location.href).catch(() => {});
+    navigator.clipboard.writeText(window.location.href)
+      .then(() => flashCopied("link"))
+      .catch(() => {});
   };
 
   const doCopyMarkdown = () => {
-    copyMarkdown(report).catch(() => {});
+    copyMarkdown(report)
+      .then(() => flashCopied("md"))
+      .catch(() => {});
   };
 
   const doDownloadMarkdown = () => {
@@ -79,13 +89,27 @@ function ExportMenu({ report, service, reportRef, onSaveAsSkill }: ExportMenuPro
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-[200px]">
-        <DropdownMenuItem onClick={copyLink} className="font-mono text-[11px] gap-2">
-          <Link2 size={11} className="!size-auto" />
-          Copy link
+        <DropdownMenuItem
+          onSelect={(e) => { e.preventDefault(); copyLink(); }}
+          className="font-mono text-[11px] gap-2"
+        >
+          {copiedKey === "link" ? (
+            <Check size={11} className="!size-auto text-success" />
+          ) : (
+            <Link2 size={11} className="!size-auto" />
+          )}
+          {copiedKey === "link" ? "Copied" : "Copy link"}
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={doCopyMarkdown} className="font-mono text-[11px] gap-2">
-          <ClipboardCopy size={11} className="!size-auto" />
-          Copy markdown
+        <DropdownMenuItem
+          onSelect={(e) => { e.preventDefault(); doCopyMarkdown(); }}
+          className="font-mono text-[11px] gap-2"
+        >
+          {copiedKey === "md" ? (
+            <Check size={11} className="!size-auto text-success" />
+          ) : (
+            <ClipboardCopy size={11} className="!size-auto" />
+          )}
+          {copiedKey === "md" ? "Copied" : "Copy markdown"}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={doDownloadPng} className="font-mono text-[11px] gap-2">
@@ -145,15 +169,18 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
     }
   }, [report]);
 
-  // Trigger phase swoop animation on the running → complete transition
+  // Trigger phase swoop animation on the running → complete transition.
+  // Update prevRunningRef *before* the early return so the effect doesn't
+  // replay the animation on any subsequent phases update after completion.
   useEffect(() => {
     const running = phases.some((p) => p.status === "running");
-    if (prevRunningRef.current && !running && report) {
+    const justCompleted = prevRunningRef.current && !running && !!report;
+    prevRunningRef.current = running;
+    if (justCompleted) {
       setPhaseSwoop(true);
       const t = setTimeout(() => setPhaseSwoop(false), 600);
       return () => clearTimeout(t);
     }
-    prevRunningRef.current = running;
   }, [phases, report]);
 
   // Determine if this investigation is active (has WS messages) or historical

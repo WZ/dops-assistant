@@ -11,7 +11,7 @@ function triggerDownload(href: string, filename: string) {
   document.body.removeChild(a);
 }
 
-function safeName(service: string) {
+export function safeName(service: string) {
   return service.replace(/[^a-z0-9-_]/gi, "-").toLowerCase() || "investigation";
 }
 
@@ -30,15 +30,14 @@ export function copyMarkdown(report: RcaReport) {
 // Wait for FontFaceSet + preload our custom Google Fonts so toPng captures them
 // instead of falling back to system sans in the rasterized image.
 async function ensureFontsLoaded() {
-  const fontSet = (document as unknown as { fonts?: FontFaceSet }).fonts;
-  if (!fontSet) return;
+  if (!document.fonts) return;
   const faces = [
     '600 22px "Inter"',
     '400 14px "Plus Jakarta Sans"',
     '500 11px "JetBrains Mono"',
   ];
-  await Promise.all(faces.map((f) => fontSet.load(f).catch(() => undefined)));
-  await fontSet.ready;
+  await Promise.all(faces.map((f) => document.fonts.load(f).catch(() => undefined)));
+  await document.fonts.ready;
 }
 
 export async function downloadPng(node: HTMLElement, service: string) {
