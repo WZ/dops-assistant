@@ -8,7 +8,19 @@ import express from "express";
 import { createServer } from "http";
 import path from "path";
 import { fileURLToPath } from "url";
+import { Agent, setGlobalDispatcher } from "undici";
 import { createLogger } from "../logger.js";
+
+// Bump undici's default headers/body timeouts (5 min each) so slow upstreams
+// — reasoning LLMs in particular — don't get cut off mid-response. The default
+// kills tool-heavy discovery runs against models like gpt-oss-120b.
+// Override per-deploy with HTTP_HEADERS_TIMEOUT_MS / HTTP_BODY_TIMEOUT_MS.
+const httpHeadersTimeoutMs = Number(process.env["HTTP_HEADERS_TIMEOUT_MS"] ?? 1_200_000);
+const httpBodyTimeoutMs = Number(process.env["HTTP_BODY_TIMEOUT_MS"] ?? 1_200_000);
+setGlobalDispatcher(new Agent({
+  headersTimeout: httpHeadersTimeoutMs,
+  bodyTimeout: httpBodyTimeoutMs,
+}));
 import { Database } from "./db.js";
 import { registerRoutes } from "./routes.js";
 import { setupWebSocket } from "./ws-handler.js";
