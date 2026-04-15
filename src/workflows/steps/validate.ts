@@ -4,6 +4,9 @@ import type { ServiceConfig, DiscoveryRecipe } from "../../config/schema.js";
 import type { ValidatedServiceConfig } from "../../types/discovery-types.js";
 import type { OnToolCallEnriched, OnIteration } from "../../types/agent-interfaces.js";
 import type { Tool } from "@mastra/core/tools";
+import { createLogger } from "../../logger.js";
+
+const logger = createLogger("validate");
 
 export interface ValidateStepConfig {
   providers: MastraProvider[];
@@ -91,11 +94,11 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
   const lokiTool = findToolBySuffix(logsTools, "query_loki_logs");
   const podsListTool = findToolBySuffix(infraTools, "pods_list");
 
-  console.error(`[VALIDATE] Starting validation of ${config.services.length} services`);
-  console.error(`[VALIDATE] Metrics tools: ${Object.keys(metricsTools).join(", ") || "(none)"}`);
-  console.error(`[VALIDATE] Logs tools: ${Object.keys(logsTools).join(", ") || "(none)"}`);
-  console.error(`[VALIDATE] Dashboards tools: ${Object.keys(dashboardsTools).join(", ") || "(none)"}`);
-  console.error(`[VALIDATE] Infra tools: ${Object.keys(infraTools).join(", ") || "(none)"}`);
+  logger.debug(`Starting validation of ${config.services.length} services`);
+  logger.debug(`Metrics tools: ${Object.keys(metricsTools).join(", ") || "(none)"}`);
+  logger.debug(`Logs tools: ${Object.keys(logsTools).join(", ") || "(none)"}`);
+  logger.debug(`Dashboards tools: ${Object.keys(dashboardsTools).join(", ") || "(none)"}`);
+  logger.debug(`Infra tools: ${Object.keys(infraTools).join(", ") || "(none)"}`);
 
   // Find datasource listing tool — try dashboards role first, fall back to metrics role
   const listDsTool = findToolBySuffix(dashboardsTools, "list_datasources")
@@ -187,7 +190,7 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
   const verified = results.filter((r) => r.confidence === "verified").length;
   const partial = results.filter((r) => r.confidence === "partial").length;
   const unverified = results.filter((r) => r.confidence === "unverified").length;
-  console.error(`[VALIDATE] Done: ${verified} verified, ${partial} partial, ${unverified} unverified`);
+  logger.debug(`Done: ${verified} verified, ${partial} partial, ${unverified} unverified`);
 
   return results;
 }
@@ -205,7 +208,7 @@ async function enrichFromK8s(
   config: ValidateStepConfig,
 ): Promise<ServiceConfig[]> {
   if (!podsListTool) {
-    console.error("[VALIDATE] No pods_list tool — skipping K8s enrichment");
+    logger.warn("No pods_list tool — skipping K8s enrichment");
     return services;
   }
 
@@ -218,9 +221,9 @@ async function enrichFromK8s(
     config.onToolCall?.(podsListTool[0], {}, resultStr.slice(0, 2000), duration, undefined, "validation");
 
     podRows = parsePodsList(resultStr);
-    console.error(`[VALIDATE] K8s pods_list: parsed ${podRows.length} pods`);
+    logger.debug(`K8s pods_list: parsed ${podRows.length} pods`);
   } catch (err) {
-    console.error(`[VALIDATE] K8s pods_list failed: ${err}`);
+    logger.warn(`K8s pods_list failed: ${err}`);
     return services;
   }
 
@@ -264,11 +267,11 @@ async function enrichFromK8s(
     }
 
     enrichedCount++;
-    console.error(`[VALIDATE] K8s match: "${service.name}" → namespace=${matched.namespace}, container=${logLabels["container"]} (pod=${matched.name})`);
+    logger.debug(`K8s match: "${service.name}" → namespace=${matched.namespace}, container=${logLabels["container"]} (pod=${matched.name})`);
     return { ...service, logLabels };
   });
 
-  console.error(`[VALIDATE] K8s enrichment: ${enrichedCount}/${services.length} services matched`);
+  logger.debug(`K8s enrichment: ${enrichedCount}/${services.length} services matched`);
   return result;
 }
 
@@ -350,18 +353,18 @@ async function findLokiDatasourceUid(
 
     const dsData = unwrapMcpJson(result);
     const datasources = Array.isArray(dsData) ? dsData : dsData?.datasources ?? [];
-    console.error(`[VALIDATE] list_datasources returned ${datasources.length} datasources`);
+    logger.debug(`list_datasources returned ${datasources.length} datasources`);
 
     const loki = datasources.find((ds: any) =>
       ds.type === "loki" || ds.typeName === "Loki" || ds.name?.toLowerCase().includes("loki")
     );
     if (loki?.uid) {
-      console.error(`[VALIDATE] Found Loki datasource: uid=${loki.uid}, name=${loki.name}`);
+      logger.debug(`Found Loki datasource: uid=${loki.uid}, name=${loki.name}`);
       return loki.uid;
     }
-    console.error(`[VALIDATE] No Loki datasource found in: ${JSON.stringify(datasources.map((d: any) => ({ name: d.name, type: d.type, uid: d.uid }))).slice(0, 500)}`);
+    logger.warn(`No Loki datasource found in: ${JSON.stringify(datasources.map((d: any) => ({ name: d.name, type: d.type, uid: d.uid }))).slice(0, 500)}`);
   } catch (err) {
-    console.error(`[VALIDATE] Failed to find Loki datasource: ${err}`);
+    logger.warn(`Failed to find Loki datasource: ${err}`);
   }
 
   return undefined;
@@ -386,12 +389,12 @@ async function buildLabelMap(
 
     const parsed = unwrapMcpJson(namesResult);
     const allNames: string[] = Array.isArray(parsed) ? parsed : parsed?.labels ?? parsed?.data ?? parsed?.values ?? [];
-    console.error(`[VALIDATE] Available label names (${allNames.length}): ${allNames.slice(0, 30).join(", ")}`);
+    logger.debug(`Available label names (${allNames.length}): ${allNames.slice(0, 30).join(", ")}`);
 
     const available = allNames.filter(
       (k: string) => labelKeys.some((p) => k === p || k.toLowerCase().includes(p)),
     );
-    console.error(`[VALIDATE] Found ${available.length} matching label keys: ${available.join(", ")}`);
+    logger.debug(`Found ${available.length} matching label keys: ${available.join(", ")}`);
 
     for (const key of available) {
       try {
@@ -407,11 +410,11 @@ async function buildLabelMap(
         const valueMap = new Map<string, string>();
         for (const v of values) valueMap.set(v.toLowerCase(), v);
         map.set(key, valueMap);
-        console.error(`[VALIDATE] Label "${key}": ${values.length} values`);
+        logger.debug(`Label "${key}": ${values.length} values`);
       } catch { /* skip this label key */ }
     }
   } catch (err) {
-    console.error(`[VALIDATE] Failed to build label map: ${err}`);
+    logger.warn(`Failed to build label map: ${err}`);
   }
 
   return map;
@@ -493,7 +496,7 @@ function enrichLogLabels(
         const original = valueMap.get(variant);
         if (original) {
           enrichedCount++;
-          console.error(`[VALIDATE] Log label match: "${service.name}" → ${labelKey}="${original}" (exact)`);
+          logger.debug(`Log label match: "${service.name}" → ${labelKey}="${original}" (exact)`);
           return { ...service, logLabels: { [labelKey]: original } };
         }
       }
@@ -508,7 +511,7 @@ function enrichLogLabels(
           for (const variant of nameVariants) {
             if (parts[1] === variant) {
               enrichedCount++;
-              console.error(`[VALIDATE] Log label match: "${service.name}" → ${labelKey}="${originalVal}" (namespace/name)`);
+              logger.debug(`Log label match: "${service.name}" → ${labelKey}="${originalVal}" (namespace/name)`);
               return { ...service, logLabels: { [labelKey]: originalVal } };
             }
           }
@@ -530,7 +533,7 @@ function enrichLogLabels(
             const longer = Math.max(variant.length, lowerVal.length);
             if (shorter / longer >= 0.6) {
               enrichedCount++;
-              console.error(`[VALIDATE] Log label match: "${service.name}" → ${labelKey}="${originalVal}" (substring, ${Math.round(shorter/longer*100)}% coverage)`);
+              logger.debug(`Log label match: "${service.name}" → ${labelKey}="${originalVal}" (substring, ${Math.round(shorter/longer*100)}% coverage)`);
               return { ...service, logLabels: { [labelKey]: originalVal } };
             }
           }
@@ -538,10 +541,10 @@ function enrichLogLabels(
       }
     }
 
-    console.error(`[VALIDATE] No log label match for "${service.name}"`);
+    logger.debug(`No log label match for "${service.name}"`);
     return service;
   });
 
-  console.error(`[VALIDATE] Log label enrichment: ${enrichedCount}/${services.length} services matched`);
+  logger.debug(`Log label enrichment: ${enrichedCount}/${services.length} services matched`);
   return result;
 }

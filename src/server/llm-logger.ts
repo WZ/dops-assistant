@@ -7,12 +7,12 @@
  *   - "debug": log full prompts, responses, and tool call details
  */
 
-import pino from "pino";
+import { createLogger } from "../logger.js";
 import { randomUUID } from "node:crypto";
 
 const level = process.env["LLM_LOG_LEVEL"] ?? "silent";
 
-export const llmLogger = pino({ level, name: "llm" });
+export const llmLogger = createLogger("llm", { level });
 
 // ── Types ───────────────────────────────────────────────────────────────────
 

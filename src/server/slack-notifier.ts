@@ -3,10 +3,10 @@
  * incoming webhook URL. No Slack SDK dependency — just a fetch POST.
  */
 
-import pino from "pino";
+import { createLogger } from "../logger.js";
 import type { RcaReport } from "../types/rca-types.js";
 
-const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
+const logger = createLogger();
 
 export interface SlackNotifierOptions {
   /** Slack incoming webhook URL */

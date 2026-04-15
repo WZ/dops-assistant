@@ -10,7 +10,7 @@
  */
 
 import { generateText, type LanguageModel } from "ai";
-import pino from "pino";
+import { createLogger } from "../logger.js";
 import { getToolsByRole, type MastraProvider } from "../mcp/provider.js";
 import { MAX_CACHE_ENTRIES } from "../constants.js";
 import type { ServiceConfig } from "../config/schema.js";
@@ -31,7 +31,7 @@ import type {
   MergeRequest,
 } from "../types/service-brief.js";
 
-const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
+const logger = createLogger();
 
 // ── Public deps interface ────────────────────────────────────────────────────
 

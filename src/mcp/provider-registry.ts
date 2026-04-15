@@ -10,10 +10,10 @@ import {
   type MastraProvider,
   type ToolInfo,
 } from "./provider.js";
-import pino from "pino";
+import { createLogger } from "../logger.js";
 import { z } from "zod";
 
-const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
+const logger = createLogger();
 
 /**
  * Resolve the Prometheus datasource UID from a metrics provider's tool set.

@@ -9,6 +9,9 @@ import type { OnToolCallEnriched, OnIteration } from "../../types/agent-interfac
 import type { Skill } from "../../skills/store.js";
 import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
 import { logLlmCall, newCallId } from "../../server/llm-logger.js";
+import { createLogger } from "../../logger.js";
+
+const logger = createLogger("discover");
 
 export interface DiscoverStepConfig {
   model: LanguageModel;
@@ -160,10 +163,10 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
       if (parsed?.services && Array.isArray(parsed.services) && parsed.services.length > 0) {
         return parsed.services;
       }
-      // Always log empty results to stderr (visible even when LLM_LOG_LEVEL=silent)
-      console.error(`[DISCOVER] Empty result on attempt ${attempt}/${MAX_RETRIES}`);
+      logger.warn({ attempt, maxRetries: MAX_RETRIES }, "discovery returned empty result");
     } catch (err) {
-      console.error(`[DISCOVER] Error on attempt ${attempt}: ${err instanceof Error ? err.message : err}`);
+      const message = err instanceof Error ? err.message : String(err);
+      logger.warn({ attempt, err: message }, "discovery attempt failed");
       if (attempt === MAX_RETRIES) throw err;
     }
   }
