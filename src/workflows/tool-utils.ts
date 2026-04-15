@@ -31,11 +31,17 @@ function resolveGrafanaTime(value: string): string {
   return new Date(now - Number(amt) * (multipliers[unit!] ?? 0)).toISOString();
 }
 
+/** Shared check: does a property name look like a time field? */
+function isTimeField(key: string): boolean {
+  const k = key.toLowerCase();
+  return k.includes("time") || k.includes("rfc3339") || k.includes("start") || k.includes("end");
+}
+
 /**
  * Coerce tool arguments to match expected schema types.
  * LLMs often pass strings where arrays are expected (e.g., matches: "{...}" instead of ["{...}"]).
  */
-function coerceToolArgs(args: Record<string, unknown>, toolSchema: any): Record<string, unknown> {
+export function coerceToolArgs(args: Record<string, unknown>, toolSchema: any): Record<string, unknown> {
   if (!toolSchema?.properties) return args;
   const coerced = { ...args };
   for (const [key, value] of Object.entries(coerced)) {
@@ -47,10 +53,17 @@ function coerceToolArgs(args: Record<string, unknown>, toolSchema: any): Record<
       if (!isNaN(num)) coerced[key] = num;
     }
     // Convert "now", "now-1h" etc. to RFC3339 for time fields
-    if (typeof value === "string" && /^now(?:-\d+[smhdw])?$/.test(value) &&
-        (key.toLowerCase().includes("time") || key.toLowerCase().includes("rfc3339") ||
-         key.toLowerCase().includes("start") || key.toLowerCase().includes("end"))) {
+    if (typeof value === "string" && /^now(?:-\d+[smhdw])?$/.test(value) && isTimeField(key)) {
       coerced[key] = resolveGrafanaTime(value);
+    }
+    // Normalize malformed RFC3339 like "2026-04-15T20:27:00.Z" → "2026-04-15T20:27:00Z".
+    // LLMs sometimes drop the fractional-seconds digits but leave the dot.
+    // Read from `coerced[key]` so we pick up any value rewritten by the "now"
+    // branch above, and only touch time-looking fields.
+    const current = coerced[key];
+    if (typeof current === "string" && isTimeField(key)) {
+      const cleaned = current.replace(/\.Z$/, "Z");
+      if (cleaned !== current) coerced[key] = cleaned;
     }
   }
   return coerced;
@@ -83,6 +96,9 @@ export function coercePrometheusArgs(args: Record<string, unknown>): Record<stri
  */
 export function coerceLokiArgs(args: Record<string, unknown>): Record<string, unknown> {
   const coerced = { ...args };
+  // stepSeconds is a Prometheus concept — Loki's query_loki_logs doesn't accept it.
+  // LLMs consistently pass it; drop it so the tool call isn't rejected.
+  delete coerced.stepSeconds;
   // Always use backward (newest-first) — errors at the end of a window are more relevant
   if (coerced.direction === "forward" || !coerced.direction) {
     coerced.direction = "backward";
