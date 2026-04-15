@@ -28,7 +28,7 @@ import type { TokenUsage } from "../types/llm-types.js";
 import type { ValidatedServiceConfig } from "../types/discovery-types.js";
 import { createChatAgent } from "../agents/chat.js";
 import { wrapUntrusted } from "../agents/shared/prompt-helpers.js";
-import { logLlmCall, logToolCall, newCallId, type ToolCallEvent } from "./llm-logger.js";
+import { logLlmCall, logLlmCallFirstChunk, logLlmCallStart, logToolCall, newCallId, type ToolCallEvent } from "./llm-logger.js";
 import { createInvestigationWorkflow, type WorkflowConfig } from "../workflows/investigation.js";
 import { runDiscovery } from "../workflows/discovery.js";
 import { createModel } from "../mastra/index.js";
@@ -183,10 +183,16 @@ export class MastraChatAgentAdapter {
     let chatInputTokens = 0;
     let chatOutputTokens = 0;
     const chatStartMs = Date.now();
+    let firstChunkLogged = false;
+    logLlmCallStart({ callId: chatCallId, agent: "chat", promptChars: prompt.length });
     try {
       const stream = await mastraAgent.stream(streamInput);
 
       for await (const chunk of stream.fullStream) {
+        if (!firstChunkLogged) {
+          firstChunkLogged = true;
+          logLlmCallFirstChunk(chatCallId, "chat", Date.now() - chatStartMs);
+        }
         const c = chunk as any;
         // Mastra wraps all events in { type, runId, from, payload }
         const p = c.payload ?? c;
