@@ -252,7 +252,18 @@ export function buildSynthesisStep(config: WorkflowConfig) {
         trigger = synthesisParsed.trigger ?? trigger;
         contributingFactors = synthesisParsed.contributingFactors ?? contributingFactors;
         timelineEvents = synthesisParsed.timeline ?? timelineEvents;
-        if (synthesisParsed.evidence) evidence = synthesisParsed.evidence;
+        // Merge LLM-produced evidence arrays with defaults. The LLM can return a
+        // partial evidence object like `{ infra: [] }` — without this merge, the
+        // deterministic neighbor-injection loop below would throw a TypeError on
+        // `evidence.metrics.push` when metrics/logs are undefined.
+        if (synthesisParsed.evidence) {
+          evidence = {
+            metrics: Array.isArray(synthesisParsed.evidence.metrics) ? synthesisParsed.evidence.metrics : [],
+            logs: Array.isArray(synthesisParsed.evidence.logs) ? synthesisParsed.evidence.logs : [],
+            infra: Array.isArray(synthesisParsed.evidence.infra) ? synthesisParsed.evidence.infra : [],
+            changes: Array.isArray(synthesisParsed.evidence.changes) ? synthesisParsed.evidence.changes : [],
+          };
+        }
         dashboardLinks = synthesisParsed.dashboardLinks ?? dashboardLinks;
         recommendedActions = synthesisParsed.recommendedActions ?? recommendedActions;
         confidence = synthesisParsed.confidence ?? confidence;
@@ -299,6 +310,21 @@ export function buildSynthesisStep(config: WorkflowConfig) {
             .join(" | ");
           evidence.logs.push(
             `[neighbor:${tag}] ${l.query} (${l.count} matches): ${firstLines || "(empty)"}`,
+          );
+        }
+        // Contract guarantee: every neighbor with any evidence attachment gets
+        // at least one [neighbor:X] row, even if all we have is soft fetchErrors
+        // (e.g. "logs: no logs-role provider configured"). Without this, a
+        // neighbor whose metrics+logs are both empty arrays but whose fetchErrors
+        // are non-empty would be silently dropped from the deterministic
+        // injection, breaking the "every neighbor gets accounted for" invariant.
+        if (
+          n.evidence.fetchErrors.length > 0 &&
+          n.evidence.metrics.length === 0 &&
+          n.evidence.logs.length === 0
+        ) {
+          evidence.metrics.push(
+            `[neighbor:${tag}] no evidence fetched → ${n.evidence.fetchErrors.join("; ")}`,
           );
         }
       }

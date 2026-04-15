@@ -253,10 +253,22 @@ export async function fetchNeighborEvidence(
         // [a-zA-Z_][a-zA-Z0-9_]* and will be quietly dropped otherwise.
         const isSafeLabelKey = (k: string): boolean => /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(k);
 
+        // Build the LogQL selector. Prefer the service's configured logLabels when
+        // they are non-empty; otherwise fall back to `service="<name>"`.
+        // NOTE: logLabels defaults to `{}` in src/config/schema.ts, so a plain
+        // truthy check on the object would always take the "configured" branch
+        // and then bail with "no safe labels" — we explicitly check for entries.
+        const configuredLabelEntries =
+          serviceConfig?.logLabels &&
+          typeof serviceConfig.logLabels === "object" &&
+          Object.keys(serviceConfig.logLabels).length > 0
+            ? Object.entries(serviceConfig.logLabels as Record<string, string>)
+            : null;
+
         let selector: string;
-        if (serviceConfig?.logLabels) {
+        if (configuredLabelEntries) {
           const parts: string[] = [];
-          for (const [k, v] of Object.entries(serviceConfig.logLabels as Record<string, string>)) {
+          for (const [k, v] of configuredLabelEntries) {
             if (!isSafeLabelKey(k) || typeof v !== "string" || !isSafeLogqlValue(v)) {
               fetchErrors.push(`logs: dropped unsafe label ${k}`);
               continue;
@@ -264,6 +276,12 @@ export async function fetchNeighborEvidence(
             parts.push(`${k}="${escapeLogqlValue(v)}"`);
           }
           selector = parts.join(",");
+          // If every configured label was rejected, bail out rather than issue
+          // an unbounded `{}` query. This is a security property, not a UX one.
+          if (selector === "") {
+            logs.push({ query: "", lines: [], count: 0, error: "no safe labels" });
+            throw new Error("no safe log labels, skipping logs fetch");
+          }
         } else {
           if (!isSafeLogqlValue(neighbor.name)) {
             fetchErrors.push(`logs: neighbor name contains unsafe characters`);
@@ -271,12 +289,6 @@ export async function fetchNeighborEvidence(
             throw new Error("unsafe neighbor name, skipping logs fetch");
           }
           selector = `service="${escapeLogqlValue(neighbor.name)}"`;
-        }
-        // If every label was rejected, bail out rather than issue a `{}` query
-        // (which would match all logs).
-        if (selector === "") {
-          logs.push({ query: "", lines: [], count: 0, error: "no safe labels" });
-          throw new Error("no safe log labels, skipping logs fetch");
         }
         const logql = `{${selector}} |~ "(?i)(error|exception|fail)"`;
         const raw = await withTimeout(

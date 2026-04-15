@@ -1,8 +1,17 @@
 import { Badge } from "@/components/ui/badge";
-import { type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { FileText } from "lucide-react";
 import { renderInline } from "../lib/renderInline";
 import type { Neighbor } from "../../types/workflow-state";
+
+// Module-scoped severity order — hoisted out of the render path so the sort
+// comparator in the Dependency Context section doesn't reallocate per compare.
+const NEIGHBOR_SEVERITY_ORDER: Record<Neighbor["status"], number> = {
+  unhealthy: 0,
+  degraded: 1,
+  unknown: 2,
+  healthy: 3,
+};
 
 interface RcaReportData {
   rootCause: string;
@@ -106,6 +115,17 @@ export function RcaReport({ report, hideOldDashboardLinks }: { report: RcaReport
     report.severity === "critical" ? "glow-red border-destructive/30" :
     report.severity === "high" ? "glow-coral border-accent/25" :
     "border-primary/20 glow-teal";
+
+  // Sort neighbors once per render only when the list reference changes.
+  // Copy before sort — Array.sort mutates, and the neighbors prop may be held
+  // elsewhere (report history cache, parent state) where a mutation would
+  // surface as reconciliation drift or stale ordering.
+  const sortedNeighbors = useMemo(() => {
+    if (!report.neighbors || report.neighbors.length === 0) return [];
+    return [...report.neighbors].sort(
+      (a, b) => NEIGHBOR_SEVERITY_ORDER[a.status] - NEIGHBOR_SEVERITY_ORDER[b.status],
+    );
+  }, [report.neighbors]);
 
   return (
     <div className={`rounded-xl border ${severityGlow} bg-card/50 overflow-hidden animate-fade-up noise relative`}>
@@ -229,14 +249,7 @@ export function RcaReport({ report, hideOldDashboardLinks }: { report: RcaReport
         {report.neighbors && report.neighbors.length > 0 && (
           <Section label="Dependency Context" count={report.neighbors.length}>
             <div className="space-y-3 ml-1">
-              {[...report.neighbors]
-                .sort((a, b) => {
-                  // Sort by severity first (unhealthy → degraded → unknown → healthy).
-                  // Copy first — Array.sort mutates; we never mutate incoming props.
-                  const order = { unhealthy: 0, degraded: 1, unknown: 2, healthy: 3 };
-                  return order[a.status] - order[b.status];
-                })
-                .map((n, i) => {
+              {sortedNeighbors.map((n, i) => {
                   const hasEvidence =
                     n.evidence &&
                     (n.evidence.metrics.length > 0 ||

@@ -58,7 +58,7 @@ npx tsc --noEmit         # Type check
 | Prometheus queries | `src/server/prometheus-query.ts` — shared PromQL execution via MCP, used by metrics API |
 | Coroot neighbor fetch | `src/server/coroot.ts` — `fetchCorootNeighbors()` + registry cache. Self-contained (does NOT import from `service-brief.ts`) — duplicates `withTimeout`/`findTool`/`parseMcpResult` by design to avoid regression surface in the Service Brief path. |
 | Neighbor evidence | `src/server/neighbor-evidence.ts` — `selectNeighborsForEvidenceFetch` (severity rank → rate → registry filter → cap 3) + `fetchNeighborEvidence` (deterministic PromQL + LogQL via `metrics`/`logs` role tools, bounded, LogQL label escaping). Called by the prefetch step. |
-| Dependency Context (UI) | `src/web/components/RcaReport.tsx` — renders `report.neighbors` as a CollapsibleSection with severity dots, linked names (`/services/{name}` via `encodeURIComponent`), status badges, and inline metric/log samples. Sorted by severity without mutating the prop. |
+| Dependency Context (UI) | `src/web/components/RcaReport.tsx` — renders `report.neighbors` inside the `Section` helper with severity dots, linked names (`/services/{name}` via `encodeURIComponent`), status badges, and inline metric/log samples. Sorted by severity (copy-before-sort to avoid mutating the prop). |
 | Service detail page | `src/web/components/ServiceDetail.tsx` — tabbed service view (metrics, history, dependencies) |
 | Service metadata | `src/server/routes.ts` — GET/PUT `/api/services/:name/metadata`, alias, tags endpoints |
 | Investigation dedup | `src/server/investigation-dedup.ts` — shared dedup + concurrency guard |
