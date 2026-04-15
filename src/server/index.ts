@@ -74,6 +74,11 @@ async function main() {
   await skillStore.loadAll();
 
   const app = express();
+  // Behind k8s ingress — trust one proxy hop so req.ip resolves to the real
+  // client and rate-limit keys work per-client instead of per-proxy. Setting
+  // to `1` (not `true`) so a client without an upstream proxy can't spoof
+  // its own X-Forwarded-For.
+  app.set("trust proxy", 1);
   app.use(express.json({ limit: "1mb" }));
 
   // ── Rate limiting (applied before auth so abusive traffic is rejected early) ──
