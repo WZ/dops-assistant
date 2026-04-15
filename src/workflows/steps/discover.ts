@@ -191,6 +191,19 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
       logger.warn({ attempt, maxRetries: MAX_RETRIES }, "discovery returned empty result");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      logLlmCall({
+        callId: discoverCallId,
+        agent: "discover",
+        phase: `attempt-${attempt}`,
+        promptChars: discoverPrompt.length + fullHints.length,
+        prompt: `${discoverPrompt}\n\n[hints: ${fullHints.length} chars]`,
+        responseChars: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        durationMs: Date.now() - discoverStartMs,
+        toolCalls: discoverToolCalls,
+        error: message,
+      });
       logger.warn({ attempt, err: message }, "discovery attempt failed");
       if (attempt === MAX_RETRIES) throw err;
     }

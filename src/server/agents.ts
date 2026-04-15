@@ -184,6 +184,7 @@ export class MastraChatAgentAdapter {
     let chatOutputTokens = 0;
     const chatStartMs = Date.now();
     let firstChunkLogged = false;
+    let chatError: string | undefined;
     logLlmCallStart({ callId: chatCallId, agent: "chat", promptChars: prompt.length });
     try {
       const stream = await mastraAgent.stream(streamInput);
@@ -235,12 +236,14 @@ export class MastraChatAgentAdapter {
         }
       } catch { /* usage not available — ignore */ }
     } catch (err) {
-      logger.warn({ err: err instanceof Error ? err.message : String(err) }, "stream error");
+      chatError = err instanceof Error ? err.message : String(err);
+      logger.warn({ err: chatError }, "stream error");
       if (!responseText) {
         try {
           const result = await mastraAgent.generate(prompt);
           responseText = result.text ?? "";
           task.onStreamDelta?.({ type: "content", content: responseText });
+          chatError = undefined; // fallback succeeded
           // Emit token usage from generate fallback
           const usage = (result as any).totalUsage ?? (result as any).usage;
           if (task.onTokenUsage && usage && (usage.inputTokens || usage.outputTokens)) {
@@ -251,6 +254,7 @@ export class MastraChatAgentAdapter {
           }
         } catch (genErr) {
           const errMsg = genErr instanceof Error ? genErr.message : String(genErr);
+          chatError = errMsg;
           responseText = `Error: ${errMsg}`;
           task.onStreamDelta?.({ type: "content", content: responseText });
         }
@@ -268,6 +272,7 @@ export class MastraChatAgentAdapter {
       outputTokens: chatOutputTokens,
       durationMs: Date.now() - chatStartMs,
       toolCalls: chatToolCalls,
+      error: chatError,
     });
 
     return {
