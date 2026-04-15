@@ -78,4 +78,61 @@ describe("safeJsonParse", () => {
     const result = safeJsonParse(text);
     expect(result).toBeNull();
   });
+
+  // Regression: in-prod discover LLM produced a JSON array with JS-style
+  // block comments like `/* StatefulSets */` as section dividers. JSON.parse
+  // rejected it and the entire discovery result was silently dropped.
+  it("parses a JSON array with JSONC block comments between elements", () => {
+    const text = `[
+      {"name": "a"},
+      /* StatefulSets */
+      {"name": "b"},
+      /* DaemonSets */
+      {"name": "c"}
+    ]`;
+    const result = safeJsonParse(text);
+    expect(Array.isArray(result)).toBe(true);
+    expect(result).toHaveLength(3);
+    expect(result[0].name).toBe("a");
+    expect(result[2].name).toBe("c");
+  });
+
+  it("parses a JSON array with // line comments", () => {
+    const text = `[
+      {"name": "a"}, // first
+      {"name": "b"}  // second
+    ]`;
+    const result = safeJsonParse(text);
+    expect(Array.isArray(result)).toBe(true);
+    expect(result).toHaveLength(2);
+  });
+
+  it("parses a JSON array wrapped in a markdown code block with comments", () => {
+    const text = '```json\n[\n  {"name": "a"},\n  /* group */\n  {"name": "b"}\n]\n```';
+    const result = safeJsonParse(text);
+    expect(Array.isArray(result)).toBe(true);
+    expect(result).toHaveLength(2);
+  });
+
+  it("tolerates trailing commas in arrays and objects", () => {
+    const text = '[{"a": 1,}, {"b": 2,},]';
+    const result = safeJsonParse(text);
+    expect(Array.isArray(result)).toBe(true);
+    expect(result[0].a).toBe(1);
+    expect(result[1].b).toBe(2);
+  });
+
+  it("does NOT corrupt strings that contain comment-like sequences", () => {
+    const text = '{"description": "see /* important */ docs", "url": "https://foo/bar"}';
+    const result = safeJsonParse(text);
+    expect(result.description).toBe("see /* important */ docs");
+    expect(result.url).toBe("https://foo/bar");
+  });
+
+  it("extracts a top-level JSON array even with preamble text", () => {
+    const text = 'Here is the result:\n[{"a": 1}, {"b": 2}]\nDone.';
+    const result = safeJsonParse(text);
+    expect(Array.isArray(result)).toBe(true);
+    expect(result).toHaveLength(2);
+  });
 });

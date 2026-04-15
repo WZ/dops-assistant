@@ -88,7 +88,13 @@ Return a JSON array. Each object must have:
     5. Use {} if no label info is available. A wrong label is worse than none —
        the logs agent will query with it and get empty results.
 
-Be thorough — discover ALL services. Return valid JSON.${excludeList}`,
+Be thorough — discover ALL services. Return valid JSON.
+
+OUTPUT STRICTNESS: Return PURE JSON only. Do NOT include JavaScript-style
+comments (// or /* */), trailing commas, or section headers inside the array.
+If you want to group services conceptually, use an extra field like
+"category": "deployment" | "statefulset" | "daemonset" | "container" on
+the service object itself — do not use inline comments as dividers.${excludeList}`,
     model: config.model as any,
     tools: config.tools ?? {},
     defaultOptions: {
