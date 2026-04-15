@@ -63,6 +63,8 @@ npx tsc --noEmit         # Type check
 | Provider tool management | `src/web/components/providers/ProviderToolList.tsx` — per-tool toggles, read/write badges |
 | Evidence timeline | `src/web/components/EvidenceTimeline.tsx` — Metrics/Timeline tabbed evidence view |
 | Smart metric extraction | `src/server/metric-extraction.ts` — backfill charts from text observations via Prometheus |
+| Shared PromQL parser | `src/lib/prom-metric.ts` — `extractMetricExpression()`, imported by both server metric extraction and the web MetricsPanel empty-card titles |
+| Investigation export helpers | `src/web/lib/exportInvestigation.ts` — `downloadPng` (html-to-image + font preload), `downloadMarkdown`, `copyMarkdown` |
 | RCA eval harness | `src/eval/rca-eval.ts` — scores RCA reports on 5 quality dimensions, baselines in `src/eval/baselines/` |
 | LLM quirk workarounds | `src/agents/shared/prepare-step.ts` (`prepareStep` hook) |
 | Shared types | `src/types/` — RCA report, agent interfaces, LLM types, WebSocket protocol |
@@ -75,7 +77,7 @@ npx tsc --noEmit         # Type check
 - **Run all**: `npx vitest run`
 - **Run one**: `npx vitest run src/agents/chat.test.ts`
 - **Watch mode**: `npx vitest` (alias: `npm run test:watch`)
-- **59 test files** across agents, CLI commands, server, workflows, config, eval, and web components
+- **73 test files** across agents, CLI commands, server, workflows, config, eval, and web components
 
 ## Dev Setup
 
