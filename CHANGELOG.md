@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.5] - 2026-04-15
+
+### Added
+- Dependency-aware investigation: when a Coroot provider is configured with the `dependencies` role, every investigation now discovers 1-hop service neighbors (upstream callers and downstream callees) for the target service, fetches real metrics and logs for the top 3 unhealthy ones, and cites the evidence in the RCA report. Operators stop at the RCA instead of context-switching to Coroot's Service Map to finish the investigation manually.
+- New "Dependency Context" section in the RCA report UI. Each neighbor shows a status dot, a linked service name pointing at `/services/{name}` so one click opens a focused investigation on the neighbor, an optional request rate, and an inline summary of any metric or log evidence that was pulled for it. Neighbors sort by severity so unhealthy ones appear first.
+- Synthesis now receives a "Dependency Evidence" section in its LLM prompt when prefetch has gathered neighbor data, wrapped in the standard untrusted-data boundary. The synthesis agent is instructed to cite neighbor evidence in `rootCause`, `contributingFactors`, or `timeline` when it supports a hypothesis.
+- Evidence flows deterministically: after the synthesis LLM call, host code appends each neighbor's metric and log samples to `evidence.metrics` / `evidence.logs` as `[neighbor:X]` formatted strings, so the report is trustworthy regardless of whether the LLM remembered to cite it.
+
+### Changed
+- `PrefetchedContextSchema` carries a new `neighbors` field that flows through every downstream workflow step via the same pass-through pattern the existing `timeRange` field uses (no mutable config state, no new schema-threading infrastructure).
+- Evidence step factories (metrics, logs, infra, changes) now propagate the neighbor list from `prefetchContext` into their own output, alongside the existing `timeRange` pass-through. Synthesis reads via a fallback chain and the first populated step wins.
+- Prefetch step runs three tracks in parallel: existing datasource/dashboard/log prefetch, Coroot neighbor discovery, and per-neighbor PromQL + LogQL evidence for the top 3 unhealthy neighbors bounded by `selectNeighborsForEvidenceFetch` (severity rank, then request-rate tiebreak, then hard cap at 3).
+- `fetchDependenciesFromCoroot` in Service Brief remains unchanged; the new investigation path uses a self-contained `src/server/coroot.ts` module with its own registry cache and MCP utilities, chosen deliberately to avoid touching the working Service Brief code path.
+
+### Fixed
+- LogQL selectors built for neighbor log queries now escape `"` and `\` in neighbor names and service label values, validate label keys against `[a-zA-Z_][a-zA-Z0-9_]*`, and refuse to emit unbounded `{}` queries when every label is rejected.
+- Identity-resolution mismatch between `inServiceRegistry` flagging and evidence fetch lookup: neighbors matched via `corootAppId` alias now have `name` rewritten to the canonical `services[*].name` so downstream fetches find the right ServiceConfig.
+- `RcaReport.tsx` no longer mutates the `neighbors` prop when sorting by severity.
+- Coroot IDs that collapse to an empty short name (e.g. `":"`, `"::"`) are now rejected in `fetchCorootNeighbors` rather than flowing through as empty-string neighbors.
+- The `[neighbor:X]` tag in synthesis's deterministic evidence injection now sanitizes the neighbor name (strips anything outside `[a-zA-Z0-9._-]`, caps at 64 chars) so attacker-chosen names cannot poison the eval prefix match or corrupt the rendered RCA.
+
 ## [0.1.4] - 2026-04-15
 
 ### Added
