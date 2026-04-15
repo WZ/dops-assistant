@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dops-assistant.configMapName" . }}
+  labels:
+    {{- include "dops-assistant.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+{{ toYaml .Values.config | indent 4 }}
+  # Rendered into /app/data/default/providers.yaml by the init container.
+  # Lets deployments declare MCP providers in Helm values rather than relying
+  # on a PVC to persist runtime-added ones. Safe to leave as [] if providers
+  # are only configured via the GUI and persistence is enabled.
+  providers.yaml: |
+{{ toYaml .Values.providers | indent 4 }}
