@@ -18,6 +18,9 @@
 import { randomUUID } from "node:crypto";
 import type { ServiceConfig, DiscoveryConfig } from "../config/schema.js";
 import type { RcaReport } from "../types/rca-types.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("mastra-chat");
 import type { IDiscoverAgent, OnToolCallEnriched, OnIteration } from "../types/agent-interfaces.js";
 import type { InvestigationTemplate } from "../config/schema.js";
 import type { ChatRequest, ChatResponse, ImageAttachment } from "../types/agent-types.js";
@@ -226,7 +229,7 @@ export class MastraChatAgentAdapter {
         }
       } catch { /* usage not available — ignore */ }
     } catch (err) {
-      console.error("[MASTRA_CHAT] stream error:", err);
+      logger.warn({ err: err instanceof Error ? err.message : String(err) }, "stream error");
       if (!responseText) {
         try {
           const result = await mastraAgent.generate(prompt);

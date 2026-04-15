@@ -11,13 +11,13 @@
  * Follows the health-monitor.ts pattern: timer + cached results + start/stop.
  */
 
-import pino from "pino";
+import { createLogger } from "../logger.js";
 import type { MastraProvider } from "../mcp/provider.js";
 import type { ServiceRegistryStore } from "../services/registry.js";
 import type { Database } from "./db.js";
 import { getToolsByRole } from "../mcp/provider.js";
 
-const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
+const logger = createLogger();
 
 export type HealthStatus = "healthy" | "degraded" | "down" | "unknown";
 

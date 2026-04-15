@@ -12,7 +12,7 @@
  */
 
 import { ulid } from "ulid";
-import pino from "pino";
+import { createLogger } from "../logger.js";
 import type { Database } from "./db.js";
 import type { IInvestigationAgent } from "../types/agent-interfaces.js";
 import type { RcaReport } from "../types/rca-types.js";
@@ -21,7 +21,7 @@ import type { SkillStore } from "../skills/store.js";
 import type { PhaseStats, ServerMessage } from "../types/ws-types.js";
 
 
-const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
+const logger = createLogger();
 
 // ── Callback interface ──────────────────────────────────────────────────────
 

@@ -1,9 +1,9 @@
 import { readdir, readFile, writeFile, unlink, mkdir } from "node:fs/promises";
 import { join, basename, extname } from "node:path";
 import matter from "gray-matter";
-import pino from "pino";
+import { createLogger } from "../logger.js";
 
-const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
+const logger = createLogger();
 
 // ── Types ───────────────────────────────────────────────────────────────────
 

@@ -1,8 +1,8 @@
-import pino from "pino";
+import { createLogger } from "../logger.js";
 import type { MastraProvider } from "../mcp/provider.js";
 import { queryServiceMetrics, type MetricSeries } from "./prometheus-query.js";
 
-const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
+const logger = createLogger();
 
 export interface MetricHints {
   keywords: string[];

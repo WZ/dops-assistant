@@ -1,10 +1,10 @@
 import { generateText, type LanguageModel } from "ai";
 import type { ServiceConfig } from "../config/schema.js";
 import type { InvestigationIntent } from "../types/rca-types.js";
-import pino from "pino";
+import { createLogger } from "../logger.js";
 import { wrapUntrusted } from "./shared/prompt-helpers.js";
 
-const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" });
+const logger = createLogger();
 
 // ── Intent classifier prompt ────────────────────────────────────────────────
 
