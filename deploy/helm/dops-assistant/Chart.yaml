@@ -1,0 +1,19 @@
+apiVersion: v2
+name: dops-assistant
+description: Agentic infrastructure monitoring assistant with MCP-backed observability
+type: application
+version: 0.1.2
+appVersion: "0.1.0"
+kubeVersion: ">=1.25.0-0"
+home: https://github.com/WZ/dops-assistant
+sources:
+  - https://github.com/WZ/dops-assistant
+keywords:
+  - observability
+  - monitoring
+  - mcp
+  - grafana
+  - ai
+  - agent
+maintainers:
+  - name: dops-assistant

@@ -1,0 +1,186 @@
+# Default values for dops-assistant.
+# Override with `helm install ... -f my-values.yaml` or `--set` flags.
+
+# -- Container image. repository is a placeholder; set this to your registry.
+image:
+  repository: dops-assistant
+  # tag defaults to .Chart.AppVersion when empty.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# dops-assistant keeps state in a local SQLite file, so replicaCount MUST stay at 1
+# and the rollout strategy must be Recreate. The chart does not support HA.
+replicaCount: 1
+strategy:
+  type: Recreate
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+
+# Example for running as non-root with the `node` user baked into node:22-alpine:
+#   podSecurityContext:
+#     fsGroup: 1000
+#   securityContext:
+#     runAsUser: 1000
+#     runAsNonRoot: true
+podSecurityContext: {}
+securityContext: {}
+
+# Pod-level /etc/hosts entries. Use when the LLM endpoint or an MCP server
+# is reachable only by IP and the cluster DNS can't resolve the hostname.
+# Format matches Kubernetes PodSpec.hostAliases.
+hostAliases: []
+# - ip: 10.0.0.42
+#   hostnames:
+#     - llm.internal.example
+
+service:
+  type: ClusterIP
+  httpPort: 3000
+  metricsPort: 9090
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  # - kubernetes.io/ingress.class: nginx
+  # - cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: dops.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  # - secretName: dops-tls
+  #   hosts:
+  #     - dops.example.com
+
+persistence:
+  enabled: true
+  # Mount path inside the container. This holds dops.sqlite, services.yaml,
+  # providers.yaml, memory.db, data/{slug}/*, plus the rendered config.yaml.
+  mountPath: /app/data
+  size: 2Gi
+  # Leave empty to use the cluster default StorageClass.
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  annotations: {}
+  # If set, chart will use this PVC instead of creating one.
+  existingClaim: ""
+
+resources: {}
+# Example:
+#   resources:
+#     requests:
+#       cpu: 250m
+#       memory: 512Mi
+#     limits:
+#       cpu: 2000m
+#       memory: 2Gi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+probes:
+  liveness:
+    path: /api/health
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    path: /api/health
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+# Extra non-secret env vars (array of {name, value} objects).
+env: []
+# - name: LOG_LEVEL
+#   value: info
+
+# ---------------------------------------------------------------------------
+# Secrets
+# ---------------------------------------------------------------------------
+# Chart creates an Opaque Secret unless `existingSecret` is set. Keys in
+# `secrets.data` are exposed to the pod via envFrom, so config.yaml can
+# reference them with ${VAR} substitution.
+secrets:
+  create: true
+  existingSecret: ""
+  annotations: {}
+  # stringData — keys become env vars.
+  data:
+    OPENAI_API_KEY: ""
+    OPENAI_API_URL: "https://api.openai.com/v1"
+    OPENAI_API_MODEL: "gpt-4o-mini"
+    # Optional — only needed if you use a Grafana MCP provider
+    # GRAFANA_URL: ""
+    # GRAFANA_SERVICE_ACCOUNT_TOKEN: ""
+
+# ---------------------------------------------------------------------------
+# config.yaml (rendered into a ConfigMap, mirrors src/config/schema.ts)
+# ---------------------------------------------------------------------------
+# This block is written verbatim into a ConfigMap key named `config.yaml`.
+# The init container copies it onto the PVC at startup so services.yaml
+# (which the loader expects as a sibling of config.yaml) is writable.
+#
+# `${VAR}` and `${VAR:-default}` are resolved at runtime from env vars
+# supplied via `secrets.data` or `env` (see src/config/loader.ts).
+config:
+  llm:
+    apiKey: ${OPENAI_API_KEY}
+    baseURL: ${OPENAI_API_URL:-https://api.openai.com/v1}
+    model: ${OPENAI_API_MODEL:-gpt-4o-mini}
+
+  # MCP providers — each one backs a role (metrics, logs, dashboards, ...).
+  # See README for examples.
+  providers: []
+  # - name: grafana
+  #   roles: [metrics, logs, dashboards]
+  #   mcpServer:
+  #     transport: http
+  #     url: http://grafana-mcp.default.svc.cluster.local:8000/mcp
+
+  # Static service catalog. Discovery can also populate services.yaml on the PVC.
+  services: []
+
+  # Keep memory.db on the PVC so it persists across restarts.
+  memory:
+    storage: libsql
+    dbPath: /app/data/memory.db
+
+  observability:
+    port: 9090
+    logLevel: info
+
+# ---------------------------------------------------------------------------
+# providers.yaml (rendered into the same ConfigMap as config.yaml)
+# ---------------------------------------------------------------------------
+# An array of MCP provider configs matching ProviderSchema in
+# src/config/schema.ts. The init container stages this into
+# /app/data/default/providers.yaml on every pod start, so Helm-declared
+# providers survive pod restarts even when persistence is disabled.
+#
+# Format is a flat array — do NOT wrap in a `providers:` key. If you're
+# adding providers via the GUI instead, leave this as [] and turn on
+# persistence so providers.yaml survives on a PVC.
+providers: []
+# - name: grafana
+#   roles: [metrics, logs, dashboards]
+#   mcpServer:
+#     transport: http
+#     url: http://grafana-mcp.default.svc.cluster.local:8000/mcp
