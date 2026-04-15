@@ -99,7 +99,9 @@ export function extractSloRates(
 ): Map<string, { reqs?: string; latency?: string }> {
   const rates = new Map<string, { reqs?: string; latency?: string }>();
   if (!Array.isArray(reports)) return rates;
-  const sloReport = reports.find((r: unknown) => (r as { name?: string }).name === "SLO");
+  const sloReport = reports.find(
+    (r: unknown) => r != null && typeof r === "object" && (r as { name?: string }).name === "SLO",
+  );
   if (!sloReport) return rates;
   const widgets = (sloReport as { widgets?: unknown[] }).widgets;
   if (!Array.isArray(widgets)) return rates;
@@ -243,7 +245,8 @@ export async function fetchCorootNeighbors(
   const tools = (await getToolsByRole(providers, "dependencies")) as Record<string, unknown>;
   if (Object.keys(tools).length === 0) return null;
 
-  const appTool = findTool(tools, ["get_application", "application"]);
+  // Exact keyword — "application" alone would also match applications_overview.
+  const appTool = findTool(tools, ["get_application"]);
   if (!appTool) return null;
 
   const registry = await ensureCorootRegistry(tools);

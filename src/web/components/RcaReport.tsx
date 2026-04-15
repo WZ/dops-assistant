@@ -2,6 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { type ReactNode } from "react";
 import { FileText } from "lucide-react";
 import { renderInline } from "../lib/renderInline";
+import type { Neighbor } from "../../types/workflow-state";
 
 interface RcaReportData {
   rootCause: string;
@@ -17,6 +18,7 @@ interface RcaReportData {
   dashboardLinks: string[];
   skillsUsed?: string[];
   timeRange?: { from: string; to: string };
+  neighbors?: Neighbor[];
 }
 
 /** Format a time range as human-readable local time. */
@@ -56,6 +58,26 @@ function severityColor(severity: string): string {
     case "medium": return "info";
     case "low": return "secondary";
     default: return "outline";
+  }
+}
+
+function neighborStatusColor(status: Neighbor["status"]): string {
+  switch (status) {
+    case "unhealthy": return "text-destructive";
+    case "degraded": return "text-warning";
+    case "unknown": return "text-muted-foreground";
+    case "healthy": return "text-primary/60";
+    default: return "text-muted-foreground";
+  }
+}
+
+function neighborStatusDot(status: Neighbor["status"]): string {
+  switch (status) {
+    case "unhealthy": return "bg-destructive";
+    case "degraded": return "bg-warning";
+    case "unknown": return "bg-muted-foreground";
+    case "healthy": return "bg-primary/60";
+    default: return "bg-muted";
   }
 }
 
@@ -200,6 +222,94 @@ export function RcaReport({ report, hideOldDashboardLinks }: { report: RcaReport
                 </li>
               ))}
             </ol>
+          </Section>
+        )}
+
+        {/* Dependency Context (Coroot neighbors + pre-fetched evidence) */}
+        {report.neighbors && report.neighbors.length > 0 && (
+          <Section label="Dependency Context" count={report.neighbors.length}>
+            <div className="space-y-3 ml-1">
+              {report.neighbors
+                .sort((a, b) => {
+                  // Sort by severity first (unhealthy → degraded → unknown → healthy)
+                  const order = { unhealthy: 0, degraded: 1, unknown: 2, healthy: 3 };
+                  return order[a.status] - order[b.status];
+                })
+                .map((n, i) => {
+                  const hasEvidence =
+                    n.evidence &&
+                    (n.evidence.metrics.length > 0 ||
+                      n.evidence.logs.length > 0 ||
+                      n.evidence.fetchErrors.length > 0);
+                  return (
+                    <div
+                      key={n.name}
+                      className="border border-border/30 rounded-md p-2.5 bg-card/30 animate-fade-up"
+                      style={{ animationDelay: `${i * 0.04}s` }}
+                    >
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className={`inline-block w-1.5 h-1.5 rounded-full ${neighborStatusDot(n.status)} shrink-0`} />
+                          <a
+                            href={`/services/${encodeURIComponent(n.name)}`}
+                            className="text-xs font-mono text-primary hover:text-primary/80 underline underline-offset-2 decoration-primary/30 hover:decoration-primary/60 truncate"
+                          >
+                            {n.name}
+                          </a>
+                          <span className="text-[10px] font-mono text-muted-foreground">
+                            {n.directions.join("+")}
+                          </span>
+                        </div>
+                        <span className={`text-[10px] font-mono uppercase tracking-[0.1em] ${neighborStatusColor(n.status)} shrink-0`}>
+                          {n.status}
+                          {n.requestRate !== undefined && <span className="text-muted-foreground ml-1">({n.requestRate} req/s)</span>}
+                        </span>
+                      </div>
+                      {!n.inServiceRegistry && (
+                        <div className="text-[10px] font-mono text-muted-foreground italic mt-0.5 ml-3.5">
+                          not in service registry — no query templates
+                        </div>
+                      )}
+                      {hasEvidence && (
+                        <div className="mt-1.5 ml-3.5 space-y-1">
+                          {n.evidence!.metrics.slice(0, 3).map((m, j) => (
+                            <div key={`m${j}`} className="text-[10px] font-mono text-foreground/70 leading-tight">
+                              <span className="text-primary/60">metric:</span>{" "}
+                              {m.error ? (
+                                <span className="text-destructive/70">ERROR: {m.error}</span>
+                              ) : (
+                                <>
+                                  <code className="text-foreground/60">{m.query.slice(0, 80)}</code>
+                                  {m.values.length > 0 && (
+                                    <span className="text-foreground/50 ml-1">
+                                      → {m.values.slice(-1)[0]?.[1]}
+                                    </span>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          ))}
+                          {n.evidence!.logs.slice(0, 2).map((l, j) => (
+                            <div key={`l${j}`} className="text-[10px] font-mono text-foreground/70 leading-tight">
+                              <span className="text-primary/60">logs:</span>{" "}
+                              {l.error ? (
+                                <span className="text-destructive/70">ERROR: {l.error}</span>
+                              ) : (
+                                <span className="text-foreground/60">{l.count} matches, {l.lines.length} shown</span>
+                              )}
+                            </div>
+                          ))}
+                          {n.evidence!.fetchErrors.length > 0 && (
+                            <div className="text-[10px] font-mono text-warning/80 leading-tight">
+                              {n.evidence!.fetchErrors[0]}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+            </div>
           </Section>
         )}
 
