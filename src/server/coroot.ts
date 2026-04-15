@@ -302,14 +302,25 @@ export async function fetchCorootNeighbors(
     direction: "upstream" | "downstream",
   ): void => {
     if (!corootId) return;
-    const name = extractServiceName(corootId);
-    if (name === serviceName) return; // don't include self in neighbor list
+    const shortName = extractServiceName(corootId);
+    // Defensive: Coroot IDs like ":", "::", or "default::" can produce empty
+    // short names, which would end up as href="/services/" and service="" in
+    // LogQL. Reject them. (Claude adversarial finding.)
+    if (!shortName || shortName.trim() === "") return;
+    // Resolve identity: direct-match on service.name first, then reverse-lookup by
+    // corootAppId alias. When matched via corootAppId, rewrite `name` to the
+    // registry's canonical name so downstream evidence fetch (which only looks up
+    // services by name) finds the right ServiceConfig. This keeps inServiceRegistry
+    // and the fetch path in agreement. (Codex F3 fix.)
+    const aliasMatch = services.find((s) => s.corootAppId === corootId);
+    const directMatch = services.find((s) => s.name === shortName);
+    const canonicalName = aliasMatch?.name ?? directMatch?.name ?? shortName;
+    const inServiceRegistry = aliasMatch !== undefined || directMatch !== undefined;
+    if (canonicalName === serviceName) return; // don't include self in neighbor list
     const status = mapCorootStatus(corootStatus);
-    const inServiceRegistry = services.some(
-      (s) => s.name === name || s.corootAppId === corootId,
-    );
-    const rateEntry = sloRates.get(name);
+    const rateEntry = sloRates.get(shortName) ?? sloRates.get(canonicalName);
     const requestRate = rateEntry?.reqs;
+    const name = canonicalName;
 
     const existing = byName.get(name);
     if (!existing) {

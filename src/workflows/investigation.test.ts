@@ -388,4 +388,161 @@ describe("synthesis step degradation and defaults", () => {
     expect(retryResult.severity).toBe("critical");
     expect(retryResult.confidenceScore).toBe(0.95);
   });
+
+  // ── F-Eng-4: deterministic neighbor evidence injection ──────────────────────
+  //
+  // The synthesis step MUST append pre-fetched neighbor evidence to
+  // `evidence.metrics` / `evidence.logs` AFTER the LLM call, regardless of
+  // whether the LLM itself cited the evidence. This is the entire point of
+  // Option 3 — the deterministic story does not depend on LLM compliance.
+
+  it("synthesis step deterministically injects neighbor evidence into evidence.metrics/logs", async () => {
+    const { createSynthesisAgent } = await import("../agents/synthesis.js");
+    // LLM returns a valid JSON with EMPTY evidence arrays — simulating an LLM that
+    // ignored the Dependency Evidence section in the prompt. The deterministic
+    // injection in synthesis.ts MUST still populate the arrays.
+    vi.mocked(createSynthesisAgent).mockReturnValue({
+      generate: vi.fn().mockResolvedValue({
+        text: JSON.stringify({
+          severity: "high",
+          summary: "Ingestion server rate drop",
+          rootCause: "Kafka broker issue (unverified)",
+          trigger: "Unknown",
+          confidence: "medium",
+          confidenceScore: 0.6,
+          evidence: { metrics: [], logs: [], infra: [] },
+        }),
+      }),
+    } as any);
+
+    const neighbors = [
+      {
+        name: "kafka-broker-0",
+        directions: ["downstream"] as ("upstream" | "downstream")[],
+        status: "unhealthy" as const,
+        inServiceRegistry: true,
+        requestRate: "25",
+        evidence: {
+          metrics: [
+            {
+              query: 'up{service="kafka-broker-0"}',
+              values: [
+                ["1714060800", "0"] as [string, string],
+                ["1714060815", "0"] as [string, string],
+              ],
+            },
+            {
+              query: 'rate(http_requests_total{service="kafka-broker-0"}[5m])',
+              values: [["1714060800", "0"] as [string, string]],
+            },
+          ],
+          logs: [
+            {
+              query: '{service="kafka-broker-0"} |~ "(?i)(error)"',
+              lines: [
+                "2026-04-15T10:00:00Z broker shutdown",
+                "2026-04-15T10:00:05Z connection refused",
+              ],
+              count: 42,
+            },
+          ],
+          fetchedAt: "2026-04-15T10:00:00Z",
+          fetchErrors: [],
+        },
+      },
+      {
+        name: "web-frontend",
+        directions: ["upstream"] as ("upstream" | "downstream")[],
+        status: "healthy" as const, // healthy neighbors with no evidence should not appear
+        inServiceRegistry: true,
+      },
+    ];
+
+    // Inject neighbors via the metrics-evidence fallback (same path synthesis reads)
+    const inputDataWithNeighbors = {
+      ...evidenceInputData,
+      "metrics-evidence": {
+        ...evidenceInputData["metrics-evidence"],
+        neighbors,
+      },
+    };
+
+    const step = buildSynthesisStep({ model: fakeModel, providers: [], services: [] });
+    const result = (await step.execute(makeStepCtx(inputDataWithNeighbors))) as any;
+
+    // F-Eng-4: neighbor metric samples must appear in evidence.metrics with [neighbor:X] prefix
+    expect(result.evidence.metrics.length).toBe(2);
+    expect(result.evidence.metrics[0]).toContain("[neighbor:kafka-broker-0]");
+    expect(result.evidence.metrics[0]).toContain('up{service="kafka-broker-0"}');
+    expect(result.evidence.metrics[0]).toContain("0@1714060800");
+    expect(result.evidence.metrics[1]).toContain("[neighbor:kafka-broker-0]");
+    expect(result.evidence.metrics[1]).toContain("rate(http_requests_total");
+
+    // Neighbor log samples must appear in evidence.logs
+    expect(result.evidence.logs.length).toBe(1);
+    expect(result.evidence.logs[0]).toContain("[neighbor:kafka-broker-0]");
+    expect(result.evidence.logs[0]).toContain("42 matches");
+    expect(result.evidence.logs[0]).toContain("broker shutdown");
+
+    // Healthy neighbor (web-frontend) with no evidence field must NOT be injected
+    expect(result.evidence.metrics.some((m: string) => m.includes("web-frontend"))).toBe(false);
+    expect(result.evidence.logs.some((l: string) => l.includes("web-frontend"))).toBe(false);
+
+    // The synthesis output schema carries neighbors through
+    expect(result.neighbors).toBeDefined();
+    expect(result.neighbors.length).toBe(2);
+  });
+
+  it("synthesis step renders fetchErrors from neighbor evidence", async () => {
+    const { createSynthesisAgent } = await import("../agents/synthesis.js");
+    vi.mocked(createSynthesisAgent).mockReturnValue({
+      generate: vi.fn().mockResolvedValue({
+        text: JSON.stringify({
+          severity: "medium",
+          summary: "Investigation complete",
+          rootCause: "Unknown",
+          trigger: "Unknown",
+          confidence: "low",
+          confidenceScore: 0.3,
+          evidence: { metrics: [], logs: [], infra: [] },
+        }),
+      }),
+    } as any);
+
+    const neighbors = [
+      {
+        name: "broken-neighbor",
+        directions: ["downstream"] as ("upstream" | "downstream")[],
+        status: "unhealthy" as const,
+        inServiceRegistry: true,
+        evidence: {
+          metrics: [
+            { query: "up", values: [], error: "timeout" },
+          ],
+          logs: [
+            { query: '{service="broken-neighbor"}', lines: [], count: 0, error: "tool unavailable" },
+          ],
+          fetchedAt: "2026-04-15T10:00:00Z",
+          fetchErrors: ["metrics: timeout"],
+        },
+      },
+    ];
+
+    const inputDataWithNeighbors = {
+      ...evidenceInputData,
+      "metrics-evidence": {
+        ...evidenceInputData["metrics-evidence"],
+        neighbors,
+      },
+    };
+
+    const step = buildSynthesisStep({ model: fakeModel, providers: [], services: [] });
+    const result = (await step.execute(makeStepCtx(inputDataWithNeighbors))) as any;
+
+    // Errors are surfaced in the injected evidence strings, not suppressed
+    expect(result.evidence.metrics[0]).toContain("[neighbor:broken-neighbor]");
+    expect(result.evidence.metrics[0]).toContain("ERROR: timeout");
+    expect(result.evidence.logs[0]).toContain("[neighbor:broken-neighbor]");
+    expect(result.evidence.logs[0]).toContain("ERROR: tool unavailable");
+  });
 });

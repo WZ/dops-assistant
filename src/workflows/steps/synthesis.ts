@@ -115,7 +115,7 @@ export function buildSynthesisStep(config: WorkflowConfig) {
             n.evidence.fetchErrors.length > 0),
       );
       if (neighborsWithEvidence.length > 0) {
-        const depLines: string[] = ["\n## Dependency Evidence (pre-fetched from Coroot + Prometheus/Loki)\n"];
+        const depLines: string[] = [];
         for (const n of neighborsWithEvidence) {
           const dir = n.directions.join("+");
           depLines.push(`### ${n.name} (${dir}, status=${n.status})`);
@@ -146,10 +146,14 @@ export function buildSynthesisStep(config: WorkflowConfig) {
           }
           depLines.push("");
         }
-        depLines.push(
-          "These neighbors are upstream callers or downstream callees of the primary service, reported by Coroot's eBPF-based service map. If any neighbor's evidence supports a root-cause hypothesis, cite it explicitly in rootCause, contributingFactors, or timeline. Neighbors with unhealthy status whose evidence shows anomalies are strong candidates for the root cause.",
+        // Neighbor data originates from Coroot via MCP — treat as untrusted external
+        // data, consistent with how other evidence findings are wrapped above.
+        promptParts.push(
+          `\n## Dependency Evidence (pre-fetched from Coroot + Prometheus/Loki)\n${wrapUntrusted(
+            "dependency_evidence",
+            depLines.join("\n"),
+          )}\n\nThese neighbors are upstream callers or downstream callees of the primary service, reported by Coroot's eBPF-based service map. If any neighbor's evidence supports a root-cause hypothesis, cite it explicitly in rootCause, contributingFactors, or timeline. Neighbors with unhealthy status whose evidence shows anomalies are strong candidates for the root cause.`,
         );
-        promptParts.push(depLines.join("\n"));
       }
 
       // Evidence quality feedback — tell synthesis what's thin
@@ -261,22 +265,32 @@ export function buildSynthesisStep(config: WorkflowConfig) {
       // matches [neighbor:X] substrings here. This MUST run regardless of whether
       // the LLM remembered to cite neighbor data — the deterministic story depends
       // on host code, not prompt compliance.
+      //
+      // Sanitize the neighbor name before it goes into the [neighbor:X] tag: strip
+      // whitespace, brackets, and control characters so an attacker-chosen name
+      // cannot poison the eval prefix match or corrupt the UI render. The safe
+      // charset mirrors typical service-registry names (DNS-1123-ish).
+      const sanitizeNeighborTag = (name: string): string => {
+        const cleaned = name.replace(/[^a-zA-Z0-9._-]/g, "_");
+        return cleaned.slice(0, 64) || "unknown";
+      };
       for (const n of neighbors) {
         if (!n.evidence) continue;
+        const tag = sanitizeNeighborTag(n.name);
         for (const m of n.evidence.metrics) {
           if (m.error) {
-            evidence.metrics.push(`[neighbor:${n.name}] ${m.query} → ERROR: ${m.error}`);
+            evidence.metrics.push(`[neighbor:${tag}] ${m.query} → ERROR: ${m.error}`);
             continue;
           }
           const sample = m.values
             .slice(0, 3)
             .map(([t, v]) => `${v}@${t}`)
             .join(", ");
-          evidence.metrics.push(`[neighbor:${n.name}] ${m.query} → ${sample || "(empty)"}`);
+          evidence.metrics.push(`[neighbor:${tag}] ${m.query} → ${sample || "(empty)"}`);
         }
         for (const l of n.evidence.logs) {
           if (l.error) {
-            evidence.logs.push(`[neighbor:${n.name}] ${l.query} → ERROR: ${l.error}`);
+            evidence.logs.push(`[neighbor:${tag}] ${l.query} → ERROR: ${l.error}`);
             continue;
           }
           const firstLines = l.lines
@@ -284,7 +298,7 @@ export function buildSynthesisStep(config: WorkflowConfig) {
             .map((x) => x.slice(0, 200))
             .join(" | ");
           evidence.logs.push(
-            `[neighbor:${n.name}] ${l.query} (${l.count} matches): ${firstLines || "(empty)"}`,
+            `[neighbor:${tag}] ${l.query} (${l.count} matches): ${firstLines || "(empty)"}`,
           );
         }
       }

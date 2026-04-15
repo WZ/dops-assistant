@@ -1,6 +1,23 @@
-import { describe, it, expect } from "vitest";
-import { selectNeighborsForEvidenceFetch } from "./neighbor-evidence.js";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { selectNeighborsForEvidenceFetch, fetchNeighborEvidence } from "./neighbor-evidence.js";
 import type { Neighbor } from "../types/workflow-state.js";
+
+// Mock the role-based tool loader so we never touch real providers.
+vi.mock("../mcp/provider.js", async (orig) => {
+  const actual = await (orig as any)();
+  return {
+    ...actual,
+    getToolsByRole: vi.fn(),
+  };
+});
+// Mock queryServiceMetrics so we don't drag in the whole prometheus-query code path.
+vi.mock("./prometheus-query.js", () => ({
+  queryServiceMetrics: vi.fn(),
+}));
+import { getToolsByRole } from "../mcp/provider.js";
+import { queryServiceMetrics } from "./prometheus-query.js";
+const mockGetToolsByRole = getToolsByRole as unknown as ReturnType<typeof vi.fn>;
+const mockQueryServiceMetrics = queryServiceMetrics as unknown as ReturnType<typeof vi.fn>;
 
 function mkNeighbor(
   name: string,
@@ -94,5 +111,82 @@ describe("selectNeighborsForEvidenceFetch", () => {
     ];
     const out = selectNeighborsForEvidenceFetch(input, { requireInRegistry: false });
     expect(out).toHaveLength(2);
+  });
+});
+
+describe("fetchNeighborEvidence (graceful fallbacks)", () => {
+  beforeEach(() => {
+    mockGetToolsByRole.mockReset();
+    mockQueryServiceMetrics.mockReset();
+  });
+
+  it("records fetchErrors when logs-role provider is missing", async () => {
+    // No metrics returned, no logs provider at all
+    mockQueryServiceMetrics.mockResolvedValue([]);
+    mockGetToolsByRole.mockImplementation(async (_providers: unknown, role: string) => {
+      if (role === "logs") return {};
+      return {};
+    });
+
+    const n: Neighbor = {
+      name: "kafka-broker-0",
+      directions: ["downstream"],
+      status: "unhealthy",
+      inServiceRegistry: true,
+    };
+    const result = await fetchNeighborEvidence(n, [], []);
+
+    expect(result.metrics).toEqual([]);
+    expect(result.logs).toEqual([]);
+    // Should have recorded both the empty-metrics soft error and the missing-logs-provider error
+    expect(result.fetchErrors.length).toBeGreaterThanOrEqual(1);
+    expect(result.fetchErrors.some((e) => e.includes("logs:"))).toBe(true);
+    expect(result.fetchedAt).toBeTruthy();
+  });
+
+  it("records fetchErrors when the metrics query throws", async () => {
+    mockQueryServiceMetrics.mockRejectedValue(new Error("MCP unreachable"));
+    mockGetToolsByRole.mockResolvedValue({});
+
+    const n: Neighbor = {
+      name: "redis-primary",
+      directions: ["downstream"],
+      status: "degraded",
+      inServiceRegistry: true,
+    };
+    const result = await fetchNeighborEvidence(n, [], []);
+
+    expect(result.fetchErrors.some((e) => e.includes("metrics:") && e.includes("MCP unreachable"))).toBe(true);
+    // Function does not throw — it returns a populated NeighborEvidence with errors.
+    expect(result.metrics).toEqual([]);
+  });
+
+  it("packages metric samples from queryServiceMetrics results", async () => {
+    mockQueryServiceMetrics.mockResolvedValue([
+      {
+        name: "Request Rate",
+        query: 'rate(http_requests_total{service="kafka-broker-0"}[5m])',
+        unit: "req/s",
+        current: 42,
+        values: [
+          ["1714060800", 42],
+          ["1714060815", 41],
+        ],
+        fetchedAt: Date.now(),
+      },
+    ]);
+    mockGetToolsByRole.mockResolvedValue({});
+
+    const n: Neighbor = {
+      name: "kafka-broker-0",
+      directions: ["downstream"],
+      status: "unhealthy",
+      inServiceRegistry: true,
+    };
+    const result = await fetchNeighborEvidence(n, [], []);
+
+    expect(result.metrics).toHaveLength(1);
+    expect(result.metrics[0]!.query).toContain("kafka-broker-0");
+    expect(result.metrics[0]!.values[0]).toEqual(["1714060800", "42"]);
   });
 });

@@ -240,11 +240,44 @@ export async function fetchNeighborEvidence(
         // Minimal LogQL: select by service label, grep for error-ish patterns, limit 10.
         // Labels may not match; empty result is not an error (just no logs for this
         // service in the time window).
-        const selector = serviceConfig?.logLabels
-          ? Object.entries(serviceConfig.logLabels as Record<string, string>)
-              .map(([k, v]) => `${k}="${v}"`)
-              .join(",")
-          : `service="${neighbor.name}"`;
+        //
+        // F4 fix: escape neighbor names and label values to prevent LogQL injection.
+        // LogQL uses double-quoted strings with Go's strconv.Quote rules — escape
+        // backslash and double quote. We also strictly reject any name/value that
+        // contains control characters or line breaks.
+        const isSafeLogqlValue = (v: string): boolean =>
+          !/[\u0000-\u001f\u007f]/.test(v);
+        const escapeLogqlValue = (v: string): string =>
+          v.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+        // Also validate label keys — LogQL label names are restricted to
+        // [a-zA-Z_][a-zA-Z0-9_]* and will be quietly dropped otherwise.
+        const isSafeLabelKey = (k: string): boolean => /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(k);
+
+        let selector: string;
+        if (serviceConfig?.logLabels) {
+          const parts: string[] = [];
+          for (const [k, v] of Object.entries(serviceConfig.logLabels as Record<string, string>)) {
+            if (!isSafeLabelKey(k) || typeof v !== "string" || !isSafeLogqlValue(v)) {
+              fetchErrors.push(`logs: dropped unsafe label ${k}`);
+              continue;
+            }
+            parts.push(`${k}="${escapeLogqlValue(v)}"`);
+          }
+          selector = parts.join(",");
+        } else {
+          if (!isSafeLogqlValue(neighbor.name)) {
+            fetchErrors.push(`logs: neighbor name contains unsafe characters`);
+            logs.push({ query: "", lines: [], count: 0, error: "unsafe neighbor name" });
+            throw new Error("unsafe neighbor name, skipping logs fetch");
+          }
+          selector = `service="${escapeLogqlValue(neighbor.name)}"`;
+        }
+        // If every label was rejected, bail out rather than issue a `{}` query
+        // (which would match all logs).
+        if (selector === "") {
+          logs.push({ query: "", lines: [], count: 0, error: "no safe labels" });
+          throw new Error("no safe log labels, skipping logs fetch");
+        }
         const logql = `{${selector}} |~ "(?i)(error|exception|fail)"`;
         const raw = await withTimeout(
           logTool.execute({

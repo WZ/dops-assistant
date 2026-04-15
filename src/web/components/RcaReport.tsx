@@ -229,9 +229,10 @@ export function RcaReport({ report, hideOldDashboardLinks }: { report: RcaReport
         {report.neighbors && report.neighbors.length > 0 && (
           <Section label="Dependency Context" count={report.neighbors.length}>
             <div className="space-y-3 ml-1">
-              {report.neighbors
+              {[...report.neighbors]
                 .sort((a, b) => {
-                  // Sort by severity first (unhealthy → degraded → unknown → healthy)
+                  // Sort by severity first (unhealthy → degraded → unknown → healthy).
+                  // Copy first — Array.sort mutates; we never mutate incoming props.
                   const order = { unhealthy: 0, degraded: 1, unknown: 2, healthy: 3 };
                   return order[a.status] - order[b.status];
                 })
