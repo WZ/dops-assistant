@@ -79,10 +79,24 @@ export function MetricsPanel({ timeSeries, textObservations, structuredObservati
     seenQueries.add(key);
     return true;
   });
-  const failedTexts = extractions.filter(e => !e.loading && e.series.length === 0).map(e => e.text);
+  // Split "empty after extraction" from network failures. If the extraction
+  // succeeded but returned zero series (Prometheus has no data for the metric,
+  // or the LLM wrote a metric name that doesn't exist), render an empty-chart
+  // placeholder card instead of demoting to a plain text fallback — keeps the
+  // visual layout consistent with real charts.
+  const emptyExtractions = extractions.filter(e => !e.loading && !e.failed && e.series.length === 0);
+  const networkFailed = extractions.filter(e => !e.loading && e.failed).map(e => e.text);
   const overflowTexts = textObservations.slice(MAX_EXTRACTIONS);
-  const remainingTexts = [...failedTexts, ...overflowTexts];
+  const remainingTexts = [...networkFailed, ...overflowTexts];
   const isExtracting = extractions.some(e => e.loading);
+
+  // Pull the metric expression back out of the observation text for the
+  // empty-card title (matches the server-side extractor).
+  const titleFromText = (text: string): string => {
+    const m = text.match(/^(?:sum|avg|max|min|count|rate|irate|increase|histogram_quantile)?\s*\(?\s*([a-zA-Z_:][a-zA-Z0-9_:]*)(\{[^}]*\})?/);
+    if (!m) return text.slice(0, 60);
+    return `${m[1]}${m[2] ?? ""}`;
+  };
 
   const hasStructured = (structuredObservations?.length ?? 0) > 0;
 
@@ -121,6 +135,35 @@ export function MetricsPanel({ timeSeries, textObservations, structuredObservati
         <div className="grid grid-cols-1 @[500px]:grid-cols-2 gap-2">
           {extractions.filter(e => e.loading).map((_, i) => (
             <Skeleton key={`shim-${i}`} className="h-[160px] rounded-lg" />
+          ))}
+        </div>
+      )}
+
+      {/* Empty-chart cards: extraction ran but Prometheus had no data. Keeps
+          the visual slot so the observation isn't hidden as a text fallback. */}
+      {emptyExtractions.length > 0 && (
+        <div className="grid grid-cols-1 @[500px]:grid-cols-2 gap-2">
+          {emptyExtractions.map((e, i) => (
+            <div
+              key={`empty-${i}`}
+              className="rounded-lg border border-border/25 bg-card/20 px-3.5 py-3 h-[160px] flex flex-col"
+              title={e.text}
+            >
+              <div className="flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/40" />
+                <span className="font-mono text-[11px] text-foreground/60 truncate">
+                  {titleFromText(e.text)}
+                </span>
+              </div>
+              <div className="flex-1 flex items-center justify-center">
+                <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/50">
+                  no data
+                </span>
+              </div>
+              <p className="font-mono text-[9px] text-muted-foreground/55 leading-relaxed line-clamp-2">
+                {e.text}
+              </p>
+            </div>
           ))}
         </div>
       )}

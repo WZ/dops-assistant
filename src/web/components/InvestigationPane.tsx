@@ -591,6 +591,7 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
                   timeSeries={timeSeries}
                   service={service}
                   providers={providers}
+                  timeRange={(report as any)?.timeRange}
                   phaseActions={(() => {
                     const rpt = report as any;
                     const tr = rpt?.timeRange;

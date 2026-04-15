@@ -19,12 +19,32 @@ const METRIC_KEYWORDS = [
 const TIME_PATTERN = /\b(\d{1,2}:\d{2})\b/g;
 const TIME_RANGE_PATTERN = /between\s+(\d{1,2}:\d{2})\s+and\s+(\d{1,2}:\d{2})/i;
 
+/** Match a Prometheus metric expression at the start of an observation string.
+ *  Handles: "metric_name", "metric_name{labels}", "sum(metric_name{...})".
+ *  Underscores are word chars in JS regex, so we match explicitly without \b. */
+const PROM_METRIC_RE = /^(?:sum|avg|max|min|count|rate|irate|increase|histogram_quantile)?\s*\(?\s*([a-zA-Z_:][a-zA-Z0-9_:]*)(\{[^}]*\})?/;
+
+/** Extract a concrete PromQL metric expression from an observation. Returns the
+ *  expression with its label selector if present, or just the metric name. Used
+ *  as the primary extraction path — the keyword-based path below is a fallback. */
+export function extractMetricExpression(text: string): string | undefined {
+  const m = text.match(PROM_METRIC_RE);
+  if (!m) return undefined;
+  const metricName = m[1];
+  const selector = m[2] ?? "";
+  // Reject common English words that happen to match the pattern.
+  // Must contain an underscore or colon to be a real Prometheus metric name,
+  // OR be followed by a label selector.
+  if (!selector && !/[_:]/.test(metricName!)) return undefined;
+  return `${metricName}${selector}`;
+}
+
 export function parseMetricHints(text: string): MetricHints {
   const lower = text.toLowerCase();
-  const keywords = METRIC_KEYWORDS.filter(kw => {
-    // Use word-boundary match to avoid false positives (e.g. "restarted" matching "restart")
-    return new RegExp(`\\b${kw}\\b`, "i").test(lower);
-  });
+  // Match keywords as substrings (word-boundary was brittle: it failed on
+  // plurals like "replicas" and on underscore-embedded names like
+  // kube_pod_status_phase because underscores are word chars in JS regex).
+  const keywords = METRIC_KEYWORDS.filter(kw => lower.includes(kw));
 
   let timeRef: string | undefined;
   let timeRefEnd: string | undefined;
@@ -102,16 +122,35 @@ export async function extractMetricsFromText(
   providers: MastraProvider[],
   timeRange?: { from: string; to: string },
 ): Promise<MetricSeries[]> {
-  const hints = parseMetricHints(text);
-  if (hints.keywords.length === 0) return [];
+  // Primary path: if the observation starts with a real PromQL metric
+  // expression (what the LLM actually writes when it emits structured metric
+  // findings), use it directly. This is the common case for LLM-generated
+  // metric observations and sidesteps the brittle keyword translation.
+  const directExpr = extractMetricExpression(text);
+  const queries: { query: string; description: string }[] = [];
 
-  const queries = keywordsToQueries(hints.keywords, service);
-  if (queries.length === 0) return [];
+  if (directExpr) {
+    queries.push({ query: directExpr, description: directExpr });
+  } else {
+    // Fallback: keyword-based heuristic for free-text observations like
+    // "CPU spiked to 95% between 08:30 and 09:00".
+    const hints = parseMetricHints(text);
+    if (hints.keywords.length === 0) return [];
+    queries.push(...keywordsToQueries(hints.keywords, service));
+    if (queries.length === 0) return [];
+  }
 
   const range = "1h";
 
   try {
-    return await queryServiceMetrics(service, range, providers, queries);
+    const series = await queryServiceMetrics(service, range, providers, queries);
+    // When we extracted a direct expression, keep only series that actually
+    // match it — queryServiceMetrics also runs default queries we don't care
+    // about in this path.
+    if (directExpr) {
+      return series.filter(s => s.query === directExpr);
+    }
+    return series;
   } catch (err) {
     logger.warn({ err, text, service }, "metric-extraction: failed to query Prometheus");
     return [];
