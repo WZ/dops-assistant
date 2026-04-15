@@ -424,7 +424,7 @@ export function buildInfraStep(config: WorkflowConfig) {
           : "",
       ].filter(Boolean).join("\n");
     },
-    extractorSchema: '{"summary": "string", "observations": [{"resource": "string", "status": "string", "detail": "string"}]}',
+    extractorSchema: '{"summary": "string", "observations": [{"resource": "string", "status": "string", "detail": "string", "timestamp": "string"}]}',
     fallbackMessage: "Infrastructure analysis unavailable",
   });
 }

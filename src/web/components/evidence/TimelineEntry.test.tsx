@@ -55,10 +55,37 @@ describe("TimelineEntry", () => {
     expect(screen.queryByText(/2026-03-25T14:31:12/)).toBeNull();
   });
 
-  it("shows time range for log entries", () => {
+  it("shows time range for log entries in local timezone with tz suffix", () => {
     render(<TimelineEntry entry={logEntry} />);
-    expect(screen.getByText(/14:31/)).toBeDefined();
-    expect(screen.getByText(/14:45/)).toBeDefined();
+    // The concrete HH:MM values depend on the viewer's timezone, so assert the
+    // structural shape: "HH:MM:SS – HH:MM:SS TZ" with an en-dash separator and
+    // a non-empty timezone abbreviation (short name or GMT offset fallback).
+    const timeNode = screen.getByText(
+      /^\d{2}:\d{2}:\d{2}\s*–\s*\d{2}:\d{2}:\d{2}\s+\S+/,
+    );
+    expect(timeNode).toBeDefined();
+    // Tooltip carries the raw ISO timestamps so the user can always see source.
+    expect(timeNode.getAttribute("title")).toContain("2026-03-25T14:31:00Z");
+    expect(timeNode.getAttribute("title")).toContain("2026-03-25T14:45:00Z");
+  });
+
+  it("renders '--:--:--' skeleton when no timestamp is available", () => {
+    const untimed: TimelineEntryData = { ...logEntry, timestamp: "", timestampEnd: undefined };
+    render(<TimelineEntry entry={untimed} />);
+    expect(screen.getByText(/^--:--:--$/)).toBeDefined();
+  });
+
+  it("prefixes approximate timestamps with '~' and explains in the tooltip", () => {
+    const approx: TimelineEntryData = {
+      ...logEntry,
+      timestamp: "2026-03-25T14:31:00Z",
+      timestampEnd: undefined,
+      isApproximate: true,
+    };
+    render(<TimelineEntry entry={approx} />);
+    const timeNode = screen.getByText(/^~\d{2}:\d{2}:\d{2}\s+\S+/);
+    expect(timeNode).toBeDefined();
+    expect(timeNode.getAttribute("title")).toMatch(/[Aa]pproximate/);
   });
 
   it("does not show expand trigger when no expandedContent", () => {

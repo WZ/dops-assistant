@@ -4,6 +4,7 @@ import { MetricChart, type TimeSeriesData } from "../MetricChart";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useStackContext } from "../../contexts/StackContext";
+import { extractMetricExpression } from "../../../lib/prom-metric.js";
 
 export interface StructuredMetricObs {
   metric: string;
@@ -79,14 +80,31 @@ export function MetricsPanel({ timeSeries, textObservations, structuredObservati
     seenQueries.add(key);
     return true;
   });
-  const failedTexts = extractions.filter(e => !e.loading && e.series.length === 0).map(e => e.text);
+  // Split "empty after extraction" from network failures. If the extraction
+  // succeeded but returned zero series (Prometheus has no data for the metric,
+  // or the LLM wrote a metric name that doesn't exist), render an empty-chart
+  // placeholder card instead of demoting to a plain text fallback — keeps the
+  // visual layout consistent with real charts.
+  const emptyExtractions = extractions.filter(e => !e.loading && !e.failed && e.series.length === 0);
+  const networkFailed = extractions.filter(e => !e.loading && e.failed).map(e => e.text);
   const overflowTexts = textObservations.slice(MAX_EXTRACTIONS);
-  const remainingTexts = [...failedTexts, ...overflowTexts];
+  const remainingTexts = [...networkFailed, ...overflowTexts];
   const isExtracting = extractions.some(e => e.loading);
+
+  // Use the shared extractor so the empty-card title matches what the server
+  // actually queried (no drift possible, single source of truth).
+  const titleFromText = (text: string): string =>
+    extractMetricExpression(text) ?? text.slice(0, 60);
 
   const hasStructured = (structuredObservations?.length ?? 0) > 0;
 
-  if (allSeries.length === 0 && !isExtracting && remainingTexts.length === 0 && !hasStructured) {
+  if (
+    allSeries.length === 0 &&
+    !isExtracting &&
+    remainingTexts.length === 0 &&
+    emptyExtractions.length === 0 &&
+    !hasStructured
+  ) {
     return <p className="text-xs text-muted-foreground/65 py-4 text-center font-mono">No metric data collected</p>;
   }
 
@@ -122,6 +140,45 @@ export function MetricsPanel({ timeSeries, textObservations, structuredObservati
           {extractions.filter(e => e.loading).map((_, i) => (
             <Skeleton key={`shim-${i}`} className="h-[160px] rounded-lg" />
           ))}
+        </div>
+      )}
+
+      {/* Empty-chart cards: extraction ran but Prometheus had no data. Keeps
+          the visual slot so the observation isn't hidden as a text fallback. */}
+      {emptyExtractions.length > 0 && (
+        <div className="grid grid-cols-1 @[500px]:grid-cols-2 gap-2">
+          {emptyExtractions.map((e, i) => {
+            const title = titleFromText(e.text);
+            // Only show the footer when it carries extra context beyond the
+            // title (e.g., metric expression as title + the baseline/timestamp
+            // narrative as footer). For plain observations where title == full
+            // text, showing both duplicates the content.
+            const showFooter = title !== e.text && !e.text.startsWith(title);
+            return (
+              <div
+                key={`empty-${i}`}
+                className="rounded-lg border border-border/25 bg-card/20 px-3.5 py-3 h-[160px] flex flex-col"
+                title={e.text}
+              >
+                <div className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/40" />
+                  <span className="font-mono text-[11px] text-foreground/60 truncate">
+                    {title}
+                  </span>
+                </div>
+                <div className="flex-1 flex items-center justify-center">
+                  <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/50">
+                    no data
+                  </span>
+                </div>
+                {showFooter && (
+                  <p className="font-mono text-[9px] text-muted-foreground/55 leading-relaxed line-clamp-2">
+                    {e.text}
+                  </p>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 

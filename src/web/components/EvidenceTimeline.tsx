@@ -56,13 +56,40 @@ function isStructuredInfra(obs: Observation): obs is StructuredInfra {
   return typeof obs === "object" && obs !== null && "resource" in obs;
 }
 
-// Parse raw log lines: "2026-03-25T13:13:16.394712758+00:00 stderr F <message>"
-const RAW_LOG_RE = /^(\d{4}-\d{2}-\d{2}T[\d:.]+(?:[+-]\d{2}:\d{2}|Z)?)\s+(?:std(?:err|out)\s+[A-Z]\s+)?(.+)/s;
+// Parse raw log lines. Handles multiple common formats:
+//   1. ISO-8601 with T separator: "2026-03-25T13:13:16.394712758+00:00 stderr F <message>"
+//   2. Java/Spring space+comma: "2026-04-15 09:52:12,309 WARN 1 --- [main] <message>"
+//   3. Java/Spring space+period: "2026-04-15 09:52:12.309 INFO <message>"
+//   4. Bracketed ISO: "[2026-04-15T09:52:12Z] <message>"
+const RAW_LOG_RE_ISO = /^(\d{4}-\d{2}-\d{2}T[\d:.]+(?:[+-]\d{2}:\d{2}|Z)?)\s+(?:std(?:err|out)\s+[A-Z]\s+)?(.+)/s;
+const RAW_LOG_RE_SPACE = /^(\d{4}-\d{2}-\d{2})[\sT](\d{2}:\d{2}:\d{2})(?:[,.](\d{1,9}))?\s+(.+)/s;
+const RAW_LOG_RE_BRACKETED = /^\[(\d{4}-\d{2}-\d{2}T[\d:.]+(?:[+-]\d{2}:\d{2}|Z)?)\]\s*(.+)/s;
 
 function parseRawLogLine(line: string): { timestamp: string; message: string } | null {
-  const m = line.match(RAW_LOG_RE);
-  if (!m) return null;
-  return { timestamp: m[1]!, message: m[2]!.trim() };
+  // Try ISO-8601 with T first (most precise)
+  let m = line.match(RAW_LOG_RE_ISO);
+  if (m) return { timestamp: m[1]!, message: m[2]!.trim() };
+
+  // Try bracketed ISO
+  m = line.match(RAW_LOG_RE_BRACKETED);
+  if (m) return { timestamp: m[1]!, message: m[2]!.trim() };
+
+  // Try space-separated Java/Spring format. Normalize to ISO-8601 so Date
+  // can parse it uniformly. Comma milliseconds (",309") become period (".309").
+  m = line.match(RAW_LOG_RE_SPACE);
+  if (m) {
+    const date = m[1]!;
+    const time = m[2]!;
+    const ms = m[3] ? `.${m[3].slice(0, 3).padEnd(3, "0")}` : "";
+    // Do NOT append 'Z'. Java/Spring servers log in local server time
+    // without a tz marker. If we forced UTC, formatTime (which uses local
+    // getHours) would shift the displayed numbers by the viewer's offset,
+    // so a line reading "09:52:12" would render "02:52:12 PDT". Parsing
+    // as local keeps the as-written numbers intact.
+    return { timestamp: `${date}T${time}${ms}`, message: m[4]!.trim() };
+  }
+
+  return null;
 }
 
 // K8s-specific entity extraction: matches pod/deployment/service resource paths.
@@ -129,7 +156,12 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange, pha
 
   const hasMetricData = timeSeries.length > 0 || textMetricObs.length > 0 || structuredMetricObs.length > 0;
 
-  // Build chronological timeline entries from logs + infra
+  // Build chronological timeline entries from logs + infra.
+  // When an observation has no real timestamp, fall back to the investigation
+  // window start (timeRange.from) and mark the entry as approximate so the UI
+  // can prefix it with "~" to signal "happened somewhere in this window".
+  const fallbackTimestamp = timeRange?.from ?? "";
+
   const timelineEntries = useMemo<TimelineEntryData[]>(() => {
     const entries: TimelineEntryData[] = [];
     let idCounter = 0;
@@ -138,11 +170,13 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange, pha
     const logObs = evidence.logs?.observations ?? [];
     for (const obs of logObs) {
       if (isStructuredLog(obs)) {
+        const hasRealTs = !!(obs.firstSeen || obs.lastSeen);
         entries.push({
           id: `log-${idCounter++}`,
           type: "log",
-          timestamp: obs.firstSeen ?? "",
+          timestamp: obs.firstSeen || fallbackTimestamp,
           timestampEnd: obs.lastSeen,
+          isApproximate: !hasRealTs && !!fallbackTimestamp,
           entity: extractEntity(obs.pattern),
           summary: obs.pattern,
           count: typeof obs.count === "string" ? parseInt(obs.count, 10) || undefined : obs.count || undefined,
@@ -150,10 +184,12 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange, pha
         });
       } else if (typeof obs === "string") {
         const parsed = parseRawLogLine(obs);
+        const realTs = parsed?.timestamp;
         entries.push({
           id: `log-${idCounter++}`,
           type: "log",
-          timestamp: parsed?.timestamp ?? "",
+          timestamp: realTs || fallbackTimestamp,
+          isApproximate: !realTs && !!fallbackTimestamp,
           entity: extractEntity(parsed?.message ?? obs),
           summary: parsed?.message ?? obs,
         });
@@ -164,10 +200,12 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange, pha
     const infraObs = evidence.infra?.observations ?? [];
     for (const obs of infraObs) {
       if (isStructuredInfra(obs)) {
+        const hasRealTs = !!obs.timestamp;
         entries.push({
           id: `infra-${idCounter++}`,
           type: "infra",
-          timestamp: obs.timestamp ?? new Date(0).toISOString(),
+          timestamp: obs.timestamp || fallbackTimestamp || new Date(0).toISOString(),
+          isApproximate: !hasRealTs && !!fallbackTimestamp,
           entity: obs.resource,
           summary: obs.detail,
           severity: obs.status,
@@ -176,7 +214,8 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange, pha
         entries.push({
           id: `infra-${idCounter++}`,
           type: "infra",
-          timestamp: "",
+          timestamp: fallbackTimestamp,
+          isApproximate: !!fallbackTimestamp,
           entity: service || "unknown",
           summary: obs,
         });
@@ -268,7 +307,7 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange, pha
     }
 
     return deduped;
-  }, [evidence.logs, evidence.infra, service]);
+  }, [evidence.logs, evidence.infra, service, fallbackTimestamp]);
 
   const hasTimeline = timelineEntries.length > 0;
 

@@ -8,7 +8,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ArrowLeft, FilePlus, RotateCw, ChevronDown, Share2, Check } from "lucide-react";
+import { ArrowLeft, FilePlus, RotateCw, ChevronDown, Download, Link2, FileText, Image as ImageIcon, ClipboardCopy, Check } from "lucide-react";
 import { PhaseStepper, type PhaseState } from "./PhaseStepper";
 import { EvidenceTimeline } from "./EvidenceTimeline";
 import { RcaReport } from "./RcaReport";
@@ -16,8 +16,10 @@ import { useStackContext } from "../contexts/StackContext";
 import type { TimelineEvent } from "./ActivityTimeline";
 import type { TimeSeriesData } from "./MetricChart";
 import type { ServerMessage } from "../../types/ws-types.js";
+import type { RcaReport as RcaReportType } from "../../types/rca-types.js";
 import { formatTokens } from "../lib/formatTokens.js";
 import { buildPhaseActions } from "../lib/grafana-links.js";
+import { downloadMarkdown, downloadPng, copyMarkdown } from "../lib/exportInvestigation.js";
 
 const DEFAULT_PHASES: PhaseState[] = [
   { name: "planning", label: "Planning", status: "pending" },
@@ -27,23 +29,104 @@ const DEFAULT_PHASES: PhaseState[] = [
   { name: "synthesis", label: "Synthesis", status: "pending" },
 ];
 
-function ShareButton() {
-  const [copied, setCopied] = useState(false);
+interface ExportMenuProps {
+  report: RcaReportType;
+  service: string;
+  reportRef: React.RefObject<HTMLDivElement | null>;
+  onSaveAsSkill: () => void;
+}
+
+function ExportMenu({ report, service, reportRef, onSaveAsSkill }: ExportMenuProps) {
+  const [busy, setBusy] = useState(false);
+  const [copiedKey, setCopiedKey] = useState<"link" | "md" | null>(null);
+
+  const flashCopied = (key: "link" | "md") => {
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1200);
+  };
+
+  const copyLink = () => {
+    navigator.clipboard.writeText(window.location.href)
+      .then(() => flashCopied("link"))
+      .catch(() => {});
+  };
+
+  const doCopyMarkdown = () => {
+    copyMarkdown(report)
+      .then(() => flashCopied("md"))
+      .catch(() => {});
+  };
+
+  const doDownloadMarkdown = () => {
+    downloadMarkdown(report, service);
+  };
+
+  const doDownloadPng = async () => {
+    const node = reportRef.current;
+    if (!node) return;
+    setBusy(true);
+    try {
+      await downloadPng(node, service);
+    } catch (err) {
+      console.error("PNG export failed", err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <Button
-      variant="ghost"
-      onClick={() => {
-        navigator.clipboard.writeText(window.location.href).then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1200);
-        }).catch(() => {});
-      }}
-      className="h-auto px-2 py-1 text-[10px] font-mono text-muted-foreground/60 hover:text-primary hover:bg-transparent transition-colors gap-1"
-      title="Copy shareable link"
-    >
-      {copied ? <Check size={10} className="!size-auto text-success" /> : <Share2 size={10} className="!size-auto" />}
-      {copied ? "Copied" : "Share"}
-    </Button>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="outline"
+          disabled={busy}
+          className="h-auto px-2.5 py-1 text-[10px] font-mono border-primary/30 text-primary/70 hover:bg-primary/8 hover:text-primary gap-1"
+          title="Export this investigation"
+        >
+          <Download size={10} className="!size-auto" />
+          {busy ? "Exporting…" : "Export"}
+          <ChevronDown size={8} className="!size-auto opacity-50" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-[200px]">
+        <DropdownMenuItem
+          onSelect={(e) => { e.preventDefault(); copyLink(); }}
+          className="font-mono text-[11px] gap-2"
+        >
+          {copiedKey === "link" ? (
+            <Check size={11} className="!size-auto text-success" />
+          ) : (
+            <Link2 size={11} className="!size-auto" />
+          )}
+          {copiedKey === "link" ? "Copied" : "Copy link"}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onSelect={(e) => { e.preventDefault(); doCopyMarkdown(); }}
+          className="font-mono text-[11px] gap-2"
+        >
+          {copiedKey === "md" ? (
+            <Check size={11} className="!size-auto text-success" />
+          ) : (
+            <ClipboardCopy size={11} className="!size-auto" />
+          )}
+          {copiedKey === "md" ? "Copied" : "Copy markdown"}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={doDownloadPng} className="font-mono text-[11px] gap-2">
+          <ImageIcon size={11} className="!size-auto" />
+          Download as PNG
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={doDownloadMarkdown} className="font-mono text-[11px] gap-2">
+          <FileText size={11} className="!size-auto" />
+          Download as Markdown
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={onSaveAsSkill} className="font-mono text-[11px] gap-2">
+          <FilePlus size={11} className="!size-auto" />
+          Save as Skill
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -58,6 +141,8 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
   const [phaseTokens, setPhaseTokens] = useState<Record<string, { inputTokens: number; outputTokens: number }>>({});
   const [totalUsage, setTotalUsage] = useState<{ inputTokens: number; outputTokens: number; durationMs: number } | null>(null);
   const [providers, setProviders] = useState<Array<{ role: string; webUrl: string; datasource?: string }>>([]);
+  const [phaseSwoop, setPhaseSwoop] = useState(false);
+  const prevRunningRef = useRef(false);
   const processedCount = useRef(0);
   const reportRef = useRef<HTMLDivElement>(null);
 
@@ -83,6 +168,20 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
       reportRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }, [report]);
+
+  // Trigger phase swoop animation on the running → complete transition.
+  // Update prevRunningRef *before* the early return so the effect doesn't
+  // replay the animation on any subsequent phases update after completion.
+  useEffect(() => {
+    const running = phases.some((p) => p.status === "running");
+    const justCompleted = prevRunningRef.current && !running && !!report;
+    prevRunningRef.current = running;
+    if (justCompleted) {
+      setPhaseSwoop(true);
+      const t = setTimeout(() => setPhaseSwoop(false), 600);
+      return () => clearTimeout(t);
+    }
+  }, [phases, report]);
 
   // Determine if this investigation is active (has WS messages) or historical
   const isActive = wsMessages.some(
@@ -344,8 +443,30 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
           {isRunning && (
             <span className="text-[10px] font-mono text-primary/60 uppercase tracking-[0.12em]">investigating...</span>
           )}
-          {isComplete && (
-            <ShareButton />
+          {isComplete && report && (
+            <ExportMenu
+              report={report as RcaReportType}
+              service={service}
+              reportRef={reportRef}
+              onSaveAsSkill={async () => {
+                try {
+                  const rpt = report as Record<string, unknown>;
+                  const res = await stackFetch("/api/skills/generate", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(rpt),
+                  });
+                  if (!res.ok) return;
+                  const generated = await res.json();
+                  await stackFetch("/api/skills", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(generated),
+                  });
+                  onNavigateSkills?.();
+                } catch { /* ignore */ }
+              }}
+            />
           )}
           {isComplete && onRerun && (
             <DropdownMenu>
@@ -387,94 +508,160 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
         </div>
       )}
 
-      {/* Scrollable content */}
+      {/* Scrollable content — Two-Column Dossier layout */}
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto px-5 py-6 space-y-6">
+        <div className="flex flex-col lg:flex-row gap-0 min-h-full">
 
-          {/* Original query */}
-          {query && (
-            <p className="text-sm font-mono text-foreground/70 italic">&ldquo;{query}&rdquo;</p>
-          )}
+          {/* LEFT RAIL — metadata column */}
+          <aside className="w-full lg:w-[300px] shrink-0 lg:border-r border-border/30 px-5 py-6 space-y-6">
 
-          {/* Phase progress with merged activity */}
-          <section>
-            <PhaseStepper phases={phases} events={timelineEvents} evidence={evidence} isComplete={isComplete} phaseTokens={phaseTokens} />
-          </section>
-
-          {/* Report */}
-          {report ? (
-            <section ref={reportRef} className="animate-fade-up">
-              <RcaReport report={report as any} hideOldDashboardLinks={providers.length > 0} />
-              {/* Save as Skill */}
-              <div className="mt-3 flex justify-end">
-                <Button
-                  variant="outline"
-                  onClick={async () => {
-                    try {
-                      const rpt = report as Record<string, unknown>;
-                      const res = await stackFetch("/api/skills/generate", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify(rpt),
-                      });
-                      if (!res.ok) return;
-                      const generated = await res.json();
-                      await stackFetch("/api/skills", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify(generated),
-                      });
-                      onNavigateSkills?.();
-                    } catch { /* ignore */ }
-                  }}
-                  className="px-3 py-1.5 h-auto text-[10px] font-mono border-primary/20 text-primary/70 hover:bg-primary/8 hover:text-primary"
-                >
-                  <FilePlus size={10} className="!size-auto" />
-                  Save as Skill
-                </Button>
+            {/* Phase rail — compact summary only once the investigation is complete.
+                While running, phases live in the right column so the user can see tool call detail. */}
+            {isComplete && (
+              <div className={phaseSwoop ? "animate-phase-swoop-left" : ""}>
+                <CompactPhaseRail phases={phases} phaseTokens={phaseTokens} />
               </div>
-            </section>
-          ) : !isRunning ? (
-            <div className="space-y-3">
-              <Skeleton className="h-6 w-48 rounded-md" />
-              <Skeleton className="h-32 w-full rounded-lg" />
-            </div>
-          ) : null}
+            )}
 
-          {totalUsage && (
-            <div className="flex items-center gap-2 px-4 py-2 text-[10px] font-mono text-muted-foreground/50 border-t border-border/20">
-              <span>Total:</span>
-              <span>{formatTokens(totalUsage.inputTokens)} input</span>
-              <span>·</span>
-              <span>{formatTokens(totalUsage.outputTokens)} output</span>
-              <span>·</span>
-              <span>{formatTokens(totalUsage.inputTokens + totalUsage.outputTokens)} tokens</span>
-              <span>·</span>
-              <span>{(totalUsage.durationMs / 1000).toFixed(1)}s</span>
-            </div>
-          )}
+            {/* Trigger quote */}
+            {query && (
+              <section>
+                <RailLabel>Trigger</RailLabel>
+                <p className="text-[12px] font-body italic text-muted-foreground/80 leading-relaxed">
+                  &ldquo;{query}&rdquo;
+                </p>
+              </section>
+            )}
 
-          {/* Evidence */}
-          {hasEvidence && (
-            <section>
-              <EvidenceTimeline
-                evidence={evidence as any}
-                timeSeries={timeSeries}
-                service={service}
-                providers={providers}
-                phaseActions={(() => {
-                  const rpt = report as any;
-                  const tr = rpt?.timeRange;
-                  if (!tr || providers.length === 0) return undefined;
-                  const { phaseActions: pa } = buildPhaseActions(undefined, providers, service, tr);
-                  return pa;
-                })()}
-              />
-            </section>
-          )}
+            {/* Metadata */}
+            {(totalUsage || isComplete) && (
+              <section>
+                <RailLabel>Metadata</RailLabel>
+                <dl className="space-y-1.5 text-[10px] font-mono">
+                  {(report as any)?.confidence && (
+                    <MetaRow
+                      label="confidence"
+                      value={`${String((report as any).confidence).toUpperCase()}${(report as any).confidenceScore ? ` · ${Math.round((report as any).confidenceScore * 100)}%` : ""}`}
+                    />
+                  )}
+                  {(report as any)?.severity && (
+                    <MetaRow label="severity" value={String((report as any).severity).toUpperCase()} />
+                  )}
+                  {totalUsage && (
+                    <>
+                      <MetaRow label="duration" value={`${(totalUsage.durationMs / 1000).toFixed(1)}s`} />
+                      <MetaRow label="tokens in" value={formatTokens(totalUsage.inputTokens)} />
+                      <MetaRow label="tokens out" value={formatTokens(totalUsage.outputTokens)} />
+                    </>
+                  )}
+                </dl>
+              </section>
+            )}
+
+          </aside>
+
+          {/* RIGHT COLUMN — live phase activity while running, RCA report when complete */}
+          <div className="flex-1 min-w-0 px-6 py-6 space-y-6">
+            {/* Live phase activity — only while running, hidden once the report lands */}
+            {!isComplete && (
+              <section>
+                <p className="text-[9px] font-mono font-semibold uppercase tracking-[0.14em] text-muted-foreground/70 mb-3">
+                  Investigation in progress
+                </p>
+                <PhaseStepper phases={phases} events={timelineEvents} evidence={evidence} isComplete={isComplete} phaseTokens={phaseTokens} />
+              </section>
+            )}
+
+            {report ? (
+              <section ref={reportRef} className="animate-fade-up">
+                <RcaReport report={report as any} hideOldDashboardLinks={providers.length > 0} />
+              </section>
+            ) : !isRunning ? (
+              <div className="space-y-3">
+                <Skeleton className="h-6 w-48 rounded-md" />
+                <Skeleton className="h-32 w-full rounded-lg" />
+              </div>
+            ) : null}
+
+            {/* Evidence */}
+            {hasEvidence && (
+              <section>
+                <EvidenceTimeline
+                  evidence={evidence as any}
+                  timeSeries={timeSeries}
+                  service={service}
+                  providers={providers}
+                  timeRange={(report as any)?.timeRange}
+                  phaseActions={(() => {
+                    const rpt = report as any;
+                    const tr = rpt?.timeRange;
+                    if (!tr || providers.length === 0) return undefined;
+                    const { phaseActions: pa } = buildPhaseActions(undefined, providers, service, tr);
+                    return pa;
+                  })()}
+                />
+              </section>
+            )}
+          </div>
 
         </div>
       </div>
     </div>
+  );
+}
+
+function RailLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="text-[9px] font-mono font-semibold uppercase tracking-[0.14em] text-muted-foreground/70 mb-2">
+      {children}
+    </p>
+  );
+}
+
+function MetaRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <dt className="text-muted-foreground/55">{label}</dt>
+      <dd className="text-foreground/80 tabular-nums">{value}</dd>
+    </div>
+  );
+}
+
+function CompactPhaseRail({ phases, phaseTokens }: { phases: PhaseState[]; phaseTokens?: Record<string, { inputTokens: number; outputTokens: number }> }) {
+  return (
+    <section>
+      <RailLabel>Phases</RailLabel>
+      <ul className="space-y-0">
+        {phases.map((p) => {
+          const duration = p.stats?.durationMs != null
+            ? p.stats.durationMs < 1000
+              ? `${p.stats.durationMs}ms`
+              : `${(p.stats.durationMs / 1000).toFixed(1)}s`
+            : null;
+          const tokens = phaseTokens?.[p.name];
+          const tokenTotal = tokens ? tokens.inputTokens + tokens.outputTokens : 0;
+          return (
+            <li key={p.name} className="flex items-center gap-2 py-1">
+              <span className={
+                p.status === "complete" ? "w-3 h-3 rounded-full bg-success/80 text-[8px] text-background flex items-center justify-center font-bold" :
+                p.status === "failed" ? "w-3 h-3 rounded-full bg-destructive/80 text-[8px] text-background flex items-center justify-center font-bold" :
+                p.status === "running" ? "w-3 h-3 rounded-full border border-primary/80 animate-status-pulse" :
+                "w-3 h-3 rounded-full border border-border/60"
+              }>
+                {p.status === "complete" && "\u2713"}
+                {p.status === "failed" && "\u2717"}
+              </span>
+              <span className="text-[12px] font-body text-foreground/75 flex-1">{p.label}</span>
+              {duration && (
+                <span className="text-[9px] font-mono text-muted-foreground/55 tabular-nums">{duration}</span>
+              )}
+              {tokenTotal > 0 && (
+                <span className="text-[9px] font-mono text-muted-foreground/40 tabular-nums">{formatTokens(tokenTotal)}</span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }

@@ -7,6 +7,9 @@ export interface TimelineEntryData {
   type: "log" | "infra";
   timestamp: string;
   timestampEnd?: string;
+  /** True when the timestamp is an approximation (e.g. investigation window start)
+   *  rather than a real per-observation time. Rendered with a `~` prefix. */
+  isApproximate?: boolean;
   entity: string;
   summary: string;
   count?: number;
@@ -16,16 +19,35 @@ export interface TimelineEntryData {
   phaseAction?: EvidenceAction;
 }
 
+// Render in the viewer's local timezone so "09:52:15" is unambiguous.
+// The full ISO string goes into a title attribute for hover confirmation.
 function formatTime(iso: string): string {
   if (!iso) return "";
   try {
     const d = new Date(iso);
     if (isNaN(d.getTime())) return "";
-    return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}:${String(d.getUTCSeconds()).padStart(2, "0")}`;
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
   } catch {
     return "";
   }
 }
+
+// Short local timezone abbreviation for the column header (e.g. "PDT", "EST", "UTC").
+// Falls back to GMT offset if the browser doesn't expose an abbreviation.
+function localTzAbbrev(): string {
+  try {
+    const parts = new Intl.DateTimeFormat(undefined, { timeZoneName: "short" }).formatToParts(new Date());
+    const tz = parts.find((p) => p.type === "timeZoneName")?.value;
+    if (tz) return tz;
+  } catch { /* ignore */ }
+  const offset = -new Date().getTimezoneOffset();
+  const sign = offset >= 0 ? "+" : "-";
+  const h = String(Math.floor(Math.abs(offset) / 60)).padStart(2, "0");
+  const m = String(Math.abs(offset) % 60).padStart(2, "0");
+  return `GMT${sign}${h}:${m}`;
+}
+
+const LOCAL_TZ = localTzAbbrev();
 
 export function TimelineEntry({ entry }: { entry: TimelineEntryData }) {
   const [expanded, setExpanded] = useState(false);
@@ -38,9 +60,26 @@ export function TimelineEntry({ entry }: { entry: TimelineEntryData }) {
       : "bg-destructive/10 text-destructive border-destructive/20";
   const badgeLabel = entry.type === "log" ? "LOG" : "INFRA";
 
-  const timeDisplay = entry.timestampEnd
-    ? `${formatTime(entry.timestamp)} – ${formatTime(entry.timestampEnd)}`
-    : formatTime(entry.timestamp);
+  // Show a skeleton placeholder when no timestamp was available so the timeline
+  // column stays visible (vs. a lone em-dash that disappears in dark mode).
+  // Approximate timestamps (fall-backs to the investigation window start) are
+  // prefixed with "~" so users know the time isn't precise.
+  const start = formatTime(entry.timestamp);
+  const end = entry.timestampEnd ? formatTime(entry.timestampEnd) : "";
+  const hasTime = !!start || !!end;
+  const prefix = entry.isApproximate && hasTime ? "~" : "";
+  const timeCore =
+    start && end ? `${prefix}${start} – ${end}` :
+    start ? `${prefix}${start}` :
+    end ? `${prefix}${end}` :
+    "--:--:--";
+  const timeDisplay = hasTime ? `${timeCore} ${LOCAL_TZ}` : timeCore;
+  // Tooltip: show the raw ISO so users can see the exact timestamp + source timezone.
+  const timeTooltip = entry.isApproximate
+    ? `Approximate — fell back to investigation window start (${entry.timestamp || "?"})`
+    : entry.timestampEnd
+      ? `${entry.timestamp || "?"} → ${entry.timestampEnd}`
+      : entry.timestamp || "no timestamp available";
 
   // Use observation-level action if available, fall back to phase-level
   const primaryAction = entry.actions?.[0] ?? entry.phaseAction;
@@ -61,7 +100,12 @@ export function TimelineEntry({ entry }: { entry: TimelineEntryData }) {
       <div className={`absolute left-0 top-[10px] w-[7px] h-[7px] rounded-full ${dotColor}`} />
       <div className="pb-4">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-mono text-[10px] text-muted-foreground/50">{timeDisplay}</span>
+          <span
+            className={`font-mono text-[10px] tabular-nums ${hasTime ? "text-muted-foreground/75" : "text-muted-foreground/35"}`}
+            title={timeTooltip}
+          >
+            {timeDisplay}
+          </span>
           <span
             className={`font-mono text-[9px] uppercase px-1.5 py-0 border rounded ${badgeBg}`}
             aria-label={`${entry.type === "log" ? "Log" : "Infrastructure"} entry`}
