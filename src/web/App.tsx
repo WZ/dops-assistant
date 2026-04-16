@@ -325,6 +325,7 @@ export function App() {
                       discoveryState={discoveryState}
                       onStartDiscovery={() => { ws.send({ type: "discover" }); }}
                       onResetDiscovery={() => setDiscoveryState({ phase: "", status: "complete", iteration: { current: 0, max: 0, description: "" }, toolCalls: [], results: [], error: null, phaseTokens: {}, totalUsage: null })}
+                      onDiscoveryAccepted={() => setLeftPane({ type: "dashboard" })}
                       grafanaUrl={branding.grafanaUrl}
                       prometheusDatasource={branding.prometheusDatasource}
                       stackName={hasMultipleStacks ? activeStack?.name : undefined}

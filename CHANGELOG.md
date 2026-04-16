@@ -2,12 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.0.9.0] - 2026-04-15
+## [0.1.7] - 2026-04-15
 
-### Added
-- **Setup stepper for first-run onboarding.** First-time users (or users switching to an unconfigured stack) now see a 3-step progress bar guiding them through Connect Provider, Discover Services, and Monitor. Auto-routes to the right page at each step. Replaces the misleading 0/0/0 KPI dashboard that made the app look broken instead of unconfigured.
-- **Setup-aware empty state on Dashboard.** When no providers are configured, the Operations Desk shows guidance text and a "Resume setup" button instead of zero-filled stat cards.
-- **Shared `createStackFetch` utility.** Extracted from StackContext so both the StackProvider and the new setup hook can make stack-scoped API calls. Also fixes the branding fetch which was manually constructing headers.
+### Fixed
+- **Accepting a discovery result left the operator on the Services page instead of the Operations Desk.** After clicking Accept, the grid view would re-render with the now-populated service list but the operator still had to manually click the Dashboard nav item to see the new services in the live catalog. Now the Accept action triggers an automatic redirect to the Operations Desk right after the `discover:accept` message is sent so the freshly-populated list is immediately usable.
 
 ## [0.1.6] - 2026-04-15
 
