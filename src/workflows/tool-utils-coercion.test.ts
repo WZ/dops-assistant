@@ -171,6 +171,46 @@ describe("wrapToolsWithCallbacks — end-to-end coercion", () => {
     expect(seenArgs.datasourceUid).toBe("prometheus");
   });
 
+  it("coerces queryType: null to 'instant'", async () => {
+    const innerExecute = vi.fn(async (args: any) => ({ ok: true, sawArgs: args }));
+    const tools = {
+      grafana_query_prometheus: {
+        id: "grafana_query_prometheus",
+        inputSchema: { properties: {} },
+        execute: innerExecute,
+      },
+    };
+
+    const wrapped = wrapToolsWithCallbacks(tools, undefined, "test");
+    await wrapped.grafana_query_prometheus.execute(
+      { datasourceUid: "prometheus", expr: "up", queryType: null, startTime: "now", endTime: "now", stepSeconds: 0 },
+      {} as any,
+    );
+
+    const [seenArgs] = innerExecute.mock.calls[0]!;
+    expect(seenArgs.queryType).toBe("instant");
+  });
+
+  it("preserves queryType when already set", async () => {
+    const innerExecute = vi.fn(async (args: any) => ({ ok: true, sawArgs: args }));
+    const tools = {
+      grafana_query_prometheus: {
+        id: "grafana_query_prometheus",
+        inputSchema: { properties: {} },
+        execute: innerExecute,
+      },
+    };
+
+    const wrapped = wrapToolsWithCallbacks(tools, undefined, "test");
+    await wrapped.grafana_query_prometheus.execute(
+      { datasourceUid: "prometheus", expr: "up", queryType: "range", startTime: "now-1h", endTime: "now", stepSeconds: 60 },
+      {} as any,
+    );
+
+    const [seenArgs] = innerExecute.mock.calls[0]!;
+    expect(seenArgs.queryType).toBe("range");
+  });
+
   it("coerceLokiArgs drops stepSeconds and forces direction=backward", async () => {
     const innerExecute = vi.fn(async (args: any) => ({ ok: true, sawArgs: args }));
     const tools = {

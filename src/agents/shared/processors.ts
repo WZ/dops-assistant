@@ -41,26 +41,33 @@ export function safeJsonParse(text: string): any | null {
     } catch { /* fall through */ }
   }
 
-  // 4. Extract the LAST top-level {...} object. Agents are instructed to end
+  // 4. Truncated array recovery: LLM hit max_tokens and the JSON array is
+  // cut off mid-element. Find the last complete object and close the array.
+  // Runs before single-object extraction so we don't pick up a stray inner
+  // object from inside a truncated array.
+  const truncated = recoverTruncatedJsonArray(text);
+  if (truncated) return truncated;
+
+  // 5. Extract the LAST top-level {...} object. Agents are instructed to end
   // their response with JSON, so the last complete object is most likely
   // the structured output. Objects are checked before arrays because most
   // agents emit objects; array-emitting agents (discover) are handled by
-  // strategies 1-3 above once JSONC stripping is applied.
+  // strategies 1-4 above.
   const lastObj = extractLastJsonObject(text);
   if (lastObj) {
     try { return JSON.parse(lastObj); } catch { /* fall through */ }
     try { return JSON.parse(stripJsoncComments(lastObj)); } catch { /* fall through */ }
   }
 
-  // 5. Extract the FIRST top-level {...} object
+  // 6. Extract the FIRST top-level {...} object
   const firstObj = extractFirstJsonObject(text);
   if (firstObj) {
     try { return JSON.parse(firstObj); } catch { /* fall through */ }
     try { return JSON.parse(stripJsoncComments(firstObj)); } catch { /* fall through */ }
   }
 
-  // 6. Last-resort: try array extraction. Only reached if the entire text
-  // is an array mixed with prose and strategies 1-3 couldn't recover it.
+  // 7. Last-resort: try array extraction. Only reached if the entire text
+  // is an array mixed with prose and strategies 1-4 couldn't recover it.
   const lastArr = extractLastJsonArray(text);
   if (lastArr) {
     try { return JSON.parse(lastArr); } catch { /* fall through */ }
@@ -72,6 +79,19 @@ export function safeJsonParse(text: string): any | null {
     try { return JSON.parse(stripJsoncComments(firstArr)); } catch { /* fall through */ }
   }
 
+  return null;
+}
+
+function recoverTruncatedJsonArray(text: string): any[] | null {
+  const start = text.indexOf("[");
+  if (start < 0) return null;
+  let candidate = text.slice(start);
+  if (!/^\[\s*\{/.test(candidate)) return null;
+  const lastBrace = candidate.lastIndexOf("}");
+  if (lastBrace < 2) return null;
+  candidate = candidate.slice(0, lastBrace + 1) + "]";
+  try { return JSON.parse(stripJsoncComments(candidate)); } catch { /* fall through */ }
+  try { return JSON.parse(candidate); } catch { /* fall through */ }
   return null;
 }
 

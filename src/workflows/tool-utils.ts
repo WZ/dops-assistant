@@ -98,6 +98,7 @@ export function coercePrometheusArgs(args: Record<string, unknown>): Record<stri
   if (coerced.startTime == null) coerced.startTime = "now";
   if (coerced.endTime == null) coerced.endTime = "now";
   if (coerced.stepSeconds == null) coerced.stepSeconds = 0;
+  if (coerced.queryType == null) coerced.queryType = "instant";
   return coerced;
 }
 

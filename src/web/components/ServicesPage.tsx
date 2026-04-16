@@ -39,6 +39,7 @@ interface DiscoveryState {
   }>;
   results: ValidatedServiceConfig[];
   error: string | null;
+  retry?: { attempt: number; maxRetries: number; reason: string } | null;
   phaseTokens: Record<string, { inputTokens: number; outputTokens: number; durationMs: number }>;
   totalUsage: { inputTokens: number; outputTokens: number; durationMs: number } | null;
 }
@@ -390,6 +391,7 @@ export function ServicesPage({
         iteration={discoveryState.iteration}
         toolCalls={discoveryState.toolCalls}
         error={discoveryState.error}
+        retry={discoveryState.retry}
         phaseTokens={discoveryState.phaseTokens}
         totalUsage={discoveryState.totalUsage}
         onRetry={onStartDiscovery}

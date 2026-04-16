@@ -417,6 +417,7 @@ export class MastraDiscoverAdapter implements IDiscoverAgent {
     onToolCall?: OnToolCallEnriched,
     onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void,
     skills?: import("../skills/store.js").Skill[],
+    onRetry?: (attempt: number, maxRetries: number, reason: string) => void,
   ): Promise<ValidatedServiceConfig[]> {
     return runDiscovery({
       model: this.deps.model,
@@ -427,6 +428,7 @@ export class MastraDiscoverAdapter implements IDiscoverAgent {
       onToolCall,
       onTokenUsage,
       skills,
+      onRetry,
     });
   }
 

@@ -605,6 +605,9 @@ export async function handleClientMessage(
           }),
         onTokenUsage,
         discoverySkills.length > 0 ? discoverySkills : undefined,
+        (attempt, maxRetries, reason) => {
+          send({ type: "discover:retry", attempt, maxRetries, reason });
+        },
       );
       send({ type: "discover:phase", phase: "validation", status: "complete" });
       if (services.length === 0) {

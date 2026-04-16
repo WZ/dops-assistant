@@ -135,4 +135,25 @@ describe("safeJsonParse", () => {
     expect(Array.isArray(result)).toBe(true);
     expect(result).toHaveLength(2);
   });
+
+  it("recovers a truncated JSON array by finding the last complete object", () => {
+    const text = '[{"name":"svc-a","metrics":[]},{"name":"svc-b","metrics":[]},{"name":"svc-c","met';
+    const result = safeJsonParse(text);
+    expect(Array.isArray(result)).toBe(true);
+    expect(result).toHaveLength(2);
+    expect(result[0].name).toBe("svc-a");
+    expect(result[1].name).toBe("svc-b");
+  });
+
+  it("recovers a truncated array with prose preamble", () => {
+    const text = 'Here are the discovered services:\n[{"name":"a"},{"name":"b"},{"na';
+    const result = safeJsonParse(text);
+    expect(Array.isArray(result)).toBe(true);
+    expect(result).toHaveLength(2);
+  });
+
+  it("returns null for non-JSON text (no truncation recovery possible)", () => {
+    const result = safeJsonParse("This is just plain text with no JSON at all.");
+    expect(result).toBeNull();
+  });
 });

@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.10] - 2026-04-16
+
+### Fixed
+- **Discovery failed on every attempt due to response truncation.** `max_tokens: 16384` was too small for 71-service environments (~50k chars output). The JSON array was truncated mid-element and `safeJsonParse` had no recovery strategy, causing all 3 retry attempts to fail (~300s and ~108k input tokens wasted). Increased to 32768 and added `recoverTruncatedJsonArray` to `safeJsonParse` as belt-and-suspenders: finds the last complete JSON object in a truncated `[{...}, {... ` array and closes it. Loses the last partial element but preserves all complete ones.
+- **`queryType: null` validation error on every first Prometheus call.** LLM consistently sends `queryType: null` on instant queries. Added to `coercePrometheusArgs` alongside the existing `startTime/endTime/stepSeconds` coercions. Eliminates 1 wasted tool call per discovery attempt.
+- **Discovery parse failure logging was opaque.** "discovery returned empty result" gave no indication of whether the response was truncated, malformed, or empty. Now logs the response length and first/last 200 chars so truncation vs malformed format is diagnosable from the log line alone.
+
+### Added
+- **Discovery retry visibility in UI.** When the discover agent retries after a parse failure, the UI now shows "Attempt 2 of 3 — previous attempt failed (parse failed)" instead of looking stuck on "Discovering services...". New `discover:retry` WebSocket event, wired through from `runDiscoverStep` → `ws-handler` → `App.tsx` → `DiscoveryProgress`.
+
 ## [0.1.9] - 2026-04-16
 
 ### Fixed

@@ -56,6 +56,7 @@ export interface IDiscoverAgent {
     onToolCall?: OnToolCallEnriched,
     onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void,
     skills?: Skill[],
+    onRetry?: (attempt: number, maxRetries: number, reason: string) => void,
   ): Promise<ValidatedServiceConfig[]>;
 
   accept(services: ServiceConfig[], source: "discovery" | "manual"): Promise<string>;

@@ -20,6 +20,7 @@ export interface DiscoverStepConfig {
   onToolCall?: OnToolCallEnriched;
   onIteration?: OnIteration;
   onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
+  onRetry?: (attempt: number, maxRetries: number, reason: string) => void;
   skills?: Skill[];
   maxCharsPerSkill?: number;
 }
@@ -209,7 +210,7 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
 
     try {
       const result = await agent.generate(discoverPrompt, {
-        providerOptions: { "openai-compatible": { max_tokens: 16384 } },
+        providerOptions: { "openai-compatible": { max_tokens: 32768 } },
         onStepFinish: (step: any) => {
           if (!step.toolResults?.length) return;
           for (const tr of step.toolResults) {
@@ -267,7 +268,14 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
       if (parsed?.services && Array.isArray(parsed.services) && parsed.services.length > 0) {
         return parsed.services;
       }
-      logger.warn({ attempt, maxRetries: MAX_RETRIES }, "discovery returned empty result");
+      const respLen = result.text?.length ?? 0;
+      const first200 = result.text?.slice(0, 200) ?? "";
+      const last200 = result.text?.slice(-200) ?? "";
+      logger.warn(
+        { attempt, maxRetries: MAX_RETRIES, responseChars: respLen, first200, last200 },
+        `discovery: parse failed on ${respLen}-char response (attempt ${attempt}/${MAX_RETRIES})`,
+      );
+      config.onRetry?.(attempt, MAX_RETRIES, "parse failed");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logLlmCall({
