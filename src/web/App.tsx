@@ -332,7 +332,10 @@ export function App() {
                       initialService={leftPane.initialService}
                       onInitialServiceConsumed={() => { if (leftPane.type === "services") setLeftPane({ ...leftPane, initialService: undefined }); }}
                       discoveryState={discoveryState}
-                      onStartDiscovery={() => { ws.send({ type: "discover" }); }}
+                      onStartDiscovery={() => {
+                        setDiscoveryState({ phase: "discovery", status: "running", iteration: { current: 0, max: 0, description: "" }, toolCalls: [], results: [], error: null, retry: null, phaseTokens: {}, totalUsage: null });
+                        ws.send({ type: "discover" });
+                      }}
                       onResetDiscovery={() => setDiscoveryState({ phase: "", status: "complete", iteration: { current: 0, max: 0, description: "" }, toolCalls: [], results: [], error: null, retry: null, phaseTokens: {}, totalUsage: null })}
                       onDiscoveryAccepted={() => setLeftPane({ type: "dashboard" })}
                       grafanaUrl={branding.grafanaUrl}
