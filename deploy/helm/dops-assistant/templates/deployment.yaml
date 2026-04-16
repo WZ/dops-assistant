@@ -47,11 +47,13 @@ spec:
         # writable directory (src/config/loader.ts). ConfigMaps are read-only,
         # so we copy the rendered config onto the data volume at startup.
         #
-        # We also stage providers.yaml into data/default/ so the provider
-        # registry picks up Helm-declared MCP providers on every boot —
-        # important when persistence is disabled, because the GUI-backed
-        # providers.yaml would otherwise vanish on every pod restart and
-        # leave the discovery agent with no tools.
+        # providers.yaml handling:
+        #   - If persistence is on AND a GUI-populated providers.yaml exists
+        #     on the PVC, leave it alone (operator-added providers survive
+        #     restarts).
+        #   - Otherwise, stage the Helm-declared providers (non-empty config
+        #     providers, or first-boot default).
+        #   - Empty "[]" from Helm never overwrites a non-empty PVC file.
         - name: init-config
           image: {{ include "dops-assistant.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -62,7 +64,29 @@ spec:
               set -e
               cp /config-src/config.yaml {{ .Values.persistence.mountPath }}/config.yaml
               mkdir -p {{ .Values.persistence.mountPath }}/default
-              cp /config-src/providers.yaml {{ .Values.persistence.mountPath }}/default/providers.yaml
+              TARGET={{ .Values.persistence.mountPath }}/default/providers.yaml
+              SOURCE=/config-src/providers.yaml
+              # Helm source has actual content (not just "[]" / blank)?
+              SOURCE_HAS_CONTENT=0
+              if [ -s "$SOURCE" ] && grep -qE '^\s*-\s' "$SOURCE"; then
+                SOURCE_HAS_CONTENT=1
+              fi
+              # PVC target has actual content?
+              TARGET_HAS_CONTENT=0
+              if [ -s "$TARGET" ] && grep -qE '^\s*-\s' "$TARGET"; then
+                TARGET_HAS_CONTENT=1
+              fi
+              if [ "$SOURCE_HAS_CONTENT" = "1" ]; then
+                # Helm declares providers: source of truth wins.
+                cp "$SOURCE" "$TARGET"
+                echo "init-config: staged Helm providers to $TARGET"
+              elif [ "$TARGET_HAS_CONTENT" = "0" ]; then
+                # Neither side has content — write the empty list so the file exists.
+                cp "$SOURCE" "$TARGET"
+                echo "init-config: wrote empty providers.yaml (first boot)"
+              else
+                echo "init-config: preserved existing providers.yaml on PVC ($TARGET)"
+              fi
           volumeMounts:
             - name: config
               mountPath: /config-src
