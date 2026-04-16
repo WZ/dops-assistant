@@ -107,12 +107,22 @@ export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, er
           </div>
         )}
 
-        {/* Progress bar */}
-        {iteration && iteration.max > 0 && !error && (
-          <div className="h-1 bg-muted rounded mb-4">
+        {/* Progress bar — shimmer overlay shows activity even when no iterations are firing */}
+        {!error && (
+          <div className="h-1 bg-muted rounded mb-4 overflow-hidden relative">
+            {iteration && iteration.max > 0 ? (
+              <div
+                className="h-1 bg-primary rounded transition-all"
+                style={{ width: `${(iteration.current / iteration.max) * 100}%` }}
+              />
+            ) : null}
             <div
-              className="h-1 bg-primary rounded transition-all"
-              style={{ width: `${(iteration.current / iteration.max) * 100}%` }}
+              className="absolute inset-0 h-1 rounded"
+              style={{
+                background: "linear-gradient(90deg, transparent 25%, hsl(var(--primary) / 0.4) 50%, transparent 75%)",
+                backgroundSize: "200% 100%",
+                animation: "shimmer 1.6s infinite",
+              }}
             />
           </div>
         )}
