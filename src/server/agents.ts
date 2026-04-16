@@ -127,18 +127,8 @@ function extractToolImages(toolName: string, result: unknown): ImageAttachment[]
  * Truncate MCP tool result to prevent oversized context when fed back to the LLM.
  * Preserves the MCP content wrapper structure.
  */
-function truncateMcpResult(result: unknown, maxChars: number): unknown {
-  if (!result || typeof result !== "object") return result;
-  const content = (result as any).content;
-  if (!Array.isArray(content)) return result;
-  const truncated = content.map((part: any) => {
-    if (part?.type === "text" && typeof part.text === "string" && part.text.length > maxChars) {
-      return { ...part, text: part.text.slice(0, maxChars) + `\n... (truncated from ${part.text.length} chars)` };
-    }
-    return part;
-  });
-  return { ...result, content: truncated };
-}
+// Re-export from tool-utils for backward compat — chat Loki truncation uses this
+import { truncateMcpResult } from "../workflows/tool-utils.js";
 
 function selectChatAgent(agents: MastraChatAgentSet, task: ChatRequest): MastraChatAgent {
   return task.supportsInlineCharts === false
@@ -185,7 +175,7 @@ export class MastraChatAgentAdapter {
     const chatStartMs = Date.now();
     let firstChunkLogged = false;
     let chatError: string | undefined;
-    logLlmCallStart({ callId: chatCallId, agent: "chat", promptChars: prompt.length });
+    logLlmCallStart({ callId: chatCallId, agent: "chat", promptChars: prompt.length, prompt });
     try {
       const stream = await mastraAgent.stream(streamInput);
 
@@ -221,7 +211,9 @@ export class MastraChatAgentAdapter {
           const result = p.result ?? "";
           const resultStr = unwrapToolText(result);
           collectedImages.push(...extractToolImages(toolName, result));
-          chatToolCalls.push({ tool: toolName, argsChars: 0, resultChars: resultStr.length, result: resultStr.slice(0, 500) });
+          const toolResultEvent: ToolCallEvent = { tool: toolName, argsChars: 0, resultChars: resultStr.length, result: resultStr.slice(0, 500) };
+          chatToolCalls.push(toolResultEvent);
+          logToolCall(chatCallId, "chat", toolResultEvent);
           task.onToolCall?.(toolName, p.args ?? {}, resultStr);
         }
       }
@@ -415,6 +407,7 @@ export class MastraDiscoverAdapter implements IDiscoverAgent {
     onToolCall?: OnToolCallEnriched,
     onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void,
     skills?: import("../skills/store.js").Skill[],
+    onRetry?: (attempt: number, maxRetries: number, reason: string) => void,
   ): Promise<ValidatedServiceConfig[]> {
     return runDiscovery({
       model: this.deps.model,
@@ -425,6 +418,7 @@ export class MastraDiscoverAdapter implements IDiscoverAgent {
       onToolCall,
       onTokenUsage,
       skills,
+      onRetry,
     });
   }
 
@@ -440,6 +434,7 @@ export interface MastraAdapterDeps {
   providers: MastraProvider[];
   noHistory?: boolean;
   registryStore?: ServiceRegistryStore;
+  datasourceUidMap?: Map<string, string>;
 }
 
 /**
@@ -510,8 +505,9 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
     providers,
     services: config.services,
     projectRoot: deps.noHistory ? undefined : process.cwd(),
-    useQuirkHandling: true, // Enable wind-down: disables tools on last 2 iterations to force text output
+    useQuirkHandling: true,
     maxCharsPerSkill: config.skills?.maxCharsPerSkill,
+    datasourceUidMap: deps.datasourceUidMap,
   };
 
   const investigationAgent = new MastraInvestigationAdapter(workflowConfig);

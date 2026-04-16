@@ -2,8 +2,14 @@
 title: Consul Bare-Metal Service Discovery
 services: []
 alerts: []
-tags: [discovery, consul, bare-metal, host-process, fortidata]
-scope: [discovery]
+tags:
+  - discovery
+  - consul
+  - bare-metal
+  - host-process
+  - fortidata
+scope:
+  - discovery
 ---
 
 ## When to use
@@ -11,7 +17,7 @@ This stack runs services on bare-metal hosts (not K8s). They are registered in C
 
 ## Discovery strategy
 
-### Step 1: Find all Consul-registered services
+### Step 1: Find all Consul-registered services ONLY WITH Type=ExternalName
 Query:
 ```
 count by (service_name) (consul_catalog_service_node_healthy)
@@ -29,5 +35,11 @@ For each bare-metal-only service, use this format:
 - **metrics**: `[{"query": "consul_catalog_service_node_healthy{service_name=\"<name>\"}", "description": "Consul health status"}]`
 - **logLabels**: `{"app_fortidata_name": "<name>"}` — this is the Loki label key for this stack
 
-### Common bare-metal services in this stack
-hdfs-datanode, hdfs-namenode, impala, hbase, kudu, spark, zookeeper, consul
+### Important: discover ALL Consul services ONLY WITH Type=ExternalName, not just known ones
+You MUST run the `consul_catalog_service_node_healthy` query above and include
+EVERY `service_name` returned. Do NOT limit discovery to the examples below —
+new services are added regularly and won't appear in this list.
+
+Known examples (not exhaustive):
+hdfs-datanode, hdfs-namenode, hdfs-journalnode, hdfs-zkfc, impala, impala-catalog,
+hbase, kudu, kudu-tserver, spark, zookeeper, consul, hive-metastore, fazbdregistry

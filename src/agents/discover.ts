@@ -8,12 +8,26 @@ export interface DiscoverAgentConfig {
   maxSteps?: number;
   excludeServices?: string[];
   useQuirkHandling?: boolean;
+  /** Datasource UIDs rendered as a strict non-negotiable block. */
+  datasourceUidHints?: string;
+  /** Recipe and skill hints rendered as suggestions. */
   discoveryRecipes?: string;
 }
 
 export function createDiscoverAgent(config: DiscoverAgentConfig) {
   const excludeList = config.excludeServices?.length
     ? `\n\nEXCLUDE these services from your results (case-insensitive): ${config.excludeServices.join(", ")}`
+    : "";
+
+  const datasourceBlock = config.datasourceUidHints
+    ? `\n\n## CRITICAL: Datasource UIDs (non-negotiable)
+
+When calling ANY metric or log query tool that requires a datasourceUid parameter,
+you MUST pass datasourceUid EXACTLY as listed below. Do NOT guess, abbreviate,
+or use short names like "prometheus" or "loki". Do NOT call datasource listing
+tools — these UIDs are already resolved for you.
+
+${config.datasourceUidHints}`
     : "";
 
   const recipeHints = config.discoveryRecipes
@@ -39,8 +53,14 @@ These are suggestions — also use your own discovery strategies based on availa
 2. Run MULTIPLE discovery queries to build a comprehensive catalog. Do NOT stop at the first query — use several approaches and merge the results:
 
    **If infrastructure tools are available (e.g., Kubernetes API):**
-   - List pods, namespaces, or deployments to discover running services directly
-   - Infrastructure tools provide ground truth about what's actually running — use them first
+   - Use metric queries FIRST for the initial sweep (deployments, statefulsets, daemonsets)
+   - THEN use a filtered pod list as a SECOND PASS to catch container-level services
+     that don't have their own deployment (e.g., sidecar containers, celery workers,
+     multi-container pods). Many services are containers within a deployment whose
+     name differs from the deployment name — metrics alone miss these.
+   - When listing pods, ALWAYS use fieldSelector or labelSelector to exclude system
+     namespaces (kube-system, kube-public, kube-node-lease). Do NOT fetch all pods
+     unfiltered — that returns 80k+ chars and wastes your token budget.
 
    **If metric query tools are available:**
    - Query for workload metrics (deployments, statefulsets, containers) grouped by service/app name
@@ -52,7 +72,7 @@ These are suggestions — also use your own discovery strategies based on availa
 
 3. Merge results from all successful queries. Deduplicate — if the same service appears under different names, keep one entry.
 4. For each service, construct a health/activity metric query using the metric that discovered it.
-5. Return ALL discovered services as a JSON array.${recipeHints}
+5. Return ALL discovered services as a JSON array.${datasourceBlock}${recipeHints}
 
 ## IMPORTANT: Don't miss application services
 Monitoring systems typically track two categories:
@@ -88,7 +108,13 @@ Return a JSON array. Each object must have:
     5. Use {} if no label info is available. A wrong label is worse than none —
        the logs agent will query with it and get empty results.
 
-Be thorough — discover ALL services. Return valid JSON.${excludeList}`,
+Be thorough — discover ALL services. Return valid JSON.
+
+OUTPUT STRICTNESS: Return PURE JSON only. Do NOT include JavaScript-style
+comments (// or /* */), trailing commas, or section headers inside the array.
+If you want to group services conceptually, use an extra field like
+"category": "deployment" | "statefulset" | "daemonset" | "container" on
+the service object itself — do not use inline comments as dividers.${excludeList}`,
     model: config.model as any,
     tools: config.tools ?? {},
     defaultOptions: {

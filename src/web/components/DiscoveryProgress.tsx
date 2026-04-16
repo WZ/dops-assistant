@@ -15,13 +15,14 @@ interface DiscoveryProgressProps {
   iteration?: { current: number; max: number; description: string };
   toolCalls: ToolCallEntry[];
   error?: string | null;
+  retry?: { attempt: number; maxRetries: number; reason: string } | null;
   phaseTokens?: Record<string, { inputTokens: number; outputTokens: number; durationMs: number }>;
   totalUsage?: { inputTokens: number; outputTokens: number; durationMs: number } | null;
   onRetry?: () => void;
   onBack: () => void;
 }
 
-export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, error, phaseTokens, totalUsage, onRetry, onBack }: DiscoveryProgressProps) {
+export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, error, retry, phaseTokens, totalUsage, onRetry, onBack }: DiscoveryProgressProps) {
   // Elapsed timer + LLM thinking detection
   const [startTime] = useState(() => Date.now());
   const [elapsed, setElapsed] = useState(0);
@@ -97,17 +98,31 @@ export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, er
                 )}
                 <span className="tabular-nums">{elapsedStr} elapsed</span>
               </div>
-              <div className="text-[10px] text-muted-foreground/40 mt-0.5">This may take several minutes to complete</div>
+              {retry ? (
+                <div className="text-[10px] text-warning mt-0.5">Attempt {retry.attempt + 1} of {retry.maxRetries} — previous attempt failed ({retry.reason})</div>
+              ) : (
+                <div className="text-[10px] text-muted-foreground/40 mt-0.5">This may take several minutes to complete</div>
+              )}
             </div>
           </div>
         )}
 
-        {/* Progress bar */}
-        {iteration && iteration.max > 0 && !error && (
-          <div className="h-1 bg-muted rounded mb-4">
+        {/* Progress bar — shimmer overlay shows activity even when no iterations are firing */}
+        {!error && (
+          <div className="h-1 bg-muted rounded mb-4 overflow-hidden relative">
+            {iteration && iteration.max > 0 ? (
+              <div
+                className="h-1 bg-primary rounded transition-all"
+                style={{ width: `${(iteration.current / iteration.max) * 100}%` }}
+              />
+            ) : null}
             <div
-              className="h-1 bg-primary rounded transition-all"
-              style={{ width: `${(iteration.current / iteration.max) * 100}%` }}
+              className="absolute inset-0 h-1 rounded"
+              style={{
+                background: "linear-gradient(90deg, transparent 25%, hsl(var(--primary) / 0.4) 50%, transparent 75%)",
+                backgroundSize: "200% 100%",
+                animation: "shimmer 1.6s infinite",
+              }}
             />
           </div>
         )}

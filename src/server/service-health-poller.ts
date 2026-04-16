@@ -270,13 +270,15 @@ export class ServiceHealthPoller {
       try {
         tools = await getToolsByRole(this.resolveProviders(), "metrics") as Record<string, unknown>;
       } catch (err) {
-        logger.warn({ err }, "ServiceHealthPoller: failed to get MCP tools, skipping poll");
+        logger.warn({ err, stackId: this.stackId }, "ServiceHealthPoller: failed to get MCP tools, skipping poll");
         return;
       }
 
+      const toolNames = Object.keys(tools);
       const queryTool = this.findMetricQueryTool(tools);
       if (!queryTool) {
-        logger.warn("ServiceHealthPoller: metric query tool not found, skipping poll");
+        logger.warn({ stackId: this.stackId, toolCount: toolNames.length, toolNames: toolNames.slice(0, 10) },
+          "ServiceHealthPoller: metric query tool not found, skipping poll");
         return;
       }
 
@@ -359,7 +361,7 @@ export class ServiceHealthPoller {
       this.cachedHealth = newHealth;
 
       logger.info(
-        { summary: this.getSummary() },
+        { stackId: this.stackId, summary: this.getSummary() },
         "ServiceHealthPoller: poll complete",
       );
     } catch (err) {
@@ -476,9 +478,9 @@ export class ServiceHealthPoller {
       const result = await tool.execute(args);
       const entries = parsePrometheusResult(result);
       if (entries.length === 0) {
-        logger.info({ query, rawPreview: JSON.stringify(result).slice(0, 500) }, "ServiceHealthPoller: empty query result");
+        logger.info({ stackId: this.stackId, query, rawPreview: JSON.stringify(result).slice(0, 500) }, "ServiceHealthPoller: empty query result");
       } else {
-        logger.info({ query, entriesCount: entries.length }, "ServiceHealthPoller: query result");
+        logger.info({ stackId: this.stackId, query, entriesCount: entries.length }, "ServiceHealthPoller: query result");
       }
       return entries;
     } catch (err) {

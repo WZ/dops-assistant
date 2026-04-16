@@ -52,13 +52,16 @@ export function newCallId(): string {
 
 /**
  * Log the start of an LLM call, before the request is sent. Emitted at info
- * level so hangs before first chunk are visible without enabling debug.
+ * level so hangs before first chunk are visible without enabling debug. At
+ * debug level, also emits the full prompt so you can inspect what the model
+ * saw without waiting for the completion log line.
  */
 export function logLlmCallStart(event: {
   callId: string;
   agent: string;
   phase?: string;
   promptChars: number;
+  prompt?: string;
 }): void {
   if (!llmLogger.isLevelEnabled("info")) return;
   llmLogger.info({
@@ -67,6 +70,15 @@ export function logLlmCallStart(event: {
     phase: event.phase,
     promptChars: event.promptChars,
   }, `LLM ${event.agent} start: ${event.promptChars}chars prompt`);
+
+  if (event.prompt && llmLogger.isLevelEnabled("debug")) {
+    llmLogger.debug({
+      callId: event.callId,
+      agent: event.agent,
+      phase: event.phase,
+      prompt: event.prompt,
+    }, `LLM ${event.agent} start prompt`);
+  }
 }
 
 /**
@@ -107,9 +119,9 @@ export function logLlmCall(event: LlmCallEvent): void {
 
 /** Log an individual tool call within an LLM conversation. */
 export function logToolCall(callId: string, agent: string, event: ToolCallEvent): void {
-  if (!llmLogger.isLevelEnabled("debug")) return;
+  if (!llmLogger.isLevelEnabled("info")) return;
 
-  llmLogger.debug({
+  llmLogger.info({
     callId,
     agent,
     tool: event.tool,
@@ -117,7 +129,15 @@ export function logToolCall(callId: string, agent: string, event: ToolCallEvent)
     resultChars: event.resultChars,
     durationMs: event.durationMs,
     error: event.error,
-    args: event.args,
-    result: event.result,
-  }, `Tool ${event.tool}: ${event.resultChars}chars ${event.durationMs ?? 0}ms`);
+  }, `Tool ${agent}.${event.tool}: ${event.resultChars}chars ${event.durationMs ?? 0}ms`);
+
+  if (llmLogger.isLevelEnabled("debug")) {
+    llmLogger.debug({
+      callId,
+      agent,
+      tool: event.tool,
+      args: event.args,
+      result: event.result,
+    }, `Tool ${agent}.${event.tool} details`);
+  }
 }

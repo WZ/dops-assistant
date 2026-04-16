@@ -2,12 +2,49 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.0.9.0] - 2026-04-15
+## [0.1.10] - 2026-04-16
+
+### Fixed
+- **Discovery failed on every attempt due to response truncation.** `max_tokens: 16384` was too small for 71-service environments (~50k chars output). The JSON array was truncated mid-element and `safeJsonParse` had no recovery strategy, causing all 3 retry attempts to fail (~300s and ~108k input tokens wasted). Increased to 32768 and added `recoverTruncatedJsonArray` to `safeJsonParse` as belt-and-suspenders: finds the last complete JSON object in a truncated `[{...}, {... ` array and closes it. Loses the last partial element but preserves all complete ones.
+- **`queryType: null` validation error on every first Prometheus call.** LLM consistently sends `queryType: null` on instant queries. Added to `coercePrometheusArgs` alongside the existing `startTime/endTime/stepSeconds` coercions. Eliminates 1 wasted tool call per discovery attempt.
+- **Discovery parse failure logging was opaque.** "discovery returned empty result" gave no indication of whether the response was truncated, malformed, or empty. Now logs the response length and first/last 200 chars so truncation vs malformed format is diagnosable from the log line alone.
 
 ### Added
-- **Setup stepper for first-run onboarding.** First-time users (or users switching to an unconfigured stack) now see a 3-step progress bar guiding them through Connect Provider, Discover Services, and Monitor. Auto-routes to the right page at each step. Replaces the misleading 0/0/0 KPI dashboard that made the app look broken instead of unconfigured.
-- **Setup-aware empty state on Dashboard.** When no providers are configured, the Operations Desk shows guidance text and a "Resume setup" button instead of zero-filled stat cards.
-- **Shared `createStackFetch` utility.** Extracted from StackContext so both the StackProvider and the new setup hook can make stack-scoped API calls. Also fixes the branding fetch which was manually constructing headers.
+- **Discovery retry visibility in UI.** When the discover agent retries after a parse failure, the UI now shows "Attempt 2 of 3 — previous attempt failed (parse failed)" instead of looking stuck on "Discovering services...". New `discover:retry` WebSocket event, wired through from `runDiscoverStep` → `ws-handler` → `App.tsx` → `DiscoveryProgress`.
+
+## [0.1.9] - 2026-04-16
+
+### Fixed
+- **Discovery agent hallucinated datasource UIDs.** The LLM consistently passed `datasourceUid: "prometheus"` (short name) instead of the real UID, causing `Tool input validation` errors and wasting 2-4 tool call retries per discovery run. Two-layer fix: (1) `wrapToolsWithCallbacks` now intercepts hallucinated short names ("prometheus", "loki") and substitutes the real UID from a pre-built map before the MCP call is sent, with info-level logging when substitution fires; (2) the discover agent's system prompt now renders datasource UIDs in a dedicated "CRITICAL: non-negotiable" block, separated from the recipe suggestions that previously gave the agent permission to ignore hints.
+- **Evidence and anomaly agents were not protected against the same datasource UID hallucination.** Extended the UID coercion map through `WorkflowConfig` to all investigation phases (metrics, logs, infrastructure, changes, anomaly detection).
+
+## [0.1.8] - 2026-04-16
+
+### Added
+- **Full LLM prompts logged at debug level on call-start**, not just completion. `logLlmCallStart` now accepts an optional `prompt` field; with `LLM_LOG_LEVEL=debug` you'll see a separate `LLM <agent> start prompt` line alongside the info summary. Previously the full prompt was only visible in the completion log, so mid-call hangs gave you no way to inspect what the model saw.
+- **Per-tool-call agentic loop logging.** `logToolCall` now emits an info summary (`Tool <agent>.<tool>: Nchars Nms`) plus optional debug details (args + result) for every tool call inside discover, evidence phases (metrics/logs/infrastructure/changes), and chat. Previously discover and evidence collected tool events silently and only flushed them in the final LLM call summary, so you couldn't watch an investigation unfold in real time.
+
+## [0.1.7] - 2026-04-15
+
+### Fixed
+- **Accepting a discovery result left the operator on the Services page instead of the Operations Desk.** After clicking Accept, the grid view would re-render with the now-populated service list but the operator still had to manually click the Dashboard nav item to see the new services in the live catalog. Now the Accept action triggers an automatic redirect to the Operations Desk right after the `discover:accept` message is sent so the freshly-populated list is immediately usable.
+
+## [0.1.6] - 2026-04-15
+
+### Fixed
+- **Discover debug log elided the prompt hints.** The `logLlmCall` in `runDiscoverStep` was logging `prompt: "...\n\n[hints: 917 chars]"` with a placeholder instead of the real hints block, so the `LLM discover details` debug entry showed only the user-facing stub and not the datasource hints, recipes, and skills that were actually injected into the system prompt. Inlined the full `fullHints` content so `LLM_LOG_LEVEL=debug` shows the complete LLM request.
+
+## [0.1.5] - 2026-04-15
+
+### Fixed
+- **Discovery agent tool-arg coercion was silently dead.** Mastra's `CoreToolBuilder` validates tool input against the tool's schema BEFORE calling the wrapped execute, but only for Mastra-native tools (detected via the `Symbol.for("mastra.core.tool.Tool")` marker). Our `wrapToolsWithCallbacks` spread was copying that symbol, so Mastra rejected LLM-emitted `startTime: null` on instant Prometheus queries with "Tool input validation failed" before our `coercePrometheusArgs` ever ran. Fix: strip the marker from wrapped tools so Mastra takes the Vercel/AI-SDK path, which skips input validation and calls our execute directly. `coerceLokiArgs` was silently affected too, but its existing fixes were shape-valid (`"forward" → "backward"`) so validation passed and the wrapper still ran, masking the problem.
+- **Discovery could crash on JSONC comments in LLM output.** `safeJsonParse` now strips `//` and `/* */` style comments and trailing commas while respecting JSON string boundaries, and falls back to extracting a top-level JSON array (in addition to objects) when direct parse fails. The discover agent was producing `[ {...}, /* StatefulSets */ {...}, /* DaemonSets */ {...} ]` which silently failed parse and dropped the whole discovery result.
+- **Discovery made the agent hallucinate datasource UIDs.** Evidence agents get datasource hints pre-injected; the discover agent didn't, so it would invent `"prometheus-k8s"` or `"loki"` short names and eat 2-3 retry round-trips. Fix: `runDiscoverStep` pre-fetches datasource UIDs via `list_datasources` and prepends them to the prompt as an `<untrusted_datasource_hints>` block.
+- **Discovery tool-arg coercion only ran when an `onToolCall` callback was wired.** Auto-discovery on cold start has no user-facing callback, so `wrapToolsWithCallbacks` was skipped entirely. Fix: always wrap, even when there's no callback.
+- **Discover agent's `onStepFinish` could crash on exotic tool results.** `JSON.stringify` throws on circular refs and BigInts; an unguarded call could kill the discovery step. Wrapped in try/catch with a 500-char slice on args.
+
+### Changed
+- **Helm chart default `imagePullPolicy` is now `Always`** so re-pushing a fixed tag actually picks up the new digest instead of reusing the node's cached copy. Override per-environment if you never re-push tags.
 
 ## [0.1.4] - 2026-04-15
 

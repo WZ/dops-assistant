@@ -8,6 +8,7 @@ import express from "express";
 import { createServer } from "http";
 import path from "path";
 import { fileURLToPath } from "url";
+import { readFileSync } from "node:fs";
 import { Agent, setGlobalDispatcher } from "undici";
 import { createLogger } from "../logger.js";
 
@@ -188,7 +189,7 @@ async function main() {
 
     // Create agents lazily for the investigation
     const providers = ctx.providerRegistry.getProviders();
-    createMastraAdapters({ config, providers, registryStore: ctx.serviceRegistry })
+    createMastraAdapters({ config, providers, registryStore: ctx.serviceRegistry, datasourceUidMap: ctx.providerRegistry.buildDatasourceUidMap() })
       .then(({ investigationAgent }) => {
         const runner = new InvestigationRunner({ db, investigationAgent, skillStore, globalOnComplete });
         return runner.run({
@@ -218,7 +219,7 @@ async function main() {
     const defaultStackId = stackManager.getDefaultStackId();
     const defaultCtx = stackManager.getDefaultContext();
     const providers = defaultCtx.providerRegistry.getProviders();
-    const { investigationAgent } = await createMastraAdapters({ config, providers, registryStore: defaultCtx.serviceRegistry });
+    const { investigationAgent } = await createMastraAdapters({ config, providers, registryStore: defaultCtx.serviceRegistry, datasourceUidMap: defaultCtx.providerRegistry.buildDatasourceUidMap() });
     const runner = new InvestigationRunner({ db, investigationAgent, skillStore, globalOnComplete });
 
     const webhookHandler = createWebhookHandler({
@@ -255,7 +256,7 @@ async function main() {
 
       const ctx = stackManager.getContext(stackRow.id);
       const stackProviders = ctx.providerRegistry.getProviders();
-      const stackAdapters = await createMastraAdapters({ config, providers: stackProviders, registryStore: ctx.serviceRegistry });
+      const stackAdapters = await createMastraAdapters({ config, providers: stackProviders, registryStore: ctx.serviceRegistry, datasourceUidMap: ctx.providerRegistry.buildDatasourceUidMap() });
       const stackRunner = new InvestigationRunner({ db, investigationAgent: stackAdapters.investigationAgent, skillStore, globalOnComplete });
       const stackWebhookHandler = createWebhookHandler({
         runner: stackRunner,
@@ -294,7 +295,9 @@ async function main() {
   stackManager.startAllPollers();
 
   server.listen(port, () => {
-    logger.info({ port }, "dops-assistant web server running");
+    const pkg = JSON.parse(readFileSync(path.join(__dirname, "../../package.json"), "utf-8"));
+    const ver = pkg.version ?? "unknown";
+    logger.info({ port, version: ver }, `dops-assistant v${ver} web server running on port ${port}`);
   });
 
   const shutdown = async () => {

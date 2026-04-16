@@ -127,6 +127,7 @@ export function App() {
     toolCalls: [] as Array<{ timestamp: string; tool: string; status: "calling" | "success" | "error"; args?: Record<string, unknown> }>,
     results: [] as ValidatedServiceConfig[],
     error: null as string | null,
+    retry: null as { attempt: number; maxRetries: number; reason: string } | null,
     phaseTokens: {} as Record<string, { inputTokens: number; outputTokens: number; durationMs: number }>,
     totalUsage: null as { inputTokens: number; outputTokens: number; durationMs: number } | null,
   });
@@ -174,6 +175,13 @@ export function App() {
         }));
       } else if (msg.type === "discover:pending") {
         setDiscoveryState((prev) => ({ ...prev, results: msg.services, error: null }));
+      } else if (msg.type === "discover:retry") {
+        setDiscoveryState((prev) => ({
+          ...prev,
+          retry: { attempt: msg.attempt, maxRetries: msg.maxRetries, reason: msg.reason },
+          toolCalls: [],
+          iteration: { current: 0, max: prev.iteration.max, description: "" },
+        }));
       } else if (msg.type === "discover:error") {
         setDiscoveryState((prev) => ({ ...prev, error: msg.message }));
       }
@@ -195,6 +203,7 @@ export function App() {
       toolCalls: [],
       results: [],
       error: null,
+      retry: null,
       phaseTokens: {},
       totalUsage: null,
     });
@@ -323,8 +332,12 @@ export function App() {
                       initialService={leftPane.initialService}
                       onInitialServiceConsumed={() => { if (leftPane.type === "services") setLeftPane({ ...leftPane, initialService: undefined }); }}
                       discoveryState={discoveryState}
-                      onStartDiscovery={() => { ws.send({ type: "discover" }); }}
-                      onResetDiscovery={() => setDiscoveryState({ phase: "", status: "complete", iteration: { current: 0, max: 0, description: "" }, toolCalls: [], results: [], error: null, phaseTokens: {}, totalUsage: null })}
+                      onStartDiscovery={() => {
+                        setDiscoveryState({ phase: "discovery", status: "running", iteration: { current: 0, max: 0, description: "" }, toolCalls: [], results: [], error: null, retry: null, phaseTokens: {}, totalUsage: null });
+                        ws.send({ type: "discover" });
+                      }}
+                      onResetDiscovery={() => setDiscoveryState({ phase: "", status: "complete", iteration: { current: 0, max: 0, description: "" }, toolCalls: [], results: [], error: null, retry: null, phaseTokens: {}, totalUsage: null })}
+                      onDiscoveryAccepted={() => setLeftPane({ type: "dashboard" })}
                       grafanaUrl={branding.grafanaUrl}
                       prometheusDatasource={branding.prometheusDatasource}
                       stackName={hasMultipleStacks ? activeStack?.name : undefined}
