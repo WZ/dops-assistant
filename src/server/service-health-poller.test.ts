@@ -191,6 +191,16 @@ describe("matchResultsToServices", () => {
     expect(result.get("postgres")).toBe("healthy");
   });
 
+  it("matches by daemonset label", () => {
+    const entries = [makePrometheusEntry({ daemonset: "node-exporter" }, "6")];
+    const result = matchResultsToServices(
+      entries as ReturnType<typeof makePrometheusEntry>[],
+      new Set(["node-exporter"]),
+      "unknown",
+    );
+    expect(result.get("node-exporter")).toBe("healthy");
+  });
+
   it("matches by job label", () => {
     const entries = [makePrometheusEntry({ job: "prometheus" }, "1")];
     const result = matchResultsToServices(

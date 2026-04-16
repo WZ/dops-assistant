@@ -161,6 +161,7 @@ export function matchResultsToServices(
     const candidates = [
       metric["deployment"],
       metric["statefulset"],
+      metric["daemonset"],
       metric["job"],
       metric["instance"],
       metric["service"],
