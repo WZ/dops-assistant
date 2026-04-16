@@ -243,7 +243,11 @@ export class StackManager {
       throw new Error("Failed to create stack — DB row not found after insert");
     }
 
-    return this.initializeStack(dbRow);
+    const ctx = await this.initializeStack(dbRow);
+    // Start the poller — startAllPollers() only runs at boot, so stacks created
+    // after boot (via the GUI) would never poll without this.
+    ctx.healthPoller.start();
+    return ctx;
   }
 
   /**
