@@ -17,6 +17,9 @@ interface DashboardProps {
   onViewService: (serviceName: string) => void;
   onViewAllServices: () => void;
   stackName?: string;
+  setupStage?: import("../hooks/useSetupStage").SetupStage | null;
+  setupDismissed?: boolean;
+  onResumeSetup?: () => void;
 }
 
 interface ActiveInvestigation {
@@ -30,7 +33,7 @@ interface ActiveInvestigation {
 
 type HealthStatus = "healthy" | "degraded" | "down" | "unknown";
 
-export function Dashboard({ wsMessages, onInvestigationClick, onViewService, onViewAllServices, stackName }: DashboardProps) {
+export function Dashboard({ wsMessages, onInvestigationClick, onViewService, onViewAllServices, stackName, setupStage, setupDismissed, onResumeSetup }: DashboardProps) {
   const { stackFetch } = useStackContext();
   const [services, setServices] = useState<ServiceConfig[]>([]);
   const [investigations, setInvestigations] = useState<InvestigationSummary[]>([]);
@@ -316,6 +319,41 @@ export function Dashboard({ wsMessages, onInvestigationClick, onViewService, onV
         </div>
       )}
 
+      {/* Setup-aware empty state */}
+      {setupStage && setupStage !== "complete" ? (
+        <section aria-label="Setup" className="mb-8">
+          <div className="py-16 flex flex-col items-center gap-4 text-center">
+            <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" className="text-primary" aria-hidden="true">
+                <path d="M12 2L2 7l10 5 10-5-10-5z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+                <path d="M2 17l10 5 10-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M2 12l10 5 10-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </div>
+            <div>
+              <p className="font-display text-sm font-semibold text-foreground/80">
+                {setupStage === "needs-provider" || setupStage === "needs-provider-connected"
+                  ? "Connect your monitoring stack to get started"
+                  : "Provider connected! Run service discovery to populate your dashboard"}
+              </p>
+              <p className="font-body text-xs text-muted-foreground/50 mt-1.5">
+                {setupStage === "needs-provider" || setupStage === "needs-provider-connected"
+                  ? "The setup guide above will walk you through each step."
+                  : "Head to Services to scan for your monitored services."}
+              </p>
+            </div>
+            {setupDismissed && onResumeSetup && (
+              <button
+                onClick={onResumeSetup}
+                className="mt-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground font-body text-sm font-medium hover:bg-primary/90 transition-colors"
+              >
+                Resume setup
+              </button>
+            )}
+          </div>
+        </section>
+      ) : (
+      <>
       {/* Section B: KPI Stat Cards */}
       <section aria-label="Overview" className="mb-4">
         <div className="flex items-center gap-2 mb-3">
@@ -456,6 +494,9 @@ export function Dashboard({ wsMessages, onInvestigationClick, onViewService, onV
             </div>
           </div>
         </section>
+      )}
+
+      </>
       )}
 
       <ToastContainer
