@@ -14,7 +14,7 @@ import type { SidebarPage } from "./components/Sidebar";
 import { ServicesPage } from "./components/ServicesPage";
 import { SettingsPage } from "./components/SettingsPage";
 import { SetupStepper } from "./components/SetupStepper";
-import { useRoute } from "./hooks/useRoute";
+import { useRoute, viewToUrl } from "./hooks/useRoute";
 import { StackSwitcher } from "./components/StackSwitcher";
 import { StackProvider } from "./contexts/StackContext";
 import { useWebSocket } from "./hooks/useWebSocket";
@@ -94,17 +94,17 @@ export function App() {
 
     if (setupStage === "needs-provider" || setupStage === "needs-provider-connected") {
       setLeftPaneRaw({ type: "settings", initialTab: "providers" });
-      history.replaceState(null, "", "/settings");
+      history.replaceState(null, "", viewToUrl({ type: "settings" }));
     } else if (setupStage === "needs-discovery") {
       setLeftPaneRaw({ type: "services" });
-      history.replaceState(null, "", "/services");
+      history.replaceState(null, "", viewToUrl({ type: "services" }));
     }
   }, [setupStage, setupDismissed, setupLoading]);
 
   useEffect(() => {
     if (setupStage === "complete" && lastRoutedStageRef.current && lastRoutedStageRef.current !== "complete") {
       setLeftPaneRaw({ type: "dashboard" });
-      history.replaceState(null, "", "/");
+      history.replaceState(null, "", viewToUrl({ type: "dashboard" }));
       lastRoutedStageRef.current = "complete";
     }
   }, [setupStage]);

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { safeGetItem } from "../lib/utils";
+import { withBase } from "../lib/createStackFetch";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -44,7 +45,7 @@ export function StacksManagePage({ stacks, activeStackId, onSwitchStack, onRefet
       const headers: Record<string, string> = {};
       const apiKey = safeGetItem("dops-api-key");
       if (apiKey) headers["X-API-Key"] = apiKey;
-      const res = await fetch(`/api/stacks/${deleteTarget.id}`, { method: "DELETE", headers });
+      const res = await fetch(withBase(`/api/stacks/${deleteTarget.id}`), { method: "DELETE", headers });
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
         throw new Error(data.error || `Failed to delete stack (${res.status})`);

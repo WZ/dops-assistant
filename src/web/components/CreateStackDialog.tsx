@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { safeGetItem } from "../lib/utils";
+import { withBase } from "../lib/createStackFetch";
 import { Loader2 } from "lucide-react";
 import {
   Dialog,
@@ -62,7 +63,7 @@ export function CreateStackDialog({ open, onOpenChange, onCreated }: CreateStack
         const headers: Record<string, string> = { "Content-Type": "application/json" };
         const apiKey = safeGetItem("dops-api-key");
         if (apiKey) headers["X-API-Key"] = apiKey;
-        const res = await fetch("/api/stacks", {
+        const res = await fetch(withBase("/api/stacks"), {
           method: "POST",
           headers,
           body: JSON.stringify({
