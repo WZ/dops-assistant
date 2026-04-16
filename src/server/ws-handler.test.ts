@@ -41,6 +41,7 @@ function mockCtx(): StackContext {
       getProviders: vi.fn().mockReturnValue([]),
       getAll: vi.fn().mockReturnValue([]),
       initialize: vi.fn().mockResolvedValue(undefined),
+      buildDatasourceUidMap: vi.fn().mockReturnValue(new Map()),
     },
     conversationMemory: {
       get: vi.fn().mockReturnValue([]),
