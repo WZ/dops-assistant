@@ -8,6 +8,7 @@ import express from "express";
 import { createServer } from "http";
 import path from "path";
 import { fileURLToPath } from "url";
+import { readFileSync } from "node:fs";
 import { Agent, setGlobalDispatcher } from "undici";
 import { createLogger } from "../logger.js";
 
@@ -294,7 +295,9 @@ async function main() {
   stackManager.startAllPollers();
 
   server.listen(port, () => {
-    logger.info({ port }, "dops-assistant web server running");
+    const pkg = JSON.parse(readFileSync(path.join(__dirname, "../../package.json"), "utf-8"));
+    const ver = pkg.version ?? "unknown";
+    logger.info({ port, version: ver }, `dops-assistant v${ver} web server running on port ${port}`);
   });
 
   const shutdown = async () => {
