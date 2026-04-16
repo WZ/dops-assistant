@@ -135,7 +135,7 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
         return { summary: noToolsMsg, observations: [], timeRange, toolCalls: [] };
       }
 
-      const tools = wrapToolsWithCallbacks(rawTools, workflowConfig.onToolCall, phaseName);
+      const tools = wrapToolsWithCallbacks(rawTools, workflowConfig.onToolCall, phaseName, workflowConfig.datasourceUidMap);
 
       // 2. Create specialized agent
       const agent = createAgent({

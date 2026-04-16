@@ -12,6 +12,9 @@ import type { WorkflowConfig } from "./investigation.js";
 import { extractTimeRange, suggestStepSeconds, toRfc3339Window } from "./helpers.js";
 import type { ServiceConfig } from "../config/schema.js";
 import { getTimeContext } from "../agents/shared/time-context.js";
+import { createLogger } from "../logger.js";
+
+const coercionLogger = createLogger("tool-coercion");
 
 // ── Debug logger (no-op in production; set DOPS_DEBUG=1 to enable) ───────────
 export const debug = process.env.DOPS_DEBUG ? (...args: unknown[]) => console.error("[INVESTIGATION]", ...args) : (..._args: unknown[]) => {};
@@ -173,7 +176,12 @@ export function wrapToolsWithCallbacks(
   tools: Record<string, any>,
   onToolCall?: WorkflowConfig["onToolCall"],
   phase?: string,
+  datasourceUidMap?: Map<string, string>,
 ): Record<string, any> {
+  const needsDatasourceCoercion = (n: string) =>
+    n.includes("query_prometheus") || n.includes("query_loki") ||
+    n.includes("list_prometheus") || n.includes("list_loki");
+
   const wrapped: Record<string, any> = {};
   for (const [name, tool] of Object.entries(tools)) {
     // Spread everything, then explicitly drop the Mastra class marker and
@@ -186,6 +194,23 @@ export function wrapToolsWithCallbacks(
     wrapped[name] = {
       ...wrappedTool,
       execute: async (...execArgs: any[]) => {
+        // Intercept hallucinated datasource short names (e.g. "prometheus" instead
+        // of the real UID). Runs first so all downstream coercers see the correct UID.
+        if (datasourceUidMap?.size && needsDatasourceCoercion(name) &&
+            execArgs[0] && typeof execArgs[0] === "object") {
+          const args = execArgs[0] as Record<string, unknown>;
+          const uid = args["datasourceUid"];
+          if (typeof uid === "string" && datasourceUidMap.has(uid)) {
+            const realUid = datasourceUidMap.get(uid)!;
+            if (realUid !== uid) {
+              args["datasourceUid"] = realUid;
+              coercionLogger.info(
+                { phase, tool: name, from: uid, to: realUid },
+                `Coerced datasourceUid: ${uid} → ${realUid}`,
+              );
+            }
+          }
+        }
         // Fill null prometheus time args BEFORE schema coercion — LLMs send null
         // on instant queries but the MCP schema requires strings, wasting a retry.
         if (name.includes("query_prometheus") && execArgs[0] && typeof execArgs[0] === "object") {

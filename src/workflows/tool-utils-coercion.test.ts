@@ -67,6 +67,110 @@ describe("wrapToolsWithCallbacks — end-to-end coercion", () => {
     expect(wt.execute).not.toBe(mcpLikeTool.execute);
   });
 
+  it("coerces hallucinated datasourceUid short name to real UID", async () => {
+    const innerExecute = vi.fn(async (args: any) => ({ ok: true, sawArgs: args }));
+    const tools = {
+      grafana_query_prometheus: {
+        id: "grafana_query_prometheus",
+        inputSchema: { properties: {} },
+        execute: innerExecute,
+      },
+    };
+    const uidMap = new Map([["prometheus", "abc-real-uid-123"]]);
+
+    const wrapped = wrapToolsWithCallbacks(tools, undefined, "test", uidMap);
+    await wrapped.grafana_query_prometheus.execute(
+      { datasourceUid: "prometheus", expr: "up" },
+      {} as any,
+    );
+
+    const [seenArgs] = innerExecute.mock.calls[0]!;
+    expect(seenArgs.datasourceUid).toBe("abc-real-uid-123");
+  });
+
+  it("leaves datasourceUid unchanged when it already matches the real UID", async () => {
+    const innerExecute = vi.fn(async (args: any) => ({ ok: true, sawArgs: args }));
+    const tools = {
+      grafana_query_prometheus: {
+        id: "grafana_query_prometheus",
+        inputSchema: { properties: {} },
+        execute: innerExecute,
+      },
+    };
+    const uidMap = new Map([["prometheus", "abc-real-uid-123"]]);
+
+    const wrapped = wrapToolsWithCallbacks(tools, undefined, "test", uidMap);
+    await wrapped.grafana_query_prometheus.execute(
+      { datasourceUid: "abc-real-uid-123", expr: "up" },
+      {} as any,
+    );
+
+    const [seenArgs] = innerExecute.mock.calls[0]!;
+    expect(seenArgs.datasourceUid).toBe("abc-real-uid-123");
+  });
+
+  it("passes through unknown datasourceUid values without coercion", async () => {
+    const innerExecute = vi.fn(async (args: any) => ({ ok: true, sawArgs: args }));
+    const tools = {
+      grafana_query_prometheus: {
+        id: "grafana_query_prometheus",
+        inputSchema: { properties: {} },
+        execute: innerExecute,
+      },
+    };
+    const uidMap = new Map([["prometheus", "abc-real-uid-123"]]);
+
+    const wrapped = wrapToolsWithCallbacks(tools, undefined, "test", uidMap);
+    await wrapped.grafana_query_prometheus.execute(
+      { datasourceUid: "some-other-uid", expr: "up" },
+      {} as any,
+    );
+
+    const [seenArgs] = innerExecute.mock.calls[0]!;
+    expect(seenArgs.datasourceUid).toBe("some-other-uid");
+  });
+
+  it("skips datasourceUid coercion when map is undefined", async () => {
+    const innerExecute = vi.fn(async (args: any) => ({ ok: true, sawArgs: args }));
+    const tools = {
+      grafana_query_prometheus: {
+        id: "grafana_query_prometheus",
+        inputSchema: { properties: {} },
+        execute: innerExecute,
+      },
+    };
+
+    const wrapped = wrapToolsWithCallbacks(tools, undefined, "test");
+    await wrapped.grafana_query_prometheus.execute(
+      { datasourceUid: "prometheus", expr: "up" },
+      {} as any,
+    );
+
+    const [seenArgs] = innerExecute.mock.calls[0]!;
+    expect(seenArgs.datasourceUid).toBe("prometheus");
+  });
+
+  it("does not coerce datasourceUid on non-grafana tools", async () => {
+    const innerExecute = vi.fn(async (args: any) => ({ ok: true, sawArgs: args }));
+    const tools = {
+      k8s_pods_list: {
+        id: "k8s_pods_list",
+        inputSchema: { properties: {} },
+        execute: innerExecute,
+      },
+    };
+    const uidMap = new Map([["prometheus", "abc-real-uid-123"]]);
+
+    const wrapped = wrapToolsWithCallbacks(tools, undefined, "test", uidMap);
+    await wrapped.k8s_pods_list.execute(
+      { datasourceUid: "prometheus", namespace: "default" },
+      {} as any,
+    );
+
+    const [seenArgs] = innerExecute.mock.calls[0]!;
+    expect(seenArgs.datasourceUid).toBe("prometheus");
+  });
+
   it("coerceLokiArgs drops stepSeconds and forces direction=backward", async () => {
     const innerExecute = vi.fn(async (args: any) => ({ ok: true, sawArgs: args }));
     const tools = {

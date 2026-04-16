@@ -39,25 +39,29 @@ const DEFAULT_PROMETHEUS_RECIPE: DiscoveryRecipe = {
   labelKeys: ["app", "container_name", "job", "component", "name", "service", "chart", "release"],
 };
 
+interface DatasourceHintResult {
+  hintBlock: string;
+  uidMap: Map<string, string>;
+}
+
 /**
  * Call `list_datasources` on a discovery tool map and format the result as a
- * `<untrusted_datasource_hints>` block the agent can consume. Returns empty
- * string if no such tool is available or the call fails — the agent can still
- * run without hints, it'll just eat a round-trip discovering uids itself.
+ * `<untrusted_datasource_hints>` block the agent can consume. Also returns a
+ * short-name → real-UID map for tool-arg coercion. Returns empty hint block
+ * and empty map if no tool is available or the call fails.
  */
 async function fetchDatasourceHintsForDiscover(
   tools: Record<string, any>,
-): Promise<string> {
-  // Find any list_datasources tool (e.g., grafana_list_datasources)
+): Promise<DatasourceHintResult> {
+  const empty: DatasourceHintResult = { hintBlock: "", uidMap: new Map() };
   const entry = Object.entries(tools).find(([name]) => name.includes("list_datasources"));
-  if (!entry) return "";
+  if (!entry) return empty;
   const [toolName, tool] = entry;
 
   try {
     const raw = await tool.execute?.({ limit: 100, offset: 0 });
-    if (!raw) return "";
+    if (!raw) return empty;
 
-    // MCP tools return { content: [{ type: "text", text: "..." }] }; unwrap.
     let text: string;
     if (typeof raw === "string") {
       text = raw;
@@ -73,18 +77,23 @@ async function fetchDatasourceHintsForDiscover(
       name: string;
       type: string;
     }>;
-    // Only prometheus + loki are relevant for the queries the discover agent runs.
     const relevant = datasources.filter((d) => d.type === "prometheus" || d.type === "loki");
-    if (relevant.length === 0) return "";
+    if (relevant.length === 0) return empty;
+
+    const uidMap = new Map<string, string>();
+    for (const d of relevant) {
+      if (!uidMap.has(d.type)) uidMap.set(d.type, d.uid);
+    }
 
     const lines = relevant.map((d) => `- ${d.type}: datasourceUid="${d.uid}" (${d.name})`);
-    return (
+    const hintBlock =
       `<untrusted_datasource_hints>Available datasources (use these UIDs directly, do NOT guess or call list_datasources):\n${lines.join("\n")}\n` +
-      `IMPORTANT: You MUST use the exact datasourceUid values above when calling query_prometheus, query_loki_logs, or list_loki_label_names. Do not invent short names like "loki" or "prometheus-k8s" — always use the real UIDs.</untrusted_datasource_hints>\n\n`
-    );
+      `IMPORTANT: You MUST use the exact datasourceUid values above when calling query_prometheus, query_loki_logs, or list_loki_label_names. Do not invent short names like "loki" or "prometheus-k8s" — always use the real UIDs.</untrusted_datasource_hints>\n\n`;
+
+    return { hintBlock, uidMap };
   } catch {
     void toolName;
-    return "";
+    return empty;
   }
 }
 
@@ -151,31 +160,29 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
   // those coercions MUST run even when no user-facing onToolCall callback
   // is wired (e.g., auto-discovery on cold start). `wrappedOnToolCall` can
   // be undefined; the wrapper handles that with optional chaining.
-  const tools = wrapToolsWithCallbacks(discoveryTools, wrappedOnToolCall, "discovery");
-
   // Pre-fetch datasource UIDs so the agent doesn't hallucinate them.
-  // Evidence agents get this via `<untrusted_datasource_hints>`; discover
-  // needs the same treatment. If list_datasources isn't available or the
-  // call fails, fall back to no hints — the agent can still run, it'll
-  // just eat a round-trip discovering them itself.
-  const datasourceHints = await fetchDatasourceHintsForDiscover(discoveryTools);
+  // Returns both a prompt hint block and a short-name → real-UID map for
+  // defensive coercion in the tool wrapper.
+  const { hintBlock: datasourceHints, uidMap: datasourceUidMap } =
+    await fetchDatasourceHintsForDiscover(discoveryTools);
 
-  // Datasource hints go first so the agent sees the real UIDs before
-  // constructing its tool call plan. Skills and recipes follow.
-  let fullHints = datasourceHints;
-  // Format discovery-scoped skills BEFORE recipes so the LLM sees them first.
-  // Skills contain stack-specific knowledge (e.g., bare-metal services via Consul)
-  // that the default K8s recipes don't cover. If skills come after recipes,
-  // the model exhausts iterations on K8s queries and never reaches skill queries.
+  const tools = wrapToolsWithCallbacks(discoveryTools, wrappedOnToolCall, "discovery", datasourceUidMap);
+
+  // Build recipe hints (skills + recipes). Datasource UIDs are passed
+  // separately as a strict "CRITICAL" block in the agent's system prompt.
+  let recipeAndSkillHints = "";
   if (config.skills && config.skills.length > 0) {
     const maxChars = config.maxCharsPerSkill ?? 2000;
     const skillSections = config.skills.map((s) => {
       const body = s.body.length > maxChars ? s.body.slice(0, maxChars) + "\n...[truncated]" : s.body;
       return `### ${wrapUntrusted("skill", s.title)}\n${wrapUntrusted("skill_body", body)}`;
     });
-    fullHints += `## PRIORITY: Team Knowledge (Discovery Skills)\nThese skills describe services that CANNOT be found via standard K8s queries. You MUST run these discovery queries IN ADDITION to the standard recipes below.\n\n${skillSections.join("\n\n")}\n\n`;
+    recipeAndSkillHints += `## PRIORITY: Team Knowledge (Discovery Skills)\nThese skills describe services that CANNOT be found via standard K8s queries. You MUST run these discovery queries IN ADDITION to the standard recipes below.\n\n${skillSections.join("\n\n")}\n\n`;
   }
-  fullHints += recipeHints;
+  recipeAndSkillHints += recipeHints;
+
+  // For logging: combine both blocks so the debug log shows the full prompt
+  const fullHints = datasourceHints + recipeAndSkillHints;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     const agent = createDiscoverAgent({
@@ -184,7 +191,8 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
       maxSteps,
       excludeServices: config.discoveryConfig.excludeServices,
       useQuirkHandling: true,
-      discoveryRecipes: fullHints,
+      datasourceUidHints: datasourceHints,
+      discoveryRecipes: recipeAndSkillHints,
     });
 
     const discoverCallId = newCallId();

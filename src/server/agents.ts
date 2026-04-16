@@ -442,6 +442,7 @@ export interface MastraAdapterDeps {
   providers: MastraProvider[];
   noHistory?: boolean;
   registryStore?: ServiceRegistryStore;
+  datasourceUidMap?: Map<string, string>;
 }
 
 /**
@@ -512,8 +513,9 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
     providers,
     services: config.services,
     projectRoot: deps.noHistory ? undefined : process.cwd(),
-    useQuirkHandling: true, // Enable wind-down: disables tools on last 2 iterations to force text output
+    useQuirkHandling: true,
     maxCharsPerSkill: config.skills?.maxCharsPerSkill,
+    datasourceUidMap: deps.datasourceUidMap,
   };
 
   const investigationAgent = new MastraInvestigationAdapter(workflowConfig);

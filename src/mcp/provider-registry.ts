@@ -172,6 +172,21 @@ export class ProviderRegistry {
   }
 
   /**
+   * Build a short-name → real-UID map from cached datasource UIDs.
+   * Used by tool wrappers to intercept hallucinated short names like
+   * "prometheus" before they reach the MCP server.
+   */
+  buildDatasourceUidMap(): Map<string, string> {
+    const map = new Map<string, string>();
+    for (const info of this.entries.values()) {
+      if (info.prometheusDatasourceUid && !map.has("prometheus")) {
+        map.set("prometheus", info.prometheusDatasourceUid);
+      }
+    }
+    return map;
+  }
+
+  /**
    * Test connection for a named provider. Updates status in the registry.
    */
   async test(name: string): Promise<{ status: "ok" | "error"; toolCount: number; error?: string }> {

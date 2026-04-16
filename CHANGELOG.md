@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.9] - 2026-04-16
+
+### Fixed
+- **Discovery agent hallucinated datasource UIDs.** The LLM consistently passed `datasourceUid: "prometheus"` (short name) instead of the real UID, causing `Tool input validation` errors and wasting 2-4 tool call retries per discovery run. Two-layer fix: (1) `wrapToolsWithCallbacks` now intercepts hallucinated short names ("prometheus", "loki") and substitutes the real UID from a pre-built map before the MCP call is sent, with info-level logging when substitution fires; (2) the discover agent's system prompt now renders datasource UIDs in a dedicated "CRITICAL: non-negotiable" block, separated from the recipe suggestions that previously gave the agent permission to ignore hints.
+- **Evidence and anomaly agents were not protected against the same datasource UID hallucination.** Extended the UID coercion map through `WorkflowConfig` to all investigation phases (metrics, logs, infrastructure, changes, anomaly detection).
+
 ## [0.1.8] - 2026-04-16
 
 ### Added

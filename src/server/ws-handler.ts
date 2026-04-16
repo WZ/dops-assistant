@@ -131,6 +131,7 @@ async function getOrCreateAgents(
     config,
     providers,
     registryStore: ctx.serviceRegistry,
+    datasourceUidMap: ctx.providerRegistry.buildDatasourceUidMap(),
   });
 
   agentsCache.set(stackId, adapters);

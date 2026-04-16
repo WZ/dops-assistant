@@ -8,12 +8,26 @@ export interface DiscoverAgentConfig {
   maxSteps?: number;
   excludeServices?: string[];
   useQuirkHandling?: boolean;
+  /** Datasource UIDs rendered as a strict non-negotiable block. */
+  datasourceUidHints?: string;
+  /** Recipe and skill hints rendered as suggestions. */
   discoveryRecipes?: string;
 }
 
 export function createDiscoverAgent(config: DiscoverAgentConfig) {
   const excludeList = config.excludeServices?.length
     ? `\n\nEXCLUDE these services from your results (case-insensitive): ${config.excludeServices.join(", ")}`
+    : "";
+
+  const datasourceBlock = config.datasourceUidHints
+    ? `\n\n## CRITICAL: Datasource UIDs (non-negotiable)
+
+When calling ANY Prometheus or Loki tool (query_prometheus, query_loki_logs,
+list_loki_label_names, etc.), you MUST pass datasourceUid EXACTLY as listed
+below. Do NOT guess, abbreviate, or use short names like "prometheus" or "loki".
+Do NOT call list_datasources — these UIDs are already resolved for you.
+
+${config.datasourceUidHints}`
     : "";
 
   const recipeHints = config.discoveryRecipes
@@ -52,7 +66,7 @@ These are suggestions — also use your own discovery strategies based on availa
 
 3. Merge results from all successful queries. Deduplicate — if the same service appears under different names, keep one entry.
 4. For each service, construct a health/activity metric query using the metric that discovered it.
-5. Return ALL discovered services as a JSON array.${recipeHints}
+5. Return ALL discovered services as a JSON array.${datasourceBlock}${recipeHints}
 
 ## IMPORTANT: Don't miss application services
 Monitoring systems typically track two categories:
