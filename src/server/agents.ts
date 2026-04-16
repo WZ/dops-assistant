@@ -185,7 +185,7 @@ export class MastraChatAgentAdapter {
     const chatStartMs = Date.now();
     let firstChunkLogged = false;
     let chatError: string | undefined;
-    logLlmCallStart({ callId: chatCallId, agent: "chat", promptChars: prompt.length });
+    logLlmCallStart({ callId: chatCallId, agent: "chat", promptChars: prompt.length, prompt });
     try {
       const stream = await mastraAgent.stream(streamInput);
 
@@ -221,7 +221,9 @@ export class MastraChatAgentAdapter {
           const result = p.result ?? "";
           const resultStr = unwrapToolText(result);
           collectedImages.push(...extractToolImages(toolName, result));
-          chatToolCalls.push({ tool: toolName, argsChars: 0, resultChars: resultStr.length, result: resultStr.slice(0, 500) });
+          const toolResultEvent: ToolCallEvent = { tool: toolName, argsChars: 0, resultChars: resultStr.length, result: resultStr.slice(0, 500) };
+          chatToolCalls.push(toolResultEvent);
+          logToolCall(chatCallId, "chat", toolResultEvent);
           task.onToolCall?.(toolName, p.args ?? {}, resultStr);
         }
       }

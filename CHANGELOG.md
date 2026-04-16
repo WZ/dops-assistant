@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.8] - 2026-04-16
+
+### Added
+- **Full LLM prompts logged at debug level on call-start**, not just completion. `logLlmCallStart` now accepts an optional `prompt` field; with `LLM_LOG_LEVEL=debug` you'll see a separate `LLM <agent> start prompt` line alongside the info summary. Previously the full prompt was only visible in the completion log, so mid-call hangs gave you no way to inspect what the model saw.
+- **Per-tool-call agentic loop logging.** `logToolCall` now emits an info summary (`Tool <agent>.<tool>: Nchars Nms`) plus optional debug details (args + result) for every tool call inside discover, evidence phases (metrics/logs/infrastructure/changes), and chat. Previously discover and evidence collected tool events silently and only flushed them in the final LLM call summary, so you couldn't watch an investigation unfold in real time.
+
 ## [0.1.7] - 2026-04-15
 
 ### Fixed

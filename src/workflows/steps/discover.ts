@@ -8,7 +8,7 @@ import type { ServiceConfig, DiscoveryConfig, DiscoveryRecipe } from "../../conf
 import type { OnToolCallEnriched, OnIteration } from "../../types/agent-interfaces.js";
 import type { Skill } from "../../skills/store.js";
 import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
-import { logLlmCall, logLlmCallStart, newCallId, type ToolCallEvent } from "../../server/llm-logger.js";
+import { logLlmCall, logLlmCallStart, logToolCall, newCallId, type ToolCallEvent } from "../../server/llm-logger.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("discover");
@@ -196,6 +196,7 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
       agent: "discover",
       phase: `attempt-${attempt}`,
       promptChars: discoverPrompt.length + fullHints.length,
+      prompt: `${discoverPrompt}\n\n${fullHints}`,
     });
 
     try {
@@ -213,13 +214,15 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
               // JSON.stringify can throw on BigInt / circular / exotic return types.
               // Slice args/results to 500 chars to bound memory on long discovery runs.
               const argsStr = JSON.stringify(payload.args ?? {});
-              discoverToolCalls.push({
+              const toolEvent: ToolCallEvent = {
                 tool: toolName,
                 argsChars: argsStr.length,
                 args: argsStr.slice(0, 500),
                 resultChars: resultStr.length,
                 result: resultStr.slice(0, 500),
-              });
+              };
+              discoverToolCalls.push(toolEvent);
+              logToolCall(discoverCallId, "discover", toolEvent);
             } catch (err) {
               // Never let observability crash the discover step.
               logger.warn({ err }, "discover: onStepFinish failed to record tool call");

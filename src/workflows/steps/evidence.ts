@@ -17,7 +17,7 @@ import { createStep } from "@mastra/core/workflows";
 import type { WorkflowConfig } from "../investigation.js";
 import { getToolsByRole, filterToReadOnlyTools } from "../../mcp/provider.js";
 import { TOOL_RESULT_TRUNCATION_LIMIT } from "../../constants.js";
-import { logLlmCall, logLlmCallStart, newCallId, type ToolCallEvent } from "../../server/llm-logger.js";
+import { logLlmCall, logLlmCallStart, logToolCall, newCallId, type ToolCallEvent } from "../../server/llm-logger.js";
 import type { ProviderRole } from "../../config/schema.js";
 import {
   wrapToolsWithCallbacks,
@@ -158,7 +158,7 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
       let totalOutputTokens = 0;
       const callId = newCallId();
       const generateStartMs = Date.now();
-      logLlmCallStart({ callId, agent: phaseName, phase: phaseName, promptChars: prompt.length });
+      logLlmCallStart({ callId, agent: phaseName, phase: phaseName, promptChars: prompt.length, prompt });
       try {
         agentResult = await agent.generate(prompt, {
           onStepFinish: (step: any) => {
@@ -176,8 +176,9 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
                   const truncated = resultStr.length > TOOL_RESULT_TRUNCATION_LIMIT ? resultStr.slice(0, TOOL_RESULT_TRUNCATION_LIMIT) + "..." : resultStr;
                   toolData.push(`Tool: ${toolName}\nResult: ${truncated}`);
                   const argsStr = JSON.stringify(payload.args ?? {});
-                  llmToolCalls.push({ tool: toolName, argsChars: argsStr.length, args: argsStr, resultChars: resultStr.length, result: truncated });
-                  // Tool call already emitted by wrapToolsWithCallbacks — don't double-emit
+                  const toolEvent: ToolCallEvent = { tool: toolName, argsChars: argsStr.length, args: argsStr, resultChars: resultStr.length, result: truncated };
+                  llmToolCalls.push(toolEvent);
+                  logToolCall(callId, phaseName, toolEvent);
                 }
               }
               if (step.text) toolData.push(`Model: ${step.text}`);
