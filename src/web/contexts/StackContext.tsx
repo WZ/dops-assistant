@@ -1,5 +1,5 @@
-import { createContext, useContext, useCallback, type ReactNode } from "react";
-import { safeGetItem } from "../lib/utils";
+import { createContext, useContext, useMemo, type ReactNode } from "react";
+import { createStackFetch } from "../lib/createStackFetch";
 
 interface StackContextValue {
   activeStackId: string;
@@ -15,18 +15,7 @@ export function StackProvider({
   children: ReactNode;
   activeStackId: string;
 }) {
-  const stackFetch = useCallback(
-    (url: string, opts?: RequestInit) => {
-      const headers = new Headers(opts?.headers);
-      headers.set("X-Stack-Id", activeStackId);
-      const apiKey = safeGetItem("dops-api-key");
-      if (apiKey) {
-        headers.set("X-API-Key", apiKey);
-      }
-      return fetch(url, { ...opts, headers });
-    },
-    [activeStackId],
-  );
+  const stackFetch = useMemo(() => createStackFetch(activeStackId), [activeStackId]);
 
   return (
     <StackContext.Provider value={{ activeStackId, stackFetch }}>

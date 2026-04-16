@@ -13,9 +13,10 @@ interface SettingsPageProps {
   activeStackId: string;
   onSwitchStack: (stackId: string) => void;
   onRefetchStacks: () => Promise<void>;
+  onProviderSaved?: () => void;
 }
 
-export function SettingsPage({ onRunDiscovery, initialTab = "providers", stacks, activeStackId, onSwitchStack, onRefetchStacks }: SettingsPageProps) {
+export function SettingsPage({ onRunDiscovery, initialTab = "providers", stacks, activeStackId, onSwitchStack, onRefetchStacks, onProviderSaved }: SettingsPageProps) {
   return (
     <div className="h-full overflow-y-auto px-4 py-5">
       <h1 className="font-display text-2xl font-extrabold tracking-tight text-foreground/90 mb-1">
@@ -53,7 +54,7 @@ export function SettingsPage({ onRunDiscovery, initialTab = "providers", stacks,
           </TabsTrigger>
         </TabsList>
         <TabsContent value="providers" className="mt-4">
-          <ProvidersPage onRunDiscovery={onRunDiscovery} />
+          <ProvidersPage onRunDiscovery={onRunDiscovery} onProviderSaved={onProviderSaved} />
         </TabsContent>
         <TabsContent value="skills" className="mt-4">
           <SkillsPage />

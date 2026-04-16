@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { safeGetItem, safeSetItem } from "./lib/utils";
 import {
   ResizablePanelGroup,
@@ -13,12 +13,15 @@ import { Sidebar } from "./components/Sidebar";
 import type { SidebarPage } from "./components/Sidebar";
 import { ServicesPage } from "./components/ServicesPage";
 import { SettingsPage } from "./components/SettingsPage";
+import { SetupStepper } from "./components/SetupStepper";
 import { useRoute } from "./hooks/useRoute";
 import { StackSwitcher } from "./components/StackSwitcher";
 import { StackProvider } from "./contexts/StackContext";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { useStacks } from "./hooks/useStacks";
+import { useSetupStage } from "./hooks/useSetupStage";
 import { useHealthPolling } from "./components/dashboard/useHealthPolling";
+import { createStackFetch } from "./lib/createStackFetch";
 import type { ValidatedServiceConfig } from "../types/discovery-types.js";
 
 function formatUptime(seconds: number): string {
@@ -69,15 +72,53 @@ export function App() {
 
   const hasMultipleStacks = stacks.length > 1;
 
+  const { stage: setupStage, loading: setupLoading, refreshSetupStage } = useSetupStage(activeStackId);
+  const [setupDismissed, setSetupDismissed] = useState(() => !!safeGetItem(`dops:setup_dismissed:${activeStackId}`));
+  const showStepper = setupStage !== null && setupStage !== "complete" && !setupDismissed && !setupLoading;
+
+  const handleSkipSetup = useCallback(() => {
+    safeSetItem(`dops:setup_dismissed:${activeStackId}`, "true");
+    setSetupDismissed(true);
+  }, [activeStackId]);
+
+  useEffect(() => {
+    setSetupDismissed(!!safeGetItem(`dops:setup_dismissed:${activeStackId}`));
+  }, [activeStackId]);
+
+  // Auto-routing: on setup stage transitions, navigate to the appropriate page
+  const lastRoutedStageRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!setupStage || setupStage === "complete" || setupDismissed || setupLoading) return;
+    if (lastRoutedStageRef.current === setupStage) return;
+    lastRoutedStageRef.current = setupStage;
+
+    if (setupStage === "needs-provider" || setupStage === "needs-provider-connected") {
+      setLeftPaneRaw({ type: "settings", initialTab: "providers" });
+      history.replaceState(null, "", "/settings");
+    } else if (setupStage === "needs-discovery") {
+      setLeftPaneRaw({ type: "services" });
+      history.replaceState(null, "", "/services");
+    }
+  }, [setupStage, setupDismissed, setupLoading]);
+
+  useEffect(() => {
+    if (setupStage === "complete" && lastRoutedStageRef.current && lastRoutedStageRef.current !== "complete") {
+      setLeftPaneRaw({ type: "dashboard" });
+      history.replaceState(null, "", "/");
+      lastRoutedStageRef.current = "complete";
+    }
+  }, [setupStage]);
+
   const activePage: SidebarPage =
     leftPane.type === "services" ? "services"
     : leftPane.type === "settings" ? "settings"
     : "dashboard";
 
+  const stackFetchForBranding = useMemo(() => createStackFetch(activeStackId), [activeStackId]);
   const [branding, setBranding] = useState<{ title: string; subtitle: string; grafanaUrl?: string; prometheusDatasource?: string }>({ title: "dops", subtitle: "assistant" });
   useEffect(() => {
-    fetch("/api/branding", { headers: { "X-Stack-Id": activeStackId } }).then((r) => r.json()).then((data) => setBranding((prev) => ({ ...prev, ...data }))).catch(() => {});
-  }, [activeStackId]);
+    stackFetchForBranding("/api/branding").then((r) => r.json()).then((data) => setBranding((prev) => ({ ...prev, ...data }))).catch(() => {});
+  }, [stackFetchForBranding]);
 
   const [discoveryState, setDiscoveryState] = useState({
     phase: "",
@@ -239,6 +280,15 @@ export function App() {
           </div>
         </header>
 
+        {/* Setup stepper */}
+        {showStepper && (
+          <SetupStepper
+            stage={setupStage}
+            onNavigate={(page) => setLeftPane({ type: page })}
+            onSkip={handleSkipSetup}
+          />
+        )}
+
         {/* Content */}
         <div className="flex-1 min-h-0">
           <ResizablePanelGroup orientation="horizontal">
@@ -252,6 +302,9 @@ export function App() {
                       onViewService={(name) => setLeftPane({ type: "services", initialService: name })}
                       onViewAllServices={() => setLeftPane({ type: "services" })}
                       stackName={hasMultipleStacks ? activeStack?.name : undefined}
+                      setupStage={setupStage}
+                      setupDismissed={setupDismissed}
+                      onResumeSetup={() => { setSetupDismissed(false); safeSetItem(`dops:setup_dismissed:${activeStackId}`, ""); }}
                     />
                   ) : leftPane.type === "investigation" ? (
                     <InvestigationPane
@@ -287,6 +340,7 @@ export function App() {
                       activeStackId={activeStackId}
                       onSwitchStack={switchStack}
                       onRefetchStacks={refetchStacks}
+                      onProviderSaved={refreshSetupStage}
                     />
                   ) : null}
                 </div>

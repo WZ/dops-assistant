@@ -21,9 +21,10 @@ interface ProviderData {
 
 interface ProvidersPageProps {
   onRunDiscovery: () => void;
+  onProviderSaved?: () => void;
 }
 
-export function ProvidersPage({ onRunDiscovery }: ProvidersPageProps) {
+export function ProvidersPage({ onRunDiscovery, onProviderSaved }: ProvidersPageProps) {
   const { stackFetch } = useStackContext();
   const [providers, setProviders] = useState<ProviderData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,6 +73,7 @@ export function ProvidersPage({ onRunDiscovery }: ProvidersPageProps) {
       setShowForm(false);
       setEditingProvider(null);
       await fetchProviders();
+      onProviderSaved?.();
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to save");
     }
