@@ -162,6 +162,8 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
   const wss = new WebSocketServer({ server, path: "/ws" });
   const wsRateLimiter = new WsRateLimiter();
 
+  const HEARTBEAT_INTERVAL_MS = 30_000;
+
   wss.on("connection", async (ws: WebSocket, req) => {
     // Extract stackId from query params
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -174,6 +176,16 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
 
     // Register connection for rate limiting
     wsRateLimiter.register(threadId);
+
+    // Heartbeat: send ping frames every 30s to keep the connection alive
+    // through reverse proxies (nginx default idle timeout is 60s).
+    let alive = true;
+    ws.on("pong", () => { alive = true; });
+    const heartbeat = setInterval(() => {
+      if (!alive) { ws.terminate(); return; }
+      alive = false;
+      ws.ping();
+    }, HEARTBEAT_INTERVAL_MS);
 
     // Per-connection pending discovery state
     let pendingDiscovery: ValidatedServiceConfig[] | null = null;
@@ -252,6 +264,7 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
     });
 
     ws.on("close", () => {
+      clearInterval(heartbeat);
       wsRateLimiter.destroy(threadId);
       logger.info({ threadId, stackId }, "WebSocket client disconnected");
     });
