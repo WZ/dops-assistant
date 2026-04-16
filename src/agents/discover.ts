@@ -53,8 +53,13 @@ These are suggestions — also use your own discovery strategies based on availa
 2. Run MULTIPLE discovery queries to build a comprehensive catalog. Do NOT stop at the first query — use several approaches and merge the results:
 
    **If infrastructure tools are available (e.g., Kubernetes API):**
-   - List pods, namespaces, or deployments to discover running services directly
-   - Infrastructure tools provide ground truth about what's actually running — use them first
+   - List deployments or statefulsets first — they map 1:1 to services and are compact
+   - AVOID listing all pods unfiltered — a cluster may have hundreds of pods and the
+     raw output wastes your token budget. If you must list pods, use fieldSelector or
+     labelSelector to exclude system namespaces (kube-system, kube-public, kube-node-lease)
+     and filter to running pods only
+   - Prefer metric queries (kube_deployment_status_replicas, kube_statefulset_status_replicas)
+     over raw pod lists — metrics are pre-aggregated and much smaller
 
    **If metric query tools are available:**
    - Query for workload metrics (deployments, statefulsets, containers) grouped by service/app name
