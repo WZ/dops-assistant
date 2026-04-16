@@ -26,9 +26,9 @@ INVESTIGATION STEPS:
 3. If the investigation window is wider than 1 hour AND the user mentioned a specific time, NARROW your first queries to ±30 minutes around that time. Wide windows return chronic noise that buries acute events. You can expand later if needed.
 4. GENERIC ERROR PATTERNS (secondary): Search for error, exception, fail, disconnect, timeout, refused, restart, kill, oom, crash. Use this as a fallback if keyword searches return nothing, or to find additional context.
 5. IMPORTANT: For each error pattern found, capture 10-15 ACTUAL log lines verbatim in the "sampleLines" array. These must be real log lines from the tool output, not summaries.
-6. CONTEXT AROUND ERRORS (critical): After finding error entries, do a FOLLOW-UP query WITHOUT any level/pattern filter to fetch ALL log lines (including DEBUG/INFO) in a ±60 second window around the error timestamps. The root cause is often in DEBUG-level lines immediately before the error — for example, an API response logged at DEBUG shows why the subsequent ERROR was raised.
+6. CONTEXT AROUND ERRORS (critical): After finding error entries, do a FOLLOW-UP query keeping the same service label selector but WITHOUT any level/pattern filter, to fetch log lines (including DEBUG/INFO) in a ±60 second window around the error timestamps. Keep limit to 100 lines max — you need the sequence of events, not the full volume. The root cause is often in DEBUG-level lines immediately before the error — for example, an API response logged at DEBUG shows why the subsequent ERROR was raised.
 7. MISLEADING SUCCESS PATTERNS: Look for API calls that return HTTP 200/success but contain failure statuses in the response payload. Search for patterns like: "status".*[Ff]ail, "state".*[Ff]ail, "status".*[Ee]rror. These are common root causes where a successful API call wraps a business-level failure.
-8. If no errors are found, query without any filter to see if ANY logs exist for this service during the window. Zero logs is itself significant evidence.
+8. If no errors are found, query with the service label selector but no pattern filter, limit 10 lines, to confirm logs exist for this service during the window. Zero logs is itself significant evidence.
 
 TOOL USAGE GUIDANCE:
 - Use whatever log search tools are available to you. Read each tool's description to understand its parameters.

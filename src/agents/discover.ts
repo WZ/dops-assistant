@@ -22,10 +22,10 @@ export function createDiscoverAgent(config: DiscoverAgentConfig) {
   const datasourceBlock = config.datasourceUidHints
     ? `\n\n## CRITICAL: Datasource UIDs (non-negotiable)
 
-When calling ANY Prometheus or Loki tool (query_prometheus, query_loki_logs,
-list_loki_label_names, etc.), you MUST pass datasourceUid EXACTLY as listed
-below. Do NOT guess, abbreviate, or use short names like "prometheus" or "loki".
-Do NOT call list_datasources — these UIDs are already resolved for you.
+When calling ANY metric or log query tool that requires a datasourceUid parameter,
+you MUST pass datasourceUid EXACTLY as listed below. Do NOT guess, abbreviate,
+or use short names like "prometheus" or "loki". Do NOT call datasource listing
+tools — these UIDs are already resolved for you.
 
 ${config.datasourceUidHints}`
     : "";
