@@ -294,15 +294,17 @@ export class ServiceHealthPoller {
       }
       const promDsUid = this.cachedPromDsUid;
 
-      // Run the 3 batch queries in parallel — query raw metrics (not > 0 / == 1)
+      // Run the 4 batch queries in parallel — query raw metrics (not > 0 / == 1)
       // so that zero-replica or down services appear in results with value 0.
       // matchResultsToServices handles value-based health classification.
       // Each batch has different semantics for value=0:
-      //   - replicas metrics: 0 = intentionally scaled down (unknown)
-      //   - up metric:        0 = scrape target is down (down)
-      const [deploymentEntries, statefulsetEntries, upEntries] = await Promise.all([
+      //   - replicas metrics:        0 = intentionally scaled down (unknown)
+      //   - daemonset desired count: 0 = no nodes match selector (unknown)
+      //   - up metric:               0 = scrape target is down (down)
+      const [deploymentEntries, statefulsetEntries, daemonsetEntries, upEntries] = await Promise.all([
         this.runQuery(queryTool, "kube_deployment_status_replicas", promDsUid),
         this.runQuery(queryTool, "kube_statefulset_status_replicas", promDsUid),
+        this.runQuery(queryTool, "kube_daemonset_status_desired_number_scheduled", promDsUid),
         this.runQuery(queryTool, "up", promDsUid),
       ]);
 
@@ -311,6 +313,7 @@ export class ServiceHealthPoller {
       const batches = [
         { entries: deploymentEntries, zeroMeans: "unknown" as const },
         { entries: statefulsetEntries, zeroMeans: "unknown" as const },
+        { entries: daemonsetEntries, zeroMeans: "unknown" as const },
         { entries: upEntries, zeroMeans: "down" as const },
       ];
       const newHealth = new Map<string, HealthStatus>();
