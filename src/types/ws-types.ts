@@ -57,6 +57,7 @@ export type ServerMessage =
   | { type: "discover:iteration"; phase: string; iteration: number; maxIterations: number; description: string }
   | { type: "discover:tool_call"; phase: string; tool: string; args: Record<string, unknown>; status: "calling" | "success" | "error"; result?: string; durationMs?: number }
   | { type: "discover:complete"; services: ValidatedServiceConfig[] }
+  | { type: "discover:retry"; attempt: number; maxRetries: number; reason: string }
   | { type: "discover:error"; message: string }
   | { type: "discover:pending"; services: ValidatedServiceConfig[] }
   | { type: "discover:resolved" }

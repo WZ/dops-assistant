@@ -22,8 +22,8 @@ CRITICAL: You are investigating a SPECIFIC service named in the prompt. ALL your
 
 INVESTIGATION PLAN:
 1. Check the workload resource for THE TARGET SERVICE using resources_get with apiVersion "apps/v1" and the service name. Check spec.replicas, status.readyReplicas, status.conditions, and metadata.creationTimestamp. Compare metadata.generation vs status.observedGeneration to detect recent rollouts.
-2. List pods and filter to only those matching the target service (by name prefix or label). Check status, restart counts, readiness, and pod age. Ignore pods belonging to other services.
-3. Get events and filter to only those with involvedObject.name matching the target service's pods or deployment. Look for:
+2. List pods for the target service by passing a labelSelector (e.g., app=<service-name>) or fieldSelector (e.g., metadata.namespace=<namespace>) directly in the tool call. Do NOT fetch all pods then filter in-memory — that wastes tokens. Check status, restart counts, readiness, and pod age.
+3. Get events scoped to the target service's namespace. If the tool supports fieldSelector, use involvedObject.name=<deployment-name> to limit results. Do NOT fetch all cluster events unfiltered. Look for:
    a) FAILURE events: OOMKilled, CrashLoopBackOff, ImagePullBackOff, FailedScheduling, FailedMount, Unhealthy, BackOff
    b) LIFECYCLE events: ScalingReplicaSet, SuccessfulCreate, Killing, Pulled, Created, Started, SuccessfulDelete
    SKIP events for pods that don't belong to the target service.

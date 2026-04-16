@@ -15,6 +15,7 @@ export interface DiscoveryWorkflowConfig {
   onIteration?: OnIteration;
   onToolCall?: OnToolCallEnriched;
   onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
+  onRetry?: (attempt: number, maxRetries: number, reason: string) => void;
   skills?: Skill[];
 }
 
@@ -27,6 +28,7 @@ export async function runDiscovery(config: DiscoveryWorkflowConfig): Promise<Val
     onToolCall: config.onToolCall,
     onIteration: config.onIteration,
     onTokenUsage: config.onTokenUsage,
+    onRetry: config.onRetry,
     skills: config.skills,
   });
 

@@ -6,7 +6,11 @@ image:
   repository: dops-assistant
   # tag defaults to .Chart.AppVersion when empty.
   tag: ""
-  pullPolicy: IfNotPresent
+  # Always re-pull on pod start. This costs a few seconds on rollout, but
+  # guarantees that re-pushing under a fixed tag (e.g. 0.1.4) actually picks
+  # up the new digest instead of reusing the node's cached copy. If you don't
+  # re-push tags, IfNotPresent is fine and slightly faster.
+  pullPolicy: Always
 
 imagePullSecrets: []
 nameOverride: ""

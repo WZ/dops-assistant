@@ -8,7 +8,7 @@ import type { ServiceConfig, DiscoveryConfig, DiscoveryRecipe } from "../../conf
 import type { OnToolCallEnriched, OnIteration } from "../../types/agent-interfaces.js";
 import type { Skill } from "../../skills/store.js";
 import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
-import { logLlmCall, logLlmCallStart, newCallId, type ToolCallEvent } from "../../server/llm-logger.js";
+import { logLlmCall, logLlmCallStart, logToolCall, newCallId, type ToolCallEvent } from "../../server/llm-logger.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("discover");
@@ -20,6 +20,7 @@ export interface DiscoverStepConfig {
   onToolCall?: OnToolCallEnriched;
   onIteration?: OnIteration;
   onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
+  onRetry?: (attempt: number, maxRetries: number, reason: string) => void;
   skills?: Skill[];
   maxCharsPerSkill?: number;
 }
@@ -38,6 +39,64 @@ const DEFAULT_PROMETHEUS_RECIPE: DiscoveryRecipe = {
   ],
   labelKeys: ["app", "container_name", "job", "component", "name", "service", "chart", "release"],
 };
+
+interface DatasourceHintResult {
+  hintBlock: string;
+  uidMap: Map<string, string>;
+}
+
+/**
+ * Call `list_datasources` on a discovery tool map and format the result as a
+ * `<untrusted_datasource_hints>` block the agent can consume. Also returns a
+ * short-name → real-UID map for tool-arg coercion. Returns empty hint block
+ * and empty map if no tool is available or the call fails.
+ */
+async function fetchDatasourceHintsForDiscover(
+  tools: Record<string, any>,
+): Promise<DatasourceHintResult> {
+  const empty: DatasourceHintResult = { hintBlock: "", uidMap: new Map() };
+  const entry = Object.entries(tools).find(([name]) => name.includes("list_datasources"));
+  if (!entry) return empty;
+  const [toolName, tool] = entry;
+
+  try {
+    const raw = await tool.execute?.({ limit: 100, offset: 0 });
+    if (!raw) return empty;
+
+    let text: string;
+    if (typeof raw === "string") {
+      text = raw;
+    } else if (raw?.content?.[0]?.text) {
+      text = raw.content[0].text;
+    } else {
+      text = JSON.stringify(raw);
+    }
+
+    const parsed = JSON.parse(text);
+    const datasources = (Array.isArray(parsed) ? parsed : parsed?.datasources ?? []) as Array<{
+      uid: string;
+      name: string;
+      type: string;
+    }>;
+    const relevant = datasources.filter((d) => d.type === "prometheus" || d.type === "loki");
+    if (relevant.length === 0) return empty;
+
+    const uidMap = new Map<string, string>();
+    for (const d of relevant) {
+      if (!uidMap.has(d.type)) uidMap.set(d.type, d.uid);
+    }
+
+    const lines = relevant.map((d) => `- ${d.type}: datasourceUid="${d.uid}" (${d.name})`);
+    const hintBlock =
+      `<untrusted_datasource_hints>Available datasources (use these UIDs directly, do NOT guess or call list_datasources):\n${lines.join("\n")}\n` +
+      `IMPORTANT: You MUST use the exact datasourceUid values above when calling query_prometheus, query_loki_logs, or list_loki_label_names. Do not invent short names like "loki" or "prometheus-k8s" — always use the real UIDs.</untrusted_datasource_hints>\n\n`;
+
+    return { hintBlock, uidMap };
+  } catch {
+    void toolName;
+    return empty;
+  }
+}
 
 /**
  * Format discovery recipes into a prompt-friendly string.
@@ -97,24 +156,34 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
       }
     : undefined;
 
-  const tools = wrappedOnToolCall
-    ? wrapToolsWithCallbacks(discoveryTools, wrappedOnToolCall, "discovery")
-    : discoveryTools;
+  // Always wrap the discovery tools — wrapToolsWithCallbacks applies
+  // coercePrometheusArgs and coerceLokiArgs inside the execute path, and
+  // those coercions MUST run even when no user-facing onToolCall callback
+  // is wired (e.g., auto-discovery on cold start). `wrappedOnToolCall` can
+  // be undefined; the wrapper handles that with optional chaining.
+  // Pre-fetch datasource UIDs so the agent doesn't hallucinate them.
+  // Returns both a prompt hint block and a short-name → real-UID map for
+  // defensive coercion in the tool wrapper.
+  const { hintBlock: datasourceHints, uidMap: datasourceUidMap } =
+    await fetchDatasourceHintsForDiscover(discoveryTools);
 
-  // Format discovery-scoped skills BEFORE recipes so the LLM sees them first.
-  // Skills contain stack-specific knowledge (e.g., bare-metal services via Consul)
-  // that the default K8s recipes don't cover. If skills come after recipes,
-  // the model exhausts iterations on K8s queries and never reaches skill queries.
-  let fullHints = "";
+  const tools = wrapToolsWithCallbacks(discoveryTools, wrappedOnToolCall, "discovery", datasourceUidMap);
+
+  // Build recipe hints (skills + recipes). Datasource UIDs are passed
+  // separately as a strict "CRITICAL" block in the agent's system prompt.
+  let recipeAndSkillHints = "";
   if (config.skills && config.skills.length > 0) {
     const maxChars = config.maxCharsPerSkill ?? 2000;
     const skillSections = config.skills.map((s) => {
       const body = s.body.length > maxChars ? s.body.slice(0, maxChars) + "\n...[truncated]" : s.body;
       return `### ${wrapUntrusted("skill", s.title)}\n${wrapUntrusted("skill_body", body)}`;
     });
-    fullHints += `## PRIORITY: Team Knowledge (Discovery Skills)\nThese skills describe services that CANNOT be found via standard K8s queries. You MUST run these discovery queries IN ADDITION to the standard recipes below.\n\n${skillSections.join("\n\n")}\n\n`;
+    recipeAndSkillHints += `## PRIORITY: Team Knowledge (Discovery Skills)\nThese skills describe services that CANNOT be found via standard K8s queries. You MUST run these discovery queries IN ADDITION to the standard recipes below.\n\n${skillSections.join("\n\n")}\n\n`;
   }
-  fullHints += recipeHints;
+  recipeAndSkillHints += recipeHints;
+
+  // For logging: combine both blocks so the debug log shows the full prompt
+  const fullHints = datasourceHints + recipeAndSkillHints;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     const agent = createDiscoverAgent({
@@ -123,7 +192,8 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
       maxSteps,
       excludeServices: config.discoveryConfig.excludeServices,
       useQuirkHandling: true,
-      discoveryRecipes: fullHints,
+      datasourceUidHints: datasourceHints,
+      discoveryRecipes: recipeAndSkillHints,
     });
 
     const discoverCallId = newCallId();
@@ -135,11 +205,12 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
       agent: "discover",
       phase: `attempt-${attempt}`,
       promptChars: discoverPrompt.length + fullHints.length,
+      prompt: `${discoverPrompt}\n\n${fullHints}`,
     });
 
     try {
       const result = await agent.generate(discoverPrompt, {
-        providerOptions: { "openai-compatible": { max_tokens: 16384 } },
+        providerOptions: { "openai-compatible": { max_tokens: 32768 } },
         onStepFinish: (step: any) => {
           if (!step.toolResults?.length) return;
           for (const tr of step.toolResults) {
@@ -152,13 +223,15 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
               // JSON.stringify can throw on BigInt / circular / exotic return types.
               // Slice args/results to 500 chars to bound memory on long discovery runs.
               const argsStr = JSON.stringify(payload.args ?? {});
-              discoverToolCalls.push({
+              const toolEvent: ToolCallEvent = {
                 tool: toolName,
                 argsChars: argsStr.length,
                 args: argsStr.slice(0, 500),
                 resultChars: resultStr.length,
                 result: resultStr.slice(0, 500),
-              });
+              };
+              discoverToolCalls.push(toolEvent);
+              logToolCall(discoverCallId, "discover", toolEvent);
             } catch (err) {
               // Never let observability crash the discover step.
               logger.warn({ err }, "discover: onStepFinish failed to record tool call");
@@ -179,7 +252,7 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
         agent: "discover",
         phase: `attempt-${attempt}`,
         promptChars: discoverPrompt.length + fullHints.length,
-        prompt: `${discoverPrompt}\n\n[hints: ${fullHints.length} chars]`,
+        prompt: `${discoverPrompt}\n\n${fullHints}`,
         responseChars: result.text?.length ?? 0,
         response: result.text,
         inputTokens: inTok,
@@ -195,7 +268,14 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
       if (parsed?.services && Array.isArray(parsed.services) && parsed.services.length > 0) {
         return parsed.services;
       }
-      logger.warn({ attempt, maxRetries: MAX_RETRIES }, "discovery returned empty result");
+      const respLen = result.text?.length ?? 0;
+      const first200 = result.text?.slice(0, 200) ?? "";
+      const last200 = result.text?.slice(-200) ?? "";
+      logger.warn(
+        { attempt, maxRetries: MAX_RETRIES, responseChars: respLen, first200, last200 },
+        `discovery: parse failed on ${respLen}-char response (attempt ${attempt}/${MAX_RETRIES})`,
+      );
+      config.onRetry?.(attempt, MAX_RETRIES, "parse failed");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logLlmCall({
@@ -203,7 +283,7 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
         agent: "discover",
         phase: `attempt-${attempt}`,
         promptChars: discoverPrompt.length + fullHints.length,
-        prompt: `${discoverPrompt}\n\n[hints: ${fullHints.length} chars]`,
+        prompt: `${discoverPrompt}\n\n${fullHints}`,
         responseChars: 0,
         inputTokens: 0,
         outputTokens: 0,

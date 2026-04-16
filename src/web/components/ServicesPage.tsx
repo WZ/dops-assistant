@@ -39,6 +39,7 @@ interface DiscoveryState {
   }>;
   results: ValidatedServiceConfig[];
   error: string | null;
+  retry?: { attempt: number; maxRetries: number; reason: string } | null;
   phaseTokens: Record<string, { inputTokens: number; outputTokens: number; durationMs: number }>;
   totalUsage: { inputTokens: number; outputTokens: number; durationMs: number } | null;
 }
@@ -51,6 +52,10 @@ interface ServicesPageProps {
   discoveryState: DiscoveryState;
   onStartDiscovery: () => void;
   onResetDiscovery: () => void;
+  /** Called after the operator accepts a discovery result — the caller
+   *  redirects to the Operations Desk so the freshly-populated service list
+   *  is immediately usable without a manual page switch. */
+  onDiscoveryAccepted?: () => void;
   grafanaUrl?: string;
   prometheusDatasource?: string;
   stackName?: string;
@@ -66,6 +71,7 @@ export function ServicesPage({
   discoveryState,
   onStartDiscovery,
   onResetDiscovery,
+  onDiscoveryAccepted,
   grafanaUrl,
   prometheusDatasource,
   stackName,
@@ -329,7 +335,11 @@ export function ServicesPage({
     onResetDiscovery();
     fetchData();
     setSubView({ type: "grid" });
-  }, [ws, onResetDiscovery, fetchData]);
+    // After the server has written services.yaml, jump the operator to the
+    // Operations Desk so the freshly-populated catalog is immediately live.
+    // No-op if the caller didn't wire the callback (e.g. tests).
+    onDiscoveryAccepted?.();
+  }, [ws, onResetDiscovery, fetchData, onDiscoveryAccepted]);
 
   const handleDiscoveryReject = useCallback(() => {
     ws.send({ type: "discover:reject" });
@@ -381,6 +391,7 @@ export function ServicesPage({
         iteration={discoveryState.iteration}
         toolCalls={discoveryState.toolCalls}
         error={discoveryState.error}
+        retry={discoveryState.retry}
         phaseTokens={discoveryState.phaseTokens}
         totalUsage={discoveryState.totalUsage}
         onRetry={onStartDiscovery}
