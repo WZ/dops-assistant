@@ -92,17 +92,13 @@ export function useSetupStage(activeStackId: string): UseSetupStageResult {
     failCountRef.current = 0;
 
     const timeout = setTimeout(() => {
-      if (loading) {
-        setLoading(false);
-      }
+      setLoading(false);
     }, INITIAL_TIMEOUT);
 
     fetchStage(activeStackId, controller.signal);
 
     pollRef.current = setInterval(() => {
-      if (stage !== "complete") {
-        fetchStage(activeStackId, controller.signal);
-      }
+      fetchStage(activeStackId, controller.signal);
     }, POLL_INTERVAL);
 
     return () => {

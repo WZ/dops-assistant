@@ -60,7 +60,6 @@ export function SetupStepper({ stage, onNavigate, onSkip }: SetupStepperProps) {
         {STEPS.map((step, i) => {
           const isCompleted = i < activeIndex;
           const isActive = i === activeIndex;
-          const isUpcoming = i > activeIndex;
 
           return (
             <button
