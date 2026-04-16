@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.9.2] - 2026-04-16
+
+### Fixed
+- **Users hit 429 frequently during normal browsing.** MetricsPanel fires up to 5 parallel `/api/metrics/extract` calls per investigation view, so the strict limiter (10/min) exhausted in 2 views. Bumped limits: global 300 → 1200/min, strict 10 → 60/min, moderate 30 → 120/min. Accommodates real GUI behavior and multi-user deployments behind a shared corporate proxy IP.
+
 ## [0.0.9.1] - 2026-04-16
 
 ### Fixed
