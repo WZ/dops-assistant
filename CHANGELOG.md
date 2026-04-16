@@ -9,6 +9,11 @@ All notable changes to this project will be documented in this file.
 - **Setup-aware empty state on Dashboard.** When no providers are configured, the Operations Desk shows guidance text and a "Resume setup" button instead of zero-filled stat cards.
 - **Shared `createStackFetch` utility.** Extracted from StackContext so both the StackProvider and the new setup hook can make stack-scoped API calls. Also fixes the branding fetch which was manually constructing headers.
 
+## [0.1.6] - 2026-04-15
+
+### Fixed
+- **Discover debug log elided the prompt hints.** The `logLlmCall` in `runDiscoverStep` was logging `prompt: "...\n\n[hints: 917 chars]"` with a placeholder instead of the real hints block, so the `LLM discover details` debug entry showed only the user-facing stub and not the datasource hints, recipes, and skills that were actually injected into the system prompt. Inlined the full `fullHints` content so `LLM_LOG_LEVEL=debug` shows the complete LLM request.
+
 ## [0.1.5] - 2026-04-15
 
 ### Fixed
