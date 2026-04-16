@@ -141,6 +141,19 @@ function stripToolPrefix(name: string): string {
  * Mastra MCP tools return { content: [{ type: "text", text: "..." }] }.
  * The frontend expects raw JSON strings for chart parsing.
  */
+export function truncateMcpResult(result: unknown, maxChars: number): unknown {
+  if (!result || typeof result !== "object") return result;
+  const content = (result as any).content;
+  if (!Array.isArray(content)) return result;
+  const truncated = content.map((part: any) => {
+    if (part?.type === "text" && typeof part.text === "string" && part.text.length > maxChars) {
+      return { ...part, text: part.text.slice(0, maxChars) + `\n... (truncated from ${part.text.length} chars)` };
+    }
+    return part;
+  });
+  return { ...result, content: truncated };
+}
+
 function unwrapMcpResult(result: unknown): string {
   if (typeof result === "string") return result;
   if (typeof result === "object" && result !== null && !Array.isArray(result)) {
@@ -178,6 +191,7 @@ export function wrapToolsWithCallbacks(
   onToolCall?: WorkflowConfig["onToolCall"],
   phase?: string,
   datasourceUidMap?: Map<string, string>,
+  maxToolResultChars?: number,
 ): Record<string, any> {
   const needsDatasourceCoercion = (n: string) =>
     n.includes("query_prometheus") || n.includes("query_loki") ||
@@ -228,7 +242,8 @@ export function wrapToolsWithCallbacks(
         }
         const start = Date.now();
         try {
-          const result = await tool.execute(...execArgs);
+          let result = await tool.execute(...execArgs);
+          if (maxToolResultChars) result = truncateMcpResult(result, maxToolResultChars);
           const resultStr = unwrapMcpResult(result);
           onToolCall?.(stripToolPrefix(name), execArgs[0] ?? {}, resultStr, Date.now() - start, undefined, phase);
           return result;

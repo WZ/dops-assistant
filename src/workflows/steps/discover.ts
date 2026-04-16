@@ -167,7 +167,7 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
   const { hintBlock: datasourceHints, uidMap: datasourceUidMap } =
     await fetchDatasourceHintsForDiscover(discoveryTools);
 
-  const tools = wrapToolsWithCallbacks(discoveryTools, wrappedOnToolCall, "discovery", datasourceUidMap);
+  const tools = wrapToolsWithCallbacks(discoveryTools, wrappedOnToolCall, "discovery", datasourceUidMap, 30_000);
 
   // Build recipe hints (skills + recipes). Datasource UIDs are passed
   // separately as a strict "CRITICAL" block in the agent's system prompt.

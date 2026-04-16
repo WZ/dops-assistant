@@ -127,18 +127,8 @@ function extractToolImages(toolName: string, result: unknown): ImageAttachment[]
  * Truncate MCP tool result to prevent oversized context when fed back to the LLM.
  * Preserves the MCP content wrapper structure.
  */
-function truncateMcpResult(result: unknown, maxChars: number): unknown {
-  if (!result || typeof result !== "object") return result;
-  const content = (result as any).content;
-  if (!Array.isArray(content)) return result;
-  const truncated = content.map((part: any) => {
-    if (part?.type === "text" && typeof part.text === "string" && part.text.length > maxChars) {
-      return { ...part, text: part.text.slice(0, maxChars) + `\n... (truncated from ${part.text.length} chars)` };
-    }
-    return part;
-  });
-  return { ...result, content: truncated };
-}
+// Re-export from tool-utils for backward compat — chat Loki truncation uses this
+import { truncateMcpResult } from "../workflows/tool-utils.js";
 
 function selectChatAgent(agents: MastraChatAgentSet, task: ChatRequest): MastraChatAgent {
   return task.supportsInlineCharts === false
