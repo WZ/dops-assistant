@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.9.1] - 2026-04-16
+
+### Fixed
+- **Discovery stuck at "Discovering services..." behind reverse proxies.** The WebSocket server had no ping/pong heartbeat. During the LLM's 50-65 second silent thinking phase (after tool calls finish), nginx-ingress treated the connection as idle and killed it. The server's `send()` silently dropped discovery results because `ws.readyState !== OPEN`. Added 30-second ping/pong heartbeat to keep connections alive through proxies. Also added WebSocket timeout annotation examples to the Helm ingress values.
+
 ## [0.1.10] - 2026-04-16
 
 ### Fixed
