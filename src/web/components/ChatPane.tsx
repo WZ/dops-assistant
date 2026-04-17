@@ -2,10 +2,11 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { useAutoScroll } from "../hooks/useAutoScroll.js";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Search, SearchCode, MessageSquare, Plus, FileText, ChevronRight, Send, Trash2, Loader2 } from "lucide-react";
+import { Search, SearchCode, MessageSquare, Plus, FileText, ChevronRight, Send, Trash2 } from "lucide-react";
 import { renderInline } from "../lib/renderInline";
 import { renderMarkdown } from "../lib/renderMarkdown";
 import { formatTokens } from "../lib/formatTokens.js";
+import { formatTimestamp } from "../lib/formatTimestamp";
 import { MetricChart, type TimeSeriesData } from "./MetricChart";
 import { useStackContext } from "../contexts/StackContext";
 import { safeGetItem, safeSetItem } from "../lib/utils";
@@ -65,11 +66,9 @@ function toTimeSeries(c: ChartSeries): TimeSeriesData {
   };
 }
 
-/** Format a UTC ISO timestamp to local time string like "2:14 PM" */
+/** Chat-message timestamp — local style via the shared formatter. */
 function formatTime(isoStr: string): string {
-  const d = new Date(isoStr);
-  if (isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return formatTimestamp(isoStr, "local");
 }
 
 /** Get a local date string for grouping (YYYY-MM-DD in local tz) */
@@ -680,11 +679,30 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4" ref={scrollRef}>
         <div className="space-y-3">
-          {/* Loading state for initial history fetch */}
+          {/* Loading state for initial history fetch — 3 fake message rows
+              using Tailwind `animate-pulse`. Mirrors the real bubble layout
+              (user right, assistant left, with varying widths) so the
+              skeleton feels like the real thing is about to appear. */}
           {historyLoading && !isDeepMode && (
-            <div className="h-full min-h-[200px] flex flex-col items-center justify-center text-center animate-fade-in">
-              <Loader2 size={20} className="!size-auto text-muted-foreground/40 animate-spin mb-2" />
-              <p className="text-[11px] font-mono text-muted-foreground/40">Loading messages...</p>
+            <div
+              className="space-y-3 animate-fade-in"
+              role="status"
+              aria-label="Loading messages"
+              data-testid="chat-loading-skeleton"
+            >
+              {/* Assistant row */}
+              <div className="flex justify-start">
+                <div className="max-w-[70%] w-60 h-9 rounded-xl rounded-bl-sm bg-secondary/50 border border-border/40 animate-pulse" />
+              </div>
+              {/* User row */}
+              <div className="flex justify-end">
+                <div className="max-w-[60%] w-40 h-9 rounded-xl rounded-br-sm bg-primary/8 border border-primary/15 animate-pulse" />
+              </div>
+              {/* Assistant row */}
+              <div className="flex justify-start">
+                <div className="max-w-[75%] w-72 h-12 rounded-xl rounded-bl-sm bg-secondary/50 border border-border/40 animate-pulse" />
+              </div>
+              <span className="sr-only">Loading messages...</span>
             </div>
           )}
           {/* Empty state */}

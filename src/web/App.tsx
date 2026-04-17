@@ -40,6 +40,18 @@ export type LeftPaneView =
   | { type: "settings"; initialTab?: "providers" | "skills" | "stacks" }
   | { type: "notfound"; path: string };
 
+/**
+ * Pure helper: given the current pane type, decide whether a stack switch
+ * should forcibly redirect the user to the dashboard.
+ *
+ * Exported for unit testing. Only panes that render stack-specific data
+ * (investigation, services) reset — stack-neutral panes (settings, dashboard,
+ * notfound) are left alone so a concurrent sidebar click isn't clobbered.
+ */
+export function shouldResetOnStackSwitch(paneType: LeftPaneView["type"]): boolean {
+  return paneType === "services" || paneType === "investigation";
+}
+
 function useTheme() {
   const [dark, setDark] = useState(() => safeGetItem("theme") !== "light");
   useEffect(() => {
@@ -189,11 +201,24 @@ export function App() {
     }
   }, [ws.messages]);
 
-  // Reset view and discovery state on stack switch
+  // Reset view + discovery state on stack switch.
+  //
+  // The reset-to-dashboard is only needed for panes that render
+  // stack-specific data (a service from stack A would be stale under stack
+  // B). For stack-neutral panes (settings, notfound) we leave the view
+  // alone — otherwise a sidebar click + stack switch racing together would
+  // briefly land on `/`, then snap to the clicked target, producing the
+  // QA-reported "double redirect" flash.
   const prevStackRef = useRef(activeStackId);
+  // Keep a ref of the current pane so the stack-change effect can read the
+  // latest value without re-running every time the pane changes.
+  const leftPaneRef = useRef(leftPane);
+  leftPaneRef.current = leftPane;
   useEffect(() => {
     if (prevStackRef.current !== activeStackId && prevStackRef.current) {
-      setLeftPane({ type: "dashboard" });
+      if (shouldResetOnStackSwitch(leftPaneRef.current.type)) {
+        setLeftPane({ type: "dashboard" });
+      }
     }
     prevStackRef.current = activeStackId;
     lastProcessedIdx.current = 0;
