@@ -378,6 +378,63 @@ describe("ProviderRegistry", () => {
 
       await expect(registry.test("ghost")).rejects.toThrow("Provider not found");
     });
+
+    // Regression: provider-registry-stale-enabledToolCount.
+    // After a successful reconnect, enabledTools/enabledToolCount must reflect the
+    // fresh tool set. Previously the UI showed "0 tools (41 enabled)" because the
+    // auto-compute was skipped when enabledTools was already populated.
+    it("re-runs auto-compute of enabledTools after successful reconnect", async () => {
+      // Initial registration: 3 tools, auto-compute picks 2.
+      mockListProviderTools.mockResolvedValue({ a: {}, b: {}, c: {} });
+      mockListAllProviderTools.mockResolvedValue({ a: {}, b: {}, c: {} });
+      mockComputeDefaultEnabledTools.mockReturnValue(["a", "b"]);
+
+      const registry = new ProviderRegistry([makeConfig("grafana")], providersPath);
+      await registry.initialize();
+
+      const initial = registry.getAll().find((i) => i.config.name === "grafana");
+      expect(initial?.enabledToolCount).toBe(2);
+      expect(initial?.provider.enabledTools).toEqual(["a", "b"]);
+
+      // Simulate reconnect: tool set changed, previously enabled tools no longer exist.
+      mockListProviderTools.mockResolvedValue({ x: {}, y: {} });
+      mockListAllProviderTools.mockResolvedValue({ x: {}, y: {} });
+      mockComputeDefaultEnabledTools.mockReturnValue(["x"]);
+
+      const result = await registry.test("grafana");
+      expect(result.status).toBe("ok");
+      expect(result.toolCount).toBe(2);
+
+      const after = registry.getAll().find((i) => i.config.name === "grafana");
+      // Fresh set has no survivors of the previous selection, so defaults kick in.
+      expect(after?.provider.enabledTools).toEqual(["x"]);
+      // Most importantly: enabledToolCount tracks the fresh list, not the stale 2.
+      expect(after?.enabledToolCount).toBe(1);
+      expect(after?.toolCount).toBe(2);
+    });
+
+    it("preserves user-curated enabledTools across reconnect when survivors exist", async () => {
+      mockListProviderTools.mockResolvedValue({ a: {}, b: {}, c: {} });
+      mockListAllProviderTools.mockResolvedValue({ a: {}, b: {}, c: {} });
+      mockComputeDefaultEnabledTools.mockReturnValue(["a", "b", "c"]);
+
+      const registry = new ProviderRegistry([makeConfig("grafana")], providersPath);
+      await registry.initialize();
+
+      // User curates: disable "c", leaving ["a", "b"]
+      await registry.updateEnabledTools("grafana", ["a", "b"]);
+
+      // Reconnect — "b" is gone, "a" + new "d"
+      mockListProviderTools.mockResolvedValue({ a: {}, d: {} });
+      mockListAllProviderTools.mockResolvedValue({ a: {}, d: {} });
+      mockComputeDefaultEnabledTools.mockReturnValue(["a", "d"]);
+
+      await registry.test("grafana");
+      const after = registry.getAll().find((i) => i.config.name === "grafana");
+      // "a" survives, so the user's selection wins ("d" is NOT added automatically).
+      expect(after?.provider.enabledTools).toEqual(["a"]);
+      expect(after?.enabledToolCount).toBe(1);
+    });
   });
 
   // -----------------------------------------------------------------------
