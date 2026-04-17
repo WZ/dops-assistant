@@ -1,6 +1,26 @@
-import { describe, it, expect } from "vitest";
-import { createQuirkPrepareStep } from "./prepare-step.js";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import type { ProcessInputStepArgs } from "@mastra/core/processors";
+
+// Capture pino .debug() calls from this module so we can assert on what gets
+// logged. The logger factory in `../../logger.js` returns a real pino instance;
+// we stub it with a tracking object so tests stay deterministic regardless of
+// the ambient LOG_LEVEL.
+const debugCalls: unknown[][] = [];
+vi.mock("../../logger.js", () => ({
+  createLogger: () => ({
+    debug: (...args: unknown[]) => {
+      debugCalls.push(args);
+    },
+    info: () => {},
+    warn: () => {},
+    error: () => {},
+    fatal: () => {},
+    trace: () => {},
+    child: () => ({ debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, fatal: () => {}, trace: () => {} }),
+  }),
+}));
+
+const { createQuirkPrepareStep } = await import("./prepare-step.js");
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -148,6 +168,48 @@ describe("createQuirkPrepareStep", () => {
       const result = prepareStep(makeArgs(1));
       // Wind-down check runs first
       expect((result as { toolChoice: string }).toolChoice).toBe("none");
+    });
+  });
+
+  describe("log gating (DEBUG_PREPARE_STEP)", () => {
+    const originalEnv = process.env["DEBUG_PREPARE_STEP"];
+
+    beforeEach(() => {
+      debugCalls.length = 0;
+    });
+    afterEach(() => {
+      if (originalEnv === undefined) delete process.env["DEBUG_PREPARE_STEP"];
+      else process.env["DEBUG_PREPARE_STEP"] = originalEnv;
+    });
+
+    it("omits argKeys from the per-step log by default", () => {
+      delete process.env["DEBUG_PREPARE_STEP"];
+      const prepareStep = createQuirkPrepareStep({ maxSteps: 10 });
+      prepareStep(makeArgs(0));
+      // First positional arg to pino.debug is the log object
+      const logObj = debugCalls[0]?.[0] as Record<string, unknown>;
+      expect(logObj).toBeDefined();
+      expect(logObj).toHaveProperty("step", 0);
+      expect(logObj).toHaveProperty("maxSteps", 10);
+      expect(logObj).not.toHaveProperty("argKeys");
+    });
+
+    it("includes argKeys when DEBUG_PREPARE_STEP=1", () => {
+      process.env["DEBUG_PREPARE_STEP"] = "1";
+      const prepareStep = createQuirkPrepareStep({ maxSteps: 10 });
+      prepareStep(makeArgs(0));
+      const logObj = debugCalls[0]?.[0] as Record<string, unknown>;
+      expect(logObj).toBeDefined();
+      expect(logObj).toHaveProperty("argKeys");
+      expect(Array.isArray(logObj["argKeys"])).toBe(true);
+    });
+
+    it("treats any value other than '1' as disabled (e.g. 'true')", () => {
+      process.env["DEBUG_PREPARE_STEP"] = "true";
+      const prepareStep = createQuirkPrepareStep({ maxSteps: 10 });
+      prepareStep(makeArgs(0));
+      const logObj = debugCalls[0]?.[0] as Record<string, unknown>;
+      expect(logObj).not.toHaveProperty("argKeys");
     });
   });
 

@@ -141,7 +141,10 @@ describe("webhook handler", () => {
     }));
   });
 
-  it("allows requests when no secret is configured", async () => {
+  it("returns structured 503 when no secret is configured", async () => {
+    // Issue #18: without a secret, the webhook used to 404 from Express's
+    // default HTML fallback. Now the handler always runs and returns a
+    // JSON 503 with a hint so operators see a meaningful error.
     const noSecretConfig = { ...DEFAULT_CONFIG, secret: undefined };
     const handler = createWebhookHandler({ runner, config: noSecretConfig, services: SERVICES });
     const { req, res } = mockReqRes(
@@ -157,9 +160,44 @@ describe("webhook handler", () => {
     );
 
     await handler(req, res);
-    expect(res.status).toHaveBeenCalledWith(202);
+    expect(res.status).toHaveBeenCalledWith(503);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
-      template: "standard", // severity=warning → standard
+      error: "Webhook not configured",
+      hint: expect.stringContaining("webhook.secret"),
     }));
+    // Should NOT kick off an investigation.
+    expect(runner.run).not.toHaveBeenCalled();
+  });
+
+  it("accepts valid bearer token when secret is configured (D-3 sanity)", async () => {
+    // Mirrors the "returns 202" test but under the D-3 scope header — explicit
+    // regression coverage that adding the 503 path didn't break the happy case.
+    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES });
+    const { req, res } = mockReqRes(
+      {
+        alerts: [{
+          status: "firing",
+          labels: { alertname: "Slow", service: "payments-api", severity: "warning" },
+          annotations: { summary: "Slow responses" },
+          startsAt: "2026-04-17T10:00:00Z",
+          endsAt: "0001-01-01T00:00:00Z",
+        }],
+      },
+      "Bearer test-secret",
+    );
+
+    await handler(req, res);
+    expect(res.status).toHaveBeenCalledWith(202);
+  });
+
+  it("rejects with 401 (not 503) when secret is set but the bearer is wrong", async () => {
+    // D-3 boundary: the 503 gate must only fire when the secret is *unset*.
+    // A misconfigured client (wrong token) with secret set should still 401.
+    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES });
+    const { req, res } = mockReqRes({ alerts: [] }, "Bearer nope");
+
+    await handler(req, res);
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.status).not.toHaveBeenCalledWith(503);
   });
 });

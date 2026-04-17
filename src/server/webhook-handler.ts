@@ -95,13 +95,23 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
   });
 
   return async (req: Request, res: Response): Promise<void> => {
-    // 1. Validate bearer token
-    if (config.secret) {
-      const authHeader = req.headers.authorization;
-      if (!authHeader || authHeader !== `Bearer ${config.secret}`) {
-        res.status(401).json({ error: "Invalid or missing authorization token" });
-        return;
-      }
+    // 1. Validate bearer token.
+    // Without a configured secret we respond 503 instead of silently accepting
+    // traffic — this endpoint is unauthenticated-by-omission otherwise, and
+    // without the clear hint operators were seeing Express's default HTML 404
+    // ("Cannot POST /api/webhook/alert") in the QA logs, which looks like the
+    // route is missing rather than misconfigured.
+    if (!config.secret) {
+      res.status(503).json({
+        error: "Webhook not configured",
+        hint: "Set webhook.secret in config.yaml and restart",
+      });
+      return;
+    }
+    const authHeader = req.headers.authorization;
+    if (!authHeader || authHeader !== `Bearer ${config.secret}`) {
+      res.status(401).json({ error: "Invalid or missing authorization token" });
+      return;
     }
 
     // 2. Parse and validate payload through Zod schema

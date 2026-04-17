@@ -228,7 +228,12 @@ async function main() {
   startHealthMonitor({ stackManager, db });
   app.get("/api/health", healthHandler);
 
-  // Alert webhook endpoint (only if secret is configured)
+  // Alert webhook endpoint.
+  // The route is always registered. When `config.webhook.secret` is unset, the
+  // handler itself returns a structured 503 with a hint, so operators posting
+  // to this URL see a meaningful error instead of Express's default HTML 404
+  // ("Cannot POST /api/webhook/alert"). When the secret IS set, we eagerly
+  // build the runner/adapters so the first webhook call doesn't pay that cost.
   if (config.webhook.secret) {
     const defaultStackId = stackManager.getDefaultStackId();
     const defaultCtx = stackManager.getDefaultContext();
@@ -284,6 +289,18 @@ async function main() {
     });
 
     logger.info("Alert webhook enabled at POST /api/webhook/alert");
+  } else {
+    // No secret configured: register 503 stubs at both the default and
+    // stack-scoped routes so clients receive a structured JSON error.
+    const notConfiguredResponse = (_req: Request, res: Response) => {
+      res.status(503).json({
+        error: "Webhook not configured",
+        hint: "Set webhook.secret in config.yaml and restart",
+      });
+    };
+    app.post("/api/webhook/alert", notConfiguredResponse);
+    app.post("/api/webhook/alert/:stackSlug", notConfiguredResponse);
+    logger.warn("Alert webhook registered but DISABLED: webhook.secret is unset — POST /api/webhook/alert will return 503");
   }
 
   setupWebSocket(server, {
