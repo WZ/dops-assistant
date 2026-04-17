@@ -10,6 +10,7 @@ export interface ProbeResult {
 export interface HealthStatus {
   status: "healthy" | "degraded" | "unhealthy";
   uptime: number; // seconds
+  version: string;
   probes: {
     mcp: ProbeResult;
     db: ProbeResult;
