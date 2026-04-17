@@ -290,8 +290,16 @@ export class StackManager {
     const rows = this.db.listStacks();
     return rows.map((row) => {
       const ctx = this.stacks.get(row.id);
-      const stackConfig = JSON.parse(row.config) as StackConfig;
       const healthSummary = ctx?.healthPoller.getSummary();
+
+      // providerCount reflects the live registry (includes GUI-added providers
+      // persisted to providers.yaml). The DB row.config is only the initial seed
+      // and is not updated when providers are added/removed via the GUI, so we
+      // MUST NOT read from it here. Fall back to the seed only if the stack
+      // hasn't been initialized yet.
+      const providerCount = ctx
+        ? ctx.providerRegistry.getAll().length
+        : (JSON.parse(row.config) as StackConfig).providers.length;
 
       return {
         id: row.id,
@@ -299,7 +307,7 @@ export class StackManager {
         slug: row.slug,
         isDefault: row.id === this.defaultStackId,
         healthSummary,
-        providerCount: stackConfig.providers.length,
+        providerCount,
         createdAt: row.created_at,
       };
     });
