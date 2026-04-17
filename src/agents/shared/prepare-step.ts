@@ -54,7 +54,15 @@ export function createQuirkPrepareStep(config: QuirkPrepareStepConfig): PrepareS
 
   return function quirkPrepareStep(args: ProcessInputStepArgs): ProcessInputStepResult | undefined {
     const step = args.stepNumber; // 0-indexed
-    logger.debug({ step, maxSteps, windDownStartStep, argKeys: Object.keys(args) }, "prepareStep");
+    // Default-compact log: each `argKeys` line is ~800 bytes and fires on every
+    // step, producing ~28KB of noise per investigation. Keep the high-signal
+    // `{step, maxSteps}` line always, and only emit the full args-key dump when
+    // debugging the prepareStep hook itself (DEBUG_PREPARE_STEP=1).
+    if (process.env["DEBUG_PREPARE_STEP"] === "1") {
+      logger.debug({ step, maxSteps, windDownStartStep, argKeys: Object.keys(args) }, "prepareStep");
+    } else {
+      logger.debug({ step, maxSteps }, "prepareStep");
+    }
 
     // Wind-down phase: disable tools so the model produces a final answer
     if (step >= windDownStartStep) {

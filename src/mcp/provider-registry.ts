@@ -64,10 +64,12 @@ export class ProviderRegistry {
   private entries: Map<string, ProviderInfo> = new Map();
   private configProviders: ProviderConfig[];
   private providersFilePath: string;
+  private connectTimeoutMs: number | undefined;
 
-  constructor(configProviders: ProviderConfig[], providersFilePath: string) {
+  constructor(configProviders: ProviderConfig[], providersFilePath: string, connectTimeoutMs?: number) {
     this.configProviders = configProviders;
     this.providersFilePath = providersFilePath;
+    this.connectTimeoutMs = connectTimeoutMs;
   }
 
   /**
@@ -343,7 +345,7 @@ export class ProviderRegistry {
     let error: string | undefined;
 
     try {
-      provider = createMcpProvider(config);
+      provider = createMcpProvider(config, this.connectTimeoutMs);
     } catch (err) {
       // If MCP client creation fails, create a stub so we can still track it
       const message = err instanceof Error ? err.message : String(err);

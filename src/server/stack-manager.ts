@@ -115,6 +115,7 @@ export class StackManager {
     const providerRegistry = new ProviderRegistry(
       isDefault ? this.config.providers : stackConfig.providers,
       providersFilePath,
+      this.config.timeouts?.mcpConnectMs,
     );
     await providerRegistry.initialize();
 

@@ -11,30 +11,63 @@ export interface MastraProvider {
 }
 
 /**
+ * Default MCP server connect timeout, applied when no value is threaded through
+ * from config. The @mastra/mcp library's own default is 3s, which is too low
+ * for the slower-starting providers we run (grafana-mcp, stdio servers cold-
+ * starting a process). Keep this in sync with `TimeoutsSchema.mcpConnectMs` in
+ * `src/config/schema.ts`.
+ */
+export const DEFAULT_MCP_CONNECT_TIMEOUT_MS = 30_000;
+
+/**
  * Build a MastraMCPServerDefinition from a ProviderConfig's mcpServer block.
  * The @mastra/mcp MCPClient takes a `servers` record where:
  *   - stdio transport → { command, args, env }
  *   - http transport  → { url: URL }
+ *
+ * The per-transport connect-time timeout field is different in @mastra/mcp's
+ * type definitions — `connectTimeout` for HTTP, and `timeout` (from
+ * `BaseServerOptions`) for stdio. We populate the right one per transport so
+ * both paths honor the config value (see `connectHttp` / `connectStdio` in
+ * `node_modules/@mastra/mcp/dist/index.js` around lines 566 / 588).
+ *
+ * `connectTimeout` ALSO appears as the `timeout` param on the MCPClient ctor,
+ * but that's the per-request timeout, not the connect timeout — the value we
+ * care about lives on the per-server definition.
  */
-function buildServerDefinition(config: ProviderConfig): MastraMCPServerDefinition {
+function buildServerDefinition(config: ProviderConfig, connectTimeoutMs: number): MastraMCPServerDefinition {
   const { mcpServer } = config;
   if (mcpServer.transport === "http") {
-    return { url: new URL(mcpServer.url) };
+    return {
+      url: new URL(mcpServer.url),
+      connectTimeout: connectTimeoutMs,
+    };
   }
-  // stdio
+  // stdio — the stdio transport reads `serverConfig.timeout` for the connect
+  // phase (see connectStdio); `connectTimeout` is explicitly typed as `never`
+  // on StdioServerDefinition in the @mastra/mcp types.
   return {
     command: mcpServer.command,
     args: mcpServer.args,
     env: mcpServer.env,
+    timeout: connectTimeoutMs,
   };
 }
 
 /**
  * Create a MastraProvider from a ProviderConfig.
  * Each provider wraps a single MCPClient instance configured for that provider's server.
+ *
+ * @param connectTimeoutMs — per-server connect timeout in milliseconds. Defaults
+ *   to `DEFAULT_MCP_CONNECT_TIMEOUT_MS` (30s) when omitted so callers that don't
+ *   plumb config through still get a sane timeout instead of the @mastra/mcp
+ *   built-in 3s default.
  */
-export function createMcpProvider(config: ProviderConfig): MastraProvider {
-  const serverDef = buildServerDefinition(config);
+export function createMcpProvider(
+  config: ProviderConfig,
+  connectTimeoutMs: number = DEFAULT_MCP_CONNECT_TIMEOUT_MS,
+): MastraProvider {
+  const serverDef = buildServerDefinition(config, connectTimeoutMs);
   const client = new MCPClient({
     id: `provider-${config.name}`,
     servers: {
