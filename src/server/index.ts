@@ -293,29 +293,62 @@ async function main() {
   // into window.__APP_BASE__ so the web bundle's API/WS calls agree.
   //
   // Keep APP_BASE_PATH empty or "/" for root deploys — no rewriting, no cost.
-  const rawBase = process.env["APP_BASE_PATH"] ?? "/";
-  const appBasePath = rawBase === "/" || rawBase === ""
-    ? "/"
-    : ("/" + rawBase.replace(/^\/+|\/+$/g, "") + "/");
-
-  let cachedIndexHtml: string | null = null;
-  function renderIndexHtml(): string {
-    if (cachedIndexHtml) return cachedIndexHtml;
-    const raw = readFileSync(path.resolve(staticDir, "index.html"), "utf-8");
-    if (appBasePath === "/") {
-      cachedIndexHtml = raw;
-      return raw;
-    }
-    // Rewrite any absolute /assets/... reference to ${base}assets/...
-    const rewritten = raw
-      .replace(/(src|href)="\/assets\//g, `$1="${appBasePath}assets/`)
-      .replace(
-        /<head(\s[^>]*)?>/i,
-        (m) => `${m}<script>window.__APP_BASE__=${JSON.stringify(appBasePath)};</script>`,
+  //
+  // Strict allowlist for the input: only alphanumeric, slash, dash, underscore.
+  // This blocks `$` (which String.replace would treat as a backreference in the
+  // asset rewrite), `<` / `>` / quotes (HTML-context injection into the
+  // inlined window.__APP_BASE__ script), and whitespace/unicode that silently
+  // produce malformed URLs.
+  const rawBase = (process.env["APP_BASE_PATH"] ?? "/").trim();
+  let appBasePath = "/";
+  if (rawBase !== "" && rawBase !== "/") {
+    if (!/^[A-Za-z0-9/_-]+$/.test(rawBase)) {
+      logger.warn(
+        { rawBase },
+        "APP_BASE_PATH contains disallowed characters (allowed: A-Z a-z 0-9 / _ -); ignoring and serving at root",
       );
-    cachedIndexHtml = rewritten;
-    return rewritten;
+    } else {
+      appBasePath = "/" + rawBase.replace(/^\/+|\/+$/g, "") + "/";
+    }
   }
+
+  // Escape `<` so the inlined string can't break out of the <script> context.
+  // JSON.stringify does NOT escape `<`; operator-controlled values that slip
+  // past the allowlist above would otherwise create stored-XSS. Defence in
+  // depth — with validation above, this is theoretically unreachable.
+  const basePathForScript = JSON.stringify(appBasePath).replace(/</g, "\\u003c");
+
+  function buildIndexHtml(): string {
+    const raw = readFileSync(path.resolve(staticDir, "index.html"), "utf-8");
+    if (appBasePath === "/") return raw;
+
+    // Rewrite any absolute /assets/... reference to ${base}assets/...
+    const afterAssets = raw.replace(
+      /(src|href)="\/assets\//g,
+      `$1="${appBasePath}assets/`,
+    );
+
+    // Inject window.__APP_BASE__ into <head>. Track whether the injection
+    // actually fired — if the HTML template ever changes to a self-closing or
+    // missing <head>, the bundle would silently fall back to "/" and every
+    // API call would go to the wrong path. Fail fast at boot instead.
+    let injected = false;
+    const finalHtml = afterAssets.replace(/<head(\s[^>]*)?>/i, (m) => {
+      injected = true;
+      return `${m}<script>window.__APP_BASE__=${basePathForScript};</script>`;
+    });
+    if (!injected) {
+      throw new Error(
+        "APP_BASE_PATH is set but <head> tag not found in index.html; web bundle would load with wrong base path",
+      );
+    }
+    return finalHtml;
+  }
+
+  // Warm the cache at startup so: (1) readFileSync failures fail fast, (2) no
+  // request path does sync I/O, (3) the <head> injection assertion above runs
+  // deterministically before we accept traffic.
+  const cachedIndexHtml = buildIndexHtml();
 
   // Serve static assets at both the root (for the ingress-rewritten case) and
   // optionally under the configured base path (for direct access without a
@@ -329,16 +362,20 @@ async function main() {
     app.use(appBasePath, express.static(staticDir, { index: false }));
   }
 
-  // SPA catch-all: serve (rewritten) index.html for any non-API route that
-  // wasn't matched by static files. This enables client-side routing
+  // SPA catch-all: serve the cached (rewritten) index.html for any non-API
+  // GET/HEAD that wasn't matched by static files. Enables client-side routing
   // (e.g. /investigations/:id, /services, /settings) AND sub-path deploys.
+  //
+  // `Cache-Control: no-cache` on index.html: content-hashed asset filenames
+  // are safe to cache indefinitely, but index.html references those hashes by
+  // name, so a stale cached index.html after redeploy would load the wrong
+  // bundle version.
   app.use((req, res, next) => {
+    if (req.method !== "GET" && req.method !== "HEAD") return next();
     if (req.path.startsWith("/api/") || req.path.startsWith("/ws")) return next();
-    try {
-      res.type("html").send(renderIndexHtml());
-    } catch (err) {
-      next(err);
-    }
+    if (appBasePath !== "/" && req.path.startsWith(`${appBasePath}ws`)) return next();
+    res.set("Cache-Control", "no-cache, must-revalidate");
+    res.type("html").send(cachedIndexHtml);
   });
 
   logger.info({ appBasePath }, "static file serving configured");

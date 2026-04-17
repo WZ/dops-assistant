@@ -6,6 +6,15 @@ declare global {
   }
 }
 
+/** Ensure a base path has leading AND trailing "/". Defensive against
+ *  misconfigured operators or future server bugs that produce "/dops" or
+ *  "dops/" — without this, withBase("/api/health") silently corrupts URLs. */
+function normalizeBase(raw: string): string {
+  if (!raw || raw === "/") return "/";
+  const trimmed = raw.replace(/^\/+|\/+$/g, "");
+  return trimmed === "" ? "/" : `/${trimmed}/`;
+}
+
 /**
  * Base path for the app, ending in "/". Resolution order:
  *   1. `window.__APP_BASE__` — injected by the server at render time, driven
@@ -15,10 +24,11 @@ declare global {
  *      dev mode (vite's own server) works without extra config.
  *   3. "/" — root fallback.
  */
-export const APP_BASE_PATH =
+export const APP_BASE_PATH = normalizeBase(
   (typeof window !== "undefined" && window.__APP_BASE__) ||
-  import.meta.env.BASE_URL ||
-  "/";
+    import.meta.env.BASE_URL ||
+    "/",
+);
 
 /** Prepend the app base path to an API URL (e.g., "/api/health" → "/dops/api/health"). */
 export function withBase(url: string): string {
