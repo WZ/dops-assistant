@@ -28,7 +28,10 @@ test.describe("Discovery UI plumbing", () => {
     await expect(runBtn).toBeVisible();
   });
 
-  test("clicking Run Discovery surfaces phase tabs", async ({ page, request }) => {
+  test.fixme("clicking Run Discovery surfaces phase tabs", async ({ page, request }) => {
+    // Needs live MCP providers to reach the phase-tab render. CI fixture has
+    // none. Batch C re-enables this with a proper mock or a dedicated
+    // discovery-agent stub.
     const stacks = await request.get("/api/stacks").then((r) => r.json() as Promise<Array<{ id: string; healthSummary?: { total: number } }>>);
     const emptyStack = stacks.find((s) => (s.healthSummary?.total ?? 0) === 0);
     if (!emptyStack) test.skip(true, "no empty stack");
