@@ -8,10 +8,23 @@
  *   "unhealthy"— critical failure
  */
 
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Request, Response } from "express";
 import { createLogger } from "../logger.js";
 import type { MastraProvider } from "../mcp/provider.js";
 import type { Database } from "./db.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const VERSION: string = (() => {
+  try {
+    const pkg = JSON.parse(readFileSync(path.join(__dirname, "../../package.json"), "utf-8"));
+    return typeof pkg.version === "string" ? pkg.version : "unknown";
+  } catch {
+    return "unknown";
+  }
+})();
 
 const logger = createLogger();
 
@@ -24,6 +37,7 @@ export interface ProbeResult {
 export interface HealthStatus {
   status: "healthy" | "degraded" | "unhealthy";
   uptime: number;
+  version: string;
   probes: {
     mcp: ProbeResult;
     db: ProbeResult;
@@ -35,6 +49,7 @@ const startTime = Date.now();
 let cachedStatus: HealthStatus = {
   status: "healthy",
   uptime: 0,
+  version: VERSION,
   probes: {
     mcp: { status: "ok", latencyMs: 0 },
     db: { status: "ok", latencyMs: 0 },
@@ -98,6 +113,7 @@ export function startHealthMonitor(deps: HealthMonitorDeps | HealthMonitorStackD
     cachedStatus = {
       status: anyError ? "degraded" : "healthy",
       uptime: Math.floor((Date.now() - startTime) / 1000),
+      version: VERSION,
       probes: { mcp, db },
       lastCheck: new Date().toISOString(),
     };
