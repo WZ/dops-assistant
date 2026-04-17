@@ -30,6 +30,11 @@ COPY src/ ./src/
 ENV VITE_BASE_PATH=${VITE_BASE_PATH}
 RUN npm run build
 
+# Strip TypeScript declaration files and source maps from dist — they leak
+# API surface (function signatures, exported types, JSDoc) and aren't needed
+# at runtime. Saves ~2 MB and removes the source-leak vector.
+RUN find dist -type f \( -name '*.d.ts' -o -name '*.d.ts.map' -o -name '*.js.map' \) -delete
+
 # Strip dev dependencies from node_modules so the production stage can reuse
 # them without running `npm ci` a second time.
 RUN npm prune --omit=dev && npm cache clean --force
