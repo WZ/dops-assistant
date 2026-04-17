@@ -47,8 +47,15 @@ interface DiscoveryState {
 interface ServicesPageProps {
   ws: ReturnType<typeof useWebSocket>;
   onViewInvestigation: (id: string) => void;
+  /** Name of the service whose detail view should be shown. Also reflects the
+   *  URL path `/services/<name>`. Owning the detail state at the parent means
+   *  the URL, the detail view, and the browser Back button stay in sync — the
+   *  previous one-shot pattern cleared the URL to `/services` the moment the
+   *  detail mounted, breaking reloads and tab-switches on the detail page. */
   initialService?: string;
-  onInitialServiceConsumed?: () => void;
+  /** Called when the user opens or closes a service detail view. The parent
+   *  should update its `initialService` state so the URL follows. */
+  onSelectService?: (name: string | undefined) => void;
   discoveryState: DiscoveryState;
   onStartDiscovery: () => void;
   onResetDiscovery: () => void;
@@ -67,7 +74,7 @@ export function ServicesPage({
   ws,
   onViewInvestigation,
   initialService,
-  onInitialServiceConsumed,
+  onSelectService,
   discoveryState,
   onStartDiscovery,
   onResetDiscovery,
@@ -158,15 +165,18 @@ export function ServicesPage({
     return () => clearInterval(refreshTick);
   }, [fetchData]);
 
-  // ── initialService prop → navigate to detail once data loads ──────
-  const initialServiceConsumedRef = useRef(false);
+  // ── initialService prop → sync detail view with URL ───────────────
+  // The parent owns `initialService` as the canonical "which service is open".
+  // Sync subView to match whenever the prop changes (URL navigation, Back/
+  // Forward, programmatic switch). Waits for services to load so we can
+  // detect unknown service names (see fix below for NotFound rendering).
   useEffect(() => {
-    if (!initialService || initialServiceConsumedRef.current) return;
-    if (services.length === 0) return; // wait for services data
-    initialServiceConsumedRef.current = true;
-    setSubView({ type: "detail", serviceName: initialService });
-    onInitialServiceConsumed?.();
-  }, [initialService, services, onInitialServiceConsumed]);
+    if (initialService && services.length > 0) {
+      setSubView((prev) => (prev.type === "detail" && prev.serviceName === initialService ? prev : { type: "detail", serviceName: initialService }));
+    } else if (!initialService) {
+      setSubView((prev) => (prev.type === "detail" ? { type: "grid" } : prev));
+    }
+  }, [initialService, services.length]);
 
   // ── Discovery state → sub-view transitions ────────────────────────
   // Track previous values to detect *transitions*, not react to initial state
@@ -351,14 +361,37 @@ export function ServicesPage({
 
   if (subView.type === "detail") {
     const svc = services.find((s) => s.name === subView.serviceName);
+    // Guard against /dops/services/<typo> — the metadata endpoint returns a
+    // default record for any name, which previously let the UI render a full
+    // detail page with the typo as the heading. If the service isn't in the
+    // current stack's service list, show an explicit not-found state instead.
+    if (services.length > 0 && !svc) {
+      return (
+        <div className="h-full flex flex-col items-center justify-center gap-3 p-8 text-center">
+          <h2 className="font-mono text-sm uppercase tracking-[0.12em] text-foreground/80">
+            Service not found
+          </h2>
+          <p className="font-mono text-[11px] text-muted-foreground/70 max-w-md">
+            <code className="text-foreground/60">{subView.serviceName}</code> isn&apos;t in this stack&apos;s service list.
+            It may belong to a different stack, or it may have been removed.
+          </p>
+          <button
+            className="mt-2 font-mono text-[11px] uppercase tracking-[0.12em] text-primary hover:text-primary/80"
+            onClick={() => { onSelectService?.(undefined); setSubView({ type: "grid" }); }}
+          >
+            ← Back to services
+          </button>
+        </div>
+      );
+    }
     const firstMetricQuery = svc?.metrics?.[0]?.query;
     return (
       <ServiceDetail
         serviceName={subView.serviceName}
         ws={ws}
-        onBack={() => setSubView({ type: "grid" })}
+        onBack={() => { onSelectService?.(undefined); setSubView({ type: "grid" }); }}
         onViewInvestigation={onViewInvestigation}
-        onViewService={(name) => setSubView({ type: "detail", serviceName: name })}
+        onViewService={(name) => { onSelectService?.(name); setSubView({ type: "detail", serviceName: name }); }}
         grafanaUrl={grafanaUrl}
         prometheusDatasource={prometheusDatasource}
         metricQuery={firstMetricQuery}
@@ -609,7 +642,7 @@ export function ServicesPage({
                         <div key={svc.name} className={`animate-fade-up delay-${Math.min(i + 1, 8)}`}>
                           <ServiceCard
                             name={svc.name}
-                            onClick={() => setSubView({ type: "detail", serviceName: svc.name })}
+                            onClick={() => { onSelectService?.(svc.name); setSubView({ type: "detail", serviceName: svc.name }); }}
                             lastInvestigation={serviceInvData.get(svc.name)?.lastInvestigation ?? null}
                             investigationCount={serviceInvData.get(svc.name)?.count ?? 0}
                             healthStatus={healthData[svc.name] as "healthy" | "degraded" | "down" | "unknown" | undefined}

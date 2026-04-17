@@ -435,6 +435,28 @@ describe("Database", () => {
       expect(meta!.alias).toBeNull();
       expect(meta!.tags).toEqual([]);
     });
+
+    it("clearServiceAlias on an existing row sets alias to null (and keeps tags)", () => {
+      // Regression: route handler used to coerce client-sent `alias: null`
+      // into `""` which never cleared the DB column. Now the handler calls
+      // clearServiceAlias for null/empty input, which should actually null
+      // the column without touching tags.
+      db.upsertServiceMetadata(S, "payments-api", { alias: "Payments", tags: ["critical"] });
+      db.clearServiceAlias(S, "payments-api");
+      const meta = db.getServiceMetadata(S, "payments-api");
+      expect(meta!.alias).toBeNull();
+      expect(meta!.tags).toEqual(["critical"]);
+    });
+
+    it("clearServiceAlias on a missing row inserts a row with null alias", () => {
+      // Clearing before any write should be a no-op conceptually. Idempotent
+      // behavior: after the call, reading back returns the empty record.
+      db.clearServiceAlias(S, "never-written");
+      const meta = db.getServiceMetadata(S, "never-written");
+      expect(meta).toBeDefined();
+      expect(meta!.alias).toBeNull();
+      expect(meta!.tags).toEqual([]);
+    });
   });
 
   // ── listInvestigations with service filter ────────────────────────────

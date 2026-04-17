@@ -193,6 +193,32 @@ describe("StackManager", () => {
     });
   });
 
+  describe("resolveStackIdWithFallback", () => {
+    beforeEach(async () => {
+      manager = new StackManager(db, config);
+      await manager.initialize();
+    });
+
+    it("reports fallback=false when the id is valid", () => {
+      const defaultId = manager.getDefaultStackId();
+      expect(manager.resolveStackIdWithFallback(defaultId)).toEqual({ id: defaultId, fallback: false });
+    });
+
+    it("reports fallback=false when the id is missing (no signal to override)", () => {
+      // Null/undefined means "caller didn't specify" — default resolution, not a fallback.
+      const defaultId = manager.getDefaultStackId();
+      expect(manager.resolveStackIdWithFallback(null)).toEqual({ id: defaultId, fallback: false });
+      expect(manager.resolveStackIdWithFallback(undefined)).toEqual({ id: defaultId, fallback: false });
+    });
+
+    it("reports fallback=true when the id was present but invalid", () => {
+      // This is the case the X-Dops-Stack-Fallback response header exists for:
+      // user asked for something specific, we had to pick something else.
+      const defaultId = manager.getDefaultStackId();
+      expect(manager.resolveStackIdWithFallback("does-not-exist")).toEqual({ id: defaultId, fallback: true });
+    });
+  });
+
   describe("createStack", () => {
     beforeEach(async () => {
       manager = new StackManager(db, config);

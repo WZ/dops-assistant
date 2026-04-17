@@ -330,7 +330,9 @@ export function App() {
                       ws={ws}
                       onViewInvestigation={(id) => setLeftPane({ type: "investigation", id })}
                       initialService={leftPane.initialService}
-                      onInitialServiceConsumed={() => { if (leftPane.type === "services") setLeftPane({ ...leftPane, initialService: undefined }); }}
+                      onSelectService={(name) => {
+                        if (leftPane.type === "services") setLeftPane({ ...leftPane, initialService: name });
+                      }}
                       discoveryState={discoveryState}
                       onStartDiscovery={() => {
                         setDiscoveryState({ phase: "discovery", status: "running", iteration: { current: 0, max: 0, description: "" }, toolCalls: [], results: [], error: null, retry: null, phaseTokens: {}, totalUsage: null });
