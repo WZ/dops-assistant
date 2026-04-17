@@ -85,7 +85,18 @@ export function ServicesPage({
 }: ServicesPageProps) {
   const { stackFetch } = useStackContext();
   // ── Sub-view routing ──────────────────────────────────────────────
-  const [subView, setSubView] = useState<SubView>({ type: "grid" });
+  // Seed subView from `initialService` at mount so SPA navigations land
+  // directly on the detail view. The previous version initialised to
+  // `{grid}` and let a useEffect promote it to detail, which meant there
+  // was always a paint of the grid H1 ("Services") before the services
+  // fetch completed. On the Home-tile click path, an intervening unmount
+  // (stack switch, setup-stage reroute, React concurrent bail-out) could
+  // orphan that promotion effect and leave the user stuck on the grid
+  // even though the URL said /services/:name — the bug captured in
+  // QA Issue #13.
+  const [subView, setSubView] = useState<SubView>(() =>
+    initialService ? { type: "detail", serviceName: initialService } : { type: "grid" },
+  );
 
   // ── Service data state ────────────────────────────────────────────
   const [services, setServices] = useState<ServiceConfig[]>([]);
