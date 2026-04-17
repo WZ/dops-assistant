@@ -468,7 +468,15 @@ export function ServicesPage({
         <h1 className="font-display text-2xl font-extrabold tracking-tight text-foreground/90">Services</h1>
         <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide flex items-center gap-2 flex-wrap">
           {stackName && <><span className="text-primary/60 uppercase">{stackName}</span><span className="text-muted-foreground/40">&middot;</span></>}
-          <span>{visibleServiceCount} services</span>
+          {/* Unified counter: "N of M services shown · K hidden" instead of
+              mixing a visible count with a hidden count in different units.
+              Keeping M (= total) in the same phrase anchors "hidden" as a
+              subset of a known total. */}
+          <span data-testid="services-counter">
+            {hiddenServices.size > 0
+              ? `${visibleServiceCount} of ${services.length} services shown`
+              : `${visibleServiceCount} ${visibleServiceCount === 1 ? "service" : "services"}`}
+          </span>
           {services.length > 0 && (
             <span className="text-[10px] font-mono flex items-center gap-2">
               <span className="text-muted-foreground/40">&middot;</span>

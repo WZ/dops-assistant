@@ -2,6 +2,7 @@ import { Button } from "@/components/ui/button";
 import { ArrowLeft, Search, ExternalLink, Pencil, Plus } from "lucide-react";
 import { AliasEditor, TagEditor } from "./ServiceAliasEditor";
 import { buildExploreUrl } from "../lib/grafana-links";
+import { formatTimestamp } from "../lib/formatTimestamp";
 
 interface ServiceDetailHeaderProps {
   serviceName: string;
@@ -59,13 +60,7 @@ function buildGrafanaExploreLink(baseUrl: string, query: string, datasource?: st
 
 function formatCheckedAgo(ts: number | null | undefined): string | null {
   if (!ts) return null;
-  const sec = Math.floor((Date.now() - ts) / 1000);
-  if (sec < 10) return "just now";
-  if (sec < 60) return `${sec}s ago`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.floor(min / 60);
-  return `${hr}h ago`;
+  return formatTimestamp(new Date(ts).toISOString(), "relative");
 }
 
 export function ServiceDetailHeader({
