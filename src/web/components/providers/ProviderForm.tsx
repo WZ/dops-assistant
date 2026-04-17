@@ -6,6 +6,7 @@ export interface ProviderFormData {
   name: string;
   roles: string[];
   region?: string;
+  webUrl?: string;
   mcpServer: {
     transport: "http";
     url?: string;
@@ -26,6 +27,7 @@ const AVAILABLE_ROLES = [
   "metrics",
   "logs",
   "dashboards",
+  "dependencies",
   "infrastructure",
   "changes",
 ] as const;
@@ -49,6 +51,7 @@ export function ProviderForm({
     new Set(initialValues?.roles ?? [])
   );
   const [region, setRegion] = useState(initialValues?.region ?? "");
+  const [webUrl, setWebUrl] = useState(initialValues?.webUrl ?? "");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [testResult, setTestResult] = useState<{
     status: string;
@@ -72,6 +75,10 @@ export function ProviderForm({
       data.region = region.trim();
     }
 
+    if (webUrl.trim()) {
+      data.webUrl = webUrl.trim();
+    }
+
     if (url.trim()) data.mcpServer.url = url.trim();
 
     return data;
@@ -93,6 +100,15 @@ export function ProviderForm({
 
     if (!url.trim()) {
       newErrors.url = "URL is required";
+    }
+
+    if (webUrl.trim()) {
+      try {
+        // eslint-disable-next-line no-new
+        new URL(webUrl.trim());
+      } catch {
+        newErrors.webUrl = "Web URL must be a valid URL";
+      }
     }
 
     setErrors(newErrors);
@@ -193,6 +209,32 @@ export function ProviderForm({
         />
         {errors.url && (
           <p className="text-xs text-destructive/80 mt-1">{errors.url}</p>
+        )}
+      </div>
+
+      {/* Web URL (optional — Grafana UI link) */}
+      <div>
+        <label className={LABEL_CLASS} htmlFor="provider-web-url">Web URL (optional)</label>
+        <input
+          id="provider-web-url"
+          type="text"
+          value={webUrl}
+          onChange={(e) => {
+            setWebUrl(e.target.value);
+            if (errors.webUrl) {
+              setErrors((prev) => {
+                const next = { ...prev };
+                delete next.webUrl;
+                return next;
+              });
+            }
+          }}
+          className={cn(INPUT_CLASS, "mt-1")}
+          placeholder="https://grafana.example.com/"
+          aria-label="Web URL"
+        />
+        {errors.webUrl && (
+          <p className="text-xs text-destructive/80 mt-1">{errors.webUrl}</p>
         )}
       </div>
 

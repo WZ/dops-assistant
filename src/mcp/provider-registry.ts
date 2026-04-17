@@ -202,11 +202,24 @@ export class ProviderRegistry {
       entry.toolCount = toolCount;
       entry.error = undefined;
 
-      // Re-run auto-compute if initial registration failed before defaults were set
-      if (!entry.provider.enabledTools?.length && toolCount > 0) {
+      // Re-run auto-compute after a successful (re)connect so enabledTools stays in sync
+      // with the current tool set. Previously this was gated on "initial registration
+      // had no tools", which meant reconnecting a provider whose tool set changed left
+      // enabledTools pointing at stale tool names — surfaced in the UI as
+      // "0 tools (41 enabled)" or tools silently dropping out of rotation.
+      // (Regression: provider-registry-stale-enabledToolCount.)
+      if (toolCount > 0) {
+        // Preserve any user-curated enabledTools that still exist in the fresh tool set;
+        // fall back to defaults when none of the previous selections survive the reconnect.
         const allRawTools = await listAllProviderTools(entry.provider);
-        const defaults = computeDefaultEnabledTools(allRawTools, entry.config.name);
-        entry.provider.enabledTools = defaults;
+        const freshToolNames = new Set(Object.keys(allRawTools));
+        const previousEnabled = entry.provider.enabledTools ?? [];
+        const survivors = previousEnabled.filter((n) => freshToolNames.has(n));
+        if (survivors.length > 0) {
+          entry.provider.enabledTools = survivors;
+        } else {
+          entry.provider.enabledTools = computeDefaultEnabledTools(allRawTools, entry.config.name);
+        }
       }
       entry.enabledToolCount = entry.provider.enabledTools?.length ?? toolCount;
 

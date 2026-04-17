@@ -1,7 +1,7 @@
 import { memo, useEffect, useState, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ProviderToolList, type ToolInfo } from "./ProviderToolList";
 import { useStackContext } from "../../contexts/StackContext";
@@ -18,6 +18,7 @@ interface ProviderCardProps {
   region?: string;
   transport: string;
   url?: string;
+  webUrl?: string;
   source: "config" | "gui";
   status: "connected" | "error" | "unknown";
   toolCount: number;
@@ -36,6 +37,7 @@ export const ProviderCard = memo(function ProviderCard({
   region,
   transport,
   url,
+  webUrl,
   source,
   status,
   toolCount,
@@ -116,6 +118,22 @@ export const ProviderCard = memo(function ProviderCard({
           {transportLabel}
         </span>
       </div>
+
+      {/* Web URL — opens provider UI (e.g. Grafana) in a new tab */}
+      {webUrl && (
+        <div className="mt-0.5 pl-[18px]">
+          <a
+            href={webUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`Open ${name} in a new tab`}
+            className="inline-flex items-center gap-1 font-mono text-[10px] text-primary/70 hover:text-primary transition-colors"
+          >
+            <ExternalLink size={10} />
+            Open
+          </a>
+        </div>
+      )}
 
       {/* Tool count */}
       <div className="mt-0.5 pl-[18px]">
