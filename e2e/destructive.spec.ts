@@ -29,8 +29,7 @@ test.describe("Remove provider confirmation", () => {
     await request.delete("/api/providers/e2e-victim").catch(() => {});
   });
 
-  test.fixme("clicking Remove opens a confirm dialog, Cancel preserves", async ({ page }) => {
-    // Batch A introduces ConfirmActionDialog. Remove .fixme when A lands.
+  test("clicking Remove opens a confirm dialog, Cancel preserves", async ({ page }) => {
     await page.goto("/settings");
     const removeBtn = page.getByRole("button", { name: "Remove e2e-victim" });
     if (!(await removeBtn.isVisible().catch(() => false))) {
@@ -50,8 +49,7 @@ test.describe("Remove provider confirmation", () => {
     await expect(page.getByRole("button", { name: "Remove e2e-victim" })).toBeVisible();
   });
 
-  test.fixme("Confirm removes the provider", async ({ page }) => {
-    // Batch A introduces ConfirmActionDialog. Remove .fixme when A lands.
+  test("Confirm removes the provider", async ({ page }) => {
     await page.goto("/settings");
     const removeBtn = page.getByRole("button", { name: "Remove e2e-victim" });
     if (!(await removeBtn.isVisible().catch(() => false))) {

@@ -340,13 +340,20 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     const dashProvider = providerRegistry.getAll().find(
       (p: { config: { roles: string[]; webUrl?: string } }) => p.config.roles.includes("dashboards") && p.config.webUrl,
     );
+    // Fallback: if no dashboards provider has a webUrl, use the metrics provider's
+    // webUrl so the Service Detail "Open in Grafana" button is still wired up.
+    // Common setup: a single Grafana provider with both "metrics" and "dashboards" roles,
+    // but plenty of users only tag "metrics".
     const metricsProvider = providerRegistry.getAll().find(
+      (p: { config: { roles: string[]; webUrl?: string } }) => p.config.roles.includes("metrics") && p.config.webUrl,
+    );
+    const anyMetricsProvider = providerRegistry.getAll().find(
       (p: { config: { roles: string[] } }) => p.config.roles.includes("metrics"),
     );
     res.json({
       ...base,
-      grafanaUrl: dashProvider?.config.webUrl,
-      prometheusDatasource: metricsProvider?.prometheusDatasourceUid,
+      grafanaUrl: dashProvider?.config.webUrl ?? metricsProvider?.config.webUrl,
+      prometheusDatasource: anyMetricsProvider?.prometheusDatasourceUid,
     });
   });
 

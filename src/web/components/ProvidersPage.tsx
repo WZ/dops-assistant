@@ -4,6 +4,7 @@ import { CirclePlus } from "lucide-react";
 import { ProviderCard, type TestResult } from "./providers/ProviderCard";
 import { ProviderForm, type ProviderFormData } from "./providers/ProviderForm";
 import { YamlModal } from "./providers/YamlModal";
+import { ConfirmActionDialog } from "./ConfirmActionDialog";
 import { useStackContext } from "../contexts/StackContext";
 
 interface ProviderData {
@@ -12,6 +13,7 @@ interface ProviderData {
   region?: string;
   transport: string;
   url?: string;
+  webUrl?: string;
   source: "config" | "gui";
   status: "connected" | "error" | "unknown";
   toolCount: number;
@@ -34,6 +36,7 @@ export function ProvidersPage({ onRunDiscovery, onProviderSaved }: ProvidersPage
   const [showYamlModal, setShowYamlModal] = useState(false);
   const [testingName, setTestingName] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({});
+  const [removeTarget, setRemoveTarget] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval>>(undefined);
 
   const fetchProviders = useCallback(async () => {
@@ -56,7 +59,13 @@ export function ProvidersPage({ onRunDiscovery, onProviderSaved }: ProvidersPage
   const handleSave = async (data: ProviderFormData) => {
     setSaving(true);
     try {
-      const body = { name: data.name, roles: data.roles, region: data.region, mcpServer: data.mcpServer };
+      const body = {
+        name: data.name,
+        roles: data.roles,
+        region: data.region,
+        webUrl: data.webUrl,
+        mcpServer: data.mcpServer,
+      };
       const isEdit = Boolean(editingProvider);
       const url = isEdit
         ? `/api/providers/${encodeURIComponent(editingProvider!.name)}`
@@ -86,7 +95,13 @@ export function ProvidersPage({ onRunDiscovery, onProviderSaved }: ProvidersPage
       const res = await stackFetch("/api/providers/test-config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: data.name, roles: data.roles, region: data.region, mcpServer: data.mcpServer }),
+        body: JSON.stringify({
+          name: data.name,
+          roles: data.roles,
+          region: data.region,
+          webUrl: data.webUrl,
+          mcpServer: data.mcpServer,
+        }),
       });
       return await res.json();
     } catch {
@@ -110,8 +125,13 @@ export function ProvidersPage({ onRunDiscovery, onProviderSaved }: ProvidersPage
     setTestingName(null);
   };
 
-  // Remove provider
-  const handleRemove = async (name: string) => {
+  // Remove provider — opens confirm dialog
+  const handleRemoveClick = (name: string) => {
+    setRemoveTarget(name);
+  };
+
+  // Actually perform the delete after user confirms
+  const performRemove = async (name: string) => {
     try {
       const res = await stackFetch(`/api/providers/${encodeURIComponent(name)}`, { method: "DELETE" });
       if (!res.ok) {
@@ -131,6 +151,7 @@ export function ProvidersPage({ onRunDiscovery, onProviderSaved }: ProvidersPage
       name: p.name,
       roles: p.roles,
       region: p.region,
+      webUrl: p.webUrl,
       mcpServer: {
         transport: "http",
         url: p.url,
@@ -194,7 +215,7 @@ export function ProvidersPage({ onRunDiscovery, onProviderSaved }: ProvidersPage
                   {...p}
                   onTest={() => handleTest(p.name)}
                   onEdit={p.source === "gui" ? () => handleEdit(p.name) : undefined}
-                  onRemove={p.source === "gui" ? () => handleRemove(p.name) : undefined}
+                  onRemove={p.source === "gui" ? () => handleRemoveClick(p.name) : undefined}
                   testing={testingName === p.name}
                   testResult={testResults[p.name] ?? null}
                 />
@@ -263,6 +284,17 @@ export function ProvidersPage({ onRunDiscovery, onProviderSaved }: ProvidersPage
         open={showYamlModal}
         onOpenChange={setShowYamlModal}
         onImported={fetchProviders}
+      />
+      <ConfirmActionDialog
+        open={removeTarget !== null}
+        onOpenChange={(open) => { if (!open) setRemoveTarget(null); }}
+        title={removeTarget ? `Remove provider "${removeTarget}"?` : "Remove provider"}
+        body="This will disconnect the MCP server and wipe any per-tool settings. You can add it back later, but enabled-tool choices will be lost."
+        confirmLabel="Remove"
+        variant="destructive"
+        onConfirm={async () => {
+          if (removeTarget) await performRemove(removeTarget);
+        }}
       />
     </div>
   );
