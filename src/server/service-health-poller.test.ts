@@ -181,6 +181,25 @@ describe("matchResultsToServices", () => {
     expect(result.get("api-service")).toBe("healthy");
   });
 
+  it("prefers exact match over prefix match when both would apply", () => {
+    // Regression: previously "coroot-web-cluster-agent" deployment entry matched
+    // "coroot-web" via prefix match because Set.find() returned the first-inserted
+    // matching name. The longer service name never got its own status assigned.
+    const entries = [
+      makePrometheusEntry({ deployment: "coroot-web" }, "1"),
+      makePrometheusEntry({ deployment: "coroot-web-cluster-agent" }, "1"),
+      makePrometheusEntry({ deployment: "coroot-web-node-agent-abc123" }, "1"), // should still prefix-match
+    ];
+    const result = matchResultsToServices(
+      entries as ReturnType<typeof makePrometheusEntry>[],
+      new Set(["coroot-web", "coroot-web-cluster-agent", "coroot-web-node-agent"]),
+      "unknown",
+    );
+    expect(result.get("coroot-web")).toBe("healthy");
+    expect(result.get("coroot-web-cluster-agent")).toBe("healthy");
+    expect(result.get("coroot-web-node-agent")).toBe("healthy");
+  });
+
   it("matches by statefulset label", () => {
     const entries = [makePrometheusEntry({ statefulset: "postgres" }, "1")];
     const result = matchResultsToServices(

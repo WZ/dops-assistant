@@ -168,13 +168,27 @@ export function matchResultsToServices(
     ].filter((v): v is string => Boolean(v));
 
     for (const candidate of candidates) {
-      // Exact match or prefix match (e.g. "my-service-abc123" → "my-service")
-      const matchedName = [...serviceNames].find(
-        (name) =>
-          candidate === name ||
-          candidate.startsWith(name + "-") ||
-          candidate.startsWith(name + "_"),
-      );
+      // Prefer EXACT match, else LONGEST prefix match. Set.find() returns
+      // insertion order, which causes shorter names to shadow longer ones
+      // (e.g. "coroot-web" would shadow "coroot-web-cluster-agent" when the
+      // metric deployment label is "coroot-web-cluster-agent", and the pod-hash
+      // candidate "coroot-web-node-agent-abc123" would shadow "coroot-web-node-agent"
+      // with "coroot-web"). Exact is always the correct identity; prefix is a
+      // heuristic fallback for pod-hash suffixes — longest prefix wins.
+      let matchedName: string | undefined = undefined;
+      for (const name of serviceNames) {
+        if (candidate === name) { matchedName = name; break; }
+      }
+      if (!matchedName) {
+        let best = "";
+        for (const name of serviceNames) {
+          if ((candidate.startsWith(name + "-") || candidate.startsWith(name + "_")) &&
+              name.length > best.length) {
+            best = name;
+          }
+        }
+        if (best) matchedName = best;
+      }
 
       if (matchedName) {
         // Get the scalar value — for instant vectors it's entry.value[1]
