@@ -11,6 +11,22 @@ export default defineConfig({
     outDir: "../../dist/web",
     emptyOutDir: true,
   },
+  // Make dynamically-loaded chunk and CSS preload URLs runtime-configurable.
+  // Without this, Vite bakes `base` into every `preloadHelper` call and
+  // lazy-chunk import, so sub-path deploys served without a matching
+  // VITE_BASE_PATH build-arg 404 on every lazy-loaded route (e.g. the
+  // ServiceDetail page at /dops/services/<name>).
+  //
+  // Static references in index.html still use the build-time `base` ("/") —
+  // the server rewrites those to the configured sub-path at serve time.
+  experimental: {
+    renderBuiltUrl(filename, { hostType }) {
+      if (hostType === "html") return undefined;
+      return {
+        runtime: `(globalThis.__APP_BASE__ ?? "/") + ${JSON.stringify(filename)}`,
+      };
+    },
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src/web"),
