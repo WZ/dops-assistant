@@ -141,6 +141,8 @@ export function YamlImportTab({ onImported, onCancel }: YamlImportTabProps) {
           placeholder={`- name: my-grafana\n  roles: [metrics, logs]\n  mcpServer:\n    transport: http\n    url: http://localhost:8000/mcp`}
           className="w-full rounded-md border border-border/40 bg-card/50 px-3 py-2 font-mono text-[11px] text-foreground focus:outline-none focus:ring-2 focus:ring-primary/15 resize-y"
           rows={14}
+          aria-label="Providers YAML"
+          spellCheck={false}
         />
         {parseError && (
           <p className="text-xs text-destructive/80">{parseError}</p>

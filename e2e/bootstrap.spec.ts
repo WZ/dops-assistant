@@ -32,16 +32,14 @@ test.describe("Bootstrap flow", () => {
     await expect(page.getByRole("checkbox", { name: "changes" })).toBeVisible();
   });
 
-  test.fixme("form includes dependencies role (Batch A addition)", async ({ page }) => {
-    // Batch A adds the dependencies checkbox to ProviderForm.tsx. Remove .fixme when A lands.
+  test("form includes dependencies role (Batch A addition)", async ({ page }) => {
     await page.goto("/settings");
     const addBtn = page.getByRole("button", { name: /Add First Provider|\+ Add Provider/ });
     await addBtn.first().click();
     await expect(page.getByRole("checkbox", { name: "dependencies" })).toBeVisible();
   });
 
-  test.fixme("form includes webUrl input (Batch A addition)", async ({ page }) => {
-    // Batch A threads webUrl through form/save/edit/card. Remove .fixme when A lands.
+  test("form includes webUrl input (Batch A addition)", async ({ page }) => {
     await page.goto("/settings");
     const addBtn = page.getByRole("button", { name: /Add First Provider|\+ Add Provider/ });
     await addBtn.first().click();
