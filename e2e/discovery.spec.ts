@@ -12,18 +12,30 @@ import { test, expect } from "@playwright/test";
  * Batch C may add a terminal-emit regression test here once the fix lands.
  */
 test.describe("Discovery UI plumbing", () => {
-  test("Services empty state shows Run Discovery CTA", async ({ page, request }) => {
-    // Find a stack with 0 services to drive the empty state.
-    const stacks = await request.get("/api/stacks").then((r) => r.json() as Promise<Array<{ id: string; healthSummary?: { total: number } }>>);
-    const emptyStack = stacks.find((s) => (s.healthSummary?.total ?? 0) === 0);
-    if (!emptyStack) {
-      test.skip(true, "no stack with 0 services available to exercise empty state");
-    }
-    // localStorage is cross-origin on about:blank — must goto a real page first.
-    await page.goto("/");
-    await page.evaluate((id) => localStorage.setItem("dops:lastStackId", id), emptyStack!.id);
-    await page.goto("/services");
+  const SEED_PROVIDER = "e2e-discovery-cta";
 
+  test.beforeAll(async ({ request }) => {
+    // The Run Discovery CTA is conditional on providers.length > 0
+    // (ProvidersPage.tsx). Seed a throwaway provider so the button renders.
+    await request.post("/api/providers", {
+      data: {
+        name: SEED_PROVIDER,
+        mcpServer: { transport: "http", url: "http://127.0.0.1:59950/mcp" },
+        roles: ["metrics"],
+        region: "test",
+      },
+    }).catch(() => {});
+  });
+
+  test.afterAll(async ({ request }) => {
+    await request.delete(`/api/providers/${SEED_PROVIDER}`).catch(() => {});
+  });
+
+  test("Settings shows Run Discovery CTA when providers exist", async ({ page }) => {
+    // The Run Discovery CTA lives in Settings → Providers (ProvidersPage.tsx),
+    // ServicesManage, and FirstRunBanner — not the /services grid empty state.
+    // Conditional on providers.length > 0 so we seed one in beforeAll.
+    await page.goto("/settings");
     const runBtn = page.getByRole("button", { name: "Run Discovery" });
     await expect(runBtn).toBeVisible();
   });
