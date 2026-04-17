@@ -113,6 +113,21 @@ Always read `DESIGN.md` before making any visual or UI decisions. All font choic
 
 Before every commit and PR, scan staged changes (`git diff --cached`) for secrets: `sk-`, `xoxb-`, `xapp-`, `glsa_`, `Bearer`, `password=`, base64-encoded keys, hardcoded URLs with credentials. If anything suspicious is found, STOP and alert.
 
+### API auth posture
+
+Writes are intentionally **unauthenticated** in the staging deploy. The trust
+boundary is the VPN / private network, not the app. `config.apiKey` is unset,
+so `createApiKeyMiddleware` (`src/server/auth-middleware.ts`) is a pass-through
+on every non-GET request. This is a deliberate choice for an internal tool on
+a trusted network, flagged and accepted during QA.
+
+To flip auth on: set `apiKey` in config (or via `${DOPS_API_KEY}` env substitution),
+update `stackFetch` in `src/web/lib/createStackFetch.ts` to send `X-API-Key` on
+every request, and distribute the key to any automation that POSTs to the API.
+Alertmanager webhook is already exempt via the `exemptPaths` list in
+`src/server/index.ts`. Don't flip it on without coordinating the rollout,
+existing scripts will 403 immediately.
+
 ## Skill routing
 
 When the user's request matches an available skill, ALWAYS invoke it using the Skill

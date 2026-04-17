@@ -37,7 +37,8 @@ export type LeftPaneView =
   | { type: "dashboard" }
   | { type: "investigation"; id: string }
   | { type: "services"; initialService?: string }
-  | { type: "settings"; initialTab?: "providers" | "skills" | "stacks" };
+  | { type: "settings"; initialTab?: "providers" | "skills" | "stacks" }
+  | { type: "notfound"; path: string };
 
 function useTheme() {
   const [dark, setDark] = useState(() => safeGetItem("theme") !== "light");
@@ -330,7 +331,9 @@ export function App() {
                       ws={ws}
                       onViewInvestigation={(id) => setLeftPane({ type: "investigation", id })}
                       initialService={leftPane.initialService}
-                      onInitialServiceConsumed={() => { if (leftPane.type === "services") setLeftPane({ ...leftPane, initialService: undefined }); }}
+                      onSelectService={(name) => {
+                        if (leftPane.type === "services") setLeftPane({ ...leftPane, initialService: name });
+                      }}
                       discoveryState={discoveryState}
                       onStartDiscovery={() => {
                         setDiscoveryState({ phase: "discovery", status: "running", iteration: { current: 0, max: 0, description: "" }, toolCalls: [], results: [], error: null, retry: null, phaseTokens: {}, totalUsage: null });
@@ -355,6 +358,21 @@ export function App() {
                       onRefetchStacks={refetchStacks}
                       onProviderSaved={refreshSetupStage}
                     />
+                  ) : leftPane.type === "notfound" ? (
+                    <div className="h-full flex flex-col items-center justify-center gap-3 p-8 text-center">
+                      <h2 className="font-mono text-sm uppercase tracking-[0.12em] text-foreground/80">
+                        Page not found
+                      </h2>
+                      <p className="font-mono text-[11px] text-muted-foreground/70 max-w-md">
+                        <code className="text-foreground/60">{leftPane.path}</code> doesn&apos;t map to a route.
+                      </p>
+                      <button
+                        className="mt-2 font-mono text-[11px] uppercase tracking-[0.12em] text-primary hover:text-primary/80"
+                        onClick={() => setLeftPane({ type: "dashboard" })}
+                      >
+                        ← Back to dashboard
+                      </button>
+                    </div>
                   ) : null}
                 </div>
               </div>
