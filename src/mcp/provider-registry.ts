@@ -13,6 +13,19 @@ import {
 import { createLogger } from "../logger.js";
 import { z } from "zod";
 
+/**
+ * Heuristic: decide whether a given tool name looks like a Prometheus-style
+ * metric query tool. Mirrors `ServiceHealthPoller.findMetricQueryTool` so the
+ * init-time poller gate can answer "does this stack have a tool we could
+ * actually poll with?" without having to set up the full poller machinery.
+ */
+export function isMetricQueryToolName(name: string): boolean {
+  if (name.endsWith("query_prometheus") || name.endsWith("get_metrics")) return true;
+  const lower = name.toLowerCase();
+  if (lower.includes("loki") || lower.includes("log") || lower.includes("metadata")) return false;
+  return lower.includes("query") || lower.includes("metric");
+}
+
 const logger = createLogger();
 
 /**
@@ -56,7 +69,28 @@ export interface ProviderInfo {
   error?: string;
   /** Cached Prometheus datasource UID, resolved at initialization for metrics-role providers. */
   prometheusDatasourceUid?: string;
+  /**
+   * Raw tool names (post-namespacing by mastra) discovered during
+   * init/test. Cached so the StackManager init-time poller gate can cheaply
+   * ask "does this provider expose a metric query tool?" without re-calling
+   * the MCP server. Undefined = not yet probed; empty array = probed and
+   * returned nothing.
+   */
+  toolNames?: string[];
 }
+
+/**
+ * Event payload for ProviderRegistry change notifications. `kind` describes
+ * what just happened; `name` is the provider that changed. Consumers (like
+ * StackManager) subscribe to know when a previously-skipped poller might now
+ * be startable.
+ */
+export type ProviderRegistryChangeEvent = {
+  kind: "add" | "update" | "remove" | "test";
+  name: string;
+};
+
+export type ProviderRegistryListener = (event: ProviderRegistryChangeEvent) => void;
 
 const GuiProvidersSchema = z.array(ProviderSchema);
 
@@ -65,11 +99,54 @@ export class ProviderRegistry {
   private configProviders: ProviderConfig[];
   private providersFilePath: string;
   private connectTimeoutMs: number | undefined;
+  private listeners: Set<ProviderRegistryListener> = new Set();
 
   constructor(configProviders: ProviderConfig[], providersFilePath: string, connectTimeoutMs?: number) {
     this.configProviders = configProviders;
     this.providersFilePath = providersFilePath;
     this.connectTimeoutMs = connectTimeoutMs;
+  }
+
+  /**
+   * Subscribe to registry change events. Returns an unsubscribe function.
+   * Used by StackManager to kick off previously-skipped health pollers when
+   * a viable metrics provider is added or becomes healthy.
+   */
+  onChange(listener: ProviderRegistryListener): () => void {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  }
+
+  private emit(event: ProviderRegistryChangeEvent): void {
+    for (const listener of this.listeners) {
+      try {
+        listener(event);
+      } catch (err) {
+        logger.warn({ err, event }, "ProviderRegistry: listener threw");
+      }
+    }
+  }
+
+  /**
+   * True when at least one registered provider holds the `metrics` role,
+   * is in `connected` status, has non-zero toolCount, and exposes at least
+   * one tool whose name looks like a metric query tool.
+   *
+   * The StackManager uses this at boot (and on registry change events) to
+   * decide whether it's worth running the health poller. Legacy stacks
+   * whose providers all fail to connect would otherwise poll every 60s and
+   * log "metric query tool not found, skipping poll" forever — filtering at
+   * the gate silences that noise until a viable provider appears.
+   */
+  hasViableMetricsProvider(): boolean {
+    for (const info of this.entries.values()) {
+      if (!info.config.roles.includes("metrics")) continue;
+      if (info.status !== "connected") continue;
+      if (info.toolCount <= 0) continue;
+      const names = info.toolNames ?? [];
+      if (names.some(isMetricQueryToolName)) return true;
+    }
+    return false;
   }
 
   /**
@@ -103,6 +180,7 @@ export class ProviderRegistry {
 
     const info = await this.createAndRegister(config, "gui");
     this.saveGuiProviders();
+    this.emit({ kind: "add", name: config.name });
     return info;
   }
 
@@ -120,6 +198,7 @@ export class ProviderRegistry {
 
     this.entries.delete(name);
     this.saveGuiProviders();
+    this.emit({ kind: "remove", name });
   }
 
   /**
@@ -147,6 +226,7 @@ export class ProviderRegistry {
 
     const info = await this.createAndRegister(config, "gui");
     this.saveGuiProviders();
+    this.emit({ kind: "update", name: config.name });
     return info;
   }
 
@@ -203,6 +283,7 @@ export class ProviderRegistry {
       entry.status = "connected";
       entry.toolCount = toolCount;
       entry.error = undefined;
+      entry.toolNames = Object.keys(tools);
 
       // Re-run auto-compute if initial registration failed before defaults were set
       if (!entry.provider.enabledTools?.length && toolCount > 0) {
@@ -224,14 +305,17 @@ export class ProviderRegistry {
       if (smokeError) {
         entry.status = "error";
         entry.error = smokeError;
+        this.emit({ kind: "test", name });
         return { status: "error", toolCount, error: smokeError };
       }
 
+      this.emit({ kind: "test", name });
       return { status: "ok", toolCount };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       entry.status = "error";
       entry.error = message;
+      this.emit({ kind: "test", name });
       return { status: "error", toolCount: 0, error: message };
     }
   }
@@ -362,9 +446,11 @@ export class ProviderRegistry {
       return info;
     }
 
+    let toolNames: string[] = [];
     try {
       const tools = await listProviderTools(provider);
       toolCount = Object.keys(tools).length;
+      toolNames = Object.keys(tools);
       status = "connected";
     } catch (err) {
       status = "error";
@@ -396,6 +482,7 @@ export class ProviderRegistry {
       enabledToolCount: provider.enabledTools?.length ?? toolCount,
       error,
       prometheusDatasourceUid,
+      toolNames,
     };
 
     this.entries.set(config.name, info);

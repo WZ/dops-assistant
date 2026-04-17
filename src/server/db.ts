@@ -200,6 +200,29 @@ export class Database {
       );
     `);
 
+    // TTL columns — additive, idempotent. `last_active_at` bumps on any
+    // activity (tool calls, successful polls, webhook, UI navigation).
+    // After 30d idle we set `inactive_at` (UI badge); after 60d idle we
+    // set `deleted_at` (soft-delete — excluded from listings but kept in
+    // DB so the user can audit / restore).
+    const stacksInfo = this.db.prepare("PRAGMA table_info(stacks)").all() as Array<{ name: string }>;
+    const hasLastActive = stacksInfo.some(c => c.name === "last_active_at");
+    const hasInactive = stacksInfo.some(c => c.name === "inactive_at");
+    const hasDeleted = stacksInfo.some(c => c.name === "deleted_at");
+    if (!hasLastActive) {
+      this.db.exec("ALTER TABLE stacks ADD COLUMN last_active_at TEXT");
+      // Backfill existing rows so TTL math is well-defined.
+      this.db.prepare(
+        "UPDATE stacks SET last_active_at = created_at WHERE last_active_at IS NULL"
+      ).run();
+    }
+    if (!hasInactive) {
+      this.db.exec("ALTER TABLE stacks ADD COLUMN inactive_at TEXT");
+    }
+    if (!hasDeleted) {
+      this.db.exec("ALTER TABLE stacks ADD COLUMN deleted_at TEXT");
+    }
+
     // Add stack_id column to tables that need it
     try { this.db.exec("ALTER TABLE investigations ADD COLUMN stack_id TEXT"); } catch {}
     try { this.db.exec("ALTER TABLE messages ADD COLUMN stack_id TEXT"); } catch {}
@@ -272,27 +295,106 @@ export class Database {
   // ── Stack CRUD ───────────────────────────────────────────────────────────
 
   createStack(stack: { id: string; name: string; slug: string; config: string }): void {
+    // last_active_at defaults to now — matches the invariant that every new
+    // stack is "fresh" and won't hit the 30d inactive threshold immediately.
     this.db.prepare(
-      "INSERT INTO stacks (id, name, slug, config) VALUES (?, ?, ?, ?)"
+      "INSERT INTO stacks (id, name, slug, config, last_active_at) VALUES (?, ?, ?, ?, datetime('now'))"
     ).run(stack.id, stack.name, stack.slug, stack.config);
   }
 
   getStack(id: string): StackRow | undefined {
+    // Exclude soft-deleted stacks from the default lookup path. Callers that
+    // need to see soft-deleted rows (audit / restore) can query directly.
     return this.db.prepare(
-      "SELECT * FROM stacks WHERE id = ?"
+      "SELECT * FROM stacks WHERE id = ? AND deleted_at IS NULL"
     ).get(id) as StackRow | undefined;
   }
 
   getStackBySlug(slug: string): StackRow | undefined {
     return this.db.prepare(
-      "SELECT * FROM stacks WHERE slug = ?"
+      "SELECT * FROM stacks WHERE slug = ? AND deleted_at IS NULL"
     ).get(slug) as StackRow | undefined;
   }
 
+  /**
+   * List all stacks that are NOT soft-deleted. Returns active + inactive.
+   * Use `listStacksIncludingDeleted` to see everything.
+   */
   listStacks(): StackRow[] {
+    return this.db.prepare(
+      "SELECT * FROM stacks WHERE deleted_at IS NULL ORDER BY created_at ASC"
+    ).all() as StackRow[];
+  }
+
+  /**
+   * Escape hatch for admin views — returns every stack row, including those
+   * soft-deleted by the TTL reaper. Not used by the default /api/stacks
+   * listing.
+   */
+  listStacksIncludingDeleted(): StackRow[] {
     return this.db.prepare(
       "SELECT * FROM stacks ORDER BY created_at ASC"
     ).all() as StackRow[];
+  }
+
+  /**
+   * Update `last_active_at` to now. Called on every tool-call, successful
+   * poll cycle, webhook invocation, and UI navigation to the stack. Cheap
+   * enough to call often (single UPDATE by PK) — the alternative of batching
+   * risks losing activity signal across server restarts.
+   *
+   * Also clears `inactive_at` if set, so a resurrected stack transitions
+   * back to "active" immediately instead of waiting for the next reaper run.
+   */
+  bumpStackActivity(id: string): void {
+    this.db.prepare(
+      "UPDATE stacks SET last_active_at = datetime('now'), inactive_at = NULL WHERE id = ? AND deleted_at IS NULL"
+    ).run(id);
+  }
+
+  /**
+   * Run the TTL reaper. Stacks idle for `inactiveAfterDays` are marked
+   * inactive; stacks idle for `deleteAfterDays` are soft-deleted. The
+   * default stack is exempted — deleting the default would orphan the
+   * server.
+   *
+   * Returns a summary of how many rows transitioned so callers can log it.
+   * Idempotent: already-inactive or already-deleted rows are untouched.
+   */
+  runStackTtlReaper(opts: {
+    defaultStackId: string;
+    inactiveAfterDays: number;
+    deleteAfterDays: number;
+    /** Optional "now" for tests; defaults to real time. */
+    nowIso?: string;
+  }): { markedInactive: number; softDeleted: number } {
+    const now = opts.nowIso ?? new Date().toISOString();
+    const inactiveCutoff = new Date(new Date(now).getTime() - opts.inactiveAfterDays * 24 * 3600 * 1000).toISOString();
+    const deleteCutoff = new Date(new Date(now).getTime() - opts.deleteAfterDays * 24 * 3600 * 1000).toISOString();
+
+    // Soft-delete first: a stack that crosses the delete threshold was
+    // already past the inactive threshold; skipping the inactive mark for
+    // it would be fine, but setting it doesn't hurt either.
+    const deleted = this.db.prepare(
+      `UPDATE stacks
+          SET deleted_at = ?
+        WHERE id != ?
+          AND deleted_at IS NULL
+          AND last_active_at IS NOT NULL
+          AND last_active_at < ?`
+    ).run(now, opts.defaultStackId, deleteCutoff);
+
+    const inactive = this.db.prepare(
+      `UPDATE stacks
+          SET inactive_at = ?
+        WHERE id != ?
+          AND deleted_at IS NULL
+          AND inactive_at IS NULL
+          AND last_active_at IS NOT NULL
+          AND last_active_at < ?`
+    ).run(now, opts.defaultStackId, inactiveCutoff);
+
+    return { markedInactive: inactive.changes, softDeleted: deleted.changes };
   }
 
   updateStack(id: string, updates: { name?: string; slug?: string; config?: string }): void {

@@ -378,6 +378,13 @@ export class ServiceHealthPoller {
       // Update cache
       this.cachedHealth = newHealth;
 
+      // A successful poll that returned real data (any service matched)
+      // counts as activity on this stack — keeps the TTL reaper from
+      // marking a busy stack inactive just because nobody opened the UI.
+      if (this.stackId && newHealth.size > 0) {
+        try { this.db.bumpStackActivity(this.stackId); } catch { /* best-effort */ }
+      }
+
       logger.info(
         { stackId: this.stackId, summary: this.getSummary() },
         "ServiceHealthPoller: poll complete",

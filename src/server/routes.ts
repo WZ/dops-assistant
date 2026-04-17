@@ -170,6 +170,11 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       res.status(400).json({ error: "Invalid stack" });
       return;
     }
+    // Touch the stack's last-active timestamp on any API hit — covers UI
+    // navigation, tool calls (the LLM agent talks to us via /api), webhook
+    // proxies, and the service detail page. Poll cycles bump separately
+    // from within the poller itself so they stay independent of HTTP.
+    try { stackManager.bumpActivity(req.stackId); } catch { /* best-effort */ }
     next();
   });
 

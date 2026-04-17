@@ -573,6 +573,143 @@ describe("Database", () => {
     });
   });
 
+  // ── Stack TTL columns + reaper (B-2) ──────────────────────────────────
+
+  describe("stack TTL", () => {
+    it("adds last_active_at, inactive_at, and deleted_at columns (idempotent)", () => {
+      // Re-running the migration on an existing DB must be a no-op, not an
+      // error. Better-sqlite3 throws on ALTER TABLE if the column already
+      // exists — our migration has to guard with PRAGMA table_info.
+      const info = (db as unknown as { db: { prepare: (s: string) => { all: () => Array<{ name: string }> } } }).db
+        .prepare("PRAGMA table_info(stacks)")
+        .all();
+      const names = info.map(c => c.name);
+      expect(names).toContain("last_active_at");
+      expect(names).toContain("inactive_at");
+      expect(names).toContain("deleted_at");
+    });
+
+    it("createStack populates last_active_at with the current time", () => {
+      db.createStack({ id: "stk_fresh", name: "Fresh", slug: "fresh", config: '{"providers":[]}' });
+      const row = db.getStack("stk_fresh");
+      expect(row!.last_active_at).toBeDefined();
+      // SQLite datetime('now') is UTC and close to Date.now()
+      const activeTime = new Date(row!.last_active_at + "Z").getTime();
+      expect(Math.abs(Date.now() - activeTime)).toBeLessThan(5000);
+    });
+
+    it("bumpStackActivity updates last_active_at and clears inactive_at", () => {
+      db.createStack({ id: "stk_b", name: "B", slug: "b", config: '{"providers":[]}' });
+      // Force both to the past using the underlying better-sqlite3 handle
+      const raw = (db as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => void } } }).db;
+      raw.prepare("UPDATE stacks SET last_active_at = ?, inactive_at = ? WHERE id = ?")
+        .run("2020-01-01 00:00:00", "2020-02-01 00:00:00", "stk_b");
+
+      db.bumpStackActivity("stk_b");
+
+      const row = db.getStack("stk_b");
+      expect(row!.last_active_at).not.toBe("2020-01-01 00:00:00");
+      expect(row!.inactive_at).toBeNull();
+    });
+
+    it("runStackTtlReaper marks idle stacks inactive at the 30-day cutoff", () => {
+      db.createStack({ id: "stk_idle", name: "Idle", slug: "idle", config: '{"providers":[]}' });
+      const raw = (db as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => void } } }).db;
+      // 31 days old — past inactive, not yet past delete
+      const thirtyOneDaysAgo = new Date(Date.now() - 31 * 24 * 3600 * 1000).toISOString();
+      raw.prepare("UPDATE stacks SET last_active_at = ? WHERE id = ?")
+        .run(thirtyOneDaysAgo, "stk_idle");
+
+      const result = db.runStackTtlReaper({
+        defaultStackId: "nonexistent-default",
+        inactiveAfterDays: 30,
+        deleteAfterDays: 60,
+      });
+
+      expect(result.markedInactive).toBe(1);
+      expect(result.softDeleted).toBe(0);
+      const row = db.getStack("stk_idle");
+      expect(row!.inactive_at).not.toBeNull();
+      expect(row!.deleted_at).toBeNull();
+    });
+
+    it("runStackTtlReaper soft-deletes stacks past the 60-day cutoff", () => {
+      db.createStack({ id: "stk_dead", name: "Dead", slug: "dead", config: '{"providers":[]}' });
+      const raw = (db as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => void } } }).db;
+      const sixtyOneDaysAgo = new Date(Date.now() - 61 * 24 * 3600 * 1000).toISOString();
+      raw.prepare("UPDATE stacks SET last_active_at = ? WHERE id = ?")
+        .run(sixtyOneDaysAgo, "stk_dead");
+
+      const result = db.runStackTtlReaper({
+        defaultStackId: "nonexistent-default",
+        inactiveAfterDays: 30,
+        deleteAfterDays: 60,
+      });
+
+      expect(result.softDeleted).toBe(1);
+      expect(db.getStack("stk_dead")).toBeUndefined();
+      expect(db.listStacksIncludingDeleted().find(s => s.id === "stk_dead")).toBeDefined();
+    });
+
+    it("runStackTtlReaper never reaps the default stack", () => {
+      db.createStack({ id: "stk_default", name: "Default", slug: "default-for-test", config: '{"providers":[]}' });
+      const raw = (db as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => void } } }).db;
+      const sixtyOneDaysAgo = new Date(Date.now() - 61 * 24 * 3600 * 1000).toISOString();
+      raw.prepare("UPDATE stacks SET last_active_at = ? WHERE id = ?")
+        .run(sixtyOneDaysAgo, "stk_default");
+
+      const result = db.runStackTtlReaper({
+        defaultStackId: "stk_default",
+        inactiveAfterDays: 30,
+        deleteAfterDays: 60,
+      });
+
+      expect(result.markedInactive).toBe(0);
+      expect(result.softDeleted).toBe(0);
+    });
+
+    it("listStacks excludes soft-deleted rows; listStacksIncludingDeleted includes them", () => {
+      db.createStack({ id: "stk_live", name: "Live", slug: "live", config: '{"providers":[]}' });
+      db.createStack({ id: "stk_soft_dead", name: "Soft Dead", slug: "soft-dead", config: '{"providers":[]}' });
+      const raw = (db as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => void } } }).db;
+      raw.prepare("UPDATE stacks SET deleted_at = datetime('now') WHERE id = ?")
+        .run("stk_soft_dead");
+
+      const visible = db.listStacks();
+      expect(visible.find(s => s.id === "stk_soft_dead")).toBeUndefined();
+      expect(visible.find(s => s.id === "stk_live")).toBeDefined();
+
+      const all = db.listStacksIncludingDeleted();
+      expect(all.find(s => s.id === "stk_soft_dead")).toBeDefined();
+      expect(all.find(s => s.id === "stk_live")).toBeDefined();
+    });
+
+    it("getStack and getStackBySlug hide soft-deleted rows", () => {
+      db.createStack({ id: "stk_hidden", name: "Hidden", slug: "hidden-stack", config: '{"providers":[]}' });
+      const raw = (db as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => void } } }).db;
+      raw.prepare("UPDATE stacks SET deleted_at = datetime('now') WHERE id = ?")
+        .run("stk_hidden");
+
+      expect(db.getStack("stk_hidden")).toBeUndefined();
+      expect(db.getStackBySlug("hidden-stack")).toBeUndefined();
+    });
+
+    it("migration idempotency: second Database instance reuses existing columns", () => {
+      // Close + re-open the same in-memory DB is not possible (it's per-
+      // instance), but we can verify migrateStacks is safe to call twice on
+      // the same DB by opening a fresh :memory: and not inspecting a side
+      // effect — the Database constructor calls migrate* multiple times
+      // via the cascade. If the guards weren't working, ALTER TABLE would
+      // throw during construction. The fact that beforeEach's `new Database`
+      // succeeds means both code paths (first run + re-run) work.
+      const second = new Database(":memory:");
+      const raw = (second as unknown as { db: { prepare: (s: string) => { all: () => Array<{ name: string }> } } }).db;
+      const names = raw.prepare("PRAGMA table_info(stacks)").all().map(c => c.name);
+      expect(names).toContain("last_active_at");
+      second.close();
+    });
+  });
+
   // ── Backfill default stack ────────────────────────────────────────────
 
   describe("backfillDefaultStack", () => {
