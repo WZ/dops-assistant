@@ -280,16 +280,68 @@ async function main() {
 
   // Resolve static dir relative to the working directory (worktree-safe), not __dirname
   const staticDir = path.resolve(process.cwd(), "dist/web");
-  const indexHtml = path.resolve(staticDir, "index.html");
-  app.use(express.static(staticDir));
-  // SPA catch-all: serve index.html for any non-API route that wasn't matched by static files.
-  // This enables client-side routing (e.g. /investigations/:id, /services, /settings).
+
+  // Runtime sub-path configuration. The built bundle always references assets
+  // at /assets/... (Vite base "/"), but a reverse proxy can serve the app at
+  // a sub-path (e.g. https://host/dops/) that strips the prefix before it
+  // reaches us. In that case the browser requests /dops/assets/..., which
+  // the proxy rewrites to /assets/... — that part already works via
+  // express.static. What fails without intervention is index.html itself:
+  // its <script src="/assets/..."> tags send the browser to /assets/... under
+  // the public host, which the proxy doesn't route. So we rewrite index.html
+  // on the fly: prepend the base path to asset URLs and inject the base
+  // into window.__APP_BASE__ so the web bundle's API/WS calls agree.
+  //
+  // Keep APP_BASE_PATH empty or "/" for root deploys — no rewriting, no cost.
+  const rawBase = process.env["APP_BASE_PATH"] ?? "/";
+  const appBasePath = rawBase === "/" || rawBase === ""
+    ? "/"
+    : ("/" + rawBase.replace(/^\/+|\/+$/g, "") + "/");
+
+  let cachedIndexHtml: string | null = null;
+  function renderIndexHtml(): string {
+    if (cachedIndexHtml) return cachedIndexHtml;
+    const raw = readFileSync(path.resolve(staticDir, "index.html"), "utf-8");
+    if (appBasePath === "/") {
+      cachedIndexHtml = raw;
+      return raw;
+    }
+    // Rewrite any absolute /assets/... reference to ${base}assets/...
+    const rewritten = raw
+      .replace(/(src|href)="\/assets\//g, `$1="${appBasePath}assets/`)
+      .replace(
+        /<head(\s[^>]*)?>/i,
+        (m) => `${m}<script>window.__APP_BASE__=${JSON.stringify(appBasePath)};</script>`,
+      );
+    cachedIndexHtml = rewritten;
+    return rewritten;
+  }
+
+  // Serve static assets at both the root (for the ingress-rewritten case) and
+  // optionally under the configured base path (for direct access without a
+  // rewriting proxy, e.g. local testing with `-p 3000:3000` and /dops/).
+  //
+  // `index: false` is CRUCIAL: without it, express.static serves index.html
+  // directly from disk for GET / (as the directory index), which bypasses
+  // the SPA catch-all and our sub-path rewriting entirely.
+  app.use(express.static(staticDir, { index: false }));
+  if (appBasePath !== "/") {
+    app.use(appBasePath, express.static(staticDir, { index: false }));
+  }
+
+  // SPA catch-all: serve (rewritten) index.html for any non-API route that
+  // wasn't matched by static files. This enables client-side routing
+  // (e.g. /investigations/:id, /services, /settings) AND sub-path deploys.
   app.use((req, res, next) => {
     if (req.path.startsWith("/api/") || req.path.startsWith("/ws")) return next();
-    res.sendFile("index.html", { root: staticDir }, (err) => {
-      if (err) next(err);
-    });
+    try {
+      res.type("html").send(renderIndexHtml());
+    } catch (err) {
+      next(err);
+    }
   });
+
+  logger.info({ appBasePath }, "static file serving configured");
 
   // Start all per-stack health pollers (staggered)
   stackManager.startAllPollers();
