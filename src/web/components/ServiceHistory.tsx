@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useStackContext } from "../contexts/StackContext";
+import { formatTimestamp } from "../lib/formatTimestamp";
 
 interface ServiceHistoryProps {
   serviceName: string;
@@ -136,8 +137,11 @@ export function ServiceHistory({ serviceName, onViewInvestigation }: ServiceHist
               <div className={`absolute -left-6 top-1 w-[11px] h-[11px] rounded-full border-2 ${dotColor}`} />
 
               {/* Content */}
-              <div className="font-mono text-[10px] text-muted-foreground/50 mb-0.5">
-                {new Date(inv.created_at).toISOString().replace("T", " ").slice(0, 19)} UTC
+              <div
+                className="font-mono text-[10px] text-muted-foreground/50 mb-0.5"
+                title={formatTimestamp(inv.created_at, "relative")}
+              >
+                {formatTimestamp(inv.created_at, "utc")}
               </div>
               <div className="text-[13px] font-medium text-foreground/90 group-hover:text-primary transition-colors">
                 {inv.query}

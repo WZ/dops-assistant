@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { formatTimestamp } from "../lib/formatTimestamp";
 
 export type TimelineEvent =
   | { type: "tool_call"; phase: string; tool: string; args: Record<string, unknown>; status: "calling" | "success" | "error"; result?: string; durationMs?: number; timestamp: number }
@@ -12,10 +13,7 @@ function formatDuration(ms: number): string {
 }
 
 function formatTimeAgo(ts: number): string {
-  const diff = Math.floor((Date.now() - ts) / 1000);
-  if (diff < 5) return "just now";
-  if (diff < 60) return `${diff}s ago`;
-  return `${Math.floor(diff / 60)}m ago`;
+  return formatTimestamp(new Date(ts).toISOString(), "relative");
 }
 
 function durationColor(ms: number): string {

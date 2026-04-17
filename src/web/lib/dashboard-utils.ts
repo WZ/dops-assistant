@@ -1,3 +1,5 @@
+import { formatTimestamp } from "./formatTimestamp";
+
 /** Shape returned by GET /api/investigations */
 export interface InvestigationSummary {
   id: string;
@@ -59,14 +61,13 @@ export function formatDuration(ms: number): string {
   return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
 }
 
+/**
+ * Relative "N ago" style. Thin wrapper over the unified `formatTimestamp`
+ * formatter to keep existing callers (ServiceCard, InvestigationRow,
+ * InvestigationLog) on the same output and rules.
+ */
 export function timeAgo(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60_000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
+  return formatTimestamp(dateStr, "relative");
 }
 
 /** Normalize unknown confidence value from JSON to a display string like "87%" */
