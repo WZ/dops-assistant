@@ -14,6 +14,12 @@ function stripBase(pathname: string): string {
 export function parseUrl(pathname: string): LeftPaneView {
   const p = stripBase(pathname).replace(/\/+$/, "") || "/";
 
+  // The root path (and explicit /dashboard) is the dashboard. Any other
+  // unmatched path falls through to the NotFound view at the bottom — a
+  // typo'd URL previously rendered the dashboard silently, which made
+  // dead links invisible and hid routing bugs.
+  if (p === "/" || p === "/dashboard") return { type: "dashboard" };
+
   // /investigations/:id
   const invMatch = p.match(/^\/investigations\/(.+)$/);
   if (invMatch) return { type: "investigation", id: invMatch[1]! };
@@ -22,15 +28,18 @@ export function parseUrl(pathname: string): LeftPaneView {
   const svcMatch = p.match(/^\/services(?:\/(.+))?$/);
   if (svcMatch) return { type: "services", initialService: svcMatch[1] };
 
-  // /settings/:tab or /settings
+  // /settings/:tab or /settings. Tabs outside the known set fall through
+  // to not-found rather than rendering an empty tab pane.
   const setMatch = p.match(/^\/settings(?:\/(.+))?$/);
   if (setMatch) {
-    const tab = setMatch[1] as "providers" | "skills" | "stacks" | undefined;
-    return { type: "settings", initialTab: tab };
+    const rawTab = setMatch[1];
+    if (!rawTab) return { type: "settings" };
+    if (rawTab === "providers" || rawTab === "skills" || rawTab === "stacks") {
+      return { type: "settings", initialTab: rawTab };
+    }
   }
 
-  // Default: dashboard
-  return { type: "dashboard" };
+  return { type: "notfound", path: pathname };
 }
 
 /** Convert a LeftPaneView state to a URL pathname (includes base path). */
@@ -43,6 +52,11 @@ export function viewToUrl(view: LeftPaneView): string {
       return view.initialService ? `${base}/services/${view.initialService}` : `${base}/services`;
     case "settings":
       return view.initialTab ? `${base}/settings/${view.initialTab}` : `${base}/settings`;
+    case "notfound":
+      // Preserve the user-typed path so reload stays on the 404 page instead
+      // of bouncing to dashboard. `path` was captured verbatim at parse time
+      // and already includes the base prefix.
+      return view.path;
     case "dashboard":
     default:
       return `${base}/`;

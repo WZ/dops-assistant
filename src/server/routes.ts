@@ -615,6 +615,23 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
           contributingFactors?: string[];
         };
 
+        // Reject genuinely empty bodies — previously this handler happily
+        // returned `{title:"Generated Skill", services:[], body:""}` for any
+        // input, which masked upstream bugs (the caller sending nothing) and
+        // wasted a round-trip in the UI. A real report has at minimum one
+        // content field; otherwise there's nothing to templatize.
+        const hasContent =
+          (typeof report.service === "string" && report.service.trim() !== "") ||
+          (typeof report.summary === "string" && report.summary.trim() !== "") ||
+          (typeof report.rootCause === "string" && report.rootCause.trim() !== "") ||
+          (typeof report.trigger === "string" && report.trigger.trim() !== "") ||
+          (Array.isArray(report.recommendedActions) && report.recommendedActions.length > 0) ||
+          (Array.isArray(report.contributingFactors) && report.contributingFactors.length > 0);
+        if (!hasContent) {
+          res.status(400).json({ error: "At least one of service, summary, rootCause, trigger, recommendedActions, or contributingFactors is required" });
+          return;
+        }
+
         const title = report.service
           ? `Investigate ${report.service} Issue`
           : "Generated Skill";

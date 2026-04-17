@@ -30,8 +30,19 @@ describe("parseUrl", () => {
     expect(parseUrl("/settings/providers")).toEqual({ type: "settings", initialTab: "providers" });
   });
 
-  it("falls back to dashboard for unknown paths", () => {
-    expect(parseUrl("/unknown/path")).toEqual({ type: "dashboard" });
+  it("returns notfound for unknown paths", () => {
+    // Previously silently rendered the dashboard, which hid dead links and
+    // routing bugs. Unknown paths now surface as an explicit 404 view.
+    expect(parseUrl("/unknown/path")).toEqual({ type: "notfound", path: "/unknown/path" });
+  });
+
+  it("returns notfound for unknown settings tabs", () => {
+    // /settings/foo used to render an empty settings shell. Now it 404s.
+    expect(parseUrl("/settings/foo")).toEqual({ type: "notfound", path: "/settings/foo" });
+  });
+
+  it("parses /dashboard explicitly as dashboard", () => {
+    expect(parseUrl("/dashboard")).toEqual({ type: "dashboard" });
   });
 
   it("strips trailing slashes", () => {
@@ -74,6 +85,9 @@ describe("roundtrip", () => {
       { type: "services" as const, initialService: "my-svc" },
       { type: "settings" as const },
       { type: "settings" as const, initialTab: "providers" as const },
+      // notfound preserves the user-typed path verbatim so reload stays on
+      // the 404 page instead of bouncing back to the dashboard.
+      { type: "notfound" as const, path: "/bogus/path" },
     ];
     for (const view of views) {
       expect(parseUrl(viewToUrl(view))).toEqual(view);
@@ -105,11 +119,14 @@ describe("useRoute — sub-path deploy (BASE_URL='/dops/')", () => {
     expect(mod.parseUrl("/dops/settings/providers")).toEqual({ type: "settings", initialTab: "providers" });
   });
 
-  it("parseUrl falls through to dashboard for paths that don't start with the base", async () => {
+  it("parseUrl returns notfound for paths that don't start with the base", async () => {
+    // Paths that bypass the configured sub-path can't be resolved to any
+    // known view. Previously they rendered the dashboard silently; now they
+    // surface as an explicit 404 so misconfigured links are visible.
     vi.stubEnv("BASE_URL", "/dops/");
     const mod = await import("./useRoute");
 
-    expect(mod.parseUrl("/other/route")).toEqual({ type: "dashboard" });
+    expect(mod.parseUrl("/other/route")).toEqual({ type: "notfound", path: "/other/route" });
   });
 
   it("viewToUrl prepends the base path", async () => {
