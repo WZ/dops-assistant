@@ -1,0 +1,43 @@
+# Git metadata
+.git/
+.gitignore
+.gitattributes
+
+# Local dev artifacts — CRITICAL: dev/ contains secrets (.env, API keys, tokens)
+dev/
+.env
+.env.*
+
+# Build outputs (rebuilt inside the container)
+dist/
+node_modules/
+coverage/
+.vite/
+
+# Local worktrees
+.worktrees/
+
+# IDE / OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Agent / skill scratch directories
+.claude/
+.context/
+.superpowers/
+
+# Docs not needed for the runtime image
+docs/
+*.md
+
+# Logs
+*.log
+
+# Local SQLite databases
+*.sqlite
+*.sqlite-journal
+
+# Local docker compose files (not part of the image)
+docker-compose*.yml
