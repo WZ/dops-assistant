@@ -2,9 +2,13 @@
  * Tiered HTTP rate limiting middleware and WebSocket rate limiting helpers.
  *
  * Three HTTP tiers:
- *   - Global: 300 req/min per IP for all /api/* routes
- *   - Strict: 10 req/min per IP for LLM-triggering routes
- *   - Moderate: 30 req/min per IP for other POST/PUT/DELETE
+ *   - Global: 1200 req/min per IP for all /api/* routes
+ *   - Strict: 60 req/min per IP for LLM-triggering routes
+ *   - Moderate: 120 req/min per IP for other POST/PUT/DELETE
+ *
+ * Limits are sized for real GUI behavior (MetricsPanel fires up to 5 parallel
+ * /api/metrics/extract calls per investigation view) AND multi-user
+ * deployments behind a shared corporate proxy IP.
  *
  * WebSocket per-connection rate limiting:
  *   - General: 20 messages/min per connection
@@ -15,28 +19,28 @@ import rateLimit from "express-rate-limit";
 
 // ── HTTP Rate Limiters ──────────────────────────────────────────────────────
 
-/** Global limiter: 300 requests per minute per IP for all /api/* routes */
+/** Global limiter: 1200 requests per minute per IP for all /api/* routes */
 export const globalLimiter = rateLimit({
   windowMs: 60_000,
-  limit: 300,
+  limit: 1200,
   standardHeaders: "draft-7",
   legacyHeaders: false,
   message: { error: "Too many requests, please try again later." },
 });
 
-/** Strict limiter: 10 requests per minute per IP for LLM-triggering routes */
+/** Strict limiter: 60 requests per minute per IP for LLM-triggering routes */
 export const strictLimiter = rateLimit({
   windowMs: 60_000,
-  limit: 10,
+  limit: 60,
   standardHeaders: "draft-7",
   legacyHeaders: false,
   message: { error: "Too many requests to this endpoint, please try again later." },
 });
 
-/** Moderate limiter: 30 requests per minute per IP for POST/PUT/DELETE */
+/** Moderate limiter: 120 requests per minute per IP for POST/PUT/DELETE */
 export const moderateLimiter = rateLimit({
   windowMs: 60_000,
-  limit: 30,
+  limit: 120,
   standardHeaders: "draft-7",
   legacyHeaders: false,
   message: { error: "Too many requests, please try again later." },

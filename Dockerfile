@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Default stays strict; override with `--build-arg NPM_STRICT_SSL=false`
 # when building from a network where registry.npmjs.org is proxied.
 ARG NPM_STRICT_SSL=true
+ARG VITE_BASE_PATH=/
 
 COPY package*.json ./
 # strict-ssl covers npm itself; NODE_TLS_REJECT_UNAUTHORIZED covers child
@@ -26,6 +27,7 @@ RUN npm config set strict-ssl ${NPM_STRICT_SSL} && \
 
 COPY tsconfig.json vite.config.ts ./
 COPY src/ ./src/
+ENV VITE_BASE_PATH=${VITE_BASE_PATH}
 RUN npm run build
 
 # Strip dev dependencies from node_modules so the production stage can reuse

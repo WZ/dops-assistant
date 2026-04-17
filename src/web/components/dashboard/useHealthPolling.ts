@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { withBase } from "../../lib/createStackFetch";
 
 export interface ProbeResult {
   status: "ok" | "error";
@@ -39,7 +40,7 @@ export function useHealthPolling(intervalMs = DEFAULT_INTERVAL_MS): HealthPollin
 
     async function poll() {
       try {
-        const res = await fetch("/api/health");
+        const res = await fetch(withBase("/api/health"));
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}`);
         }

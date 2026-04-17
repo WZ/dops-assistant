@@ -1,9 +1,18 @@
 import { useEffect, useCallback, useRef } from "react";
 import type { LeftPaneView } from "../App";
+import { APP_BASE_PATH } from "../lib/createStackFetch";
+
+/** Strip the base path prefix so route matching works regardless of sub-path. */
+function stripBase(pathname: string): string {
+  if (APP_BASE_PATH === "/") return pathname;
+  const base = APP_BASE_PATH.replace(/\/+$/, "");
+  if (pathname.startsWith(base)) return pathname.slice(base.length) || "/";
+  return pathname;
+}
 
 /** Parse a URL pathname into a LeftPaneView state. */
 export function parseUrl(pathname: string): LeftPaneView {
-  const p = pathname.replace(/\/+$/, "") || "/";
+  const p = stripBase(pathname).replace(/\/+$/, "") || "/";
 
   // /investigations/:id
   const invMatch = p.match(/^\/investigations\/(.+)$/);
@@ -24,18 +33,19 @@ export function parseUrl(pathname: string): LeftPaneView {
   return { type: "dashboard" };
 }
 
-/** Convert a LeftPaneView state to a URL pathname. */
+/** Convert a LeftPaneView state to a URL pathname (includes base path). */
 export function viewToUrl(view: LeftPaneView): string {
+  const base = APP_BASE_PATH.replace(/\/+$/, "");
   switch (view.type) {
     case "investigation":
-      return `/investigations/${view.id}`;
+      return `${base}/investigations/${view.id}`;
     case "services":
-      return view.initialService ? `/services/${view.initialService}` : "/services";
+      return view.initialService ? `${base}/services/${view.initialService}` : `${base}/services`;
     case "settings":
-      return view.initialTab ? `/settings/${view.initialTab}` : "/settings";
+      return view.initialTab ? `${base}/settings/${view.initialTab}` : `${base}/settings`;
     case "dashboard":
     default:
-      return "/";
+      return `${base}/`;
   }
 }
 

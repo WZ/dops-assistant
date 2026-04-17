@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { formatTokens } from "@/lib/formatTokens";
 import { formatDuration, normalizeConfidence, severityVariant, timeAgo } from "@/lib/dashboard-utils";
+import { withBase } from "@/lib/createStackFetch";
 import type { InvestigationSummary } from "@/lib/dashboard-utils";
 
 interface InvestigationRowProps {
@@ -60,7 +61,7 @@ export const InvestigationRow = memo(function InvestigationRow({
 
   return (
     <a
-      href={`/investigations/${inv.id}`}
+      href={withBase(`/investigations/${inv.id}`)}
       tabIndex={0}
       onClick={(e) => { e.preventDefault(); onClick(inv.id); }}
       onKeyDown={handleKeyDown}

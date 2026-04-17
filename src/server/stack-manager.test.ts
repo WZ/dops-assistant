@@ -4,17 +4,22 @@ import { StackManager } from "./stack-manager.js";
 import type { Config } from "../config/schema.js";
 import { DEFAULT_STACK_SLUG } from "../types/stack-types.js";
 
-// Mock ProviderRegistry — MCP connections are not available in tests
+// Mock ProviderRegistry — MCP connections are not available in tests.
+// The mock tracks the seed providers passed to the constructor so that
+// listStacks().providerCount (which reads from getAll()) reflects them.
 vi.mock("../mcp/provider-registry.js", () => {
   return {
     ProviderRegistry: class MockProviderRegistry {
+      private seeded: unknown[];
       initialize = vi.fn().mockResolvedValue(undefined);
-      getProviders = vi.fn().mockReturnValue([]);
-      getAll = vi.fn().mockReturnValue([]);
+      getProviders = vi.fn(() => this.seeded);
+      getAll = vi.fn(() => this.seeded.map((config) => ({ config })));
       getByRole = vi.fn().mockReturnValue([]);
       add = vi.fn().mockResolvedValue({});
       remove = vi.fn().mockResolvedValue(undefined);
-      constructor() {}
+      constructor(providers: unknown[]) {
+        this.seeded = providers ?? [];
+      }
     },
   };
 });
@@ -216,6 +221,15 @@ describe("StackManager", () => {
       expect(usEast).toBeDefined();
       expect(usEast!.isDefault).toBe(false);
       expect(usEast!.providerCount).toBe(1);
+    });
+
+    it("starts the health poller for stacks created after boot", async () => {
+      // Regression: startAllPollers() only runs once at server boot, so stacks
+      // created via the GUI/API later would never poll without createStack()
+      // calling start() itself. Services in those stacks appeared permanently
+      // "unknown" even with providers configured.
+      const ctx = await manager.createStack("Boot Test", "boot-test", { providers: [] });
+      expect(ctx.healthPoller.start).toHaveBeenCalled();
     });
 
     it("rejects duplicate slugs", async () => {
