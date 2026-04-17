@@ -9,14 +9,20 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 describe("createStackFetch helpers", () => {
   const originalFetch = globalThis.fetch;
+  // vitest's default node env doesn't provide a `window` global. The source
+  // guards with `typeof window !== "undefined"`, so installing a stub here
+  // lets us exercise both "window absent" and "window.__APP_BASE__ set" paths.
+  const originalWindow = (globalThis as { window?: unknown }).window;
 
   beforeEach(() => {
     vi.resetModules();
+    (globalThis as { window?: unknown }).window = {};
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
     globalThis.fetch = originalFetch;
+    (globalThis as { window?: unknown }).window = originalWindow;
   });
 
   describe("APP_BASE_PATH", () => {
@@ -28,6 +34,27 @@ describe("createStackFetch helpers", () => {
 
     it("reflects Vite's configured BASE_URL when set", async () => {
       vi.stubEnv("BASE_URL", "/dops/");
+      const { APP_BASE_PATH } = await import("./createStackFetch");
+      expect(APP_BASE_PATH).toBe("/dops/");
+    });
+
+    it("prefers window.__APP_BASE__ (runtime) over import.meta.env.BASE_URL (build-time)", async () => {
+      vi.stubEnv("BASE_URL", "/");
+      (globalThis.window as { __APP_BASE__?: string }).__APP_BASE__ = "/dops/";
+      const { APP_BASE_PATH } = await import("./createStackFetch");
+      expect(APP_BASE_PATH).toBe("/dops/");
+    });
+
+    it("normalizes window.__APP_BASE__ that lacks a trailing slash", async () => {
+      vi.stubEnv("BASE_URL", "/");
+      (globalThis.window as { __APP_BASE__?: string }).__APP_BASE__ = "/dops";
+      const { APP_BASE_PATH } = await import("./createStackFetch");
+      expect(APP_BASE_PATH).toBe("/dops/");
+    });
+
+    it("normalizes a base without leading slash", async () => {
+      vi.stubEnv("BASE_URL", "/");
+      (globalThis.window as { __APP_BASE__?: string }).__APP_BASE__ = "dops/";
       const { APP_BASE_PATH } = await import("./createStackFetch");
       expect(APP_BASE_PATH).toBe("/dops/");
     });

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+- **Sub-path is now runtime-configurable via `APP_BASE_PATH` env var** instead of baked into the image via `VITE_BASE_PATH` build-arg. Previous flow required rebuilding the image per deploy environment (blank page if you forgot). Now one generic image serves any sub-path: the server rewrites `index.html` asset references and injects `window.__APP_BASE__` at serve time; the web bundle reads the base from that global with fallback to `import.meta.env.BASE_URL`. `VITE_BASE_PATH` still works as a build-time default but is no longer required for sub-path deploys.
+
 ## [0.0.9.2] - 2026-04-16
 
 ### Fixed
