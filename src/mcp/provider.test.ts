@@ -18,7 +18,7 @@ vi.mock("@mastra/mcp", () => {
   return { MCPClient };
 });
 
-import { createMcpProvider, getToolsByRole, getAllTools, listProviderTools, classifyToolAccess, filterToReadOnlyTools } from "./provider.js";
+import { createMcpProvider, getToolsByRole, getAllTools, listProviderTools, classifyToolAccess, filterToReadOnlyTools, DEFAULT_MCP_CONNECT_TIMEOUT_MS } from "./provider.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -109,6 +109,36 @@ describe("createMcpProvider", () => {
   it("preserves enabledTools on the provider wrapper", () => {
     const provider = createMcpProvider(httpConfig("grafana", ["metrics"], ["query_prometheus"]));
     expect(provider.enabledTools).toEqual(["query_prometheus"]);
+  });
+
+  it("threads connectTimeout onto the HTTP server definition", () => {
+    createMcpProvider(httpConfig("grafana", ["metrics"]), 45_000);
+    const callArgs = constructorCalls[0] as {
+      servers: Record<string, { url: URL; connectTimeout?: number }>;
+    };
+    expect(callArgs.servers["grafana"]?.connectTimeout).toBe(45_000);
+  });
+
+  // Stdio uses `timeout` (from BaseServerOptions), HTTP uses `connectTimeout`.
+  // `StdioServerDefinition` types `connectTimeout` as `never`; `timeout` is the
+  // value @mastra/mcp reads for the stdio connect phase.
+  it("threads the connect timeout onto the stdio server definition as `timeout`", () => {
+    createMcpProvider(stdioConfig("loki", ["logs"]), 45_000);
+    const callArgs = constructorCalls[0] as {
+      servers: Record<string, { command: string; timeout?: number }>;
+    };
+    expect(callArgs.servers["loki"]?.timeout).toBe(45_000);
+  });
+
+  // REGRESSION (IRON RULE): default timeout must stay at 30s, not regress to
+  // the @mastra/mcp built-in 3s default that causes spurious failures in QA.
+  it("uses a 30s default connectTimeout when none is provided", () => {
+    createMcpProvider(httpConfig("grafana", ["metrics"]));
+    const callArgs = constructorCalls[0] as {
+      servers: Record<string, { url: URL; connectTimeout?: number }>;
+    };
+    expect(DEFAULT_MCP_CONNECT_TIMEOUT_MS).toBe(30_000);
+    expect(callArgs.servers["grafana"]?.connectTimeout).toBe(30_000);
   });
 });
 

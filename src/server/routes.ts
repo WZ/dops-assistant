@@ -1040,7 +1040,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         res.status(400).json({ error: parsed.error.issues.map(i => i.message).join(", ") });
         return;
       }
-      const provider = createMcpProvider(parsed.data);
+      const provider = createMcpProvider(parsed.data, config.timeouts?.mcpConnectMs);
       const tools = await listProviderTools(provider);
       const toolCount = Object.keys(tools).length;
       res.json({ status: "ok", toolCount });
