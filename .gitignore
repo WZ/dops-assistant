@@ -45,3 +45,8 @@ bin/
 benchmark/
 benchmark/
 .gstack/
+
+# Playwright artifacts
+playwright-report/
+test-results/
+playwright/.cache/

@@ -9,6 +9,8 @@
     "start": "node dist/server/index.js",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
     "cli": "NODE_TLS_REJECT_UNAUTHORIZED=0 NODE_NO_WARNINGS=1 tsx src/cli/index.tsx",
     "cli:investigate": "NODE_TLS_REJECT_UNAUTHORIZED=0 NODE_NO_WARNINGS=1 tsx src/cli/index.tsx investigate",
     "cli:chat": "NODE_TLS_REJECT_UNAUTHORIZED=0 NODE_NO_WARNINGS=1 tsx src/cli/index.tsx chat",
@@ -67,6 +69,7 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
+    "@playwright/test": "^1.59.1",
     "@tailwindcss/vite": "^4.2.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
