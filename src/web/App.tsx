@@ -312,6 +312,9 @@ export function App() {
             <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/75">
               {health.health ? (health.health.probes.db.status === "ok" ? "db:ok" : "db:\u2014") : "db:\u2014"}
             </span>
+            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/75">
+              {health.health?.version ? `v${health.health.version}` : "v\u2014"}
+            </span>
           </div>
         </header>
 
