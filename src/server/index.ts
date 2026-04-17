@@ -273,6 +273,10 @@ async function main() {
         }
       }
 
+      // Webhook invocation counts as activity for the target stack,
+      // independent of the /api middleware (which bumps the resolved-from-
+      // header stack — usually the default for webhooks).
+      stackManager.bumpActivity(stackRow.id);
       const ctx = stackManager.getContext(stackRow.id);
       const stackProviders = ctx.providerRegistry.getProviders();
       const stackAdapters = await createMastraAdapters({ config, providers: stackProviders, registryStore: ctx.serviceRegistry, datasourceUidMap: ctx.providerRegistry.buildDatasourceUidMap() });
@@ -414,6 +418,10 @@ async function main() {
   // Start all per-stack health pollers (staggered)
   stackManager.startAllPollers();
 
+  // Kick off the TTL reaper — marks idle stacks inactive (30d) and
+  // soft-deletes long-dormant ones (60d). Runs once immediately, then hourly.
+  stackManager.startTtlReaper();
+
   server.listen(port, () => {
     const pkg = JSON.parse(readFileSync(path.join(__dirname, "../../package.json"), "utf-8"));
     const ver = pkg.version ?? "unknown";
@@ -424,6 +432,7 @@ async function main() {
     logger.info("Shutting down...");
     stopHealthMonitor();
     stackManager.stopAllPollers();
+    stackManager.stopTtlReaper();
     stackManager.destroyAllMemory();
     db.close();
     server.close();
