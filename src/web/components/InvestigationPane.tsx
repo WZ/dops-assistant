@@ -137,6 +137,10 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
   const [report, setReport] = useState<unknown | null>(null);
   const [service, setService] = useState("");
   const [query, setQuery] = useState("");
+  /** Set when the REST fetch comes back 404. Visiting an investigation URL
+   *  whose ID is either garbage or belongs to a different stack previously
+   *  rendered an empty Phases skeleton with no explanation. */
+  const [notFound, setNotFound] = useState(false);
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
   const [phaseTokens, setPhaseTokens] = useState<Record<string, { inputTokens: number; outputTokens: number }>>({});
   const [totalUsage, setTotalUsage] = useState<{ inputTokens: number; outputTokens: number; durationMs: number } | null>(null);
@@ -207,17 +211,24 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
     if (isActive) return;
 
     let cancelled = false;
+    // Reset the not-found flag whenever the caller navigates to a new
+    // investigation ID — don't let a stale "not found" persist across ids.
+    setNotFound(false);
     stackFetch(`/api/investigations/${investigationId}`)
       .then((r) => {
+        if (r.status === 404) {
+          setNotFound(true);
+          return null;
+        }
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
       })
-      .then((data: {
+      .then((data: null | {
         investigation: { service: string; query: string; status: string; report: string | null; total_input_tokens?: number; total_output_tokens?: number; total_duration_ms?: number };
         phases: Array<{ phase: string; status: string; findings: string | null }>;
         events?: Array<{ event_type: string; payload: string; created_at: string }>;
       }) => {
-        if (cancelled) return;
+        if (cancelled || !data) return;
         setService(data.investigation.service);
         if (data.investigation.query) setQuery(data.investigation.query);
 
@@ -420,6 +431,30 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
   }, [timelineEvents]);
 
   const hasEvidence = Object.keys(evidence).length > 0 || timeSeries.length > 0;
+
+  // Invalid ID, or valid ID but belongs to a different stack: show a clear
+  // not-found state instead of the empty Phases skeleton. Active investigations
+  // take precedence — if WS messages are still flowing for this id we're
+  // mid-run and the REST 404 is expected until persistence catches up.
+  if (notFound && !isActive) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-3 p-8 text-center">
+        <h2 className="font-mono text-sm uppercase tracking-[0.12em] text-foreground/80">
+          Investigation not found
+        </h2>
+        <p className="font-mono text-[11px] text-muted-foreground/70 max-w-md">
+          <code className="text-foreground/60">{investigationId}</code> isn&apos;t in this stack.
+          It may belong to a different stack, or it may have been deleted.
+        </p>
+        <button
+          className="mt-2 font-mono text-[11px] uppercase tracking-[0.12em] text-primary hover:text-primary/80"
+          onClick={onBack}
+        >
+          ← Back
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="h-full flex flex-col overflow-hidden">

@@ -196,10 +196,21 @@ export class StackManager {
    * Falls back to the default stack if the value is not a valid stack ID.
    */
   resolveStackId(stackId?: string | null): string {
+    return this.resolveStackIdWithFallback(stackId).id;
+  }
+
+  /**
+   * Like `resolveStackId` but also reports whether the caller's value was
+   * rejected (invalid / missing) and we had to fall back to the default.
+   * Lets callers surface the fallback as a debug log or response header so
+   * users with a bookmarked URL for a since-deleted stack don't silently
+   * view the wrong environment's data.
+   */
+  resolveStackIdWithFallback(stackId?: string | null): { id: string; fallback: boolean } {
     if (stackId && this.stacks.has(stackId)) {
-      return stackId;
+      return { id: stackId, fallback: false };
     }
-    return this.getDefaultStackId();
+    return { id: this.getDefaultStackId(), fallback: Boolean(stackId) };
   }
 
   /**

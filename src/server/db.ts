@@ -709,6 +709,22 @@ export class Database {
     `).run(stackId, service, alias, tags);
   }
 
+  /**
+   * Explicitly clear a service's alias (sets alias column to NULL).
+   * `upsertServiceMetadata` treats `null` as "don't change this column" to
+   * support partial updates, so there's no way to clear via that path. This
+   * method is for the PUT /alias handler when the client sends `null`.
+   */
+  clearServiceAlias(stackId: string, service: string): void {
+    this.db.prepare(`
+      INSERT INTO service_metadata (stack_id, service, alias, tags, updated_at)
+      VALUES (?, ?, NULL, NULL, datetime('now'))
+      ON CONFLICT(stack_id, service) DO UPDATE SET
+        alias      = NULL,
+        updated_at = datetime('now')
+    `).run(stackId, service);
+  }
+
   getAllServiceMetadata(stackId: string): ServiceMetadataRow[] {
     const rows = this.db.prepare(
       "SELECT service, alias, tags, updated_at FROM service_metadata WHERE stack_id = ? ORDER BY service ASC"

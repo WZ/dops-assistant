@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 const envPath = process.env["DOTENV_PATH"] ?? resolve(process.cwd(), "dev/.env");
 loadDotenv({ path: envPath });
 
-import express from "express";
+import express, { type NextFunction, type Request, type Response } from "express";
 import { createServer } from "http";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -93,6 +93,20 @@ async function main() {
   const trustProxyHops = Number(process.env["TRUST_PROXY_HOPS"] ?? 1);
   app.set("trust proxy", Number.isFinite(trustProxyHops) && trustProxyHops >= 0 ? trustProxyHops : 1);
   app.use(express.json({ limit: "1mb" }));
+
+  // ── JSON error shim for body-parser ──────────────────────────────
+  // Without this, a malformed JSON POST falls through to Express's default
+  // HTML error page (`<!DOCTYPE html>...<pre>Bad Request</pre>`). SPA clients
+  // that `res.json()` on the response crash with "SyntaxError: Unexpected
+  // token <". Only catches SyntaxError-shaped errors from express.json so
+  // we don't accidentally intercept unrelated downstream errors.
+  app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
+    if (err instanceof SyntaxError && "body" in (err as SyntaxError & { body?: unknown })) {
+      res.status(400).json({ error: "Invalid JSON in request body" });
+      return;
+    }
+    next(err);
+  });
 
   // ── Rate limiting (applied before auth so abusive traffic is rejected early) ──
   // Global: 300 req/min per IP for all /api/* routes

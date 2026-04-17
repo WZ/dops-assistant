@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { createLogger } from "../logger.js";
 import type { Database } from "./db.js";
 import type { ServiceConfig, Config, ProviderConfig } from "../config/schema.js";
 import { MAX_CACHE_ENTRIES } from "../constants.js";
@@ -140,14 +141,29 @@ export function categorizeImportActions(
   return actions;
 }
 
+const logger = createLogger("routes");
+
 export function registerRoutes(app: Express, deps: RouteDeps): void {
   const { db, stackManager, config } = deps;
   const skillStore = deps.skillStore;
 
   // ── Stack middleware — resolve stack for all /api routes ──────────────
+  //
+  // When the X-Stack-Id header is missing or doesn't match any stack, we fall
+  // back to the default stack. That's the long-standing behavior, but the
+  // client used to have no way to know the fallback happened — a bookmarked
+  // URL pointing at a deleted stack would silently serve default-stack data.
+  // We now:
+  //   - log at debug level so operators can trace "wrong data on /foo" issues
+  //   - set `X-Dops-Stack-Fallback: true` on the response so the UI can warn
   app.use("/api", (req: Request, res: Response, next) => {
     const headerStackId = req.headers["x-stack-id"] as string | undefined;
-    req.stackId = stackManager.resolveStackId(headerStackId);
+    const resolved = stackManager.resolveStackIdWithFallback(headerStackId);
+    req.stackId = resolved.id;
+    if (resolved.fallback) {
+      logger.debug({ wanted: headerStackId, resolved: resolved.id }, "stack id fell back to default");
+      res.setHeader("X-Dops-Stack-Fallback", "true");
+    }
     try {
       req.stackContext = stackManager.getContext(req.stackId);
     } catch {
@@ -387,7 +403,14 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     const name = req.params["name"] as string;
     if (!NAME_PATTERN.test(name)) { res.status(400).json({ error: "Invalid service name" }); return; }
     const { alias } = req.body as { alias: string | null };
-    db.upsertServiceMetadata(req.stackId, name, { alias: alias === null || alias === "" ? "" : alias });
+    // Treat null and "" as "clear the alias" rather than storing an empty
+    // string sentinel. Previously null→"" round-tripped, so a GET after a
+    // clear returned alias:"" instead of alias:null, confusing client logic.
+    if (alias === null || alias === undefined || alias === "") {
+      db.clearServiceAlias(req.stackId, name);
+    } else {
+      db.upsertServiceMetadata(req.stackId, name, { alias });
+    }
     res.json({ ok: true });
   });
 
@@ -591,6 +614,23 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
           recommendedActions?: string[];
           contributingFactors?: string[];
         };
+
+        // Reject genuinely empty bodies — previously this handler happily
+        // returned `{title:"Generated Skill", services:[], body:""}` for any
+        // input, which masked upstream bugs (the caller sending nothing) and
+        // wasted a round-trip in the UI. A real report has at minimum one
+        // content field; otherwise there's nothing to templatize.
+        const hasContent =
+          (typeof report.service === "string" && report.service.trim() !== "") ||
+          (typeof report.summary === "string" && report.summary.trim() !== "") ||
+          (typeof report.rootCause === "string" && report.rootCause.trim() !== "") ||
+          (typeof report.trigger === "string" && report.trigger.trim() !== "") ||
+          (Array.isArray(report.recommendedActions) && report.recommendedActions.length > 0) ||
+          (Array.isArray(report.contributingFactors) && report.contributingFactors.length > 0);
+        if (!hasContent) {
+          res.status(400).json({ error: "At least one of service, summary, rootCause, trigger, recommendedActions, or contributingFactors is required" });
+          return;
+        }
 
         const title = report.service
           ? `Investigate ${report.service} Issue`
