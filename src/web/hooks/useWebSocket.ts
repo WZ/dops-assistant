@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { ClientMessage, ServerMessage } from "../../types/ws-types.js";
+import { APP_BASE_PATH } from "../lib/createStackFetch";
 
 type ConnectionStatus = "connecting" | "connected" | "disconnected";
 
@@ -17,7 +18,8 @@ export function useWebSocket(stackId?: string) {
     setMessages([]);
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const url = `${protocol}//${window.location.host}/ws?stackId=${encodeURIComponent(stackId)}`;
+    const wsPath = APP_BASE_PATH === "/" ? "/ws" : `${APP_BASE_PATH}ws`;
+    const url = `${protocol}//${window.location.host}${wsPath}?stackId=${encodeURIComponent(stackId)}`;
     const ws = new WebSocket(url);
     wsRef.current = ws;
 

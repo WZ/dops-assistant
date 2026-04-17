@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { parseUrl, viewToUrl } from "./useRoute";
 
 describe("parseUrl", () => {
@@ -77,6 +77,64 @@ describe("roundtrip", () => {
     ];
     for (const view of views) {
       expect(parseUrl(viewToUrl(view))).toEqual(view);
+    }
+  });
+});
+
+/**
+ * Sub-path deploys (e.g. served at https://host/dops/) require parseUrl to
+ * strip the base prefix before matching, and viewToUrl to prepend it. These
+ * tests re-import the module under a stubbed BASE_URL to exercise that path.
+ */
+describe("useRoute — sub-path deploy (BASE_URL='/dops/')", () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("parseUrl strips the base prefix before matching", async () => {
+    vi.stubEnv("BASE_URL", "/dops/");
+    const mod = await import("./useRoute");
+
+    expect(mod.parseUrl("/dops/")).toEqual({ type: "dashboard" });
+    expect(mod.parseUrl("/dops/investigations/inv_123")).toEqual({ type: "investigation", id: "inv_123" });
+    expect(mod.parseUrl("/dops/services/api")).toEqual({ type: "services", initialService: "api" });
+    expect(mod.parseUrl("/dops/settings/providers")).toEqual({ type: "settings", initialTab: "providers" });
+  });
+
+  it("parseUrl falls through to dashboard for paths that don't start with the base", async () => {
+    vi.stubEnv("BASE_URL", "/dops/");
+    const mod = await import("./useRoute");
+
+    expect(mod.parseUrl("/other/route")).toEqual({ type: "dashboard" });
+  });
+
+  it("viewToUrl prepends the base path", async () => {
+    vi.stubEnv("BASE_URL", "/dops/");
+    const mod = await import("./useRoute");
+
+    expect(mod.viewToUrl({ type: "dashboard" })).toBe("/dops/");
+    expect(mod.viewToUrl({ type: "investigation", id: "inv_1" })).toBe("/dops/investigations/inv_1");
+    expect(mod.viewToUrl({ type: "services" })).toBe("/dops/services");
+    expect(mod.viewToUrl({ type: "services", initialService: "api" })).toBe("/dops/services/api");
+    expect(mod.viewToUrl({ type: "settings", initialTab: "skills" })).toBe("/dops/settings/skills");
+  });
+
+  it("parseUrl(viewToUrl(view)) roundtrip holds under sub-path", async () => {
+    vi.stubEnv("BASE_URL", "/dops/");
+    const mod = await import("./useRoute");
+
+    const views = [
+      { type: "dashboard" as const },
+      { type: "investigation" as const, id: "inv_123" },
+      { type: "services" as const, initialService: "api" },
+      { type: "settings" as const, initialTab: "providers" as const },
+    ];
+    for (const view of views) {
+      expect(mod.parseUrl(mod.viewToUrl(view))).toEqual(view);
     }
   });
 });

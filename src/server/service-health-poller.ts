@@ -161,19 +161,34 @@ export function matchResultsToServices(
     const candidates = [
       metric["deployment"],
       metric["statefulset"],
+      metric["daemonset"],
       metric["job"],
       metric["instance"],
       metric["service"],
     ].filter((v): v is string => Boolean(v));
 
     for (const candidate of candidates) {
-      // Exact match or prefix match (e.g. "my-service-abc123" → "my-service")
-      const matchedName = [...serviceNames].find(
-        (name) =>
-          candidate === name ||
-          candidate.startsWith(name + "-") ||
-          candidate.startsWith(name + "_"),
-      );
+      // Prefer EXACT match, else LONGEST prefix match. Set.find() returns
+      // insertion order, which causes shorter names to shadow longer ones
+      // (e.g. "coroot-web" would shadow "coroot-web-cluster-agent" when the
+      // metric deployment label is "coroot-web-cluster-agent", and the pod-hash
+      // candidate "coroot-web-node-agent-abc123" would shadow "coroot-web-node-agent"
+      // with "coroot-web"). Exact is always the correct identity; prefix is a
+      // heuristic fallback for pod-hash suffixes — longest prefix wins.
+      let matchedName: string | undefined = undefined;
+      for (const name of serviceNames) {
+        if (candidate === name) { matchedName = name; break; }
+      }
+      if (!matchedName) {
+        let best = "";
+        for (const name of serviceNames) {
+          if ((candidate.startsWith(name + "-") || candidate.startsWith(name + "_")) &&
+              name.length > best.length) {
+            best = name;
+          }
+        }
+        if (best) matchedName = best;
+      }
 
       if (matchedName) {
         // Get the scalar value — for instant vectors it's entry.value[1]
@@ -293,15 +308,17 @@ export class ServiceHealthPoller {
       }
       const promDsUid = this.cachedPromDsUid;
 
-      // Run the 3 batch queries in parallel — query raw metrics (not > 0 / == 1)
+      // Run the 4 batch queries in parallel — query raw metrics (not > 0 / == 1)
       // so that zero-replica or down services appear in results with value 0.
       // matchResultsToServices handles value-based health classification.
       // Each batch has different semantics for value=0:
-      //   - replicas metrics: 0 = intentionally scaled down (unknown)
-      //   - up metric:        0 = scrape target is down (down)
-      const [deploymentEntries, statefulsetEntries, upEntries] = await Promise.all([
+      //   - replicas metrics:        0 = intentionally scaled down (unknown)
+      //   - daemonset desired count: 0 = no nodes match selector (unknown)
+      //   - up metric:               0 = scrape target is down (down)
+      const [deploymentEntries, statefulsetEntries, daemonsetEntries, upEntries] = await Promise.all([
         this.runQuery(queryTool, "kube_deployment_status_replicas", promDsUid),
         this.runQuery(queryTool, "kube_statefulset_status_replicas", promDsUid),
+        this.runQuery(queryTool, "kube_daemonset_status_desired_number_scheduled", promDsUid),
         this.runQuery(queryTool, "up", promDsUid),
       ]);
 
@@ -310,6 +327,7 @@ export class ServiceHealthPoller {
       const batches = [
         { entries: deploymentEntries, zeroMeans: "unknown" as const },
         { entries: statefulsetEntries, zeroMeans: "unknown" as const },
+        { entries: daemonsetEntries, zeroMeans: "unknown" as const },
         { entries: upEntries, zeroMeans: "down" as const },
       ];
       const newHealth = new Map<string, HealthStatus>();

@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.9.2] - 2026-04-16
+
+### Fixed
+- **Users hit 429 frequently during normal browsing.** MetricsPanel fires up to 5 parallel `/api/metrics/extract` calls per investigation view, so the strict limiter (10/min) exhausted in 2 views. Bumped limits: global 300 → 1200/min, strict 10 → 60/min, moderate 30 → 120/min. Accommodates real GUI behavior and multi-user deployments behind a shared corporate proxy IP.
+
+## [0.0.9.1] - 2026-04-16
+
+### Fixed
+- **Discovery stuck at "Discovering services..." behind reverse proxies.** The WebSocket server had no ping/pong heartbeat. During the LLM's 50-65 second silent thinking phase (after tool calls finish), nginx-ingress treated the connection as idle and killed it. The server's `send()` silently dropped discovery results because `ws.readyState !== OPEN`. Added 30-second ping/pong heartbeat to keep connections alive through proxies. Also added WebSocket timeout annotation examples to the Helm ingress values.
+
 ## [0.1.10] - 2026-04-16
 
 ### Fixed

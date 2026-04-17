@@ -57,6 +57,19 @@ ingress:
   enabled: false
   className: ""
   annotations: {}
+  # WebSocket-friendly timeouts (discovery LLM calls can take 60-90s):
+  # nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+  # nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+  # nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+  #
+  # Sub-path deploys (serving at e.g. https://host/dops/):
+  #   1. Build the image with `--build-arg VITE_BASE_PATH=/dops/` (matching the
+  #      ingress path). Without this, the browser requests assets at `/assets/*`
+  #      instead of `/dops/assets/*` and loads a blank page.
+  #   2. Configure the ingress to rewrite `/dops/*` → `/*` before forwarding,
+  #      so the server's `/ws` and `/api/*` routes still resolve. Example:
+  #      nginx.ingress.kubernetes.io/rewrite-target: /$2
+  #      (and set the path to `/dops(/|$)(.*)` with pathType: ImplementationSpecific)
   # - kubernetes.io/ingress.class: nginx
   # - cert-manager.io/cluster-issuer: letsencrypt-prod
   hosts:
