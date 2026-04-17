@@ -11,8 +11,9 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Loader2, Trash2 } from "lucide-react";
+import { Loader2, Pencil, Trash2 } from "lucide-react";
 import { CreateStackDialog } from "./CreateStackDialog";
+import { RenameStackDialog } from "./RenameStackDialog";
 import type { StackSummary } from "../../types/stack-types.js";
 
 interface StacksManagePageProps {
@@ -33,6 +34,7 @@ function healthDotColor(stack: StackSummary): string {
 
 export function StacksManagePage({ stacks, activeStackId, onSwitchStack, onRefetch }: StacksManagePageProps) {
   const [createOpen, setCreateOpen] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<StackSummary | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<StackSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -62,32 +64,6 @@ export function StacksManagePage({ stacks, activeStackId, onSwitchStack, onRefet
     }
     setDeleting(false);
   };
-
-  // Empty/single-stack state
-  if (stacks.length <= 1) {
-    return (
-      <div className="py-12 text-center">
-        <p className="font-body text-[13px] text-muted-foreground/70">
-          You're running a single stack. Add stacks to manage multiple clusters.
-        </p>
-        <Button
-          onClick={() => setCreateOpen(true)}
-          className="mt-4 font-mono text-xs font-medium min-h-[44px]"
-        >
-          Create Stack
-        </Button>
-        <CreateStackDialog
-          open={createOpen}
-          onOpenChange={setCreateOpen}
-          onCreated={async (newStack) => {
-            await onRefetch();
-            onSwitchStack(newStack.id);
-            setCreateOpen(false);
-          }}
-        />
-      </div>
-    );
-  }
 
   return (
     <div>
@@ -125,11 +101,21 @@ export function StacksManagePage({ stacks, activeStackId, onSwitchStack, onRefet
               <span className="font-mono text-[10px] text-muted-foreground/50">
                 {stack.providerCount} provider{stack.providerCount !== 1 ? "s" : ""}
               </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setRenameTarget(stack)}
+                aria-label={`Rename ${stack.name}`}
+                className="h-7 px-2 text-muted-foreground/60 hover:text-foreground hover:bg-muted/40"
+              >
+                <Pencil size={12} />
+              </Button>
               {!stack.isDefault && (
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => setDeleteTarget(stack)}
+                  aria-label={`Delete ${stack.name}`}
                   className="h-7 px-2 text-destructive/60 hover:text-destructive hover:bg-destructive/8"
                 >
                   <Trash2 size={12} />
@@ -159,6 +145,13 @@ export function StacksManagePage({ stacks, activeStackId, onSwitchStack, onRefet
           onSwitchStack(newStack.id);
           setCreateOpen(false);
         }}
+      />
+
+      {/* Rename dialog */}
+      <RenameStackDialog
+        stack={renameTarget}
+        onOpenChange={(open) => { if (!open) setRenameTarget(null); }}
+        onRenamed={onRefetch}
       />
 
       {/* Delete confirmation dialog */}

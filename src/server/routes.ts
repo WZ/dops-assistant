@@ -237,6 +237,15 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     }
     const { name, slug, config: stackConfig } = req.body as { name?: string; slug?: string; config?: unknown };
 
+    // Validate name if provided
+    if (name !== undefined) {
+      const trimmed = name.trim();
+      if (!trimmed || trimmed.length > 64) {
+        res.status(400).json({ error: "Name must be 1-64 characters" });
+        return;
+      }
+    }
+
     // Validate config if provided
     if (stackConfig !== undefined) {
       const parsed = StackConfigSchema.safeParse(stackConfig);
@@ -247,7 +256,14 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     }
 
     // Validate slug format if slug is being changed
-    if (slug !== undefined) {
+    if (slug !== undefined && slug !== stack.slug) {
+      // Block slug rename for the default stack — startup uses the literal
+      // "default" slug to identify it; renaming would orphan the stack and
+      // a fresh "Default" would be created on next boot.
+      if (stack.slug === DEFAULT_STACK_SLUG) {
+        res.status(403).json({ error: "Cannot change the slug of the default stack" });
+        return;
+      }
       if (!SLUG_REGEX.test(slug) || slug.length > 64) {
         res.status(400).json({ error: "Invalid slug: must be 2-64 lowercase alphanumeric characters and hyphens" });
         return;
@@ -260,10 +276,12 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     }
 
     db.updateStack(id, {
-      name,
+      name: name !== undefined ? name.trim() : undefined,
       slug,
       config: stackConfig !== undefined ? JSON.stringify(stackConfig) : undefined,
     });
+    // listStacks() reads name/slug from the DB row, so the rename is visible
+    // immediately. The in-memory StackContext.name is unused for read paths.
     res.json({ ok: true });
   });
 
