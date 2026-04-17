@@ -223,6 +223,15 @@ describe("StackManager", () => {
       expect(usEast!.providerCount).toBe(1);
     });
 
+    it("starts the health poller for stacks created after boot", async () => {
+      // Regression: startAllPollers() only runs once at server boot, so stacks
+      // created via the GUI/API later would never poll without createStack()
+      // calling start() itself. Services in those stacks appeared permanently
+      // "unknown" even with providers configured.
+      const ctx = await manager.createStack("Boot Test", "boot-test", { providers: [] });
+      expect(ctx.healthPoller.start).toHaveBeenCalled();
+    });
+
     it("rejects duplicate slugs", async () => {
       await manager.createStack("Stack A", "my-slug", { providers: [] });
       await expect(

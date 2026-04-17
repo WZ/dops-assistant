@@ -66,16 +66,15 @@ spec:
               mkdir -p {{ .Values.persistence.mountPath }}/default
               TARGET={{ .Values.persistence.mountPath }}/default/providers.yaml
               SOURCE=/config-src/providers.yaml
-              # Helm source has actual content (not just "[]" / blank)?
+              # Does the file declare at least one provider? Accept both YAML
+              # block style (`- name: foo`) and flow style (`[{name: foo}]`).
+              has_content() {
+                [ -s "$1" ] && grep -qE '(^\s*-\s)|(\[[^]]+\])' "$1"
+              }
               SOURCE_HAS_CONTENT=0
-              if [ -s "$SOURCE" ] && grep -qE '^\s*-\s' "$SOURCE"; then
-                SOURCE_HAS_CONTENT=1
-              fi
-              # PVC target has actual content?
+              has_content "$SOURCE" && SOURCE_HAS_CONTENT=1
               TARGET_HAS_CONTENT=0
-              if [ -s "$TARGET" ] && grep -qE '^\s*-\s' "$TARGET"; then
-                TARGET_HAS_CONTENT=1
-              fi
+              has_content "$TARGET" && TARGET_HAS_CONTENT=1
               if [ "$SOURCE_HAS_CONTENT" = "1" ]; then
                 # Helm declares providers: source of truth wins.
                 cp "$SOURCE" "$TARGET"

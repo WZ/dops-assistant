@@ -340,6 +340,59 @@ describe("ServiceHealthPoller", () => {
       expect(poller.getHealth().get("api")).toBe("unknown");
     });
 
+    it("issues all four PromQL queries (deployment, statefulset, daemonset, up) per poll and classifies daemonset matches", async () => {
+      // Regression guard: before this test, a test for the daemonset matcher
+      // existed but nothing verified that pollOnce actually QUERIED the
+      // daemonset metric. Dropping the daemonset entry from the Promise.all
+      // would have passed all prior tests.
+      const queryResults: Record<string, object[]> = {
+        "kube_deployment_status_replicas": [makePrometheusEntry({ deployment: "api" }, "1")],
+        "kube_statefulset_status_replicas": [makePrometheusEntry({ statefulset: "postgres" }, "1")],
+        "kube_daemonset_status_desired_number_scheduled": [makePrometheusEntry({ daemonset: "node-exporter" }, "6")],
+        "up": [makePrometheusEntry({ job: "prom" }, "1")],
+      };
+      const queryTool = {
+        execute: vi.fn(async (args: unknown) => {
+          const { expr } = args as { expr: string };
+          return { data: { result: queryResults[expr] ?? [] } };
+        }),
+      };
+      const listDatasourcesTool = {
+        execute: vi.fn(async () => ({
+          content: [{ type: "text", text: JSON.stringify({ datasources: [{ uid: "prometheus", name: "Prometheus", type: "prometheus" }] }) }],
+        })),
+      };
+      const provider = makeProvider("prom", {
+        prom_query_prometheus: queryTool,
+        prom_list_datasources: listDatasourcesTool,
+      });
+      (provider.client.listTools as ReturnType<typeof vi.fn>).mockResolvedValue({
+        prom_query_prometheus: queryTool,
+        prom_list_datasources: listDatasourcesTool,
+      });
+
+      const poller = new ServiceHealthPoller({
+        providers: [provider],
+        registryStore: makeRegistryStore(["node-exporter", "api", "postgres", "prom"]),
+        db: makeDb(),
+        intervalMs: 999_999,
+      });
+
+      await poller.poll();
+
+      const exprs = queryTool.execute.mock.calls.map((c) => (c[0] as { expr: string }).expr);
+      expect(exprs).toContain("kube_deployment_status_replicas");
+      expect(exprs).toContain("kube_statefulset_status_replicas");
+      expect(exprs).toContain("kube_daemonset_status_desired_number_scheduled");
+      expect(exprs).toContain("up");
+
+      // DaemonSet service gets classified via the daemonset batch.
+      expect(poller.getHealth().get("node-exporter")).toBe("healthy");
+      expect(poller.getHealth().get("api")).toBe("healthy");
+      expect(poller.getHealth().get("postgres")).toBe("healthy");
+      expect(poller.getHealth().get("prom")).toBe("healthy");
+    });
+
     it("marks service as down when up = 0 (real scrape failure)", async () => {
       const { poller } = makePoller(
         ["prometheus"],
