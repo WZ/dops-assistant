@@ -182,9 +182,10 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
     let alive = true;
     ws.on("pong", () => { alive = true; });
     const heartbeat = setInterval(() => {
+      if (ws.readyState !== WebSocket.OPEN) return;
       if (!alive) { ws.terminate(); return; }
       alive = false;
-      ws.ping();
+      try { ws.ping(); } catch { /* socket transitioned to closing mid-tick */ }
     }, HEARTBEAT_INTERVAL_MS);
 
     // Per-connection pending discovery state

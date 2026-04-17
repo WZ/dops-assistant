@@ -1,7 +1,7 @@
 import { safeGetItem } from "./utils";
 
 /** Base path from Vite config (e.g., "/dops/" or "/"). Always ends with "/". */
-export const APP_BASE_PATH = import.meta.env.BASE_URL;
+export const APP_BASE_PATH = import.meta.env.BASE_URL || "/";
 
 /** Prepend the app base path to an API URL (e.g., "/api/health" → "/dops/api/health"). */
 export function withBase(url: string): string {

@@ -82,7 +82,11 @@ spec:
                 echo "init-config: staged Helm providers to $TARGET"
               elif [ "$TARGET_HAS_CONTENT" = "0" ]; then
                 # Neither side has content — write the empty list so the file exists.
-                cp "$SOURCE" "$TARGET"
+                if [ -f "$SOURCE" ]; then
+                  cp "$SOURCE" "$TARGET"
+                else
+                  echo "[]" > "$TARGET"
+                fi
                 echo "init-config: wrote empty providers.yaml (first boot)"
               else
                 echo "init-config: preserved existing providers.yaml on PVC ($TARGET)"
