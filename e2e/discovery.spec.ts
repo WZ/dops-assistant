@@ -19,6 +19,8 @@ test.describe("Discovery UI plumbing", () => {
     if (!emptyStack) {
       test.skip(true, "no stack with 0 services available to exercise empty state");
     }
+    // localStorage is cross-origin on about:blank — must goto a real page first.
+    await page.goto("/");
     await page.evaluate((id) => localStorage.setItem("dops:lastStackId", id), emptyStack!.id);
     await page.goto("/services");
 
@@ -31,6 +33,8 @@ test.describe("Discovery UI plumbing", () => {
     const emptyStack = stacks.find((s) => (s.healthSummary?.total ?? 0) === 0);
     if (!emptyStack) test.skip(true, "no empty stack");
 
+    // localStorage is cross-origin on about:blank — must goto a real page first.
+    await page.goto("/");
     await page.evaluate((id) => localStorage.setItem("dops:lastStackId", id), emptyStack!.id);
     await page.goto("/services");
     await page.getByRole("button", { name: "Run Discovery" }).click();

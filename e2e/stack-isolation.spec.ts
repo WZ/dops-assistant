@@ -18,9 +18,10 @@ test.describe("Stack isolation", () => {
     stackAId = stacks.find((s) => s.isDefault)?.id ?? stacks[0]?.id ?? "";
     expect(stackAId).toBeTruthy();
 
-    // Create a second stack for B.
+    // Create a second stack for B. POST /api/stacks requires {name, slug, config}
+    // where config matches StackConfigSchema — {providers: []} is the minimal shape.
     const createRes = await request.post("/api/stacks", {
-      data: { name: "e2e-stack-b", slug: "e2e-stack-b" },
+      data: { name: "e2e-stack-b", slug: "e2e-stack-b", config: { providers: [] } },
     });
     if (createRes.ok()) {
       const body = (await createRes.json()) as { id: string };
