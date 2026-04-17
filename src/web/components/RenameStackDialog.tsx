@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { safeGetItem } from "../lib/utils";
+import { withBase } from "../lib/createStackFetch";
 import { Loader2 } from "lucide-react";
 import {
   Dialog,
@@ -58,7 +59,7 @@ export function RenameStackDialog({ stack, onOpenChange, onRenamed }: RenameStac
         if (nameChanged) body.name = trimmedName;
         if (slugChanged) body.slug = slug;
 
-        const res = await fetch(`/api/stacks/${stack.id}`, {
+        const res = await fetch(withBase(`/api/stacks/${stack.id}`), {
           method: "PUT",
           headers,
           body: JSON.stringify(body),
