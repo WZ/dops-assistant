@@ -11,7 +11,19 @@ export interface StackRow {
   config: string;        // JSON-serialized StackConfig
   created_at: string;
   updated_at: string;
+  /**
+   * ISO timestamp of last activity against this stack — bumped on tool
+   * calls, successful polls, webhook invocations, and UI navigation.
+   * Defaults to `created_at` for pre-TTL rows (backfilled on migration).
+   */
+  last_active_at?: string;
+  /** ISO timestamp when the stack was marked inactive (30d idle). Null = active. */
+  inactive_at?: string | null;
+  /** ISO timestamp when the stack was soft-deleted (60d idle). Null = live. */
+  deleted_at?: string | null;
 }
+
+export type StackStatus = "active" | "inactive";
 
 export interface StackSummary {
   id: string;
@@ -27,6 +39,10 @@ export interface StackSummary {
   };
   providerCount: number;
   createdAt: string;
+  /** "active" normally, "inactive" once the stack has been idle for ~30 days. */
+  status: StackStatus;
+  /** ISO timestamp of last activity (tool calls, polls, webhook, navigation). */
+  lastActiveAt?: string;
 }
 
 export const DEFAULT_STACK_SLUG = "default";

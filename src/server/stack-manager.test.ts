@@ -7,21 +7,43 @@ import { DEFAULT_STACK_SLUG } from "../types/stack-types.js";
 // Mock ProviderRegistry — MCP connections are not available in tests.
 // The mock tracks the seed providers passed to the constructor so that
 // listStacks().providerCount (which reads from getAll()) reflects them.
+// Exposes a mutable `__viable` flag + `__fireChange()` so individual
+// tests can simulate provider additions / connection transitions without
+// standing up the real MCP client.
+//
+// `hasViableMetricsProvider` is defined on the prototype (not the instance)
+// so individual tests can override it via `prototype.hasViableMetricsProvider`
+// between constructions. Instance-method overrides would only affect the
+// current instance, not future ones — many of our tests construct fresh
+// StackManager instances which trigger fresh ProviderRegistry instances.
 vi.mock("../mcp/provider-registry.js", () => {
-  return {
-    ProviderRegistry: class MockProviderRegistry {
-      private seeded: unknown[];
-      initialize = vi.fn().mockResolvedValue(undefined);
-      getProviders = vi.fn(() => this.seeded);
-      getAll = vi.fn(() => this.seeded.map((config) => ({ config })));
-      getByRole = vi.fn().mockReturnValue([]);
-      add = vi.fn().mockResolvedValue({});
-      remove = vi.fn().mockResolvedValue(undefined);
-      constructor(providers: unknown[]) {
-        this.seeded = providers ?? [];
-      }
-    },
+  class MockProviderRegistry {
+    private seeded: unknown[];
+    public __viable = false;
+    public __listeners: Array<(event: { kind: string; name: string }) => void> = [];
+    initialize = vi.fn().mockResolvedValue(undefined);
+    getProviders = vi.fn(() => this.seeded);
+    getAll = vi.fn(() => this.seeded.map((config) => ({ config })));
+    getByRole = vi.fn().mockReturnValue([]);
+    add = vi.fn().mockResolvedValue({});
+    remove = vi.fn().mockResolvedValue(undefined);
+    onChange = vi.fn((listener: (event: { kind: string; name: string }) => void) => {
+      this.__listeners.push(listener);
+      return () => { this.__listeners = this.__listeners.filter(l => l !== listener); };
+    });
+    __fireChange(event: { kind: string; name: string } = { kind: "add", name: "test" }): void {
+      for (const l of this.__listeners) l(event);
+    }
+    constructor(providers: unknown[]) {
+      this.seeded = providers ?? [];
+    }
+  }
+  // Prototype method so tests can swap it for all instances at once
+  (MockProviderRegistry.prototype as unknown as { hasViableMetricsProvider: () => boolean })
+    .hasViableMetricsProvider = function(this: MockProviderRegistry): boolean {
+    return this.__viable;
   };
+  return { ProviderRegistry: MockProviderRegistry };
 });
 
 // Mock ws-handler — clearStackCaches is imported by StackManager
@@ -88,6 +110,7 @@ describe("StackManager", () => {
     // Clean up memory and pollers to avoid leaking timers
     if (manager) {
       manager.stopAllPollers();
+      manager.stopTtlReaper();
       manager.destroyAllMemory();
     }
     db.close();
@@ -249,12 +272,52 @@ describe("StackManager", () => {
       expect(usEast!.providerCount).toBe(1);
     });
 
-    it("starts the health poller for stacks created after boot", async () => {
+    it("starts the health poller for stacks created after boot when viable", async () => {
       // Regression: startAllPollers() only runs once at server boot, so stacks
       // created via the GUI/API later would never poll without createStack()
       // calling start() itself. Services in those stacks appeared permanently
       // "unknown" even with providers configured.
-      const ctx = await manager.createStack("Boot Test", "boot-test", { providers: [] });
+      //
+      // The gate added in #8 only starts the poller if there's a viable
+      // metrics provider. We pre-flip the mock's `__viable` flag via a
+      // one-shot spy on hasViableMetricsProvider so the gate returns true
+      // at createStack time.
+      const { ProviderRegistry } = await import("../mcp/provider-registry.js");
+      const origHas = ProviderRegistry.prototype.hasViableMetricsProvider;
+      ProviderRegistry.prototype.hasViableMetricsProvider = vi.fn(() => true);
+      try {
+        const ctx = await manager.createStack("Boot Test", "boot-test", { providers: [] });
+        expect(ctx.healthPoller.start).toHaveBeenCalled();
+      } finally {
+        ProviderRegistry.prototype.hasViableMetricsProvider = origHas;
+      }
+    });
+
+    it("skips the health poller for stacks with no viable metrics provider (issue #8)", async () => {
+      // Legacy stacks with 3 registered providers but runtime toolCount:0 used
+      // to spam "metric query tool not found, skipping poll" every 10s. The
+      // gate silences them by skipping the initial start() call — they'll
+      // auto-start via the registry change event when a working provider is
+      // added or tested.
+      const ctx = await manager.createStack("Empty Stack", "empty-stack", { providers: [] });
+      expect(ctx.healthPoller.start).not.toHaveBeenCalled();
+    });
+
+    it("starts a previously-skipped poller when a provider change event fires", async () => {
+      // Adding a viable metrics provider to a dormant stack (or having one
+      // become healthy via test()) should flip the gate and kick off polling
+      // without requiring a server restart.
+      const ctx = await manager.createStack("Will Become Viable", "viable-later", { providers: [] });
+      expect(ctx.healthPoller.start).not.toHaveBeenCalled();
+
+      // Simulate: provider gets added + becomes viable
+      const mockRegistry = ctx.providerRegistry as unknown as {
+        __viable: boolean;
+        __fireChange: (e?: { kind: string; name: string }) => void;
+      };
+      mockRegistry.__viable = true;
+      mockRegistry.__fireChange({ kind: "add", name: "new-provider" });
+
       expect(ctx.healthPoller.start).toHaveBeenCalled();
     });
 
@@ -355,21 +418,54 @@ describe("StackManager", () => {
   });
 
   describe("pollers", () => {
-    it("startAllPollers calls start on each health poller", async () => {
+    it("startAllPollers calls start on viable stacks only", async () => {
+      // With the init-time gate, startAllPollers must skip stacks that have
+      // no viable metrics provider. Patch the prototype so the mock reports
+      // viable for the duration of this test.
+      const { ProviderRegistry } = await import("../mcp/provider-registry.js");
+      const origHas = ProviderRegistry.prototype.hasViableMetricsProvider;
+      ProviderRegistry.prototype.hasViableMetricsProvider = vi.fn(() => true);
+      try {
+        manager = new StackManager(db, config);
+        await manager.initialize();
+
+        // Use fake timers to avoid actual setTimeout delays
+        vi.useFakeTimers();
+        manager.startAllPollers();
+
+        // Advance past the stagger window (30s)
+        vi.advanceTimersByTime(31_000);
+
+        const ctx = manager.getDefaultContext();
+        expect(ctx.healthPoller.start).toHaveBeenCalled();
+
+        vi.useRealTimers();
+      } finally {
+        ProviderRegistry.prototype.hasViableMetricsProvider = origHas;
+      }
+    });
+
+    it("startAllPollers skips non-viable stacks, starts them later on provider change", async () => {
       manager = new StackManager(db, config);
       await manager.initialize();
 
-      // Use fake timers to avoid actual setTimeout delays
       vi.useFakeTimers();
       manager.startAllPollers();
-
-      // Advance past the stagger window (30s)
       vi.advanceTimersByTime(31_000);
 
       const ctx = manager.getDefaultContext();
-      expect(ctx.healthPoller.start).toHaveBeenCalled();
+      expect(ctx.healthPoller.start).not.toHaveBeenCalled();
 
       vi.useRealTimers();
+
+      // Now simulate the provider becoming viable
+      const mockRegistry = ctx.providerRegistry as unknown as {
+        __viable: boolean;
+        __fireChange: (e?: { kind: string; name: string }) => void;
+      };
+      mockRegistry.__viable = true;
+      mockRegistry.__fireChange({ kind: "test", name: "x" });
+      expect(ctx.healthPoller.start).toHaveBeenCalled();
     });
 
     it("stopAllPollers calls stop on each health poller", async () => {
@@ -380,6 +476,101 @@ describe("StackManager", () => {
 
       const ctx = manager.getDefaultContext();
       expect(ctx.healthPoller.stop).toHaveBeenCalled();
+    });
+  });
+
+  // ── TTL / last-active tracking (B-2) ────────────────────────────────────
+
+  describe("TTL + activity tracking", () => {
+    beforeEach(async () => {
+      manager = new StackManager(db, config);
+      await manager.initialize();
+    });
+
+    it("createStack sets last_active_at to now", async () => {
+      const ctx = await manager.createStack("Fresh", "fresh-stack", { providers: [] });
+      const row = db.getStack(ctx.id);
+      expect(row).toBeDefined();
+      expect(row!.last_active_at).toBeDefined();
+      // SQLite returns "YYYY-MM-DD HH:MM:SS" (UTC, no T). Parse + compare to now.
+      const activeMs = new Date(row!.last_active_at + "Z").getTime();
+      expect(Math.abs(Date.now() - activeMs)).toBeLessThan(5000);
+    });
+
+    it("bumpActivity updates last_active_at and clears inactive marker", async () => {
+      const ctx = await manager.createStack("Busy", "busy-stack", { providers: [] });
+      // Simulate an inactive marker already present (as if the reaper hit)
+      const nowBefore = new Date().toISOString();
+      // Force last_active_at backwards by direct DB write so bump is visible
+      (db as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => void } } }).db
+        .prepare("UPDATE stacks SET last_active_at = ?, inactive_at = ? WHERE id = ?")
+        .run("2020-01-01T00:00:00.000Z", "2020-02-01T00:00:00.000Z", ctx.id);
+
+      manager.bumpActivity(ctx.id);
+
+      const row = db.getStack(ctx.id);
+      expect(row!.last_active_at! > nowBefore.slice(0, 10)).toBe(true);
+      expect(row!.inactive_at).toBeNull();
+    });
+
+    it("runTtlReaper marks idle stacks inactive after 30 days", async () => {
+      const ctx = await manager.createStack("Idle", "idle-stack", { providers: [] });
+
+      // Simulate a run 31 days from now — runTtlReaper accepts nowIso.
+      const future = new Date(Date.now() + 31 * 24 * 3600 * 1000).toISOString();
+      const result = manager.runTtlReaper({ nowIso: future });
+      expect(result.markedInactive).toBe(1);
+      expect(result.softDeleted).toBe(0);
+
+      const row = db.getStack(ctx.id);
+      expect(row!.inactive_at).not.toBeNull();
+      expect(row!.deleted_at).toBeNull();
+
+      // Still listed (active + inactive both visible)
+      const stacks = manager.listStacks();
+      const summary = stacks.find(s => s.id === ctx.id);
+      expect(summary).toBeDefined();
+      expect(summary!.status).toBe("inactive");
+    });
+
+    it("runTtlReaper soft-deletes stacks idle >60 days and drops them from listings", async () => {
+      const ctx = await manager.createStack("Ancient", "ancient-stack", { providers: [] });
+
+      const future = new Date(Date.now() + 61 * 24 * 3600 * 1000).toISOString();
+      const result = manager.runTtlReaper({ nowIso: future });
+      expect(result.softDeleted).toBe(1);
+
+      // Not in default listing
+      expect(manager.listStacks().find(s => s.id === ctx.id)).toBeUndefined();
+      // Still in DB (audit trail)
+      expect(db.listStacksIncludingDeleted().find(s => s.id === ctx.id)).toBeDefined();
+      // In-memory context torn down
+      expect(() => manager.getContext(ctx.id)).toThrow("Stack not found");
+    });
+
+    it("runTtlReaper never touches the default stack even if idle", async () => {
+      const defaultId = manager.getDefaultStackId();
+      // Force default's last_active_at way into the past
+      (db as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => void } } }).db
+        .prepare("UPDATE stacks SET last_active_at = ? WHERE id = ?")
+        .run("2020-01-01T00:00:00.000Z", defaultId);
+
+      const result = manager.runTtlReaper();
+      expect(result.markedInactive).toBe(0);
+      expect(result.softDeleted).toBe(0);
+      expect(db.getStack(defaultId)).toBeDefined();
+    });
+
+    it("DELETE on a stack still works and is distinct from TTL soft-delete", async () => {
+      // Regression guard (IRON RULE): the existing explicit delete path
+      // must keep working — it hard-deletes immediately, unlike the TTL
+      // reaper's soft-delete which keeps the row for audit.
+      const ctx = await manager.createStack("To Remove", "to-remove", { providers: [] });
+      await manager.deleteStack(ctx.id);
+
+      // Hard-gone from both the live and the including-deleted views.
+      expect(manager.listStacks().find(s => s.id === ctx.id)).toBeUndefined();
+      expect(db.listStacksIncludingDeleted().find(s => s.id === ctx.id)).toBeUndefined();
     });
   });
 });

@@ -51,6 +51,16 @@ export class StackManager {
   private db: Database;
   private config: Config;
   private defaultStackId: string | null = null;
+  /**
+   * Track which stacks had their poller intentionally skipped at init-time
+   * because they had no viable metrics provider (issue #8). We keep the
+   * entry so that when a provider is later added/tested/updated and the
+   * registry fires a change event, we can start the poller on demand
+   * instead of silently staying idle.
+   */
+  private skippedPollers: Set<string> = new Set();
+  private allPollersStarted = false;
+  private ttlReaperHandle: ReturnType<typeof setInterval> | undefined;
 
   constructor(db: Database, config: Config) {
     this.db = db;
@@ -157,7 +167,35 @@ export class StackManager {
     };
 
     this.stacks.set(row.id, ctx);
+
+    // Wire a listener so that if a provider is added / tested successfully
+    // / updated on a stack whose poller was skipped at init, we can start
+    // the poller on demand. Without this, a legacy stack with no viable
+    // metrics provider would never poll until server restart even after
+    // the user fixed its config.
+    providerRegistry.onChange(() => {
+      this.maybeStartSkippedPoller(row.id);
+    });
+
     return ctx;
+  }
+
+  /**
+   * If this stack's poller was skipped at boot because the registry had no
+   * viable metrics provider, and we've since gained one, start it now.
+   * No-op otherwise. Safe to call repeatedly.
+   */
+  private maybeStartSkippedPoller(stackId: string): void {
+    if (!this.skippedPollers.has(stackId)) return;
+    const ctx = this.stacks.get(stackId);
+    if (!ctx) return;
+    if (!ctx.providerRegistry.hasViableMetricsProvider()) return;
+    this.skippedPollers.delete(stackId);
+    logger.info(
+      { stackId, slug: ctx.slug },
+      "StackManager: starting previously-skipped health poller — viable metrics provider became available",
+    );
+    ctx.healthPoller.start();
   }
 
   /**
@@ -257,8 +295,18 @@ export class StackManager {
 
     const ctx = await this.initializeStack(dbRow);
     // Start the poller — startAllPollers() only runs at boot, so stacks created
-    // after boot (via the GUI) would never poll without this.
-    ctx.healthPoller.start();
+    // after boot (via the GUI) would never poll without this. Gate on viable
+    // metrics provider so freshly-created stacks with no working providers
+    // don't immediately start spamming "metric query tool not found" logs.
+    if (ctx.providerRegistry.hasViableMetricsProvider()) {
+      ctx.healthPoller.start();
+    } else {
+      this.skippedPollers.add(ctx.id);
+      logger.info(
+        { stackId: ctx.id, slug: ctx.slug },
+        "StackManager: skipping health poller start — no viable metrics provider yet (will auto-start when one is added/healthy)",
+      );
+    }
     return ctx;
   }
 
@@ -296,7 +344,8 @@ export class StackManager {
   }
 
   /**
-   * List all stacks with summary information.
+   * List all stacks with summary information. Excludes soft-deleted stacks
+   * (those with `deleted_at` set by the TTL reaper).
    */
   listStacks(): StackSummary[] {
     const rows = this.db.listStacks();
@@ -321,15 +370,100 @@ export class StackManager {
         healthSummary,
         providerCount,
         createdAt: row.created_at,
+        status: row.inactive_at ? "inactive" : "active",
+        lastActiveAt: row.last_active_at,
       };
     });
   }
 
   /**
-   * Start all health pollers with staggered delays (0-30s).
+   * Record that this stack had some activity (tool call, successful poll,
+   * webhook, UI nav). Bumps `last_active_at` in the DB and clears any
+   * inactive marker. Safe to call frequently — it's a single UPDATE by PK.
+   * Silently no-ops for unknown stack IDs.
+   */
+  bumpActivity(stackId: string): void {
+    if (!this.stacks.has(stackId)) return;
+    try {
+      this.db.bumpStackActivity(stackId);
+    } catch (err) {
+      logger.warn({ err, stackId }, "StackManager: bumpStackActivity failed");
+    }
+  }
+
+  /**
+   * Default TTL thresholds. Exposed as constants so tests and the reaper
+   * runner stay in sync; tune here if we ever change policy.
+   */
+  static readonly INACTIVE_AFTER_DAYS = 30;
+  static readonly DELETE_AFTER_DAYS = 60;
+
+  /**
+   * Run the TTL reaper once. Marks stacks idle >30 days inactive and
+   * soft-deletes those idle >60 days. After soft-delete we also tear down
+   * the in-memory StackContext (stop poller, clear caches) so the now-dead
+   * stack stops consuming resources. The default stack is exempted.
+   *
+   * Returns a summary for logging.
+   */
+  runTtlReaper(opts?: { nowIso?: string; inactiveAfterDays?: number; deleteAfterDays?: number }): {
+    markedInactive: number;
+    softDeleted: number;
+  } {
+    if (!this.defaultStackId) {
+      return { markedInactive: 0, softDeleted: 0 };
+    }
+    const result = this.db.runStackTtlReaper({
+      defaultStackId: this.defaultStackId,
+      inactiveAfterDays: opts?.inactiveAfterDays ?? StackManager.INACTIVE_AFTER_DAYS,
+      deleteAfterDays: opts?.deleteAfterDays ?? StackManager.DELETE_AFTER_DAYS,
+      nowIso: opts?.nowIso,
+    });
+
+    // Tear down any in-memory contexts that just got soft-deleted. The DB
+    // row is still present (soft-delete), but we shouldn't keep polling or
+    // serving it. listStacks filters them out at the query level.
+    if (result.softDeleted > 0) {
+      const liveIds = new Set(this.db.listStacks().map(r => r.id));
+      for (const [stackId, ctx] of Array.from(this.stacks.entries())) {
+        if (!liveIds.has(stackId) && stackId !== this.defaultStackId) {
+          try { ctx.healthPoller.stop(); } catch { /* ignore */ }
+          try { ctx.conversationMemory.destroy(); } catch { /* ignore */ }
+          this.stacks.delete(stackId);
+          this.skippedPollers.delete(stackId);
+          clearStackCaches(stackId);
+          logger.info({ stackId, slug: ctx.slug }, "StackManager: soft-deleted stack, tore down in-memory context");
+        }
+      }
+    }
+
+    if (result.markedInactive > 0 || result.softDeleted > 0) {
+      logger.info(result, "StackManager: TTL reaper complete");
+    }
+    return result;
+  }
+
+  /**
+   * Start all health pollers with staggered delays (0-30s). Stacks with no
+   * viable metrics provider (see `ProviderRegistry.hasViableMetricsProvider`)
+   * are skipped and recorded — they'll auto-start via a provider-change
+   * listener when a working metrics provider is added or tested.
+   *
+   * This prevents the "metric query tool not found, skipping poll" log spam
+   * from legacy stacks whose config still has 3 providers registered but
+   * whose runtime toolCount is 0 (issue #8).
    */
   startAllPollers(): void {
+    this.allPollersStarted = true;
     for (const ctx of this.stacks.values()) {
+      if (!ctx.providerRegistry.hasViableMetricsProvider()) {
+        this.skippedPollers.add(ctx.id);
+        logger.info(
+          { stackId: ctx.id, slug: ctx.slug },
+          "StackManager: skipping health poller start — no viable metrics provider (will auto-start when one becomes available)",
+        );
+        continue;
+      }
       const delay = Math.floor(Math.random() * 30_000);
       setTimeout(() => ctx.healthPoller.start(), delay);
     }
@@ -341,6 +475,34 @@ export class StackManager {
   stopAllPollers(): void {
     for (const ctx of this.stacks.values()) {
       ctx.healthPoller.stop();
+    }
+  }
+
+  /**
+   * Kick off a recurring TTL reaper. The reaper runs once immediately (so
+   * post-deploy the DB state is up to date) and then every `intervalMs`.
+   * Returns a handle for the tests; index.ts doesn't need it since
+   * `destroyAllMemory` plus server shutdown tears it down.
+   *
+   * Default interval is 1 hour — TTL math is measured in days, so polling
+   * more often is wasted work.
+   */
+  startTtlReaper(intervalMs = 60 * 60 * 1000): void {
+    this.runTtlReaper();
+    this.ttlReaperHandle = setInterval(() => {
+      try {
+        this.runTtlReaper();
+      } catch (err) {
+        logger.warn({ err }, "StackManager: TTL reaper cycle failed");
+      }
+    }, intervalMs);
+  }
+
+  /** Stop the TTL reaper interval. Called on shutdown. */
+  stopTtlReaper(): void {
+    if (this.ttlReaperHandle) {
+      clearInterval(this.ttlReaperHandle);
+      this.ttlReaperHandle = undefined;
     }
   }
 

@@ -436,4 +436,111 @@ describe("ProviderRegistry", () => {
       expect(registry.getAll()).toHaveLength(0);
     });
   });
+
+  // -----------------------------------------------------------------------
+  // hasViableMetricsProvider + onChange (B-1 init-time poller gate)
+  // -----------------------------------------------------------------------
+  describe("hasViableMetricsProvider", () => {
+    it("returns false when no providers are registered", async () => {
+      const registry = new ProviderRegistry([], providersPath);
+      await registry.initialize();
+      expect(registry.hasViableMetricsProvider()).toBe(false);
+    });
+
+    it("returns false when the metrics provider has no tools (toolCount=0)", async () => {
+      // Simulates the FAZBD-240-style legacy stack: 3 providers configured,
+      // all returning empty tool sets at runtime. The init-time poller gate
+      // must say "no viable provider" so we don't log-spam forever.
+      mockListProviderTools.mockResolvedValue({});
+      const registry = new ProviderRegistry([makeConfig("empty-grafana", ["metrics"])], providersPath);
+      await registry.initialize();
+      expect(registry.hasViableMetricsProvider()).toBe(false);
+    });
+
+    it("returns false when metrics provider has tools but none is a metric query tool", async () => {
+      mockListProviderTools.mockResolvedValue({
+        list_namespaces: { execute: vi.fn() },
+        list_pods: { execute: vi.fn() },
+      });
+      const registry = new ProviderRegistry([makeConfig("k8s-only", ["metrics"])], providersPath);
+      await registry.initialize();
+      expect(registry.hasViableMetricsProvider()).toBe(false);
+    });
+
+    it("returns true when a metrics provider exposes a query_prometheus-style tool", async () => {
+      mockListProviderTools.mockResolvedValue({
+        grafana_query_prometheus: { execute: vi.fn() },
+      });
+      const registry = new ProviderRegistry([makeConfig("grafana", ["metrics"])], providersPath);
+      await registry.initialize();
+      expect(registry.hasViableMetricsProvider()).toBe(true);
+    });
+
+    it("ignores providers that are not in the metrics role", async () => {
+      mockListProviderTools.mockResolvedValue({
+        loki_query_range: { execute: vi.fn() },
+      });
+      // logs-only provider should not satisfy the gate
+      const registry = new ProviderRegistry([makeConfig("loki", ["logs"])], providersPath);
+      await registry.initialize();
+      expect(registry.hasViableMetricsProvider()).toBe(false);
+    });
+  });
+
+  describe("onChange", () => {
+    it("fires on add()", async () => {
+      const registry = new ProviderRegistry([], providersPath);
+      await registry.initialize();
+      const listener = vi.fn();
+      registry.onChange(listener);
+
+      await registry.add(makeConfig("new-provider", ["metrics"]));
+      expect(listener).toHaveBeenCalledWith({ kind: "add", name: "new-provider" });
+    });
+
+    it("fires on update() and remove()", async () => {
+      const registry = new ProviderRegistry([], providersPath);
+      await registry.initialize();
+      await registry.add(makeConfig("p", ["metrics"]));
+
+      const listener = vi.fn();
+      registry.onChange(listener);
+
+      await registry.update("p", makeConfig("p", ["metrics", "logs"]));
+      expect(listener).toHaveBeenCalledWith({ kind: "update", name: "p" });
+
+      await registry.remove("p");
+      expect(listener).toHaveBeenCalledWith({ kind: "remove", name: "p" });
+    });
+
+    it("fires on test() success and test() failure", async () => {
+      mockListProviderTools.mockResolvedValue({ grafana_query_prometheus: { execute: vi.fn() } });
+      const registry = new ProviderRegistry([], providersPath);
+      await registry.initialize();
+      await registry.add(makeConfig("p", ["metrics"]));
+
+      const listener = vi.fn();
+      registry.onChange(listener);
+
+      await registry.test("p");
+      expect(listener).toHaveBeenCalledWith({ kind: "test", name: "p" });
+
+      // Now make it fail
+      listener.mockClear();
+      mockListProviderTools.mockRejectedValueOnce(new Error("boom"));
+      await registry.test("p");
+      expect(listener).toHaveBeenCalledWith({ kind: "test", name: "p" });
+    });
+
+    it("returns an unsubscribe function that detaches the listener", async () => {
+      const registry = new ProviderRegistry([], providersPath);
+      await registry.initialize();
+      const listener = vi.fn();
+      const unsubscribe = registry.onChange(listener);
+
+      unsubscribe();
+      await registry.add(makeConfig("unheard", ["metrics"]));
+      expect(listener).not.toHaveBeenCalled();
+    });
+  });
 });
