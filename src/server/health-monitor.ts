@@ -15,6 +15,7 @@ import type { Request, Response } from "express";
 import { createLogger } from "../logger.js";
 import type { MastraProvider } from "../mcp/provider.js";
 import type { Database } from "./db.js";
+import { eventLog } from "./event-log.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const VERSION: string = (() => {
@@ -92,6 +93,8 @@ export interface HealthMonitorStackDeps {
 }
 
 let intervalHandle: ReturnType<typeof setInterval> | undefined;
+// Track previous probe statuses for transition detection (one entry per named probe)
+const prevProbeStatus: Record<string, "ok" | "error"> = {};
 
 export function startHealthMonitor(deps: HealthMonitorDeps | HealthMonitorStackDeps, intervalMs = 30_000): void {
   let resolveProviders: () => MastraProvider[];
@@ -117,6 +120,21 @@ export function startHealthMonitor(deps: HealthMonitorDeps | HealthMonitorStackD
       probes: { mcp, db },
       lastCheck: new Date().toISOString(),
     };
+
+    // Emit events for probe status transitions (only on actual state change)
+    for (const [providerName, probeResult] of [["mcp", mcp], ["db", db]] as [string, ProbeResult][]) {
+      const prevState = prevProbeStatus[providerName];
+      const nextState = probeResult.status;
+      if (prevState !== undefined && prevState !== nextState) {
+        eventLog.append({
+          kind: "provider_health_changed",
+          severity: nextState === "error" ? "error" : "success",
+          summary: `provider ${providerName}: ${prevState} → ${nextState}`,
+          meta: { provider: providerName, from: prevState, to: nextState },
+        });
+      }
+      prevProbeStatus[providerName] = nextState;
+    }
   };
 
   // Run immediately on startup, then on interval
