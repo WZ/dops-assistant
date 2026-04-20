@@ -144,6 +144,7 @@ export function buildSynthesisStep(config: WorkflowConfig) {
       }
       let dashboardLinks: string[] = [];
       let recommendedActions: string[] = [];
+      let actionLinks: import("../../types/rca-types.js").ActionLink[] | undefined;
       let confidence: "low" | "medium" | "high" = "low";
       let confidenceScore = 0.5;
 
@@ -195,6 +196,12 @@ export function buildSynthesisStep(config: WorkflowConfig) {
         if (synthesisParsed.evidence) evidence = synthesisParsed.evidence;
         dashboardLinks = synthesisParsed.dashboardLinks ?? dashboardLinks;
         recommendedActions = synthesisParsed.recommendedActions ?? recommendedActions;
+        if (Array.isArray(synthesisParsed.actionLinks) && synthesisParsed.actionLinks.length > 0) {
+          actionLinks = synthesisParsed.actionLinks.filter(
+            (a: unknown): a is import("../../types/rca-types.js").ActionLink =>
+              typeof a === "object" && a !== null && typeof (a as { label?: unknown }).label === "string",
+          );
+        }
         confidence = synthesisParsed.confidence ?? confidence;
         confidenceScore = synthesisParsed.confidenceScore ?? confidenceScore;
       }
@@ -220,6 +227,7 @@ export function buildSynthesisStep(config: WorkflowConfig) {
         evidenceToolCalls: Object.keys(evidenceToolCalls).length > 0 ? evidenceToolCalls : undefined,
         dashboardLinks,
         recommendedActions,
+        actionLinks,
         confidence,
         confidenceScore,
         timeRange,

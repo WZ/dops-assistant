@@ -113,6 +113,7 @@ export function buildPostSynthesisStep(config: WorkflowConfig) {
         evidenceToolCalls: inputData.evidenceToolCalls,
         dashboardLinks,
         recommendedActions: inputData.recommendedActions,
+        actionLinks: inputData.actionLinks,
         confidence: inputData.confidence,
         confidenceScore: inputData.confidenceScore,
         savedToHistory,

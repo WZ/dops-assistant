@@ -56,6 +56,18 @@ export type TimelineEvent = {
   event: string;
 };
 
+/** Structured remediation link — emitted alongside prose recommendedActions when
+ *  the agent has a concrete command or URL to offer. Non-executable: the UI
+ *  exposes copy-to-clipboard and click-through only. */
+export type ActionLink = {
+  label: string;
+  rationale?: string;
+  command?: string;
+  url?: string;
+  urlLabel?: string;
+  kind?: "rollback" | "scale" | "restart" | "config" | "investigate" | "other";
+};
+
 export type RcaReport = {
   service: string;
   severity: "low" | "medium" | "high" | "critical";
@@ -76,6 +88,9 @@ export type RcaReport = {
   };
   dashboardLinks: string[];
   recommendedActions: string[];
+  /** Structured remediation links emitted alongside prose actions when the agent
+   *  has a grounded command or URL. Optional — unset for older reports. */
+  actionLinks?: ActionLink[];
   confidence: "low" | "medium" | "high";
   confidenceScore: number;
   investigatedAt: string;

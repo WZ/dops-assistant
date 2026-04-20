@@ -46,6 +46,14 @@ SIZING:
 - Contributing factors: 1-4 items, each 1 sentence.
 - Each recommended action: 1 sentence max. Max 5 actions. Max 5 dashboard links.
 
+ACTION LINKS — structured remediation suggestions (OPTIONAL, CONSERVATIVE):
+In addition to prose recommendedActions, you MAY emit an actionLinks array of structured remediation entries. Each entry can include a copy-able shell command or a URL (e.g. to a runbook, MR, or dashboard). Rules:
+- Only emit actionLinks when you can ground the command or URL in the evidence. Never fabricate a command for a resource you did not see named in the findings. Never invent a URL.
+- If the evidence contains a commit hash, deploy ID, pod name, deployment name, or concrete dashboard URL, you may reference it in a command or url field.
+- If you cannot produce a grounded command or URL, omit actionLinks entirely. A missing actionLinks array is correct and preferred over guessing.
+- Each entry: {"label": "short imperative, e.g. 'Rollback deploy #2871'", "rationale": "optional 1-sentence why", "command": "optional exact shell command", "url": "optional full URL", "urlLabel": "optional short link text", "kind": "rollback"|"scale"|"restart"|"config"|"investigate"|"other"}
+- Max 3 actionLinks entries. Do not duplicate prose actions into actionLinks unless you can add a concrete command or URL.
+
 FORMATTING: Do NOT use markdown tables. Use bullet lists or plain text. Output renders in a terminal.
 
 CRITICAL — EVIDENCE REQUIREMENTS (FAILURE TO FOLLOW = BROKEN REPORT):
@@ -60,8 +68,8 @@ SELF-CHECK before outputting JSON:
 3. Is rootCause longer than 50 characters and does it cite a specific metric or log entry?
 If any answer is NO, fix it before outputting.
 
-You MUST respond with a JSON object matching this exact schema (no trailing text after the JSON):
-{"severity": "low"|"medium"|"high"|"critical", "summary": "string", "impact": {"duration": "string", "description": "string"}, "trigger": "string", "rootCause": "string", "contributingFactors": ["string"], "timeline": [{"time": "string", "event": "string"}], "evidence": {"metrics": ["string"], "logs": ["string"], "infra": ["string"]}, "dashboardLinks": ["string"], "recommendedActions": ["string"], "confidence": "low"|"medium"|"high", "confidenceScore": number}`,
+You MUST respond with a JSON object matching this exact schema (no trailing text after the JSON). The actionLinks field is optional — omit it if you cannot produce grounded commands or URLs:
+{"severity": "low"|"medium"|"high"|"critical", "summary": "string", "impact": {"duration": "string", "description": "string"}, "trigger": "string", "rootCause": "string", "contributingFactors": ["string"], "timeline": [{"time": "string", "event": "string"}], "evidence": {"metrics": ["string"], "logs": ["string"], "infra": ["string"]}, "dashboardLinks": ["string"], "recommendedActions": ["string"], "actionLinks": [{"label": "string", "rationale": "string", "command": "string", "url": "string", "urlLabel": "string", "kind": "rollback"|"scale"|"restart"|"config"|"investigate"|"other"}], "confidence": "low"|"medium"|"high", "confidenceScore": number}`,
     model: config.model as any,
     tools: {},
     defaultOptions: {

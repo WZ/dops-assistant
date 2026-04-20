@@ -1,7 +1,8 @@
 import { Badge } from "@/components/ui/badge";
-import { type ReactNode } from "react";
-import { FileText } from "lucide-react";
+import { useCallback, useState, type ReactNode } from "react";
+import { Check, Copy, ExternalLink, FileText } from "lucide-react";
 import { renderInline } from "../lib/renderInline";
+import type { ActionLink } from "../../types/rca-types";
 
 interface RcaReportData {
   rootCause: string;
@@ -14,6 +15,13 @@ interface RcaReportData {
   contributingFactors: string[];
   timeline: { time: string; event: string }[];
   recommendedActions: string[];
+  evidence?: {
+    metrics?: string[];
+    logs?: string[];
+    infra?: string[];
+    changes?: string[];
+  };
+  actionLinks?: ActionLink[];
   dashboardLinks: string[];
   skillsUsed?: string[];
   timeRange?: { from: string; to: string };
@@ -75,6 +83,111 @@ function Section({ label, count, children }: { label: string; count?: number; ch
       </h4>
       {children}
     </div>
+  );
+}
+
+function ActionLinkRow({ action }: { action: ActionLink }) {
+  const [copied, setCopied] = useState(false);
+  const onCopy = useCallback(() => {
+    if (!action.command) return;
+    navigator.clipboard.writeText(action.command).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    });
+  }, [action.command]);
+
+  return (
+    <li className="rounded-md border border-border/50 bg-card/40 px-3 py-2 space-y-1.5">
+      <div className="flex items-baseline gap-2">
+        <span className="text-[12px] font-body font-semibold text-foreground/90 flex-1 min-w-0">
+          {action.label}
+        </span>
+        {action.kind && (
+          <span className="text-[9px] font-mono uppercase tracking-[0.1em] text-muted-foreground/70 shrink-0">
+            {action.kind}
+          </span>
+        )}
+      </div>
+      {action.rationale && (
+        <p className="text-[11px] font-body text-muted-foreground leading-relaxed">
+          {action.rationale}
+        </p>
+      )}
+      {action.command && (
+        <div className="flex items-stretch gap-1.5">
+          <code className="flex-1 min-w-0 font-mono text-[11px] text-foreground/80 bg-secondary/40 border border-border/30 rounded px-2 py-1 overflow-x-auto whitespace-pre">
+            {action.command}
+          </code>
+          <button
+            onClick={onCopy}
+            aria-label="Copy command"
+            className="shrink-0 inline-flex items-center gap-1 font-mono text-[10px] text-primary/70 hover:text-primary px-2 rounded bg-primary/8 hover:bg-primary/15 transition-colors active:scale-[0.98]"
+          >
+            {copied ? <Check size={11} /> : <Copy size={11} />}
+            {copied ? "Copied" : "Copy"}
+          </button>
+        </div>
+      )}
+      {action.url && (
+        <a
+          href={action.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-[11px] font-mono text-primary hover:text-primary/80 underline underline-offset-2 decoration-primary/30 hover:decoration-primary/60 transition-colors"
+        >
+          <ExternalLink size={11} />
+          {action.urlLabel ?? action.url}
+        </a>
+      )}
+    </li>
+  );
+}
+
+const EVIDENCE_ITEMS_PER_CATEGORY = 5;
+
+const EVIDENCE_CATEGORIES: { key: "metrics" | "logs" | "infra" | "changes"; label: string }[] = [
+  { key: "metrics", label: "Metrics" },
+  { key: "logs", label: "Logs" },
+  { key: "infra", label: "Infra" },
+  { key: "changes", label: "Changes" },
+];
+
+function EvidenceSection({ evidence }: { evidence?: RcaReportData["evidence"] }) {
+  if (!evidence) return null;
+  const totalCount = EVIDENCE_CATEGORIES.reduce((n, c) => n + (evidence[c.key]?.length ?? 0), 0);
+  if (totalCount === 0) return null;
+
+  return (
+    <Section label="Evidence" count={totalCount}>
+      <div className="space-y-3 ml-1">
+        {EVIDENCE_CATEGORIES.map(({ key, label }) => {
+          const items = evidence[key];
+          if (!items?.length) return null;
+          const shown = items.slice(0, EVIDENCE_ITEMS_PER_CATEGORY);
+          const overflow = items.length - shown.length;
+          return (
+            <div key={key}>
+              <h5 className="text-[10px] font-mono font-semibold uppercase tracking-[0.12em] text-muted-foreground mb-1.5">
+                {label} <span className="tabular-nums">({items.length})</span>
+              </h5>
+              <ul className="space-y-1 ml-1">
+                {shown.map((item, i) => (
+                  <li key={i} className="flex items-start gap-2 text-[12px] font-mono text-foreground/75 leading-relaxed">
+                    <span className="text-primary/60 mt-0.5 shrink-0">&middot;</span>
+                    <span className="min-w-0 flex-1 break-words">{item}</span>
+                  </li>
+                ))}
+                {overflow > 0 && (
+                  <li className="text-[10px] font-mono text-muted-foreground/70 ml-3.5 tabular-nums">
+                    + {overflow} more
+                  </li>
+                )}
+              </ul>
+            </div>
+          );
+        })}
+      </div>
+    </Section>
   );
 }
 
@@ -154,6 +267,9 @@ export function RcaReport({ report, hideOldDashboardLinks }: { report: RcaReport
           </div>
         </div>
 
+        {/* Evidence — proof behind the root cause claim */}
+        <EvidenceSection evidence={report.evidence} />
+
         {/* Timeline */}
         {report.timeline.length > 0 && (
           <Section label="Timeline" count={report.timeline.length}>
@@ -200,6 +316,19 @@ export function RcaReport({ report, hideOldDashboardLinks }: { report: RcaReport
                 </li>
               ))}
             </ol>
+          </Section>
+        )}
+
+        {/* Structured action links — copy-able commands and deep links grounded
+            in evidence. Rendered beneath prose actions so the narrative stays
+            primary; links are a scannable "click-to-act" layer. */}
+        {report.actionLinks && report.actionLinks.length > 0 && (
+          <Section label="Quick Actions" count={report.actionLinks.length}>
+            <ul className="space-y-2 ml-1">
+              {report.actionLinks.map((a, i) => (
+                <ActionLinkRow key={i} action={a} />
+              ))}
+            </ul>
           </Section>
         )}
 

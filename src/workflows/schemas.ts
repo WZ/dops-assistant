@@ -62,6 +62,16 @@ const ToolCallRecordSchema = z.object({
   resultChars: z.number(),
 });
 
+/** Structured remediation link — see ActionLink in src/types/rca-types.ts. */
+export const ActionLinkSchema = z.object({
+  label: z.string(),
+  rationale: z.string().optional(),
+  command: z.string().optional(),
+  url: z.string().optional(),
+  urlLabel: z.string().optional(),
+  kind: z.enum(["rollback", "scale", "restart", "config", "investigate", "other"]).optional(),
+});
+
 export const EvidenceOutputSchema = z.object({
   summary: z.string(),
   observations: z.array(z.unknown()).optional(),
@@ -105,6 +115,7 @@ export const SynthesisOutputSchema = z.object({
   evidenceToolCalls: z.record(z.string(), z.array(ToolCallRecordSchema)).optional(),
   dashboardLinks: z.array(z.string()).default([]),
   recommendedActions: z.array(z.string()).default([]),
+  actionLinks: z.array(ActionLinkSchema).optional(),
   confidence: z.enum(["low", "medium", "high"]).default("low"),
   confidenceScore: z.number().default(0.5),
   timeRange: TimeRangeSchema.optional(),
@@ -133,6 +144,7 @@ export const PostSynthesisOutputSchema = z.object({
   evidenceToolCalls: z.record(z.string(), z.array(ToolCallRecordSchema)).optional(),
   dashboardLinks: z.array(z.string()),
   recommendedActions: z.array(z.string()),
+  actionLinks: z.array(ActionLinkSchema).optional(),
   confidence: z.enum(["low", "medium", "high"]),
   confidenceScore: z.number(),
   savedToHistory: z.boolean(),
