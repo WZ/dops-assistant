@@ -5,6 +5,14 @@
  *   npx tsx src/eval/rca-eval.ts
  *   npx tsx src/eval/rca-eval.ts --save
  *   npx tsx src/eval/rca-eval.ts --compare src/eval/baselines/2026-03-01.json
+ *   npx tsx src/eval/rca-eval.ts --source scan    # filter by trigger source
+ *
+ * --source values: all (default) | scan | webhook | user
+ *
+ * Source classification is heuristic, based on the `query` column's prefix:
+ *   - "Proactive scan detected anomaly"  → scan-triggered (see anomaly-probe.ts)
+ *   - "Alert: " (Alertmanager payload)   → webhook-triggered (see webhook-handler.ts)
+ *   - anything else                       → user-initiated
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
@@ -121,12 +129,32 @@ export function scoreReport(report: RcaReport): ScoreResult {
   };
 }
 
+// ── Trigger-source classification ──────────────────────────────────────────
+
+export type TriggerSource = "scan" | "webhook" | "user";
+
+/**
+ * Classify an investigation by its stored `query` column (the message originally
+ * passed to InvestigationRunner.run). Scan and webhook messages follow fixed
+ * prefixes; anything else is considered user-initiated.
+ *
+ * Keep in sync with:
+ *   - anomaly-probe.ts buildInvestigationMessage (scan prefix)
+ *   - webhook-handler.ts messageParts[0] (webhook prefix)
+ */
+export function classifyTriggerSource(query: string): TriggerSource {
+  if (query.startsWith("Proactive scan detected anomaly")) return "scan";
+  if (query.startsWith("Alert: ")) return "webhook";
+  return "user";
+}
+
 // ── Baseline record type ───────────────────────────────────────────────────
 
 interface BaselineEntry {
   id: string;
   service: string;
   createdAt: string | null;
+  source: TriggerSource;
   scores: ScoreResult;
 }
 
@@ -154,10 +182,12 @@ function fmtDelta(current: number, baseline: number): string {
 function renderTable(entries: BaselineEntry[], baseline?: Baseline): void {
   const COL_ID = 36;
   const COL_SVC = 18;
+  const COL_SRC = 8;
 
   const header = [
     pad("ID", COL_ID),
     pad("Service", COL_SVC),
+    pad("Source", COL_SRC),
     "RC ",
     "Ev ",
     "Tr ",
@@ -200,6 +230,7 @@ function renderTable(entries: BaselineEntry[], baseline?: Baseline): void {
       [
         pad(entry.id, COL_ID),
         pad(entry.service, COL_SVC),
+        pad(entry.source, COL_SRC),
         rcCol,
         evCol,
         trCol,
@@ -220,10 +251,23 @@ function renderTable(entries: BaselineEntry[], baseline?: Baseline): void {
         )
       : 0;
 
+  // Per-source breakdown: helps operators see whether scan-triggered RCAs
+  // are meeting the ≥60 design-doc criterion without pulling DB manually.
+  const bySource: Record<TriggerSource, BaselineEntry[]> = { scan: [], webhook: [], user: [] };
+  for (const e of entries) bySource[e.source].push(e);
+
   console.log("-".repeat(header.length));
   console.log(
-    `\nSummary: ${passed}/${total} PASS  |  avg score: ${avgTotal}/100\n`
+    `\nSummary: ${passed}/${total} PASS  |  avg score: ${avgTotal}/100`
   );
+  for (const src of ["scan", "webhook", "user"] as TriggerSource[]) {
+    const group = bySource[src];
+    if (group.length === 0) continue;
+    const avg = Math.round(group.reduce((a, e) => a + e.scores.total, 0) / group.length);
+    const p = group.filter((e) => e.scores.pass).length;
+    console.log(`  ${pad(src, 8)}  ${p}/${group.length} PASS  |  avg: ${avg}/100`);
+  }
+  console.log("");
 }
 
 // ── CLI entry point ────────────────────────────────────────────────────────
@@ -233,6 +277,14 @@ async function main(): Promise<void> {
   const saveFlag = args.includes("--save");
   const compareIdx = args.indexOf("--compare");
   const compareFile = compareIdx !== -1 ? args[compareIdx + 1] : undefined;
+  const sourceIdx = args.indexOf("--source");
+  const sourceArg = sourceIdx !== -1 ? args[sourceIdx + 1] : "all";
+  const validSources = new Set(["all", "scan", "webhook", "user"]);
+  if (!validSources.has(sourceArg ?? "all")) {
+    console.error(`Invalid --source value: ${sourceArg}. Expected one of: all, scan, webhook, user`);
+    process.exit(1);
+  }
+  const sourceFilter = sourceArg === "all" ? null : (sourceArg as TriggerSource);
 
   // Dynamic import to keep scoring functions importable without better-sqlite3
   const { Database } = await import("../server/db.js");
@@ -240,7 +292,7 @@ async function main(): Promise<void> {
   const dbPath = process.env.DB_PATH ?? "dops.sqlite";
   const db = new Database(dbPath);
 
-  let rows: Array<{ id: string; service: string; report: string | null; created_at: string }>;
+  let rows: Array<{ id: string; service: string; query: string; report: string | null; created_at: string }>;
   try {
     // Find the default stack to read its investigations
     const { DEFAULT_STACK_SLUG } = await import("../types/stack-types.js");
@@ -264,10 +316,14 @@ async function main(): Promise<void> {
       continue;
     }
 
+    const source = classifyTriggerSource(row.query ?? "");
+    if (sourceFilter && source !== sourceFilter) continue;
+
     entries.push({
       id: row.id,
       service: row.service,
       createdAt: row.created_at ?? null,
+      source,
       scores: scoreReport(report),
     });
   }
