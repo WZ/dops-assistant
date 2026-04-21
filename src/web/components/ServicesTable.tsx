@@ -41,14 +41,19 @@ function relTime(ts: number): string {
 }
 
 export function ServicesTable({ items, onOpenService, onInvestigate, grafanaUrlFor }: Props) {
+  // Hide Tier and Owner columns when no service in the current view has data
+  // for them. Prevents a grid of "—" cells that promise data we can't deliver.
+  const hasAnyTier = items.some((s) => tierFromTags(s.metadata.tags) !== null);
+  const hasAnyOwner = items.some((s) => ownerFromTags(s.metadata.tags) !== null);
+
   return (
     <table role="table" className="w-full border-collapse">
       <thead>
         <tr role="row" className="text-left font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60 border-b border-border">
           <th scope="col" className="w-1 p-0" aria-label="Status" />
           <th scope="col" className="py-2 pl-3">Service</th>
-          <th scope="col" className="py-2">Owner</th>
-          <th scope="col" className="py-2">Tier</th>
+          {hasAnyOwner && <th scope="col" className="py-2">Owner</th>}
+          {hasAnyTier && <th scope="col" className="py-2">Tier</th>}
           <th scope="col" className="py-2">Last investigation</th>
           <th scope="col" className="py-2 pr-3 text-right" aria-label="Actions" />
         </tr>
@@ -79,24 +84,28 @@ export function ServicesTable({ items, onOpenService, onInvestigate, grafanaUrlF
                   <span className="ml-2 font-mono text-[10px] text-muted-foreground/60">· {extra}</span>
                 )}
               </td>
-              <td className="py-2">
-                {owner ? (
-                  <span className="inline-flex items-center rounded-md bg-secondary/60 px-2 py-0.5 font-body text-[11px] text-muted-foreground">
-                    {owner}
-                  </span>
-                ) : (
-                  <span className="text-muted-foreground/40">—</span>
-                )}
-              </td>
-              <td className="py-2">
-                {tier ? (
-                  <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-foreground/70">
-                    {tier}
-                  </span>
-                ) : (
-                  <span className="text-muted-foreground/40">—</span>
-                )}
-              </td>
+              {hasAnyOwner && (
+                <td className="py-2">
+                  {owner ? (
+                    <span className="inline-flex items-center rounded-md bg-secondary/60 px-2 py-0.5 font-body text-[11px] text-muted-foreground">
+                      {owner}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground/40">—</span>
+                  )}
+                </td>
+              )}
+              {hasAnyTier && (
+                <td className="py-2">
+                  {tier ? (
+                    <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-foreground/70">
+                      {tier}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground/40">—</span>
+                  )}
+                </td>
+              )}
               <td className="py-2 font-mono text-[11px] tabular-nums text-muted-foreground">
                 {inv ? (
                   <span>
