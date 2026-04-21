@@ -4,6 +4,7 @@ import type { InvestigationCallbacks } from "./investigation-runner.js";
 import type { Database } from "./db.js";
 import type { IInvestigationAgent } from "../types/agent-interfaces.js";
 import type { RcaReport } from "../types/rca-types.js";
+import { eventLog } from "./event-log.js";
 
 const MOCK_REPORT: RcaReport = {
   service: "test-service",
@@ -126,6 +127,62 @@ describe("InvestigationRunner", () => {
       total_input_tokens: 0,
       total_output_tokens: 0,
     }));
+  });
+});
+
+describe("eventLog integration", () => {
+  let db: Database;
+  let agent: IInvestigationAgent;
+
+  beforeEach(() => {
+    db = createMockDb();
+    agent = createMockAgent();
+    eventLog.reset();
+  });
+
+  it("emits investigation_started and investigation_completed on success", async () => {
+    const runner = new InvestigationRunner({ db, investigationAgent: agent });
+    await runner.run({
+      service: { name: "test-svc", metrics: [], logLabels: {} },
+      message: "investigate test-svc",
+      investigationId: "inv_event_1",
+      stackId: "stack-abc",
+    });
+
+    const { events } = eventLog.recent(10);
+    const kinds = events.map((e) => e.kind);
+    expect(kinds).toContain("investigation_started");
+    expect(kinds).toContain("investigation_completed");
+
+    const started = events.find((e) => e.kind === "investigation_started")!;
+    expect(started.stackId).toBe("stack-abc");
+    expect(started.service).toBe("test-svc");
+
+    const completed = events.find((e) => e.kind === "investigation_completed")!;
+    expect(completed.stackId).toBe("stack-abc");
+    expect(completed.service).toBe("test-svc");
+  });
+
+  it("emits investigation_failed on agent error", async () => {
+    const failAgent: IInvestigationAgent = {
+      investigate: vi.fn().mockRejectedValue(new Error("LLM timeout")),
+    };
+    const runner = new InvestigationRunner({ db, investigationAgent: failAgent });
+
+    await expect(
+      runner.run({
+        service: { name: "test-svc", metrics: [], logLabels: {} },
+        message: "test",
+        investigationId: "inv_event_fail",
+        stackId: "stack-xyz",
+      }),
+    ).rejects.toThrow("LLM timeout");
+
+    const { events } = eventLog.recent(10);
+    const failed = events.find((e) => e.kind === "investigation_failed");
+    expect(failed).toBeDefined();
+    expect(failed!.stackId).toBe("stack-xyz");
+    expect(failed!.service).toBe("test-svc");
   });
 });
 

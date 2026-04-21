@@ -47,6 +47,12 @@ export class EventLog {
     const events = scoped.slice(-limit).reverse();
     return { events, truncated: this.truncated };
   }
+
+  reset(): void {
+    this.buf = [];
+    this.truncated = false;
+    this.seq = 0;
+  }
 }
 
 export const eventLog = new EventLog({ capacity: 200 });
