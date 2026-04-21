@@ -3,6 +3,16 @@
 import "@testing-library/jest-dom/vitest";
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
+
+// HealthDotTimeline uses useStackContext which throws outside a provider.
+// Mock it to return a no-op fetch so ServicesTable renders standalone.
+vi.mock("../contexts/StackContext", () => ({
+  useStackContext: () => ({
+    activeStackId: "test-stack",
+    stackFetch: () => Promise.resolve(new Response(JSON.stringify([]), { status: 200 })),
+  }),
+}));
+
 import { ServicesTable } from "./ServicesTable";
 import type { ServiceListItem } from "../../types/services";
 

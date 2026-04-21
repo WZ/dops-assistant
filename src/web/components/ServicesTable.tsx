@@ -1,5 +1,6 @@
 // src/web/components/ServicesTable.tsx
 import type { ServiceListItem } from "../../types/services";
+import { HealthDotTimeline } from "./services/HealthDotTimeline";
 
 interface Props {
   items: ServiceListItem[];
@@ -54,6 +55,7 @@ export function ServicesTable({ items, onOpenService, onInvestigate, grafanaUrlF
           <th scope="col" className="py-2 pl-3">Service</th>
           {hasAnyOwner && <th scope="col" className="py-2">Owner</th>}
           {hasAnyTier && <th scope="col" className="py-2">Tier</th>}
+          <th scope="col" className="py-2 w-[200px]">24h health</th>
           <th scope="col" className="py-2">Last investigation</th>
           <th scope="col" className="py-2 pr-3 text-right" aria-label="Actions" />
         </tr>
@@ -106,6 +108,9 @@ export function ServicesTable({ items, onOpenService, onInvestigate, grafanaUrlF
                   )}
                 </td>
               )}
+              <td className="py-2 pr-4">
+                <HealthDotTimeline service={s.name} />
+              </td>
               <td className="py-2 font-mono text-[11px] tabular-nums text-muted-foreground">
                 {inv ? (
                   <span>
