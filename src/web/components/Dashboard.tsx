@@ -130,7 +130,10 @@ export function Dashboard({
         setKpiStats((await kpiRes.json()) as KpiStats);
       }
       setInvestigations(invData);
-      setServices(svcData);
+      // /api/services now returns { services: ServiceListItem[] } (Phase 3).
+      // Dashboard only needs the name + health lookup, so unwrap the array.
+      const svcArray = Array.isArray(svcData) ? svcData : (svcData?.services ?? []);
+      setServices(svcArray);
       // Reconcile: remove active investigations that are now complete/failed in DB
       setActiveInvestigations((prev) => {
         if (prev.size === 0) return prev;
