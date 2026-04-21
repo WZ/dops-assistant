@@ -482,7 +482,7 @@ export class Database {
       id: string;
       service: string;
       status: string;
-      created_at: number;
+      created_at: string | number;
       confidence_score: number | null;
     }>;
     const result = new Map<string, {
@@ -493,9 +493,15 @@ export class Database {
     }>();
     for (const row of rows) {
       if (result.has(row.service)) continue;
+      // created_at is stored by SQLite CURRENT_TIMESTAMP as an ISO-ish string
+      // like "2026-04-09 19:09:10". Parse it to epoch ms so the frontend can
+      // compute relative times. If it's already a number, keep it.
+      const createdAt = typeof row.created_at === "number"
+        ? row.created_at
+        : new Date(row.created_at.replace(" ", "T") + "Z").getTime();
       result.set(row.service, {
         id: row.id,
-        createdAt: row.created_at,
+        createdAt,
         confidence: row.confidence_score,
         status: row.status as "running" | "complete" | "failed",
       });
