@@ -18,6 +18,8 @@ import { buildServiceBrief } from "./service-brief.js";
 import type { LanguageModel } from "ai";
 import { eventLog } from "./event-log.js";
 import { SkillInputSchema } from "./sanitize.js";
+import { Cron } from "croner";
+import { getScanSettingsView } from "./scan-settings.js";
 
 export interface DependencyNode {
   id: string;
@@ -212,6 +214,64 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       return;
     }
     res.json(req.stackContext.scanScheduler.getStatus());
+  });
+
+  /**
+   * GET effective scan settings — global, not per-stack (probe config lives
+   * in config.yaml and is shared). Matches the shape of /api/notifications:
+   * effective values + per-field `source` (gui|config) so the UI can show a
+   * "from config.yaml" badge.
+   */
+  app.get("/api/scan/settings", (_req: Request, res: Response) => {
+    res.json(getScanSettingsView(db, config));
+  });
+
+  /**
+   * PUT scan settings — writes `scan.enabled`, `scan.cron`, `scan.timezone`
+   * to db.settings, validates cron via croner, then calls
+   * stackManager.reloadAllScanSchedulers() so the change takes effect
+   * without a server restart.
+   *
+   * Accepts partial updates. Missing fields are left untouched. To clear
+   * an override and revert to config.yaml, set the field to `null`.
+   */
+  app.put("/api/scan/settings", (req: Request, res: Response) => {
+    const body = req.body as {
+      enabled?: boolean | null;
+      cron?: string | null;
+      timezone?: string | null;
+    };
+
+    // Validate cron BEFORE writing. Bad input should not corrupt DB.
+    if (typeof body.cron === "string" && body.cron.length > 0) {
+      try {
+        // croner's Cron constructor throws on invalid expressions. We
+        // instantiate with a no-op fn and immediately .stop() — cheap
+        // validation pass, no scheduling side effects.
+        const probe = new Cron(body.cron, { timezone: body.timezone ?? "UTC", paused: true }, () => {});
+        probe.stop();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        res.status(400).json({ error: `Invalid cron expression: ${msg}` });
+        return;
+      }
+    }
+
+    // `null` clears the override; otherwise string-encode and set.
+    if (body.enabled === null) db.deleteSetting("scan.enabled");
+    else if (typeof body.enabled === "boolean") db.setSetting("scan.enabled", String(body.enabled));
+
+    if (body.cron === null) db.deleteSetting("scan.cron");
+    else if (typeof body.cron === "string") db.setSetting("scan.cron", body.cron);
+
+    if (body.timezone === null) db.deleteSetting("scan.timezone");
+    else if (typeof body.timezone === "string") db.setSetting("scan.timezone", body.timezone);
+
+    // Propagate to every running scheduler. Idempotent — reload() no-ops
+    // when nothing changed.
+    stackManager.reloadAllScanSchedulers();
+
+    res.json(getScanSettingsView(db, config));
   });
 
   app.post("/api/stacks", async (req: Request, res: Response) => {

@@ -304,3 +304,116 @@ describe("ScanScheduler.getStatus", () => {
     expect(status.dropsByConcurrency).toBe(0);
   });
 });
+
+describe("ScanScheduler.reload", () => {
+  it("starts the scheduler when enabled flips false → true", () => {
+    const scheduler = new ScanScheduler({
+      providers: () => [], registryStore: makeRegistry([]), db: makeDb(),
+      stackId: "s1", scan: makeScanConfig({ enabled: false }),
+      getPrometheusDatasourceUid: () => "uid", onAnomaliesDetected: vi.fn(),
+    });
+    scheduler.start();
+    expect(scheduler.getStatus().nextRun).toBeNull();
+
+    scheduler.reload(makeScanConfig({ enabled: true }));
+    expect(scheduler.getStatus().enabled).toBe(true);
+    expect(scheduler.getStatus().nextRun).not.toBeNull();
+    scheduler.stop();
+  });
+
+  it("stops the scheduler when enabled flips true → false", () => {
+    const scheduler = new ScanScheduler({
+      providers: () => [], registryStore: makeRegistry([]), db: makeDb(),
+      stackId: "s1", scan: makeScanConfig({ enabled: true }),
+      getPrometheusDatasourceUid: () => "uid", onAnomaliesDetected: vi.fn(),
+    });
+    scheduler.start();
+    expect(scheduler.getStatus().nextRun).not.toBeNull();
+
+    scheduler.reload(makeScanConfig({ enabled: false }));
+    expect(scheduler.getStatus().enabled).toBe(false);
+    expect(scheduler.getStatus().nextRun).toBeNull();
+  });
+
+  it("can re-enable after a disable reload", () => {
+    // Regression for the `stopped` flag — previously, a disable via reload
+    // could leave the scheduler in a state where re-enabling did nothing.
+    const scheduler = new ScanScheduler({
+      providers: () => [], registryStore: makeRegistry([]), db: makeDb(),
+      stackId: "s1", scan: makeScanConfig({ enabled: true }),
+      getPrometheusDatasourceUid: () => "uid", onAnomaliesDetected: vi.fn(),
+    });
+    scheduler.start();
+    scheduler.reload(makeScanConfig({ enabled: false }));
+    scheduler.reload(makeScanConfig({ enabled: true }));
+    expect(scheduler.getStatus().enabled).toBe(true);
+    expect(scheduler.getStatus().nextRun).not.toBeNull();
+    scheduler.stop();
+  });
+
+  it("reschedules the cron when the expression changes while enabled", () => {
+    // Use two crons that cannot coincidentally fire at the same moment:
+    // daily at 01:00 UTC vs daily at 23:00 UTC always differ by >= 2h.
+    const scheduler = new ScanScheduler({
+      providers: () => [], registryStore: makeRegistry([]), db: makeDb(),
+      stackId: "s1", scan: makeScanConfig({ enabled: true, cron: "0 1 * * *" }),
+      getPrometheusDatasourceUid: () => "uid", onAnomaliesDetected: vi.fn(),
+    });
+    scheduler.start();
+    const before = scheduler.getStatus().nextRun;
+
+    scheduler.reload(makeScanConfig({ enabled: true, cron: "0 23 * * *" }));
+    const after = scheduler.getStatus().nextRun;
+
+    expect(after).not.toBeNull();
+    expect(after).not.toBe(before);
+    scheduler.stop();
+  });
+
+  it("reschedules the cron when only the timezone changes", () => {
+    const scheduler = new ScanScheduler({
+      providers: () => [], registryStore: makeRegistry([]), db: makeDb(),
+      stackId: "s1", scan: makeScanConfig({ enabled: true, cron: "0 12 * * *", timezone: "UTC" }),
+      getPrometheusDatasourceUid: () => "uid", onAnomaliesDetected: vi.fn(),
+    });
+    scheduler.start();
+    const before = scheduler.getStatus().nextRun;
+
+    scheduler.reload(makeScanConfig({ enabled: true, cron: "0 12 * * *", timezone: "America/New_York" }));
+    const after = scheduler.getStatus().nextRun;
+
+    expect(after).not.toBeNull();
+    expect(after).not.toBe(before);
+    scheduler.stop();
+  });
+
+  it("is a no-op when the new config equals the current config", () => {
+    const scheduler = new ScanScheduler({
+      providers: () => [], registryStore: makeRegistry([]), db: makeDb(),
+      stackId: "s1", scan: makeScanConfig({ enabled: true }),
+      getPrometheusDatasourceUid: () => "uid", onAnomaliesDetected: vi.fn(),
+    });
+    scheduler.start();
+    const before = scheduler.getStatus().nextRun;
+
+    scheduler.reload(makeScanConfig({ enabled: true }));
+    expect(scheduler.getStatus().nextRun).toBe(before);
+    scheduler.stop();
+  });
+
+  it("applies non-schedule config changes without restarting the cron", () => {
+    // maxInvestigationsPerTick change should NOT reset nextRun — the next
+    // tick just picks up the new value.
+    const scheduler = new ScanScheduler({
+      providers: () => [], registryStore: makeRegistry([]), db: makeDb(),
+      stackId: "s1", scan: makeScanConfig({ enabled: true, maxInvestigationsPerTick: 5 }),
+      getPrometheusDatasourceUid: () => "uid", onAnomaliesDetected: vi.fn(),
+    });
+    scheduler.start();
+    const before = scheduler.getStatus().nextRun;
+
+    scheduler.reload(makeScanConfig({ enabled: true, maxInvestigationsPerTick: 10 }));
+    expect(scheduler.getStatus().nextRun).toBe(before);
+    scheduler.stop();
+  });
+});

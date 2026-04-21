@@ -90,6 +90,13 @@ export interface ScanSchedulerDeps {
 
 export class ScanScheduler {
   private readonly deps: ScanSchedulerDeps;
+  /**
+   * Live scan config. Mutated via `reload()` when the operator changes
+   * settings in the GUI — lets the scheduler start/stop/re-schedule without
+   * a server restart. Starts as a copy of `deps.scan` so reloads don't
+   * mutate the caller's snapshot.
+   */
+  private scan: ScanConfig;
   private cron: Cron | undefined;
   private ac: AbortController | undefined;
   private ticking = false;
@@ -102,6 +109,7 @@ export class ScanScheduler {
 
   constructor(deps: ScanSchedulerDeps) {
     this.deps = deps;
+    this.scan = deps.scan;
   }
 
   /**
@@ -113,18 +121,18 @@ export class ScanScheduler {
    */
   start(): void {
     if (this.cron) return;
-    if (!this.deps.scan.enabled) return;
+    if (!this.scan.enabled) return;
     this.stopped = false;
 
     try {
       this.cron = new Cron(
-        this.deps.scan.cron,
-        { timezone: this.deps.scan.timezone, protect: true },
+        this.scan.cron,
+        { timezone: this.scan.timezone, protect: true },
         () => { void this.tick(); },
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      logger.error({ err, stackId: this.deps.stackId, cron: this.deps.scan.cron }, "ScanScheduler: invalid cron expression — scheduler not started");
+      logger.error({ err, stackId: this.deps.stackId, cron: this.scan.cron }, "ScanScheduler: invalid cron expression — scheduler not started");
       this.lastError = `Invalid cron: ${msg}`;
       this.cron = undefined;
       return;
@@ -132,13 +140,13 @@ export class ScanScheduler {
 
     logger.info({
       stackId: this.deps.stackId,
-      cron: this.deps.scan.cron,
-      timezone: this.deps.scan.timezone,
+      cron: this.scan.cron,
+      timezone: this.scan.timezone,
       nextRun: this.cron.nextRun()?.toISOString(),
-      runOnEnable: this.deps.scan.runOnEnable,
+      runOnEnable: this.scan.runOnEnable,
     }, "ScanScheduler: started");
 
-    if (this.deps.scan.runOnEnable) {
+    if (this.scan.runOnEnable) {
       // Defer to next tick so start() returns before the first tick begins —
       // avoids surprising callers who expect start() to be synchronous.
       setImmediate(() => { void this.tick(); });
@@ -147,7 +155,7 @@ export class ScanScheduler {
 
   /** Trigger a tick immediately (e.g. via on-demand API). No-op if disabled. */
   async triggerNow(): Promise<void> {
-    if (!this.cron && !this.deps.scan.enabled) return;
+    if (!this.cron && !this.scan.enabled) return;
     await this.tick();
   }
 
@@ -162,11 +170,66 @@ export class ScanScheduler {
     this.cron = undefined;
   }
 
+  /**
+   * Apply a new scan config at runtime. Called by PUT /api/scan/settings
+   * when an operator flips enable/cron/timezone via the GUI. Minimal-work:
+   *  - if only non-schedule fields changed (e.g. maxInvestigationsPerTick,
+   *    probe rules), just swap the config — the next tick picks it up.
+   *  - if enabled flipped on: start()
+   *  - if enabled flipped off: stop()
+   *  - if cron or timezone changed while running: restart cron with new
+   *    expression (tears down the Cron instance; next fire uses the new
+   *    schedule).
+   *
+   * A currently-executing tick is NOT interrupted — it reads `this.scan`
+   * at the top of the call path so ongoing work completes against its
+   * snapshot. Next tick uses the new config.
+   */
+  reload(newConfig: ScanConfig): void {
+    const prev = this.scan;
+    this.scan = newConfig;
+
+    const scheduleChanged =
+      prev.cron !== newConfig.cron || prev.timezone !== newConfig.timezone;
+
+    if (prev.enabled && !newConfig.enabled) {
+      // Disabled: stop but keep `stopped` logic so start() can re-activate later.
+      this.cron?.stop();
+      this.cron = undefined;
+      this.stopped = false; // allow start() to re-schedule if reload swings back
+      logger.info({ stackId: this.deps.stackId }, "ScanScheduler: disabled via reload");
+      return;
+    }
+
+    if (!prev.enabled && newConfig.enabled) {
+      // Enabled for the first time (or after a previous disable): start from clean state.
+      logger.info({ stackId: this.deps.stackId }, "ScanScheduler: enabling via reload");
+      this.start();
+      return;
+    }
+
+    if (newConfig.enabled && scheduleChanged) {
+      // Still enabled but cadence changed: tear down the Cron and re-schedule.
+      this.cron?.stop();
+      this.cron = undefined;
+      logger.info({
+        stackId: this.deps.stackId,
+        from: { cron: prev.cron, timezone: prev.timezone },
+        to: { cron: newConfig.cron, timezone: newConfig.timezone },
+      }, "ScanScheduler: schedule changed via reload");
+      this.start();
+      return;
+    }
+
+    // Non-schedule, non-enable change — e.g. maxInvestigationsPerTick, probe
+    // rules, dedup window. Next tick picks up the new `this.scan` automatically.
+  }
+
   getStatus(): ScanStatus {
     return {
-      enabled: this.deps.scan.enabled,
-      cron: this.deps.scan.cron,
-      timezone: this.deps.scan.timezone,
+      enabled: this.scan.enabled,
+      cron: this.scan.cron,
+      timezone: this.scan.timezone,
       nextRun: this.cron?.nextRun()?.toISOString() ?? null,
       lastRun: this.lastRunIso,
       lastError: this.lastError,
@@ -209,7 +272,7 @@ export class ScanScheduler {
 
       const rawHits = await runProbe({
         services,
-        probe: this.deps.scan.probe,
+        probe: this.scan.probe,
         providers: this.deps.providers(),
         datasourceUid,
         signal: this.ac.signal,
@@ -225,7 +288,7 @@ export class ScanScheduler {
       // This is independent of the global webhook dedup (5min by default) —
       // a scan-dedup of 30min prevents the same service from being investigated
       // every 4 hours if it keeps tripping the same rule.
-      const dedupSeconds = this.deps.scan.dedupWindowMinutes * 60;
+      const dedupSeconds = this.scan.dedupWindowMinutes * 60;
       const postDedupHits = rawHits.filter((hit) => {
         const recent = this.deps.db.hasRecentInvestigation(this.deps.stackId, hit.service, dedupSeconds);
         if (recent) {
@@ -238,7 +301,7 @@ export class ScanScheduler {
       const prioritized = prioritizeHits(postDedupHits, (service) =>
         this.deps.db.getLastInvestigationAt(this.deps.stackId, service),
       );
-      const cap = this.deps.scan.maxInvestigationsPerTick;
+      const cap = this.scan.maxInvestigationsPerTick;
       const selected = prioritized.slice(0, cap);
       const dropped = prioritized.length - selected.length;
       if (dropped > 0) {

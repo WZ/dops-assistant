@@ -30,6 +30,14 @@ describe("parseUrl", () => {
     expect(parseUrl("/settings/providers")).toEqual({ type: "settings", initialTab: "providers" });
   });
 
+  it("parses /settings/scan as the scan tab", () => {
+    expect(parseUrl("/settings/scan")).toEqual({ type: "settings", initialTab: "scan" });
+  });
+
+  it("parses /settings/notifications as the notifications tab", () => {
+    expect(parseUrl("/settings/notifications")).toEqual({ type: "settings", initialTab: "notifications" });
+  });
+
   it("returns notfound for unknown paths", () => {
     // Previously silently rendered the dashboard, which hid dead links and
     // routing bugs. Unknown paths now surface as an explicit 404 view.

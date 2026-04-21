@@ -34,7 +34,13 @@ export function parseUrl(pathname: string): LeftPaneView {
   if (setMatch) {
     const rawTab = setMatch[1];
     if (!rawTab) return { type: "settings" };
-    if (rawTab === "providers" || rawTab === "skills" || rawTab === "stacks") {
+    if (
+      rawTab === "providers" ||
+      rawTab === "skills" ||
+      rawTab === "stacks" ||
+      rawTab === "scan" ||
+      rawTab === "notifications"
+    ) {
       return { type: "settings", initialTab: rawTab };
     }
   }

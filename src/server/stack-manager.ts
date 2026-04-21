@@ -30,6 +30,7 @@ import { ConversationMemory } from "../memory/conversation.js";
 import { ServiceRegistryStore } from "../services/registry.js";
 import { ServiceHealthPoller, type HealthStatus } from "./service-health-poller.js";
 import { ScanScheduler, type ScanAnomaliesEvent } from "./scan-scheduler.js";
+import { getEffectiveScanConfig } from "./scan-settings.js";
 import type { Database } from "./db.js";
 import type { StackRow, StackSummary, StackConfig } from "../types/stack-types.js";
 import { DEFAULT_STACK_SLUG } from "../types/stack-types.js";
@@ -163,12 +164,14 @@ export class StackManager {
     // ScanScheduler: per-stack. Emits onAnomaliesDetected — the actual
     // dispatch to InvestigationRunner is wired in index.ts (lazy runner
     // construction matches the existing onHealthTransition pattern).
+    // Use effective config so DB-stored GUI overrides take effect at boot,
+    // not just after the operator toggles again.
     const scanScheduler = new ScanScheduler({
       providers: () => providerRegistry.getProviders(),
       registryStore: serviceRegistry,
       db: this.db,
       stackId: row.id,
-      scan: this.config.scan,
+      scan: getEffectiveScanConfig(this.db, this.config),
       getPrometheusDatasourceUid: getDatasourceUid,
       getHiddenServices: () => this.db.getHiddenServices(row.id),
       onAnomaliesDetected: (evt: ScanAnomaliesEvent) => {
@@ -505,6 +508,26 @@ export class StackManager {
     for (const ctx of this.stacks.values()) {
       ctx.healthPoller.stop();
       ctx.scanScheduler.stop();
+    }
+  }
+
+  /**
+   * Re-apply effective scan config to every stack's scheduler. Called by
+   * PUT /api/scan/settings after DB settings change so operators don't have
+   * to restart the server for enable/cron/timezone edits to take effect.
+   *
+   * Each scheduler's reload() is idempotent and handles start/stop/reschedule
+   * based on the diff between its current live config and the new effective
+   * config.
+   */
+  reloadAllScanSchedulers(): void {
+    const effective = getEffectiveScanConfig(this.db, this.config);
+    for (const ctx of this.stacks.values()) {
+      // Gate on viable metrics provider: if a stack has no working metrics
+      // MCP, calling start() would log-spam. Skip here, poller-change listener
+      // will pick it up later if a provider is added.
+      if (!ctx.providerRegistry.hasViableMetricsProvider()) continue;
+      ctx.scanScheduler.reload(effective);
     }
   }
 
