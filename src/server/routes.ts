@@ -18,6 +18,7 @@ import { buildServiceBrief } from "./service-brief.js";
 import type { LanguageModel } from "ai";
 import { eventLog } from "./event-log.js";
 import { SkillInputSchema } from "./sanitize.js";
+import type { ServiceListItem, ServiceHealth } from "../types/services.js";
 
 export interface DependencyNode {
   id: string;
@@ -324,15 +325,28 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
   app.get("/api/services", (req: Request, res: Response) => {
     const allServices = getAllServices(config, req);
-
-    // Merge service metadata (alias, tags) into each service object
     const allMeta = db.getAllServiceMetadata(req.stackId);
     const metaMap = new Map(allMeta.map(m => [m.service, m]));
-    const enriched = allServices.map(s => {
+    const latestInv = db.getLatestInvestigationPerService(req.stackId);
+    const healthSnapshot = Object.fromEntries(req.stackContext.healthPoller.getHealth());
+
+    const items: ServiceListItem[] = allServices.map((s) => {
       const meta = metaMap.get(s.name);
-      return meta ? { ...s, alias: meta.alias, tags: meta.tags } : s;
+      const inv = latestInv.get(s.name);
+      return {
+        name: s.name,
+        health: (healthSnapshot[s.name] ?? "unknown") as ServiceHealth,
+        metadata: {
+          alias: meta?.alias ?? undefined,
+          tags: meta?.tags ?? [],
+        },
+        lastInvestigation: inv
+          ? { id: inv.id, createdAt: inv.createdAt, confidence: inv.confidence, status: inv.status }
+          : null,
+      };
     });
-    res.json(enriched);
+
+    res.json({ services: items });
   });
 
   app.get("/api/branding", (req: Request, res: Response) => {
