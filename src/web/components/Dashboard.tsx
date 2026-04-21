@@ -489,9 +489,7 @@ export function Dashboard({
         </section>
       ) : (
         <>
-          <div className="dashboard-stream-grid">
-            <div className="min-w-0">
-              {/* Section B: KPI Stat Cards */}
+          {/* Section B: KPI Stat Cards */}
               <section aria-label="Overview" className="mb-4">
                 <div className="flex items-center gap-2 mb-3">
                   <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
@@ -741,16 +739,6 @@ export function Dashboard({
                   </div>
                 )}
               </section>
-            </div>
-            <aside className="mt-6 dashboard-stream-aside">
-              <EventStream
-                events={recentEvents}
-                loading={recentEventsLoading}
-                error={recentEventsError}
-                truncated={recentEventsTruncated}
-              />
-            </aside>
-          </div>
 
           {/* Section F: Learned Patterns */}
           {patterns.length > 0 && (
@@ -805,6 +793,16 @@ export function Dashboard({
               </div>
             </section>
           )}
+
+          {/* Section G: Recent Events */}
+          <section aria-label="Recent events" className="mb-4">
+            <EventStream
+              events={recentEvents}
+              loading={recentEventsLoading}
+              error={recentEventsError}
+              truncated={recentEventsTruncated}
+            />
+          </section>
         </>
       )}
 
