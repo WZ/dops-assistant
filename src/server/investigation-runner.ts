@@ -19,6 +19,7 @@ import type { RcaReport } from "../types/rca-types.js";
 import type { ServiceConfig, InvestigationTemplate } from "../config/schema.js";
 import type { SkillStore } from "../skills/store.js";
 import type { PhaseStats, ServerMessage } from "../types/ws-types.js";
+import { eventLog } from "./event-log.js";
 
 
 const logger = createLogger();
@@ -142,6 +143,14 @@ export class InvestigationRunner {
 
     // 1. Create DB record
     this.db.createInvestigation(stackId ?? "", { id: invId, service: service.name, query: message, status: "running" });
+    eventLog.append({
+      kind: "investigation_started",
+      severity: "info",
+      summary: `investigation started · ${service.name}`,
+      stackId,
+      service: service.name,
+      href: `/investigations/${invId}`,
+    });
 
     // 2. Search for matching skills — pass both string (for planning step) and Skill[] (for evidence steps)
     let skillContext: string | undefined;
@@ -293,6 +302,17 @@ export class InvestigationRunner {
         total_output_tokens: totalTokens.outputTokens,
         total_duration_ms: totalDurationMs,
       });
+      const confidencePct = report.confidenceScore != null ? Math.round(report.confidenceScore * 100) : null;
+      eventLog.append({
+        kind: "investigation_completed",
+        severity: "success",
+        summary: confidencePct != null
+          ? `investigation complete · ${service.name} · confidence ${confidencePct}%`
+          : `investigation complete · ${service.name}`,
+        stackId,
+        service: service.name,
+        href: `/investigations/${invId}`,
+      });
 
       callbacks?.onTotalUsage?.(invId, totalTokens.inputTokens, totalTokens.outputTokens, totalDurationMs);
       callbacks?.onComplete?.(invId, report);
@@ -311,6 +331,14 @@ export class InvestigationRunner {
       logger.error({ err, invId, service: service.name }, "Investigation failed");
       this.db.updateInvestigation(invId, { status: "failed" });
       const errorMsg = friendlyError(err);
+      eventLog.append({
+        kind: "investigation_failed",
+        severity: "error",
+        summary: `investigation failed · ${service.name} · ${errorMsg}`,
+        stackId,
+        service: service.name,
+        href: `/investigations/${invId}`,
+      });
       callbacks?.onFailed?.(invId, errorMsg);
       throw err;
     }

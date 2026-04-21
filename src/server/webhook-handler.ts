@@ -21,6 +21,7 @@ import { InvestigationDedup } from "./investigation-dedup.js";
 import { matchServiceFromText } from "../agents/intent.js";
 import { AlertPayloadSchema, type ValidatedAlertPayload } from "./sanitize.js";
 import { wrapUntrusted } from "../agents/shared/prompt-helpers.js";
+import { eventLog } from "./event-log.js";
 
 const logger = createLogger();
 
@@ -196,6 +197,14 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
 
     // 7. Run investigation in background (headless — no WS callbacks)
     logger.info({ service: service.name, template, alertName }, "Alert webhook: starting headless investigation");
+    eventLog.append({
+      kind: "alert_received",
+      severity: "warn",
+      summary: `alert · ${alertName} · ${service.name}`,
+      stackId,
+      service: service.name,
+      meta: { source: "alertmanager" },
+    });
     try {
       await runner.run({
         service,
