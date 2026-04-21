@@ -466,6 +466,43 @@ export class Database {
     ).all(stackId, limit, offset) as InvestigationRow[]).map(normalizeRow);
   }
 
+  getLatestInvestigationPerService(stackId: string): Map<string, {
+    id: string;
+    createdAt: number;
+    confidence: number | null;
+    status: "running" | "complete" | "failed";
+  }> {
+    const rows = this.db.prepare(
+      `SELECT id, service, status, created_at,
+              CASE WHEN json_valid(report) THEN json_extract(report, '$.confidenceScore') ELSE NULL END AS confidence_score
+       FROM investigations
+       WHERE stack_id = ?
+       ORDER BY service, created_at DESC, rowid DESC`
+    ).all(stackId) as Array<{
+      id: string;
+      service: string;
+      status: string;
+      created_at: number;
+      confidence_score: number | null;
+    }>;
+    const result = new Map<string, {
+      id: string;
+      createdAt: number;
+      confidence: number | null;
+      status: "running" | "complete" | "failed";
+    }>();
+    for (const row of rows) {
+      if (result.has(row.service)) continue;
+      result.set(row.service, {
+        id: row.id,
+        createdAt: row.created_at,
+        confidence: row.confidence_score,
+        status: row.status as "running" | "complete" | "failed",
+      });
+    }
+    return result;
+  }
+
   createPhase(phase: { id: string; investigationId: string; phase: string; status: string }): void {
     this.db.prepare("INSERT INTO investigation_phases (id, investigation_id, phase, status) VALUES (?, ?, ?, ?)").run(phase.id, phase.investigationId, phase.phase, phase.status);
   }

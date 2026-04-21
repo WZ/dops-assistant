@@ -775,4 +775,34 @@ describe("Database", () => {
       expect(statsB.investigations.active).toBe(1);
     });
   });
+
+  // ── getLatestInvestigationPerService ──────────────────────────────────
+
+  describe("getLatestInvestigationPerService", () => {
+    it("returns the most recent investigation per service with confidence", () => {
+      const stack = "s1";
+      db.createInvestigation(stack, { id: "i1", service: "payments-api", query: "q", status: "complete" });
+      db.updateInvestigation("i1", { status: "complete", report: JSON.stringify({ confidenceScore: 0.82 }) });
+      db.createInvestigation(stack, { id: "i2", service: "payments-api", query: "q", status: "complete" });
+      db.updateInvestigation("i2", { status: "complete", report: JSON.stringify({ confidenceScore: 0.91 }) });
+      db.createInvestigation(stack, { id: "i3", service: "auth-service", query: "q", status: "running" });
+
+      const map = db.getLatestInvestigationPerService(stack);
+      expect(map.get("payments-api")).toMatchObject({ id: "i2", confidence: 0.91, status: "complete" });
+      expect(map.get("auth-service")).toMatchObject({ id: "i3", confidence: null, status: "running" });
+      expect(map.size).toBe(2);
+    });
+
+    it("scopes by stackId — does not leak across stacks", () => {
+      db.createInvestigation("s1", { id: "a", service: "svc", query: "q", status: "complete" });
+      db.createInvestigation("s2", { id: "b", service: "svc", query: "q", status: "complete" });
+
+      expect(db.getLatestInvestigationPerService("s1").get("svc")?.id).toBe("a");
+      expect(db.getLatestInvestigationPerService("s2").get("svc")?.id).toBe("b");
+    });
+
+    it("returns empty map when stack has no investigations", () => {
+      expect(db.getLatestInvestigationPerService("empty-stack").size).toBe(0);
+    });
+  });
 });
