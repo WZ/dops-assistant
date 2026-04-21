@@ -47,12 +47,16 @@ vi.mock("./VersionHistory", () => ({
 }));
 
 /** Baseline mock responses for all the API endpoints ServicesPage calls. */
-function mockFetchResponses(services: Array<{ name: string }>) {
+function mockFetchResponses(rawServices: Array<{ name: string }>) {
+  // Build ServiceListItem shapes from minimal stubs
+  const services = rawServices.map((s) => ({
+    name: s.name,
+    health: "unknown" as const,
+    metadata: { tags: [] },
+    lastInvestigation: null,
+  }));
   (globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string | Request) => {
     const urlStr = typeof url === "string" ? url : url.toString();
-    if (urlStr.includes("/api/services/health")) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
-    }
     if (urlStr.includes("/api/services/hidden")) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
     }
@@ -60,10 +64,7 @@ function mockFetchResponses(services: Array<{ name: string }>) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
     }
     if (urlStr.includes("/api/services")) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve(services) });
-    }
-    if (urlStr.includes("/api/investigations")) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ services }) });
     }
     return Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}) });
   });

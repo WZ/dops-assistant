@@ -14,28 +14,27 @@ function Wrapper({ children }: { children: ReactNode }) {
   );
 }
 
-// ServiceCard fetches per-service health history — stub it to avoid noise.
-vi.mock("./ServiceCard", () => ({
-  ServiceCard: ({ name }: { name: string }) => (
-    <div data-testid="service-card">{name}</div>
-  ),
-}));
-
 // Prevent the FirstRunBanner from leaking into counter-copy assertions.
 vi.mock("./FirstRunBanner", () => ({
   FirstRunBanner: () => null,
 }));
 
 interface MockOpts {
-  services?: Array<{ name: string }>;
+  services?: Array<{ name: string; health?: string }>;
   hidden?: Array<{ service: string; reason: string | null; hidden_at: string }>;
-  health?: Record<string, string>;
 }
 
 function mockFetch(opts: MockOpts = {}) {
-  const services = opts.services ?? [];
+  const rawServices = opts.services ?? [];
   const hidden = opts.hidden ?? [];
-  const health = opts.health ?? {};
+
+  // Build ServiceListItem shapes from minimal stubs
+  const services = rawServices.map((s) => ({
+    name: s.name,
+    health: (s.health ?? "unknown") as "healthy" | "degraded" | "down" | "unknown",
+    metadata: { tags: [] },
+    lastInvestigation: null,
+  }));
 
   (globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementation((url: string | Request) => {
     const urlStr = typeof url === "string" ? url : url.toString();
@@ -48,14 +47,8 @@ function mockFetch(opts: MockOpts = {}) {
     if (urlStr.includes("/api/services/stale-unknown")) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
     }
-    if (urlStr.includes("/api/services/health")) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve(health) });
-    }
     if (urlStr.includes("/api/services")) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve(services) });
-    }
-    if (urlStr.includes("/api/investigations")) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ services }) });
     }
     return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
   });
