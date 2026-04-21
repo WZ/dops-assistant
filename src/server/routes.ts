@@ -200,6 +200,20 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     res.json(stackManager.listStacks());
   });
 
+  /**
+   * Proactive scan status for the resolved stack. Read-only, always safe to poll
+   * from the UI. Shape matches the ScanStatus interface in scan-scheduler.ts
+   * plus the `enabled` flag coming from the effective runtime config (not the
+   * startup config — matters when scan.enabled is flipped in config + restart).
+   */
+  app.get("/api/scan/status", (req: Request, res: Response) => {
+    if (!req.stackContext) {
+      res.status(400).json({ error: "No active stack" });
+      return;
+    }
+    res.json(req.stackContext.scanScheduler.getStatus());
+  });
+
   app.post("/api/stacks", async (req: Request, res: Response) => {
     try {
       const { name, slug, config: stackConfig } = req.body as { name: string; slug: string; config: unknown };
