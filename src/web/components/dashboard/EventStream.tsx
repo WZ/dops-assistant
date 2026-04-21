@@ -25,14 +25,14 @@ function relTime(ts: number): string {
 
 export function EventStream({ events, loading, error, truncated }: Props) {
   return (
-    <aside aria-label="Recent events" className="rounded-lg border border-border bg-card h-full flex flex-col">
-      <header className="flex items-center gap-2 px-3 py-2 border-b border-border shrink-0">
+    <aside aria-label="Recent events" className="rounded-lg border border-border bg-card">
+      <header className="flex items-center gap-2 px-3 py-2 border-b border-border">
         <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
         <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">
           Recent events
         </h2>
       </header>
-      <ul role="list" className="flex-1 min-h-0 overflow-y-auto divide-y divide-border/60">
+      <ul role="list" className="max-h-[520px] overflow-y-auto divide-y divide-border/60">
         {loading && events.length === 0 ? (
           <li className="px-3 py-4 text-xs text-muted-foreground">Loading…</li>
         ) : error ? (
@@ -52,7 +52,7 @@ export function EventStream({ events, loading, error, truncated }: Props) {
         )}
       </ul>
       {truncated && (
-        <div className="px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground/60 border-t border-border shrink-0">
+        <div className="px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground/60 border-t border-border">
           older events dropped
         </div>
       )}
