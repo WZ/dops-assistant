@@ -270,7 +270,7 @@ export function ServicesPage({
   }, [services, hiddenSet, searchQuery, filters]);
 
   const sortedServices = useMemo(() => {
-    const order: Record<ServiceHealth, number> = { down: 0, degraded: 1, unknown: 2, healthy: 3 };
+    const order: Record<ServiceHealth, number> = { healthy: 0, degraded: 1, down: 2, unknown: 3 };
     return [...visibleServices].sort((a, b) => {
       const d = order[a.health] - order[b.health];
       return d !== 0 ? d : a.name.localeCompare(b.name);
