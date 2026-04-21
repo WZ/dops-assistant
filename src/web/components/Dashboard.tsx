@@ -618,7 +618,8 @@ export function Dashboard({
                           | "degraded"
                           | "down"
                           | "unknown",
-                      }))}
+                      }))
+                      .filter((s) => s.health !== "unknown")}
                     onClickService={onViewService}
                     onViewAll={onViewAllServices}
                   />
