@@ -3,6 +3,7 @@ import type { Request, Response } from "express";
 import { createWebhookHandler } from "./webhook-handler.js";
 import type { InvestigationRunner } from "./investigation-runner.js";
 import type { WebhookConfig, ServiceConfig } from "../config/schema.js";
+import { eventLog } from "./event-log.js";
 
 const SERVICES: ServiceConfig[] = [
   { name: "checkout-service", metrics: [], logLabels: {} },
@@ -199,5 +200,37 @@ describe("webhook handler", () => {
     await handler(req, res);
     expect(res.status).toHaveBeenCalledWith(401);
     expect(res.status).not.toHaveBeenCalledWith(503);
+  });
+});
+
+describe("webhook handler eventLog integration", () => {
+  let runner: InvestigationRunner;
+
+  beforeEach(() => {
+    runner = mockRunner();
+    eventLog.reset();
+  });
+
+  it("emits alert_received event with correct service when a firing alert is processed", async () => {
+    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES });
+    const { req, res } = mockReqRes(
+      {
+        alerts: [{
+          status: "firing",
+          labels: { alertname: "HighErrorRate", service: "checkout-service", severity: "critical" },
+          annotations: { summary: "Error rate is high" },
+          startsAt: "2026-03-18T10:00:00Z",
+          endsAt: "0001-01-01T00:00:00Z",
+        }],
+      },
+      "Bearer test-secret",
+    );
+
+    await handler(req, res);
+
+    const { events } = eventLog.recent(10);
+    expect(events.length).toBeGreaterThan(0);
+    expect(events[0].kind).toBe("alert_received");
+    expect(events[0].service).toBe("checkout-service");
   });
 });

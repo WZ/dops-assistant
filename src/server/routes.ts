@@ -16,6 +16,7 @@ import type { MetricSeries } from "./prometheus-query.js";
 import { inferDependencyGraph } from "./dependency-graph.js";
 import { buildServiceBrief } from "./service-brief.js";
 import type { LanguageModel } from "ai";
+import { eventLog } from "./event-log.js";
 import { SkillInputSchema } from "./sanitize.js";
 
 export interface DependencyNode {
@@ -401,6 +402,15 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     const phases = db.getPhases(idStr);
     const events = db.getEvents(idStr);
     res.json({ investigation, phases, events });
+  });
+
+  app.get("/api/events/recent", (req: Request, res: Response) => {
+    const limitParam = Number(req.query.limit);
+    const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 200) : 50;
+    // Filter events to the active stack (plus global events like process-wide probes).
+    // req.stackId is populated by the stack middleware; empty string means unresolved.
+    const stackId = req.stackId && req.stackId !== "" ? req.stackId : undefined;
+    res.json(eventLog.recent(limit, stackId));
   });
 
   // ── Service Metadata REST API ──────────────────────────────────────────
