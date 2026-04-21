@@ -486,7 +486,7 @@ export function Dashboard({
         </section>
       ) : (
         <>
-          <div className="xl:grid xl:grid-cols-[minmax(0,1fr)_320px] xl:gap-6">
+          <div className="dashboard-stream-grid">
             <div className="min-w-0">
               {/* Section B: KPI Stat Cards */}
               <section aria-label="Overview" className="mb-4">
@@ -738,7 +738,7 @@ export function Dashboard({
                 )}
               </section>
             </div>
-            <aside className="mt-6 xl:mt-0">
+            <aside className="mt-6 dashboard-stream-aside">
               <EventStream
                 events={recentEvents}
                 loading={recentEventsLoading}
