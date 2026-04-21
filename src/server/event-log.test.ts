@@ -32,4 +32,14 @@ describe("EventLog", () => {
     log.append({ kind: "alert_received", severity: "warn", summary: long });
     expect(log.recent().events[0].summary.length).toBe(80);
   });
+
+  it("filters by stackId but includes stack-less (global) events", () => {
+    log.append({ kind: "investigation_started", severity: "info", summary: "a", stackId: "stack-a" });
+    log.append({ kind: "investigation_started", severity: "info", summary: "b", stackId: "stack-b" });
+    log.append({ kind: "provider_health_changed", severity: "error", summary: "global" });
+    const scoped = log.recent(10, "stack-a");
+    expect(scoped.events.map((e) => e.summary)).toEqual(["global", "a"]);
+    const all = log.recent(10);
+    expect(all.events.map((e) => e.summary)).toEqual(["global", "b", "a"]);
+  });
 });

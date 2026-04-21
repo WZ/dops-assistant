@@ -147,6 +147,7 @@ export class InvestigationRunner {
       kind: "investigation_started",
       severity: "info",
       summary: `investigation started · ${service.name}`,
+      stackId,
       service: service.name,
       href: `/investigations/${invId}`,
     });
@@ -308,6 +309,7 @@ export class InvestigationRunner {
         summary: confidencePct != null
           ? `investigation complete · ${service.name} · confidence ${confidencePct}%`
           : `investigation complete · ${service.name}`,
+        stackId,
         service: service.name,
         href: `/investigations/${invId}`,
       });
@@ -333,6 +335,7 @@ export class InvestigationRunner {
         kind: "investigation_failed",
         severity: "error",
         summary: `investigation failed · ${service.name} · ${errorMsg}`,
+        stackId,
         service: service.name,
         href: `/investigations/${invId}`,
       });

@@ -201,6 +201,7 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
       kind: "alert_received",
       severity: "warn",
       summary: `alert · ${alertName} · ${service.name}`,
+      stackId,
       service: service.name,
       meta: { source: "alertmanager" },
     });

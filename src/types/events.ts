@@ -14,6 +14,7 @@ export interface RecentEvent {
   kind: EventKind;
   severity: "info" | "warn" | "error" | "success";
   summary: string;          // one-line human description, <= 80 chars
+  stackId?: string;         // scope events to a stack; undefined = global (e.g., process-wide probes)
   service?: string;         // optional service name association
   href?: string;            // optional deep link (investigation id path, etc.)
   meta?: Record<string, string | number | boolean>;
