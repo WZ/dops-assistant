@@ -12,6 +12,8 @@ import { ArrowLeft, FilePlus, RotateCw, ChevronDown, Download, Link2, FileText, 
 import { PhaseStepper, type PhaseState } from "./PhaseStepper";
 import { EvidenceTimeline } from "./EvidenceTimeline";
 import { RcaReport } from "./RcaReport";
+import { InvestigationTopStrip } from "./investigation/InvestigationTopStrip";
+import { EvidenceColumn } from "./investigation/EvidenceColumn";
 import { useStackContext } from "../contexts/StackContext";
 import type { TimelineEvent } from "./ActivityTimeline";
 import type { TimeSeriesData } from "./MetricChart";
@@ -478,7 +480,22 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
           {isRunning && (
             <span className="text-[10px] font-mono text-primary/60 uppercase tracking-[0.12em]">investigating...</span>
           )}
-          {isComplete && report && (
+        </div>
+      </div>
+
+      {/* Top strip — phase stepper + confidence + export/rerun slots */}
+      <InvestigationTopStrip
+        phases={phases}
+        phaseTokens={phaseTokens}
+        isRunning={isRunning}
+        isComplete={isComplete}
+        confidencePct={
+          (report as any)?.confidenceScore != null
+            ? Math.round((report as any).confidenceScore * 100)
+            : null
+        }
+        exportSlot={
+          isComplete && report ? (
             <ExportMenu
               report={report as RcaReportType}
               service={service}
@@ -502,8 +519,10 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
                 } catch { /* ignore */ }
               }}
             />
-          )}
-          {isComplete && onRerun && (
+          ) : null
+        }
+        rerunSlot={
+          isComplete && onRerun ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -532,9 +551,9 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-          )}
-        </div>
-      </div>
+          ) : null
+        }
+      />
 
       {/* Progress bar — visible while running */}
       {isRunning && (
@@ -543,36 +562,28 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
         </div>
       )}
 
-      {/* Scrollable content — Two-Column Dossier layout */}
+      {/* Scrollable content — Dense Desk layout: narrative + evidence columns */}
       <div className="flex-1 overflow-y-auto">
         <div className="flex flex-col lg:flex-row gap-0 min-h-full">
 
-          {/* LEFT RAIL — metadata column */}
-          <aside className="w-full lg:w-[300px] shrink-0 lg:border-r border-border/30 px-5 py-6 space-y-6">
+          {/* NARRATIVE COLUMN */}
+          <div className="flex-1 min-w-0 px-6 py-6 space-y-6">
 
-            {/* Phase rail — compact summary only once the investigation is complete.
-                While running, phases live in the right column so the user can see tool call detail. */}
-            {isComplete && (
-              <div className={phaseSwoop ? "animate-phase-swoop-left" : ""}>
-                <CompactPhaseRail phases={phases} phaseTokens={phaseTokens} />
-              </div>
-            )}
-
-            {/* Trigger quote */}
+            {/* Trigger quote — moved from left rail */}
             {query && (
               <section>
                 <RailLabel>Trigger</RailLabel>
-                <p className="text-[12px] font-body italic text-muted-foreground/80 leading-relaxed">
+                <p className="text-[13px] font-body italic text-muted-foreground/80 leading-relaxed">
                   &ldquo;{query}&rdquo;
                 </p>
               </section>
             )}
 
-            {/* Metadata */}
+            {/* Metadata — moved from left rail */}
             {(totalUsage || isComplete) && (
               <section>
                 <RailLabel>Metadata</RailLabel>
-                <dl className="space-y-1.5 text-[10px] font-mono">
+                <dl className="space-y-1.5 text-[11px] font-mono">
                   {(report as any)?.confidence && (
                     <MetaRow
                       label="confidence"
@@ -593,10 +604,6 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
               </section>
             )}
 
-          </aside>
-
-          {/* RIGHT COLUMN — live phase activity while running, RCA report when complete */}
-          <div className="flex-1 min-w-0 px-6 py-6 space-y-6">
             {/* Live phase activity — only while running, hidden once the report lands */}
             {!isComplete && (
               <section>
@@ -618,7 +625,7 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
               </div>
             ) : null}
 
-            {/* Evidence */}
+            {/* Evidence timeline — detailed phase-by-phase evidence view */}
             {hasEvidence && (
               <section>
                 <EvidenceTimeline
@@ -638,6 +645,9 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
               </section>
             )}
           </div>
+
+          {/* EVIDENCE COLUMN — sparkline charts extracted from prometheus tool calls */}
+          <EvidenceColumn charts={timeSeries} />
 
         </div>
       </div>
