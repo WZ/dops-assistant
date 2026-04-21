@@ -853,6 +853,25 @@ export class Database {
     return !!row;
   }
 
+  /**
+   * Epoch ms of the most recent completed investigation for this stack+service,
+   * or null if none. Used by the scan scheduler's per-tick prioritization
+   * ("oldest last-investigated wins" tiebreak when more services trip than
+   * `maxInvestigationsPerTick`). Failed investigations are excluded so a
+   * service whose investigations keep erroring doesn't get starved.
+   *
+   * Uses SQLite `strftime('%s', ...)` to convert the `created_at` TEXT column
+   * to a Unix timestamp — Date.parse() on SQLite's space-separated datetime
+   * format is implementation-defined (can yield NaN or local-time) and is
+   * unsafe for cross-runtime comparisons.
+   */
+  getLastInvestigationAt(stackId: string, service: string): number | null {
+    const row = this.db.prepare(
+      "SELECT CAST(strftime('%s', created_at) AS INTEGER) * 1000 AS ms FROM investigations WHERE stack_id = ? AND service = ? AND status != 'failed' ORDER BY created_at DESC LIMIT 1"
+    ).get(stackId, service) as { ms: number } | undefined;
+    return row?.ms ?? null;
+  }
+
   // ── Settings ──────────────────────────────────────────────────────────
 
   getSetting(key: string): string | undefined {

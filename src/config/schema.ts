@@ -147,6 +147,79 @@ const WebhookSchema = z.object({
   slackWebhookUrl: z.string().url().optional(),
 });
 
+/**
+ * Scheduled proactive system scan config. Disabled by default.
+ *
+ * On cron fire, a deterministic PromQL probe pass runs across every registered
+ * service. Services whose values exceed a rule's threshold for `consecutiveTicks`
+ * consecutive ticks get a focused headless investigation (capped at
+ * `maxInvestigationsPerTick`). Design doc:
+ * ~/.gstack/projects/WZ-dops-assistant/wli02-main-design-20260421-012829.md
+ */
+const ThresholdSchema = z.object({
+  op: z.enum(["gt", "lt", "gte", "lte"]),
+  value: z.number(),
+});
+
+const ProbeMetricRuleSchema = z.object({
+  name: z.string(),
+  query: z.string(),
+  threshold: ThresholdSchema,
+  consecutiveTicks: z.number().int().min(1).default(1),
+});
+
+const ProbeLogsSchema = z.object({
+  enabled: z.boolean().default(true),
+  window: z.string().default("15m"),
+  errorRateThreshold: z.number().default(10),
+  consecutiveTicks: z.number().int().min(1).default(2),
+});
+
+const ProbeSchema = z.object({
+  concurrency: z.number().int().min(1).default(8),
+  queryTimeoutMs: z.number().int().min(100).default(3_000),
+  metrics: z.array(ProbeMetricRuleSchema).default([
+    {
+      name: "availability",
+      query: 'up{service="{service}"}',
+      threshold: { op: "lt", value: 1 },
+      consecutiveTicks: 1,
+    },
+    {
+      name: "error_rate",
+      query:
+        'sum(rate(http_requests_total{service="{service}",status=~"5.."}[5m])) / sum(rate(http_requests_total{service="{service}"}[5m]))',
+      threshold: { op: "gt", value: 0.01 },
+      consecutiveTicks: 2,
+    },
+    {
+      name: "latency_p99",
+      query:
+        'histogram_quantile(0.99, rate(http_request_duration_seconds_bucket{service="{service}"}[5m]))',
+      threshold: { op: "gt", value: 2.0 },
+      consecutiveTicks: 2,
+    },
+  ]),
+  logs: ProbeLogsSchema.optional().default({}),
+});
+
+const ScanSchema = z.object({
+  enabled: z.boolean().default(false),
+  cron: z.string().default("0 */4 * * *"),
+  timezone: z.string().default("UTC"),
+  maxInvestigationsPerTick: z.number().int().min(1).default(5),
+  investigationTemplate: InvestigationTemplateSchema.default("standard"),
+  runOnEnable: z.boolean().default(true),
+  dedupWindowMinutes: z.number().int().min(1).default(30),
+  probe: ProbeSchema.optional().default({}),
+});
+
+export type ScanConfig = z.infer<typeof ScanSchema>;
+export type ProbeConfig = z.infer<typeof ProbeSchema>;
+export type ProbeMetricRule = z.infer<typeof ProbeMetricRuleSchema>;
+export type ProbeLogsConfig = z.infer<typeof ProbeLogsSchema>;
+export type Threshold = z.infer<typeof ThresholdSchema>;
+
 export const ConfigSchema = z.object({
   llm: LlmSchema,
   /** Optional API key for authenticating mutating (non-GET) API requests */
@@ -165,6 +238,7 @@ export const ConfigSchema = z.object({
   discovery: DiscoverySchema.optional().default({}),
   memory: MemorySchema.optional().default({}),
   webhook: WebhookSchema.optional().default({}),
+  scan: ScanSchema.optional().default({}),
   branding: BrandingSchema.optional().default({}),
 });
 
