@@ -108,6 +108,8 @@ export function ServicesPage({
   // ── UI state ──────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState("");
   const [filters, setFilters] = useState<FilterValue>({ status: [], tiers: [], owners: [] });
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 50;
   const [hideTarget, setHideTarget] = useState<{ name: string; defaultReason?: string } | null>(null);
   const [bulkHideTarget, setBulkHideTarget] = useState<string[] | null>(null);
   const [bannerDismissed, setBannerDismissed] = useState(false);
@@ -276,6 +278,18 @@ export function ServicesPage({
       return d !== 0 ? d : a.name.localeCompare(b.name);
     });
   }, [visibleServices]);
+
+  const totalPages = Math.max(1, Math.ceil(sortedServices.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pageServices = useMemo(() => {
+    const start = (safePage - 1) * PAGE_SIZE;
+    return sortedServices.slice(start, start + PAGE_SIZE);
+  }, [sortedServices, safePage]);
+
+  // Reset to page 1 whenever the underlying filtered set changes shape
+  useEffect(() => {
+    setPage(1);
+  }, [searchQuery, filters, hiddenSet]);
 
   // ── Handlers ──────────────────────────────────────────────────────
 
@@ -584,12 +598,42 @@ export function ServicesPage({
                 No services match these filters.
               </div>
             ) : (
-              <ServicesTable
-                items={sortedServices}
-                onOpenService={(name) => { onSelectService?.(name); setSubView({ type: "detail", serviceName: name }); }}
-                onInvestigate={(name) => ws.send({ type: "chat", message: `investigate ${name}`, serviceContext: name })}
-                grafanaUrlFor={grafanaUrl ? (name) => `${grafanaUrl}/d/service/${encodeURIComponent(name)}` : undefined}
-              />
+              <>
+                <ServicesTable
+                  items={pageServices}
+                  onOpenService={(name) => { onSelectService?.(name); setSubView({ type: "detail", serviceName: name }); }}
+                  onInvestigate={(name) => ws.send({ type: "chat", message: `investigate ${name}`, serviceContext: name })}
+                  grafanaUrlFor={grafanaUrl ? (name) => `${grafanaUrl}/d/service/${encodeURIComponent(name)}` : undefined}
+                />
+                {sortedServices.length > PAGE_SIZE && (
+                  <nav aria-label="Services pagination" className="flex items-center justify-between mt-3 pl-3 pr-1">
+                    <span className="font-mono text-[10px] tabular-nums text-muted-foreground/60">
+                      {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, sortedServices.length)} of {sortedServices.length}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setPage((p) => Math.max(1, p - 1))}
+                        disabled={safePage <= 1}
+                        className="font-mono text-[10px] uppercase tracking-[0.08em] text-primary/70 hover:text-primary disabled:text-muted-foreground/30 disabled:cursor-not-allowed py-2 px-2 min-h-[44px]"
+                      >
+                        ← Prev
+                      </button>
+                      <span className="font-mono text-[10px] tabular-nums text-muted-foreground/50">
+                        {safePage} / {totalPages}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                        disabled={safePage >= totalPages}
+                        className="font-mono text-[10px] uppercase tracking-[0.08em] text-primary/70 hover:text-primary disabled:text-muted-foreground/30 disabled:cursor-not-allowed py-2 px-2 min-h-[44px]"
+                      >
+                        Next →
+                      </button>
+                    </div>
+                  </nav>
+                )}
+              </>
             )}
 
             {/* Action toolbar */}
