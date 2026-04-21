@@ -24,6 +24,16 @@ export function useRecentEvents(opts: Options = {}): State {
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
+    let timer: number | null = null;
+    // On error, double the delay up to 60s; reset on success. Avoids hammering a
+    // flapping endpoint from every open tab during an incident.
+    let currentDelay = pollMs;
+    const maxDelay = 60_000;
+
+    const schedule = (delay: number) => {
+      if (cancelled) return;
+      timer = window.setTimeout(fetchOnce, delay);
+    };
 
     const fetchOnce = async () => {
       try {
@@ -31,18 +41,21 @@ export function useRecentEvents(opts: Options = {}): State {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const body = (await res.json()) as RecentEventsResponse;
         if (cancelled) return;
+        currentDelay = pollMs;
         setState({ events: body.events, loading: false, error: null, truncated: body.truncated });
       } catch (e) {
         if (cancelled) return;
-        setState((prev) => ({ ...prev, loading: false, error: (e as Error).message }));
+        const message = e instanceof Error ? e.message : String(e);
+        setState((prev) => ({ ...prev, loading: false, error: message }));
+        currentDelay = Math.min(currentDelay * 2, maxDelay);
       }
+      schedule(currentDelay);
     };
 
     fetchOnce();
-    const timer = window.setInterval(fetchOnce, pollMs);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      if (timer !== null) window.clearTimeout(timer);
     };
   }, [limit, pollMs, enabled, stackFetch]);
 
