@@ -6,7 +6,8 @@ export type EventKind =
   | "investigation_failed"
   | "alert_received"
   | "provider_health_changed"
-  | "service_health_changed";
+  | "service_health_changed"
+  | "scan_triggered_manually";
 
 export interface RecentEvent {
   id: string;               // monotonic ulid

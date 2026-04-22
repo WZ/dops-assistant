@@ -854,6 +854,33 @@ export class Database {
   }
 
   /**
+   * Count scan-triggered investigations on this stack within a time window.
+   * Used by the Dashboard activity badge to show "N anomalies in last 24h".
+   *
+   * "Scan-triggered" is identified by the stable message prefix written by
+   * `buildInvestigationMessage()` in anomaly-probe.ts — kept in lockstep with
+   * `classifyTriggerSource()` in rca-eval.ts. If the prefix ever changes,
+   * BOTH must update (tested via shared fixtures in rca-eval.test.ts).
+   *
+   * Counts only investigations with `status = 'complete'` — pending/running
+   * shouldn't inflate the "anomalies found" number the operator sees.
+   */
+  countScanTriggeredInvestigationsSince(stackId: string, sinceIso: string): number {
+    // `created_at` is stored in SQLite's datetime('now') format — space-separated,
+    // no 'T', no 'Z'. An ISO-8601 input string compared directly fails lexically
+    // ("2026-04-22 06:00:00" < "2026-04-22T05:00:00.000Z" because ' ' < 'T').
+    // `datetime(?)` parses the ISO input into the same format before comparison.
+    const row = this.db.prepare(
+      "SELECT COUNT(*) as n FROM investigations " +
+        "WHERE stack_id = ? " +
+        "AND query LIKE 'Proactive scan detected anomaly%' " +
+        "AND status = 'complete' " +
+        "AND created_at >= datetime(?)"
+    ).get(stackId, sinceIso) as { n: number } | undefined;
+    return row?.n ?? 0;
+  }
+
+  /**
    * Epoch ms of the most recent COMPLETED investigation for this stack+service,
    * or null if none. Used by the scan scheduler's per-tick prioritization
    * ("oldest last-investigated wins" tiebreak when more services trip than

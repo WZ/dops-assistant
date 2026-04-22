@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useStackContext } from "../contexts/StackContext";
 
@@ -63,6 +63,13 @@ export function ScanTab() {
   const [cronInput, setCronInput] = useState("");
   const [timezoneInput, setTimezoneInput] = useState("");
   const [dirty, setDirty] = useState(false);
+  const [triggering, setTriggering] = useState(false);
+  const [triggerMsg, setTriggerMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // Tracks post-trigger status-refresh timers so we can clear them on unmount.
+  // Without this, navigating away mid-trigger leaves 3 pending setTimeouts
+  // that fire setState on an unmounted component (React warning + leaked
+  // closure captures).
+  const triggerRefreshTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -97,8 +104,52 @@ export function ScanTab() {
         .then((data: ScanStatus) => setStatus(data))
         .catch(() => { /* ignore */ });
     }, 10_000);
-    return () => clearInterval(interval);
+    const pendingTimers = triggerRefreshTimers.current;
+    return () => {
+      clearInterval(interval);
+      // Clear any post-trigger refresh timers still pending when the tab
+      // unmounts or the effect re-runs.
+      for (const t of pendingTimers) clearTimeout(t);
+      pendingTimers.length = 0;
+    };
   }, [fetchAll, stackFetch]);
+
+  const refreshStatus = useCallback(async () => {
+    try {
+      const res = await stackFetch("/api/scan/status");
+      const data = (await res.json()) as ScanStatus;
+      setStatus(data);
+    } catch { /* ignore */ }
+  }, [stackFetch]);
+
+  const handleTriggerNow = async () => {
+    setTriggering(true);
+    setTriggerMsg(null);
+    try {
+      const res = await stackFetch("/api/scan/trigger", { method: "POST" });
+      if (res.status === 202) {
+        setTriggerMsg({ ok: true, text: "Probe dispatched \u2014 watch the status below." });
+        // A tick typically takes a few seconds once dispatched. Poll the status
+        // a few extra times beyond the standard 10s interval so the operator
+        // sees lastRun update without waiting. Handles tracked in a ref so
+        // unmount cleanup can clear any still-pending timers.
+        triggerRefreshTimers.current.push(
+          setTimeout(() => { void refreshStatus(); }, 1500),
+          setTimeout(() => { void refreshStatus(); }, 4000),
+          setTimeout(() => { void refreshStatus(); }, 8000),
+        );
+      } else {
+        const err = (await res.json().catch(() => ({}))) as { error?: string; hint?: string };
+        setTriggerMsg({
+          ok: false,
+          text: err.error ? `${err.error}${err.hint ? ` \u00b7 ${err.hint}` : ""}` : `Trigger failed: ${res.status}`,
+        });
+      }
+    } catch (err) {
+      setTriggerMsg({ ok: false, text: err instanceof Error ? err.message : "Trigger failed" });
+    }
+    setTriggering(false);
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -266,27 +317,59 @@ export function ScanTab() {
             </h2>
           </div>
 
-          <div className="rounded-lg border border-border/40 bg-card/50 p-4 grid grid-cols-2 gap-x-6 gap-y-3 text-xs font-mono">
-            <Field label="Next run" value={formatTimestamp(status.nextRun)} />
-            <Field label="Last run" value={formatTimestamp(status.lastRun)} />
-            <Field label="Ticking" value={status.ticking ? "yes" : "no"} />
-            <Field
-              label="Drops (overflow)"
-              value={String(status.dropsByConcurrency)}
-              hint={
-                status.dropsByConcurrency > 0
-                  ? "Services flagged but dropped by per-tick cap. Tune config.yaml's scan.maxInvestigationsPerTick if this grows."
-                  : undefined
-              }
-            />
-            {status.lastError && (
-              <div className="col-span-2">
-                <div className={LABEL_CLASS}>Last error</div>
-                <div className="text-destructive mt-1 text-[11px] break-all">
-                  {status.lastError}
+          <div className="rounded-lg border border-border/40 bg-card/50 p-4 space-y-4">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-xs font-mono">
+              <Field label="Next run" value={formatTimestamp(status.nextRun)} />
+              <Field label="Last run" value={formatTimestamp(status.lastRun)} />
+              <Field label="Ticking" value={status.ticking ? "yes" : "no"} />
+              <Field
+                label="Drops (overflow)"
+                value={String(status.dropsByConcurrency)}
+                hint={
+                  status.dropsByConcurrency > 0
+                    ? "Services flagged but dropped by per-tick cap. Tune config.yaml's scan.maxInvestigationsPerTick if this grows."
+                    : undefined
+                }
+              />
+              {status.lastError && (
+                <div className="col-span-2">
+                  <div className={LABEL_CLASS}>Last error</div>
+                  <div className="text-destructive mt-1 text-[11px] break-all">
+                    {status.lastError}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
+
+            {/* Scan now — fires one probe pass immediately, bypassing cron.
+                Disabled when scan is off (route returns 400) or already ticking
+                (route returns 409). These are also enforced server-side so the
+                UI state is just a friendly nudge, not the real guard. */}
+            <div className="flex items-center gap-2 pt-2 border-t border-border/30">
+              <Button
+                variant="outline"
+                onClick={handleTriggerNow}
+                disabled={triggering || !status.enabled || status.ticking || dirty}
+                className="font-mono text-xs font-medium h-9 rounded-lg px-4"
+                title={
+                  !status.enabled ? "Enable the scan first"
+                    : status.ticking ? "A tick is already running"
+                    : dirty ? "Save your changes first"
+                    : "Fire one probe pass immediately"
+                }
+              >
+                {triggering ? "Triggering..." : "Scan now"}
+              </Button>
+              {triggerMsg && (
+                <span className={`text-[11px] font-mono ${
+                  triggerMsg.ok
+                    ? "text-success/80"
+                    : "text-destructive"
+                }`}>
+                  {triggerMsg.text}
+                </span>
+              )}
+            </div>
           </div>
         </section>
       )}
