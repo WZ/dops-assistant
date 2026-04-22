@@ -272,6 +272,14 @@ export class Database {
       `);
     }
 
+    // Lane B Step 4 — add scan_override column for per-service probe overrides.
+    // Stored as JSON text (ScanServiceOverride shape) or NULL. Idempotent; runs
+    // after the composite-PK migration above so metaInfoPost reflects final schema.
+    const metaInfoPost = this.db.prepare("PRAGMA table_info(service_metadata)").all() as Array<{ name: string }>;
+    if (!metaInfoPost.some(col => col.name === "scan_override")) {
+      this.db.prepare("ALTER TABLE service_metadata ADD COLUMN scan_override TEXT").run();
+    }
+
     // Indexes
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_inv_stack ON investigations (stack_id);
@@ -809,6 +817,58 @@ export class Database {
         tags       = CASE WHEN excluded.tags  IS NOT NULL THEN excluded.tags  ELSE tags  END,
         updated_at = datetime('now')
     `).run(stackId, service, alias, tags);
+  }
+
+  /**
+   * Per-service scan override — the effective override shape for a service.
+   * Null means "no override" (use global rules). Caller is responsible for
+   * the JSON schema of the value; we just store + retrieve the string.
+   */
+  getScanOverride(stackId: string, service: string): string | null {
+    const row = this.db.prepare(
+      "SELECT scan_override FROM service_metadata WHERE stack_id = ? AND service = ?"
+    ).get(stackId, service) as { scan_override: string | null } | undefined;
+    return row?.scan_override ?? null;
+  }
+
+  /**
+   * Set the per-service scan override JSON. Upserts the metadata row if
+   * none exists yet (symmetric with `upsertServiceMetadata`).
+   */
+  setScanOverride(stackId: string, service: string, overrideJson: string): void {
+    this.db.prepare(`
+      INSERT INTO service_metadata (stack_id, service, scan_override, updated_at)
+      VALUES (?, ?, ?, datetime('now'))
+      ON CONFLICT(stack_id, service) DO UPDATE SET
+        scan_override = excluded.scan_override,
+        updated_at    = datetime('now')
+    `).run(stackId, service, overrideJson);
+  }
+
+  /**
+   * Clear the override, reverting the service to global rules. NULLs out the
+   * column without deleting the metadata row (which may still hold alias/tags).
+   */
+  clearScanOverride(stackId: string, service: string): void {
+    this.db.prepare(`
+      UPDATE service_metadata
+      SET scan_override = NULL, updated_at = datetime('now')
+      WHERE stack_id = ? AND service = ?
+    `).run(stackId, service);
+  }
+
+  /**
+   * Map of { service → overrideJson } for every service in a stack that has
+   * a non-null scan_override. Used by the scheduler to pass a cheap lookup
+   * into anomaly-probe without hitting the DB once per service per tick.
+   */
+  getAllScanOverrides(stackId: string): Record<string, string> {
+    const rows = this.db.prepare(
+      "SELECT service, scan_override FROM service_metadata WHERE stack_id = ? AND scan_override IS NOT NULL"
+    ).all(stackId) as Array<{ service: string; scan_override: string }>;
+    const out: Record<string, string> = {};
+    for (const row of rows) out[row.service] = row.scan_override;
+    return out;
   }
 
   /**

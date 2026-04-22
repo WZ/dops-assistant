@@ -48,6 +48,55 @@ describe("Database", () => {
     });
   });
 
+  describe("scan override (get/set/clear/getAll)", () => {
+    it("returns null when no override is set", () => {
+      expect(db.getScanOverride(S, "svc")).toBeNull();
+    });
+
+    it("round-trips a set value", () => {
+      db.setScanOverride(S, "svc", '{"disabled":true}');
+      expect(db.getScanOverride(S, "svc")).toBe('{"disabled":true}');
+    });
+
+    it("set creates a service_metadata row even if none existed", () => {
+      // Previously there was no metadata row for "new-svc" at all. setScanOverride
+      // must upsert rather than silently failing.
+      db.setScanOverride(S, "new-svc", '{"disabled":true}');
+      expect(db.getScanOverride(S, "new-svc")).toBe('{"disabled":true}');
+    });
+
+    it("clear reverts the service to null (global rules)", () => {
+      db.setScanOverride(S, "svc", '{"disabled":true}');
+      db.clearScanOverride(S, "svc");
+      expect(db.getScanOverride(S, "svc")).toBeNull();
+    });
+
+    it("clear preserves other metadata fields (alias, tags)", () => {
+      db.upsertServiceMetadata(S, "svc", { alias: "payments", tags: ["critical"] });
+      db.setScanOverride(S, "svc", '{"disabled":true}');
+      db.clearScanOverride(S, "svc");
+      const meta = db.getServiceMetadata(S, "svc");
+      expect(meta?.alias).toBe("payments");
+      expect(meta?.tags).toEqual(["critical"]);
+    });
+
+    it("scopes by stack_id", () => {
+      db.setScanOverride("stack-a", "svc", '{"disabled":true}');
+      expect(db.getScanOverride("stack-b", "svc")).toBeNull();
+      expect(db.getScanOverride("stack-a", "svc")).toBe('{"disabled":true}');
+    });
+
+    it("getAllScanOverrides returns only services with non-null overrides", () => {
+      db.setScanOverride(S, "a", '{"disabled":true}');
+      db.setScanOverride(S, "b", '{"rules":[]}');
+      db.upsertServiceMetadata(S, "c", { alias: "no-override-here" });
+      const all = db.getAllScanOverrides(S);
+      expect(Object.keys(all).sort()).toEqual(["a", "b"]);
+      expect(all.a).toBe('{"disabled":true}');
+      expect(all.b).toBe('{"rules":[]}');
+    });
+  });
+
   describe("countScanTriggeredInvestigationsSince", () => {
     it("returns 0 when no investigations exist", () => {
       const since = new Date(Date.now() - 24 * 3600_000).toISOString();

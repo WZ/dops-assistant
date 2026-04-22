@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, lazy, Suspense } from "react";
 import { ServiceDetailHeader } from "./ServiceDetailHeader";
 import { ServiceHistory } from "./ServiceHistory";
+import { ServiceScanOverride } from "./scan/ServiceScanOverride";
 const ServiceOverview = lazy(() => import("./ServiceOverview").then(m => ({ default: m.ServiceOverview })));
 import { useStackContext } from "../contexts/StackContext";
 import type { useWebSocket } from "../hooks/useWebSocket";
 
-type TabId = "overview" | "history";
+type TabId = "overview" | "history" | "scan";
 
 interface ServiceDetailProps {
   serviceName: string;
@@ -28,6 +29,7 @@ type HealthStatus = "healthy" | "degraded" | "down" | "unknown";
 const TABS: { id: TabId; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "history", label: "Investigations" },
+  { id: "scan", label: "Scan" },
 ];
 
 export function ServiceDetail({
@@ -182,6 +184,9 @@ export function ServiceDetail({
         )}
         {activeTab === "history" && (
           <ServiceHistory serviceName={serviceName} onViewInvestigation={onViewInvestigation} />
+        )}
+        {activeTab === "scan" && (
+          <ServiceScanOverride serviceName={serviceName} />
         )}
       </div>
     </div>

@@ -22,6 +22,7 @@ import { Cron } from "croner";
 import { z } from "zod";
 import { getScanSettingsView, SCAN_SETTING_KEYS } from "./scan-settings.js";
 import { validateRules } from "./scan-rule-validator.js";
+import { validateOverride, parseOverride } from "./scan-service-override.js";
 import { getToolsByRole } from "../mcp/provider.js";
 import { parsePrometheusResult } from "./service-health-poller.js";
 
@@ -836,6 +837,48 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     const { tags } = req.body as { tags: string[] };
     db.upsertServiceMetadata(req.stackId, name, { tags });
     res.json({ ok: true });
+  });
+
+  /**
+   * Per-service scan override CRUD (Lane B Step 4).
+   *
+   * GET returns the effective override (null when no override) + per-field
+   * source for the UI to show "global" vs "overridden".
+   * PUT upserts an override — body must specify `disabled`, `rules`, or both.
+   * DELETE clears the override (revert to global rules).
+   *
+   * All three trigger `reloadAllScanSchedulers` so the change takes effect
+   * on the NEXT tick without a server restart. Scheduler's reload clears
+   * any stale consecutiveState entries for rules that changed.
+   */
+  app.get("/api/services/:name/scan-override", (req: Request, res: Response) => {
+    const name = req.params["name"] as string;
+    if (!NAME_PATTERN.test(name)) { res.status(400).json({ error: "Invalid service name" }); return; }
+    const raw = db.getScanOverride(req.stackId, name);
+    res.json({ service: name, override: parseOverride(raw) });
+  });
+
+  app.put("/api/services/:name/scan-override", (req: Request, res: Response) => {
+    const name = req.params["name"] as string;
+    if (!NAME_PATTERN.test(name)) { res.status(400).json({ error: "Invalid service name" }); return; }
+    const result = validateOverride(req.body);
+    if (!result.ok) {
+      res.status(400).json({ error: "Invalid override", details: result.errors });
+      return;
+    }
+    db.setScanOverride(req.stackId, name, JSON.stringify(result.override));
+    // Reset hysteresis for this service: the rule set may have changed, so
+    // any in-flight breach counters from the prior set are now stale.
+    stackManager.resetScanHysteresisForService(req.stackId, name);
+    res.json({ service: name, override: result.override });
+  });
+
+  app.delete("/api/services/:name/scan-override", (req: Request, res: Response) => {
+    const name = req.params["name"] as string;
+    if (!NAME_PATTERN.test(name)) { res.status(400).json({ error: "Invalid service name" }); return; }
+    db.clearScanOverride(req.stackId, name);
+    stackManager.resetScanHysteresisForService(req.stackId, name);
+    res.json({ service: name, override: null });
   });
 
   // ── Service Metrics REST API ────────────────────────────────────────────

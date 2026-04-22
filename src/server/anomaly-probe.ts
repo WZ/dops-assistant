@@ -22,6 +22,7 @@ import type { MastraProvider } from "../mcp/provider.js";
 import { getToolsByRole } from "../mcp/provider.js";
 import { parsePrometheusResult } from "./service-health-poller.js";
 import type { ProbeConfig, ProbeMetricRule, Threshold } from "../config/schema.js";
+import type { ScanServiceOverride } from "./scan-service-override.js";
 
 const logger = createLogger();
 
@@ -58,6 +59,16 @@ export interface ProbeOptions {
    * back — caller owns the Map so scan-scheduler can persist it across ticks.
    */
   consecutiveState: Map<string, number>;
+  /**
+   * Optional per-service override getter. Returns null/undefined for services
+   * using the global rules. When the override has `disabled: true`, the
+   * service is skipped entirely (no probe queries, no scoring). When it has
+   * `rules`, those replace the global rules for this service only.
+   *
+   * Getter form (not a pre-built Map) so the caller can cheaply re-read DB
+   * each tick without copying for services that don't have overrides.
+   */
+  getOverride?: (service: string) => ScanServiceOverride | null;
 }
 
 interface ToolExecutor {
@@ -238,12 +249,19 @@ export async function runProbe(opts: ProbeOptions): Promise<ProbeHit[]> {
     return [];
   }
 
-  // Build the (service, rule) work list
+  // Build the (service, rule) work list. Per-service overrides:
+  //   - override.disabled:true  → skip this service entirely (no tasks queued)
+  //   - override.rules present  → use those instead of probe.metrics
+  //   - no override             → use probe.metrics (global)
   type Task = { service: string; rule: ProbeMetricRule; query: string };
   const tasks: Task[] = [];
+  const globalRules = probe.metrics;
   for (const service of services) {
+    const override = opts.getOverride?.(service);
+    if (override?.disabled) continue;
+    const rulesForService = override?.rules && override.rules.length > 0 ? override.rules : globalRules;
     const safeService = sanitizeForPromQL(service);
-    for (const rule of probe.metrics) {
+    for (const rule of rulesForService) {
       tasks.push({
         service,
         rule,

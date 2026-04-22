@@ -49,6 +49,7 @@ function makeHit(service: string, severity = 1, ruleName = "availability"): Prob
 function makeDb(options: {
   hasRecent?: (stackId: string, service: string) => boolean;
   lastAt?: (stackId: string, service: string) => number | null;
+  overrides?: Record<string, string>;
 } = {}): Database {
   return {
     hasRecentInvestigation: vi.fn((stackId: string, service: string, _win: number) =>
@@ -57,6 +58,9 @@ function makeDb(options: {
     getLastInvestigationAt: vi.fn((stackId: string, service: string) =>
       options.lastAt ? options.lastAt(stackId, service) : null
     ),
+    // Lane B Step 4: scheduler reads overrides once per tick. Default to empty —
+    // individual tests override when they want per-service behaviors.
+    getAllScanOverrides: vi.fn((_stackId: string) => options.overrides ?? {}),
   } as unknown as Database;
 }
 
@@ -566,6 +570,69 @@ describe("ScanScheduler.reload — probe rule diff hysteresis reset", () => {
     // Old rule's state preserved; nothing there for new_rule yet
     expect(state.get("svc-a:availability")).toBe(2);
     expect(state.has("svc-a:new_rule")).toBe(false);
+    scheduler.stop();
+  });
+});
+
+describe("ScanScheduler.resetHysteresisForService", () => {
+  function peekState(scheduler: ScanScheduler): Map<string, number> {
+    return (scheduler as unknown as { consecutiveState: Map<string, number> }).consecutiveState;
+  }
+
+  it("clears only the target service's entries, keeps other services'", () => {
+    // Routes call this when a per-service override is set or cleared. The
+    // rule set for that one service may have changed, so its tick counters
+    // are stale. Other services are untouched.
+    const scheduler = new ScanScheduler({
+      providers: () => [], registryStore: makeRegistry([]), db: makeDb(),
+      stackId: "s1", scan: makeScanConfig(),
+      getPrometheusDatasourceUid: () => "uid", onAnomaliesDetected: vi.fn(),
+    });
+    const state = peekState(scheduler);
+    state.set("svc-a:availability", 2);
+    state.set("svc-a:error_rate", 1);
+    state.set("svc-b:availability", 3);
+
+    scheduler.resetHysteresisForService("svc-a");
+
+    expect(state.has("svc-a:availability")).toBe(false);
+    expect(state.has("svc-a:error_rate")).toBe(false);
+    expect(state.get("svc-b:availability")).toBe(3);
+    scheduler.stop();
+  });
+
+  it("is a no-op when no entries exist for the service", () => {
+    const scheduler = new ScanScheduler({
+      providers: () => [], registryStore: makeRegistry([]), db: makeDb(),
+      stackId: "s1", scan: makeScanConfig(),
+      getPrometheusDatasourceUid: () => "uid", onAnomaliesDetected: vi.fn(),
+    });
+    const state = peekState(scheduler);
+    state.set("svc-b:availability", 1);
+
+    scheduler.resetHysteresisForService("svc-a");
+
+    expect(state.get("svc-b:availability")).toBe(1);
+    scheduler.stop();
+  });
+
+  it("does not match services whose names are prefixes of another (':' boundary honored)", () => {
+    // "svc" is a prefix of "svc-a" but the key boundary is ':' after the
+    // full service name. Without ':'-boundary matching, "svc" reset could
+    // wrongly nuke "svc-a"'s entries.
+    const scheduler = new ScanScheduler({
+      providers: () => [], registryStore: makeRegistry([]), db: makeDb(),
+      stackId: "s1", scan: makeScanConfig(),
+      getPrometheusDatasourceUid: () => "uid", onAnomaliesDetected: vi.fn(),
+    });
+    const state = peekState(scheduler);
+    state.set("svc:availability", 2);
+    state.set("svc-a:availability", 3);
+
+    scheduler.resetHysteresisForService("svc");
+
+    expect(state.has("svc:availability")).toBe(false);
+    expect(state.get("svc-a:availability")).toBe(3);
     scheduler.stop();
   });
 });

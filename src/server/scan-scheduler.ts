@@ -33,6 +33,7 @@ import {
   prioritizeHits,
   type ProbeHit,
 } from "./anomaly-probe.js";
+import { parseOverride } from "./scan-service-override.js";
 
 const logger = createLogger();
 
@@ -254,6 +255,32 @@ export class ScanScheduler {
   }
 
   /**
+   * Drop all `consecutiveState` entries for a given service. Called when the
+   * per-service override changes (set or cleared) — we can't cheaply diff the
+   * before/after rule sets (the old override shape isn't known here), so the
+   * safe move is to reset every counter for that service. The operator's
+   * intent is "this service's rules just changed", so starting fresh matches
+   * the behavior we already provide for global-rule changes.
+   *
+   * Keys are `"{service}:{ruleName}"` — we match by prefix up to the last
+   * colon, matching resetHysteresisForChangedRules' key-parsing rule.
+   */
+  resetHysteresisForService(service: string): void {
+    let cleared = 0;
+    for (const key of Array.from(this.consecutiveState.keys())) {
+      const colonIdx = key.lastIndexOf(":");
+      if (colonIdx < 0) continue;
+      if (key.slice(0, colonIdx) === service) {
+        this.consecutiveState.delete(key);
+        cleared++;
+      }
+    }
+    if (cleared > 0) {
+      logger.info({ stackId: this.deps.stackId, service, clearedKeys: cleared }, "ScanScheduler: cleared hysteresis state for per-service override change");
+    }
+  }
+
+  /**
    * Drop `consecutiveState` entries whose rule was removed or materially
    * changed. A rule is "materially changed" if its query or threshold changed
    * (same name, different semantics). Changes to `consecutiveTicks` alone
@@ -340,6 +367,16 @@ export class ScanScheduler {
         return;
       }
 
+      // Snapshot all per-service overrides once per tick (cheap: one SQL
+      // query returning a small map), then serve a synchronous getter to the
+      // probe. Avoids N DB hits during the tick's hot loop.
+      const overridesRaw = this.deps.db.getAllScanOverrides(this.deps.stackId);
+      const parsedOverrides = new Map<string, ReturnType<typeof parseOverride>>();
+      for (const [svc, raw] of Object.entries(overridesRaw)) {
+        parsedOverrides.set(svc, parseOverride(raw));
+      }
+      const getOverride = (service: string) => parsedOverrides.get(service) ?? null;
+
       const rawHits = await runProbe({
         services,
         probe: this.scan.probe,
@@ -347,6 +384,7 @@ export class ScanScheduler {
         datasourceUid,
         signal: this.ac.signal,
         consecutiveState: this.consecutiveState,
+        getOverride,
       });
 
       if (this.stopped || this.ac.signal.aborted) {
