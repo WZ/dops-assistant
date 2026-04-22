@@ -33,6 +33,7 @@ import {
   prioritizeHits,
   type ProbeHit,
 } from "./anomaly-probe.js";
+import { parseOverride } from "./scan-service-override.js";
 
 const logger = createLogger();
 
@@ -340,6 +341,16 @@ export class ScanScheduler {
         return;
       }
 
+      // Snapshot all per-service overrides once per tick (cheap: one SQL
+      // query returning a small map), then serve a synchronous getter to the
+      // probe. Avoids N DB hits during the tick's hot loop.
+      const overridesRaw = this.deps.db.getAllScanOverrides(this.deps.stackId);
+      const parsedOverrides = new Map<string, ReturnType<typeof parseOverride>>();
+      for (const [svc, raw] of Object.entries(overridesRaw)) {
+        parsedOverrides.set(svc, parseOverride(raw));
+      }
+      const getOverride = (service: string) => parsedOverrides.get(service) ?? null;
+
       const rawHits = await runProbe({
         services,
         probe: this.scan.probe,
@@ -347,6 +358,7 @@ export class ScanScheduler {
         datasourceUid,
         signal: this.ac.signal,
         consecutiveState: this.consecutiveState,
+        getOverride,
       });
 
       if (this.stopped || this.ac.signal.aborted) {

@@ -49,6 +49,7 @@ function makeHit(service: string, severity = 1, ruleName = "availability"): Prob
 function makeDb(options: {
   hasRecent?: (stackId: string, service: string) => boolean;
   lastAt?: (stackId: string, service: string) => number | null;
+  overrides?: Record<string, string>;
 } = {}): Database {
   return {
     hasRecentInvestigation: vi.fn((stackId: string, service: string, _win: number) =>
@@ -57,6 +58,9 @@ function makeDb(options: {
     getLastInvestigationAt: vi.fn((stackId: string, service: string) =>
       options.lastAt ? options.lastAt(stackId, service) : null
     ),
+    // Lane B Step 4: scheduler reads overrides once per tick. Default to empty —
+    // individual tests override when they want per-service behaviors.
+    getAllScanOverrides: vi.fn((_stackId: string) => options.overrides ?? {}),
   } as unknown as Database;
 }
 
