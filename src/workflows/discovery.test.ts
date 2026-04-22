@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { runDiscovery } from "./discovery.js";
 import type { DiscoveryWorkflowConfig } from "./discovery.js";
 import type { LanguageModel } from "ai";
@@ -12,6 +12,10 @@ vi.mock("../mcp/provider.js", () => ({
 // Switches used by individual tests to force the discover agent's output.
 let mockDiscoverReturnsEmpty = false;
 let mockDiscoverReturnsObjectForm = false;
+// Escape hatch for adversarial-fix tests: when non-null, the mock returns
+// this string verbatim instead of the default shape. Takes precedence over
+// the two switches above.
+let mockDiscoverReplyOverride: string | null = null;
 
 vi.mock("@mastra/core/agent", () => ({
   Agent: class MockAgent {
@@ -20,6 +24,7 @@ vi.mock("@mastra/core/agent", () => ({
     constructor(opts: any) { this.id = opts.id; this.name = opts.name; }
     async generate(prompt: string) {
       if (this.id === "discover") {
+        if (mockDiscoverReplyOverride !== null) return { text: mockDiscoverReplyOverride };
         if (mockDiscoverReturnsEmpty) return { text: "[]" };
         if (mockDiscoverReturnsObjectForm) {
           // Slice B output shape: top-level {services, globalProbeRules}.
@@ -40,8 +45,9 @@ vi.mock("@mastra/core/agent", () => ({
   },
 }));
 
+const fakeModel = {} as LanguageModel;
+
 describe("runDiscovery", () => {
-  const fakeModel = {} as LanguageModel;
 
   it("returns validated services and empty globalProbeRules from bare-array agent output", async () => {
     const config: DiscoveryWorkflowConfig = {
@@ -107,5 +113,67 @@ describe("runDiscovery", () => {
     } finally {
       mockDiscoverReturnsObjectForm = false;
     }
+  });
+});
+
+describe("runDiscoverStep — adversarial-review fixes (2026-04-22)", () => {
+  // These tests exercise the fixes applied to runDiscoverStep directly:
+  // validateDiscoveredRules drops unsafe rules before they reach the
+  // registry, and the empty-services branch preserves globals.
+  // Uses the mockDiscoverReplyOverride escape hatch on the existing
+  // vi.mock (module-hoisted) rather than a second vi.mock call.
+
+  const baseConfig: DiscoveryWorkflowConfig = {
+    model: fakeModel,
+    providers: [],
+    discoveryConfig: { autoRefresh: false, excludeServices: [], maxIterations: 5, discoveryRecipes: [] },
+  };
+
+  afterEach(() => {
+    mockDiscoverReplyOverride = null;
+  });
+
+  it("B — accepts object form when globalProbeRules is non-empty even if services is empty", async () => {
+    mockDiscoverReplyOverride = JSON.stringify({
+      services: [],
+      globalProbeRules: [{
+        name: "app_availability",
+        query: 'up{app="{service}"}',
+        threshold: { op: "lt", value: 1 },
+        consecutiveTicks: 3,
+        source: "metrics",
+      }],
+    });
+    const result = await runDiscovery(baseConfig);
+    expect(result.services).toEqual([]);
+    expect(result.globalProbeRules).toHaveLength(1);
+    expect(result.globalProbeRules[0]!.name).toBe("app_availability");
+  });
+
+  it("A — drops LLM-written rules with unsafe names (colon forbidden)", async () => {
+    mockDiscoverReplyOverride = JSON.stringify({
+      services: [{ name: "svc1", metrics: [{ query: "up{}", description: "" }], logLabels: {} }],
+      globalProbeRules: [
+        { name: "ok_rule", query: 'up{app="{service}"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 1, source: "metrics" },
+        // State-key corruption: name with ':' would break the scheduler's
+        // `lastIndexOf(":")` parse. Must be dropped before persisting.
+        { name: "db:slow", query: 'up{app="{service}"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 1, source: "metrics" },
+      ],
+    });
+    const result = await runDiscovery(baseConfig);
+    expect(result.globalProbeRules).toHaveLength(1);
+    expect(result.globalProbeRules[0]!.name).toBe("ok_rule");
+  });
+
+  it("A — drops LLM-written rules with malformed threshold op", async () => {
+    mockDiscoverReplyOverride = JSON.stringify({
+      services: [{ name: "svc1", metrics: [{ query: "up{}", description: "" }], logLabels: {} }],
+      globalProbeRules: [
+        { name: "bad_op", query: 'up{app="{service}"}', threshold: { op: "equals", value: 1 }, consecutiveTicks: 1 },
+      ],
+    });
+    const result = await runDiscovery(baseConfig);
+    // Bad-op rule dropped. Services list retained.
+    expect(result.globalProbeRules).toEqual([]);
   });
 });

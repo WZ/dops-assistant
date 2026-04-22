@@ -602,6 +602,34 @@ describe("runProbe — four-track evaluator (Slice C)", () => {
     // Even across three services + per-task loop, only one snapshot read.
     expect(loadAll).toHaveBeenCalledTimes(1);
   });
+
+  it("GCs orphaned consecutiveState entries at tick start (rule rename / removal)", async () => {
+    // Simulates what happens when discovery renames a global rule from
+    // "availability" to "app_avail" between ticks: old counters under
+    // `{svc}:global:availability` must not leak. Pre-load the state Map
+    // with an orphan key, run a tick with the new rule name, verify the
+    // orphan was cleaned up.
+    const execute = vi.fn(async () => promResult(1));  // nothing trips
+    mockTools = { query_prometheus: { execute } };
+
+    const state = new Map<string, number>();
+    state.set(stateKey("svc-a", "global", "OLD_RENAMED_RULE"), 7);  // orphan from prior tick
+    state.set(stateKey("svc-b", "service", "pod_restarts"), 3);     // orphan — svc-b not in this tick
+
+    await runProbe({
+      services: ["svc-a"],
+      probe: buildProbe(),
+      providers, datasourceUid: "uid",
+      consecutiveState: state,
+      registryStore: fakeRegistryStore({
+        globalProbeRules: [metricsRule({ name: "new_rule" })],
+      }),
+    });
+
+    // Both orphan keys GC'd. No new trips since value=1 doesn't breach.
+    expect(state.has(stateKey("svc-a", "global", "OLD_RENAMED_RULE"))).toBe(false);
+    expect(state.has(stateKey("svc-b", "service", "pod_restarts"))).toBe(false);
+  });
 });
 
 describe("prioritizeHits", () => {

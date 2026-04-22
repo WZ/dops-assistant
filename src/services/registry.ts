@@ -96,6 +96,15 @@ export class ServiceRegistryStore {
    * read and carried forward — routes.ts-driven saves (metadata edits,
    * renames, rollback) cannot silently wipe the discovery-written top-level
    * rules. For atomic combined writes, prefer `saveAll()`.
+   *
+   * Concurrency note: this is a read-modify-write without file locking.
+   * If `saveGlobalRules()` commits between our `loadFile()` and
+   * `writeFile()`, those fresh globals are overwritten with the version
+   * we read. In practice the call sites don't race — discovery is
+   * human-triggered or low-cadence scheduled; routes.ts manual edits are
+   * UI clicks away. No existing YAML writer in this project uses locking.
+   * If two concurrent writers ever become a real pattern, upgrade this
+   * and saveGlobalRules to use proper-lockfile (or equivalent) together.
    */
   save(services: ServiceConfig[], source: "discovery" | "manual"): string {
     const deduped = this.dedupeServices(services);

@@ -16,7 +16,13 @@ const ThresholdSchema = z.object({
   value: z.number(),
 });
 
-const ProbeMetricRuleSchema = z.object({
+// Exported so the discovery-path validator in src/workflows/steps/discover.ts
+// can safeParse LLM-written rules before they're persisted. Keep this in
+// lockstep with scan-rule-validator's RuleSchema (same fields, same defaults);
+// the only intentional divergence is that scan-rule-validator is `.strict()`
+// (rejects unknown keys to catch typo'd GUI input) while this schema tolerates
+// unknown keys so future field additions don't break in-flight rules.
+export const ProbeMetricRuleSchema = z.object({
   name: z.string(),
   query: z.string(),
   threshold: ThresholdSchema,

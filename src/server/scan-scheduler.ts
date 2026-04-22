@@ -326,7 +326,13 @@ export class ScanScheduler {
 
     let cleared = 0;
     for (const key of Array.from(this.consecutiveState.keys())) {
-      // Key shape: "service:ruleName". Rule name comes after the last ":".
+      // Key shape (Slice C): "service:origin:ruleName". Rule name is still
+      // the suffix after the last colon — lastIndexOf + slice(+1) extracts
+      // it correctly regardless of whether the key is the 2-part legacy
+      // shape or the 3-part origin-namespaced one. DO NOT use this index
+      // to extract the service prefix (it now includes ":origin"); use
+      // `startsWith(service + ":")` for service matching as in
+      // resetHysteresisForService.
       const colonIdx = key.lastIndexOf(":");
       if (colonIdx < 0) continue; // malformed key, ignore
       const ruleName = key.slice(colonIdx + 1);

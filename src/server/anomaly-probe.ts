@@ -350,8 +350,15 @@ function buildGenericLogQLFromLabels(
   logLabels: Record<string, string>,
   windowStr: string,
 ): string {
+  // Escape backslash FIRST so we don't double-escape the quotes we add next.
+  // k8s label values are RFC 1123 so these escapes are belt-and-suspenders
+  // — but logLabels ultimately come from discovery, which could include any
+  // string a provider returns. Cheap to be defensive.
   const selectors = Object.entries(logLabels)
-    .map(([k, v]) => `${k}="${v.replaceAll(`"`, `\\"`)}"`)
+    .map(([k, v]) => {
+      const escaped = v.replaceAll("\\", "\\\\").replaceAll(`"`, `\\"`);
+      return `${k}="${escaped}"`;
+    })
     .join(",");
   return `sum(count_over_time({${selectors}} |= \`error\` or \`fatal\` [${windowStr}]))`;
 }
@@ -505,6 +512,28 @@ export async function runProbe(opts: ProbeOptions): Promise<ProbeHit[]> {
         });
       }
     }
+  }
+
+  // ── Garbage-collect orphaned consecutiveState entries ───────────────────
+  // Discovery-driven rule changes (rename, remove, threshold rewrite) don't
+  // currently fire `scan-scheduler.resetHysteresisForChangedRules` — that
+  // hook only runs on config.yaml reload via PUT /api/scan/settings. Without
+  // cleanup, renamed rules leak counters under the old state key (unbounded
+  // Map growth across discovery re-runs), and removed rules keep their
+  // counter forever. This tick-start GC is cheap (one Map diff) and covers
+  // every rule-change case: discovery writes, config reloads, per-service
+  // override toggles, hidden-service filtering. Operator-override and
+  // disabled services naturally contribute zero tasks → their keys drop.
+  const activeKeys = new Set(tasks.map((t) => stateKey(t.service, t.origin, t.rule.name)));
+  let orphaned = 0;
+  for (const key of Array.from(consecutiveState.keys())) {
+    if (!activeKeys.has(key)) {
+      consecutiveState.delete(key);
+      orphaned++;
+    }
+  }
+  if (orphaned > 0) {
+    logger.debug({ orphaned, activeKeys: activeKeys.size }, "anomaly-probe: garbage-collected orphaned consecutiveState entries");
   }
 
   // ── Execute all tasks under one shared concurrency cap ──────────────────
