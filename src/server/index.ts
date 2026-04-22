@@ -38,6 +38,7 @@ import { startHealthMonitor, stopHealthMonitor, healthHandler } from "./health-m
 import { StackManager } from "./stack-manager.js";
 import { createMastraAdapters } from "./agents.js";
 import { notifySlack } from "./slack-notifier.js";
+import { buildInvestigationMessage } from "./anomaly-probe.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const logger = createLogger();
@@ -220,6 +221,63 @@ async function main() {
       .finally(() => {
         sharedDedup.markCompleted();
       });
+  };
+
+  // Wire scan anomaly handler: for each flagged service, dedup-check + lazy-runner
+  // This mirrors the onHealthTransition pattern above. Scheduler does NOT await
+  // this callback, so each investigation runs in the background.
+  stackManager.onScanAnomalies = ({ stackId, hits }) => {
+    const ctx = stackManager.getContext(stackId);
+    const allServices = [
+      ...config.services,
+      ...ctx.serviceRegistry.load().filter((s) => !config.services.some((c) => c.name === s.name)),
+    ];
+
+    for (const hit of hits) {
+      const serviceConfig = allServices.find((s) => s.name === hit.service);
+      if (!serviceConfig) {
+        logger.warn({ service: hit.service, stackId }, "ScanScheduler: service not found in config or registry, skipping");
+        continue;
+      }
+      // Defense in depth: hidden check is already done in the scheduler, but
+      // re-check here in case the hidden set changed between tick and dispatch.
+      if (db.isServiceHidden(stackId, hit.service)) continue;
+
+      const dedupResult = sharedDedup.shouldInvestigate(stackId, hit.service);
+      if (!dedupResult.allowed) {
+        logger.info({
+          stackId, service: hit.service, reason: dedupResult.reason, activeCount: sharedDedup.getActiveCount(),
+        }, "ScanScheduler: investigation suppressed by shared dedup/concurrency");
+        continue;
+      }
+
+      sharedDedup.markStarted(stackId, hit.service);
+      const message = buildInvestigationMessage(hit);
+      const template = config.scan.investigationTemplate;
+
+      logger.info({
+        stackId, service: hit.service, rule: hit.ruleName, severity: hit.severity, template,
+      }, "ScanScheduler: triggering auto-investigate");
+
+      const providers = ctx.providerRegistry.getProviders();
+      createMastraAdapters({ config, providers, registryStore: ctx.serviceRegistry, datasourceUidMap: ctx.providerRegistry.buildDatasourceUidMap() })
+        .then(({ investigationAgent }) => {
+          const runner = new InvestigationRunner({ db, investigationAgent, skillStore, globalOnComplete });
+          return runner.run({
+            service: serviceConfig,
+            message,
+            template,
+            stackId,
+            readOnlyTools: true,
+          });
+        })
+        .catch((err) => {
+          logger.error({ err, service: hit.service, stackId }, "ScanScheduler: auto-investigate failed");
+        })
+        .finally(() => {
+          sharedDedup.markCompleted();
+        });
+    }
   };
 
   registerRoutes(app, { db, stackManager, config, skillStore, sharedDedup, llmModel: model });

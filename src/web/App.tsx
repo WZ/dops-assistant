@@ -37,7 +37,7 @@ export type LeftPaneView =
   | { type: "dashboard" }
   | { type: "investigation"; id: string }
   | { type: "services"; initialService?: string }
-  | { type: "settings"; initialTab?: "providers" | "skills" | "stacks" }
+  | { type: "settings"; initialTab?: "providers" | "skills" | "stacks" | "scan" | "notifications" }
   | { type: "notfound"; path: string };
 
 /**

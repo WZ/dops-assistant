@@ -218,3 +218,107 @@ describe("ConfigSchema – providers", () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe("ConfigSchema – scan section", () => {
+  it("scan is disabled by default when section is omitted", () => {
+    const result = ConfigSchema.parse({ llm, providers: [grafanaProvider] });
+    expect(result.scan.enabled).toBe(false);
+    expect(result.scan.cron).toBe("0 */4 * * *");
+    expect(result.scan.timezone).toBe("UTC");
+    expect(result.scan.maxInvestigationsPerTick).toBe(5);
+    expect(result.scan.investigationTemplate).toBe("standard");
+    expect(result.scan.runOnEnable).toBe(true);
+    expect(result.scan.dedupWindowMinutes).toBe(30);
+  });
+
+  it("applies nested probe defaults", () => {
+    const result = ConfigSchema.parse({ llm, providers: [grafanaProvider] });
+    expect(result.scan.probe.concurrency).toBe(8);
+    expect(result.scan.probe.queryTimeoutMs).toBe(3_000);
+    expect(result.scan.probe.metrics.length).toBe(3);
+    expect(result.scan.probe.metrics[0]!.name).toBe("availability");
+    expect(result.scan.probe.metrics[0]!.threshold).toEqual({ op: "lt", value: 1 });
+    expect(result.scan.probe.metrics[0]!.consecutiveTicks).toBe(1);
+    expect(result.scan.probe.metrics[1]!.consecutiveTicks).toBe(2);
+    expect(result.scan.probe.logs.enabled).toBe(true);
+    expect(result.scan.probe.logs.errorRateThreshold).toBe(10);
+  });
+
+  it("accepts overrides at any depth", () => {
+    const result = ConfigSchema.parse({
+      llm,
+      providers: [grafanaProvider],
+      scan: {
+        enabled: true,
+        cron: "*/15 * * * *",
+        timezone: "America/New_York",
+        maxInvestigationsPerTick: 3,
+        runOnEnable: false,
+        probe: {
+          concurrency: 4,
+          metrics: [
+            {
+              name: "custom",
+              query: "custom_metric",
+              threshold: { op: "gte", value: 100 },
+              consecutiveTicks: 5,
+            },
+          ],
+          logs: { enabled: false, window: "5m", errorRateThreshold: 50, consecutiveTicks: 1 },
+        },
+      },
+    });
+    expect(result.scan.enabled).toBe(true);
+    expect(result.scan.cron).toBe("*/15 * * * *");
+    expect(result.scan.timezone).toBe("America/New_York");
+    expect(result.scan.maxInvestigationsPerTick).toBe(3);
+    expect(result.scan.runOnEnable).toBe(false);
+    expect(result.scan.probe.concurrency).toBe(4);
+    expect(result.scan.probe.metrics).toHaveLength(1);
+    expect(result.scan.probe.metrics[0]!.threshold).toEqual({ op: "gte", value: 100 });
+    expect(result.scan.probe.metrics[0]!.consecutiveTicks).toBe(5);
+    expect(result.scan.probe.logs.enabled).toBe(false);
+  });
+
+  it("rejects consecutiveTicks below 1", () => {
+    const result = ConfigSchema.safeParse({
+      llm,
+      providers: [grafanaProvider],
+      scan: {
+        probe: {
+          metrics: [
+            {
+              name: "x",
+              query: "q",
+              threshold: { op: "gt", value: 0 },
+              consecutiveTicks: 0,
+            },
+          ],
+        },
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects invalid threshold op", () => {
+    const result = ConfigSchema.safeParse({
+      llm,
+      providers: [grafanaProvider],
+      scan: {
+        probe: {
+          metrics: [{ name: "x", query: "q", threshold: { op: "eq", value: 1 } }],
+        },
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects queryTimeoutMs below 100", () => {
+    const result = ConfigSchema.safeParse({
+      llm,
+      providers: [grafanaProvider],
+      scan: { probe: { queryTimeoutMs: 50 } },
+    });
+    expect(result.success).toBe(false);
+  });
+});

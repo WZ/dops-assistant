@@ -48,6 +48,69 @@ describe("Database", () => {
     });
   });
 
+  describe("getLastInvestigationAt", () => {
+    it("returns null when no investigation exists", () => {
+      expect(db.getLastInvestigationAt(S, "nonexistent")).toBeNull();
+    });
+
+    it("returns epoch ms of the only investigation", () => {
+      db.createInvestigation(S, { id: "inv_1", service: "payments", query: "q", status: "complete" });
+      const ms = db.getLastInvestigationAt(S, "payments");
+      expect(ms).not.toBeNull();
+      expect(typeof ms).toBe("number");
+      // Should be within a few seconds of now (SQLite datetime('now') is UTC seconds)
+      const now = Date.now();
+      expect(ms!).toBeGreaterThan(now - 10_000);
+      expect(ms!).toBeLessThanOrEqual(now + 1_000);
+    });
+
+    it("returns the MOST RECENT completed investigation when multiple exist", () => {
+      db.createInvestigation(S, { id: "inv_1", service: "svc", query: "q", status: "complete" });
+      // Simulate a later investigation by manipulating created_at via raw SQL
+      // (SQLite datetime resolution is 1s, so two sequential inserts can collide)
+      const rawDb = (db as unknown as { db: { prepare: (s: string) => { run: (...args: unknown[]) => void } } }).db;
+      rawDb.prepare(
+        "INSERT INTO investigations (id, stack_id, service, query, status, created_at) VALUES (?, ?, ?, ?, ?, datetime('now', '+10 seconds'))"
+      ).run("inv_2", S, "svc", "q", "complete");
+      const ms = db.getLastInvestigationAt(S, "svc");
+      const now = Date.now();
+      // Second insert is ~10s in the future
+      expect(ms!).toBeGreaterThan(now + 5_000);
+    });
+
+    it("excludes failed investigations from the lookup", () => {
+      // Only a failed investigation → returns null (not the failed one's timestamp)
+      db.createInvestigation(S, { id: "inv_1", service: "flaky", query: "q", status: "failed" });
+      expect(db.getLastInvestigationAt(S, "flaky")).toBeNull();
+    });
+
+    it("excludes in-progress investigations (running/pending) from the lookup", () => {
+      // Regression: a stuck-running investigation would otherwise pin its service
+      // at "most recently investigated" forever and starve it from scan prioritization.
+      db.createInvestigation(S, { id: "inv_1", service: "stuck", query: "q", status: "running" });
+      expect(db.getLastInvestigationAt(S, "stuck")).toBeNull();
+    });
+
+    it("picks the most recent non-failed when mixed with failures", () => {
+      db.createInvestigation(S, { id: "inv_1", service: "svc", query: "q", status: "complete" });
+      const rawDb = (db as unknown as { db: { prepare: (s: string) => { run: (...args: unknown[]) => void } } }).db;
+      // Later but failed → should be ignored; method returns the earlier complete one
+      rawDb.prepare(
+        "INSERT INTO investigations (id, stack_id, service, query, status, created_at) VALUES (?, ?, ?, ?, ?, datetime('now', '+20 seconds'))"
+      ).run("inv_2", S, "svc", "q", "failed");
+      const ms = db.getLastInvestigationAt(S, "svc");
+      const now = Date.now();
+      // Should be close to "now" (the first inv), not 20s in the future
+      expect(ms!).toBeLessThan(now + 5_000);
+    });
+
+    it("scopes by stack_id", () => {
+      db.createInvestigation("stack-a", { id: "inv_1", service: "svc", query: "q", status: "complete" });
+      expect(db.getLastInvestigationAt("stack-b", "svc")).toBeNull();
+      expect(db.getLastInvestigationAt("stack-a", "svc")).not.toBeNull();
+    });
+  });
+
   describe("investigation phases", () => {
     it("creates and retrieves phases for an investigation", () => {
       db.createInvestigation(S, { id: "inv_1", service: "svc", query: "q", status: "running" });
