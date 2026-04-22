@@ -231,15 +231,38 @@ describe("ConfigSchema – scan section", () => {
     expect(result.scan.dedupWindowMinutes).toBe(30);
   });
 
-  it("applies nested probe defaults", () => {
+  it("applies nested probe defaults — k8s-native availability trio", () => {
     const result = ConfigSchema.parse({ llm, providers: [grafanaProvider] });
     expect(result.scan.probe.concurrency).toBe(8);
     expect(result.scan.probe.queryTimeoutMs).toBe(3_000);
+    // Three rules: deployment, statefulset, daemonset availability. See
+    // schema.ts comment for why these replaced the old service=-labeled
+    // defaults (2026-04-22 smoke test).
     expect(result.scan.probe.metrics.length).toBe(3);
-    expect(result.scan.probe.metrics[0]!.name).toBe("availability");
+    expect(result.scan.probe.metrics[0]!.name).toBe("deployment_availability");
     expect(result.scan.probe.metrics[0]!.threshold).toEqual({ op: "lt", value: 1 });
-    expect(result.scan.probe.metrics[0]!.consecutiveTicks).toBe(1);
-    expect(result.scan.probe.metrics[1]!.consecutiveTicks).toBe(2);
+    expect(result.scan.probe.metrics[0]!.consecutiveTicks).toBe(3);
+    expect(result.scan.probe.metrics[1]!.name).toBe("statefulset_availability");
+    expect(result.scan.probe.metrics[2]!.name).toBe("daemonset_availability");
+    // All three rules query on {service} placeholder — the probe substitutes
+    // the actual service name. Essential contract: if this ever breaks, the
+    // probe runs queries that cannot filter per-service.
+    expect(result.scan.probe.metrics.every(m => m.query.includes("{service}"))).toBe(true);
+    // All three use deployment/statefulset/daemonset label selectors to match
+    // the kube-state-metrics schema. Reversible via GUI rule editor.
+    expect(result.scan.probe.metrics[0]!.query).toContain('deployment="{service}"');
+    expect(result.scan.probe.metrics[1]!.query).toContain('statefulset="{service}"');
+    expect(result.scan.probe.metrics[2]!.query).toContain('daemonset="{service}"');
+    // Every default MUST guard against scaled-to-zero workloads (spec=0 /
+    // desired=0) so scan doesn't false-positive on HPA-min-0 deployments,
+    // arch-mismatched daemonsets, or paused statefulsets. Review finding
+    // 2026-04-22.
+    expect(result.scan.probe.metrics[0]!.query).toContain("kube_deployment_spec_replicas");
+    expect(result.scan.probe.metrics[0]!.query).toContain("> 0");
+    expect(result.scan.probe.metrics[1]!.query).toContain("kube_statefulset_replicas");
+    expect(result.scan.probe.metrics[1]!.query).toContain("> 0");
+    expect(result.scan.probe.metrics[2]!.query).toContain("kube_daemonset_status_desired_number_scheduled");
+    expect(result.scan.probe.metrics[2]!.query).toContain("> 0");
     expect(result.scan.probe.logs.enabled).toBe(true);
     expect(result.scan.probe.logs.errorRateThreshold).toBe(10);
   });
