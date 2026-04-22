@@ -292,6 +292,24 @@ describe("matchResultsToServices", () => {
     );
     expect(result.has("api-service")).toBe(false);
   });
+
+  it("matches on 'app' label (services discovered via up{app=...} queries)", () => {
+    // Regression: the default stack's services use `up{app="admin-daphne"}`-style
+    // queries. Prometheus returns `up` entries with an `app` label, not
+    // `deployment`/`job`/`service`. Before this fix, the poller could not match
+    // those entries to service names and reported them as unknown.
+    const entries = [
+      makePrometheusEntry({ app: "admin-daphne" }, "1"),
+      makePrometheusEntry({ app: "admin-nginx" }, "1"),
+    ];
+    const result = matchResultsToServices(
+      entries as ReturnType<typeof makePrometheusEntry>[],
+      new Set(["admin-daphne", "admin-nginx"]),
+      "down",
+    );
+    expect(result.get("admin-daphne")).toBe("healthy");
+    expect(result.get("admin-nginx")).toBe("healthy");
+  });
 });
 
 // ── ServiceHealthPoller ───────────────────────────────────────────────────────
