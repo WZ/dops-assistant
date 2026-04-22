@@ -11,7 +11,11 @@ vi.mock("./anomaly-probe.js", async () => {
   const actual = await vi.importActual<typeof import("./anomaly-probe.js")>("./anomaly-probe.js");
   return {
     ...actual,
-    runProbe: vi.fn(async () => mockProbeHits),
+    runProbe: vi.fn(async () => ({
+      hits: mockProbeHits,
+      queriesExecuted: mockProbeHits.length,
+      probeErrors: 0,
+    })),
   };
 });
 

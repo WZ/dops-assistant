@@ -69,6 +69,17 @@ export interface ProbeHit {
   severity: number;
 }
 
+/**
+ * Return shape for runProbe. Carries the scored hits alongside stats that
+ * feed the per-scan-run dashboard (queries executed, query failures). NaN
+ * results are the v1 proxy for "errored"; see runProbe body.
+ */
+export interface ProbeResult {
+  hits: ProbeHit[];
+  queriesExecuted: number;
+  probeErrors: number;
+}
+
 export interface ProbeOptions {
   services: string[];
   probe: ProbeConfig;
@@ -390,10 +401,10 @@ function parseWindowToMinutes(window: string): number {
  * pending queries but does not throw — callers see an empty result and log
  * "tick aborted".
  */
-export async function runProbe(opts: ProbeOptions): Promise<ProbeHit[]> {
+export async function runProbe(opts: ProbeOptions): Promise<ProbeResult> {
   const { services, probe, providers, datasourceUid, lokiDatasourceUid, signal, consecutiveState, registryStore } = opts;
 
-  if (services.length === 0) return [];
+  if (services.length === 0) return { hits: [], queriesExecuted: 0, probeErrors: 0 };
 
   // Atomic registry snapshot — one read per tick, consistent view of
   // services + globalProbeRules even if discovery runs concurrently.
@@ -406,12 +417,12 @@ export async function runProbe(opts: ProbeOptions): Promise<ProbeHit[]> {
     metricsTools = (await getToolsByRole(providers, "metrics")) as Record<string, unknown>;
   } catch (err) {
     logger.warn({ err }, "anomaly-probe: failed to resolve metrics MCP tools, skipping tick");
-    return [];
+    return { hits: [], queriesExecuted: 0, probeErrors: 0 };
   }
   const metricsTool = findMetricQueryTool(metricsTools);
   if (!metricsTool) {
     logger.warn("anomaly-probe: no metric query tool found, skipping tick");
-    return [];
+    return { hits: [], queriesExecuted: 0, probeErrors: 0 };
   }
 
   // Resolve logs MCP tool if available. Missing logs tool is NOT fatal —
@@ -577,7 +588,14 @@ export async function runProbe(opts: ProbeOptions): Promise<ProbeHit[]> {
     }
   }
 
-  return hits;
+  // NaN values are the v1 proxy for "query errored or returned empty vector".
+  // If we ever need to split those two outcomes, promote executeInstant to
+  // return a discriminated union and track errors explicitly.
+  return {
+    hits,
+    queriesExecuted: tasks.length,
+    probeErrors: values.filter((v) => Number.isNaN(v)).length,
+  };
 }
 
 /**

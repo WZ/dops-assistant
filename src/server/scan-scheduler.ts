@@ -394,7 +394,7 @@ export class ScanScheduler {
       const getOverride = (service: string) => parsedOverrides.get(service) ?? null;
 
       const lokiDatasourceUid = this.deps.getLokiDatasourceUid?.();
-      const rawHits = await runProbe({
+      const probeResult = await runProbe({
         services,
         probe: this.scan.probe,
         providers: this.deps.providers(),
@@ -405,6 +405,9 @@ export class ScanScheduler {
         getOverride,
         registryStore: this.deps.registryStore,
       });
+      const rawHits = probeResult.hits;
+      // probeResult.queriesExecuted / probeResult.probeErrors will be consumed
+      // by ScanRunTracker.recordProbeComplete in Task 7.
 
       if (this.stopped || this.ac.signal.aborted) {
         logger.info({ stackId: this.deps.stackId }, "ScanScheduler: tick aborted");
