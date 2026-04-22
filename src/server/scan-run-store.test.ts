@@ -109,4 +109,62 @@ describe("ScanRunTracker", () => {
     t.skip("no_provider");
     expect(onComplete).not.toHaveBeenCalled();
   });
+
+  it("recordTriageComplete does NOT write hits_dispatched to DB (linkInvestigation is the authority)", () => {
+    const t = createScanRunStore({ db }).begin({ stackId: "s1", trigger: "manual" });
+    t.recordTriageComplete({
+      hitsRaw: 5, hitsAfterDedup: 3,
+      dispatched: [
+        { service: "a", ruleName: "r1", value: 0, severity: 0.5 },
+        { service: "b", ruleName: "r2", value: 0, severity: 0.4 },
+      ],
+      dropped: [],
+      dedupedList: [],
+    });
+    const row = db.getScanRun("s1", t.id)!;
+    expect(row.hitsRaw).toBe(5);
+    expect(row.hitsAfterDedup).toBe(3);
+    expect(row.hitsDispatched).toBe(0);  // NOT 2 — triage doesn't claim authority anymore
+  });
+
+  it("linkInvestigation increments hits_dispatched in DB and closure", () => {
+    const t = createScanRunStore({ db }).begin({ stackId: "s1", trigger: "manual" });
+    t.linkInvestigation("inv1", { service: "a", ruleName: "r", value: 0, severity: 0.5 });
+    t.linkInvestigation("inv2", { service: "b", ruleName: "r", value: 0, severity: 0.5 });
+    expect(db.getScanRun("s1", t.id)!.hitsDispatched).toBe(2);
+  });
+
+  it("post-terminal recordProbeComplete is a no-op (logged)", () => {
+    const emit = vi.fn();
+    const t = createScanRunStore({ db, emit }).begin({ stackId: "s1", trigger: "manual" });
+    t.finalize("complete");
+    const callsAfterFirst = emit.mock.calls.length;
+    t.recordProbeComplete({ servicesProbed: 99, rulesApplied: 1, queriesExecuted: 1, probeErrors: 0, durationMs: 1 });
+    expect(emit.mock.calls.length).toBe(callsAfterFirst); // no extra emit
+    expect(db.getScanRun("s1", t.id)!.servicesProbed).toBe(0); // no DB write
+  });
+
+  it("post-terminal linkInvestigation is a no-op", () => {
+    const t = createScanRunStore({ db }).begin({ stackId: "s1", trigger: "manual" });
+    t.skip("no_provider");
+    t.linkInvestigation("inv1", { service: "a", ruleName: "r", value: 0, severity: 0.5 });
+    expect(db.getScanRunInvestigations(t.id)).toEqual([]);
+  });
+
+  it("second skip is a no-op (logged)", () => {
+    const emit = vi.fn();
+    const t = createScanRunStore({ db, emit }).begin({ stackId: "s1", trigger: "cron" });
+    t.skip("no_provider");
+    const callsAfterFirst = emit.mock.calls.length;
+    t.skip("empty_registry");
+    expect(emit.mock.calls.length).toBe(callsAfterFirst);
+  });
+
+  it("fail after finalize is a no-op (first terminal wins)", () => {
+    const emit = vi.fn();
+    const t = createScanRunStore({ db, emit }).begin({ stackId: "s1", trigger: "manual" });
+    t.finalize("complete");
+    t.fail(new Error("too late"));
+    expect(db.getScanRun("s1", t.id)!.status).toBe("complete"); // not "failed"
+  });
 });

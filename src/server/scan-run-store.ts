@@ -103,10 +103,19 @@ export function createScanRunStore(deps: ScanRunStoreDeps): ScanRunStore {
         fn();
       }
 
+      function guardNonTerminal(op: string): boolean {
+        if (terminated) {
+          logger.warn({ runId: id, op }, "scan-run: ignored post-terminal call");
+          return true; // skip
+        }
+        return false;
+      }
+
       return {
         id,
         stackId,
         recordProbeComplete(stats) {
+          if (guardNonTerminal("recordProbeComplete")) return;
           servicesProbed = stats.servicesProbed;
           deps.db.updateScanRun(id, {
             servicesProbed: stats.servicesProbed,
@@ -120,10 +129,10 @@ export function createScanRunStore(deps: ScanRunStoreDeps): ScanRunStore {
           deps.emit?.({ type: "scan:probe_complete", runId: id, stackId, stats: rest });
         },
         recordTriageComplete(detail) {
+          if (guardNonTerminal("recordTriageComplete")) return;
           deps.db.updateScanRun(id, {
             hitsRaw: detail.hitsRaw,
             hitsAfterDedup: detail.hitsAfterDedup,
-            hitsDispatched: detail.dispatched.length,
             droppedByCap: detail.dropped.length,
             triageDetailJson: JSON.stringify({
               hits: detail.dispatched,
@@ -134,6 +143,7 @@ export function createScanRunStore(deps: ScanRunStoreDeps): ScanRunStore {
           deps.emit?.({ type: "scan:triage_complete", runId: id, stackId, detail });
         },
         linkInvestigation(investigationId, hit) {
+          if (guardNonTerminal("linkInvestigation")) return;
           deps.db.linkScanRunInvestigation(id, investigationId, {
             service: hit.service,
             ruleName: hit.ruleName,
@@ -143,6 +153,7 @@ export function createScanRunStore(deps: ScanRunStoreDeps): ScanRunStore {
           });
           dispatchedServices.push(hit.service);
           hitsDispatched += 1;
+          deps.db.updateScanRun(id, { hitsDispatched });
           deps.emit?.({
             type: "scan:investigation_dispatched",
             runId: id, stackId, investigationId,
