@@ -60,7 +60,10 @@ export function DiscoveryReview({ services: initialServices, onAccept, onReject,
         return;
       }
     } catch { /* fall through */ }
-    onAccept(services.map(({ confidence: _c, validationNotes: _v, ...s }) => s));
+    onAccept(services.map(({ confidence: _c, validationNotes: _v, ...s }) => ({
+      ...s,
+      probeRules: s.probeRules ?? [],
+    })));
   };
 
   return (

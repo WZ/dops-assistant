@@ -51,7 +51,10 @@ function DiscoverApp({ agent, config }: DiscoverAppProps) {
 
     if (input === "a") {
       agent.accept(
-        services.map(({ confidence: _c, validationNotes: _v, ...s }) => s),
+        services.map(({ confidence: _c, validationNotes: _v, ...s }) => ({
+          ...s,
+          probeRules: s.probeRules ?? [],
+        })),
         "discovery",
       ).then(() => {
         setPhase("done");
