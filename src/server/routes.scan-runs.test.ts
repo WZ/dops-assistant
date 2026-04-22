@@ -155,3 +155,75 @@ describe("GET /api/scan/runs", () => {
     expect(resNeg.body.runs).toHaveLength(50);
   });
 });
+
+describe("GET /api/scan/runs/:id", () => {
+  let ctx: TestCtx;
+  afterEach(() => { ctx?.cleanup(); });
+
+  it("returns run + joined investigations for own stack", async () => {
+    ctx = makeApp(["stack-a", "stack-b"]);
+    const now = Date.now();
+    ctx.db.insertScanRun({ id: "r1", stackId: "stack-a", trigger: "manual", startedAt: now });
+    ctx.db.updateScanRun("r1", { status: "complete", finishedAt: now + 5, hitsDispatched: 1 });
+    ctx.db.linkScanRunInvestigation("r1", "inv1", {
+      service: "api", ruleName: "availability", value: 0, severity: 0.5, dispatchedAt: now,
+    });
+    const res = await request(ctx.app).get("/api/scan/runs/r1").set("X-Stack-Id", "stack-a");
+    expect(res.status).toBe(200);
+    expect(res.body.run.id).toBe("r1");
+    expect(res.body.investigations).toHaveLength(1);
+    expect(res.body.investigations[0].investigationId).toBe("inv1");
+    // status/reportSummary may be "unknown"/null when investigation doesn't exist yet
+    expect(res.body.investigations[0].service).toBe("api");
+    expect(res.body.investigations[0].ruleName).toBe("availability");
+  });
+
+  it("returns 404 with expectedStackId when run belongs to a different stack", async () => {
+    ctx = makeApp(["stack-a", "stack-b"]);
+    ctx.db.insertScanRun({ id: "r1", stackId: "stack-b", trigger: "cron", startedAt: Date.now() });
+    const res = await request(ctx.app).get("/api/scan/runs/r1").set("X-Stack-Id", "stack-a");
+    expect(res.status).toBe(404);
+    expect(res.body.expectedStackId).toBe("stack-b");
+  });
+
+  it("returns 404 (no hint) when run does not exist at all", async () => {
+    ctx = makeApp(["stack-a"]);
+    const res = await request(ctx.app).get("/api/scan/runs/nope").set("X-Stack-Id", "stack-a");
+    expect(res.status).toBe(404);
+    expect(res.body.expectedStackId).toBeUndefined();
+  });
+
+  it("enriches investigation rows with current status and reportSummary (when report is JSON-parseable)", async () => {
+    ctx = makeApp(["stack-a"]);
+    const now = Date.now();
+    ctx.db.insertScanRun({ id: "r1", stackId: "stack-a", trigger: "manual", startedAt: now });
+    ctx.db.linkScanRunInvestigation("r1", "inv1", {
+      service: "api", ruleName: "availability", value: 0, severity: 0.5, dispatchedAt: now,
+    });
+    // Seed an investigation with a JSON report containing a summary. No public helper
+    // accepts a custom report at insert time, so we insert via raw prepared statement.
+    (ctx.db as unknown as { db: import("better-sqlite3").Database }).db.prepare(
+      "INSERT INTO investigations (id, service, query, status, report, stack_id) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run("inv1", "api", "why down?", "complete", JSON.stringify({ summary: "DB pool exhausted", severity: "high" }), "stack-a");
+
+    const res = await request(ctx.app).get("/api/scan/runs/r1").set("X-Stack-Id", "stack-a");
+    expect(res.status).toBe(200);
+    expect(res.body.investigations[0].status).toBe("complete");
+    expect(res.body.investigations[0].reportSummary).toBe("DB pool exhausted");
+  });
+
+  it("returns reportSummary=null when report is not parseable JSON", async () => {
+    ctx = makeApp(["stack-a"]);
+    const now = Date.now();
+    ctx.db.insertScanRun({ id: "r1", stackId: "stack-a", trigger: "manual", startedAt: now });
+    ctx.db.linkScanRunInvestigation("r1", "inv1", {
+      service: "api", ruleName: "availability", value: 0, severity: 0.5, dispatchedAt: now,
+    });
+    (ctx.db as unknown as { db: import("better-sqlite3").Database }).db.prepare(
+      "INSERT INTO investigations (id, service, query, status, report, stack_id) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run("inv1", "api", "q", "complete", "not json{{{", "stack-a");
+
+    const res = await request(ctx.app).get("/api/scan/runs/r1").set("X-Stack-Id", "stack-a");
+    expect(res.body.investigations[0].reportSummary).toBeNull();
+  });
+});

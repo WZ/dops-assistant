@@ -77,6 +77,21 @@ export interface RouteDeps {
   llmModel?: LanguageModel;
 }
 
+/**
+ * Extract a one-line summary from an investigation.report JSON blob. Returns
+ * null if the column is non-JSON or has no string `.summary` field. Used by
+ * GET /api/scan/runs/:id to decorate linked investigations without forcing
+ * the caller to parse RCA reports on the client.
+ */
+function extractReportSummary(reportJson: string): string | null {
+  try {
+    const parsed = JSON.parse(reportJson) as { summary?: string };
+    return typeof parsed.summary === "string" ? parsed.summary : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Get all services for a stack by merging config + registry */
 function getAllServices(config: Config, req: Request): ServiceConfig[] {
   const registryStore = req.stackContext.serviceRegistry;
@@ -380,6 +395,47 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       before,
     });
     res.json({ runs });
+  });
+
+  /**
+   * GET /api/scan/runs/:id — detail view for a single scan_run.
+   *
+   * Returns the run plus all linked investigations, each enriched with the
+   * investigation's current `status` and a one-line `reportSummary`
+   * (extracted from `report.summary` when the JSON is parseable). The
+   * snapshot metadata stored on `scan_run_investigations` (service,
+   * ruleName, value, severity, dispatchedAt) is preserved alongside the
+   * live fields so the UI can show "what fired" even if the investigation
+   * row has been GC'd or is still running.
+   *
+   * Cross-stack hint: if the run ID exists but belongs to another stack,
+   * returns 404 with `{ expectedStackId }` so the web UI can offer a
+   * "switch to that stack" banner instead of a dead end. A truly missing
+   * ID returns plain 404 (no hint).
+   */
+  app.get("/api/scan/runs/:id", (req: Request, res: Response) => {
+    const id = req.params["id"] as string;
+    const run = db.getScanRun(req.stackId, id);
+    if (!run) {
+      const anyStack = db.getScanRunAnyStack(id);
+      if (anyStack) {
+        res.status(404).json({ error: "Wrong stack", expectedStackId: anyStack.stackId });
+        return;
+      }
+      res.status(404).json({ error: "Scan run not found" });
+      return;
+    }
+    const links = db.getScanRunInvestigations(id);
+    const investigations = links.map(link => {
+      const inv = db.getInvestigation(req.stackId, link.investigationId);
+      return {
+        ...link,
+        status: inv?.status ?? "unknown",
+        reportSummary: inv?.report ? extractReportSummary(inv.report) : null,
+        completedAt: inv?.completed_at ?? null,
+      };
+    });
+    res.json({ run, investigations });
   });
 
   /**

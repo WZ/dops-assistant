@@ -1358,6 +1358,16 @@ export class Database {
   }
 
   /**
+   * Look up a scan_run row WITHOUT stack filtering. Used solely by the
+   * GET /api/scan/runs/:id handler to produce a "wrong stack" 404 hint —
+   * do NOT expose this to cross-stack callers elsewhere.
+   */
+  getScanRunAnyStack(id: string): ScanRunRow | null {
+    const row = this.db.prepare(`SELECT * FROM scan_runs WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
+    return row ? scanRunFromDbRow(row) : null;
+  }
+
+  /**
    * List scan_runs for a stack, newest first. `before` is an epoch-ms
    * cursor: only rows with started_at strictly less than it are returned.
    */
