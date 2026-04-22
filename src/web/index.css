@@ -437,13 +437,3 @@ input:focus, textarea:focus {
     grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
   }
 }
-@container (min-width: 1100px) {
-  .dashboard-stream-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 320px;
-    gap: 1.5rem;
-  }
-  .dashboard-stream-grid > .dashboard-stream-aside {
-    margin-top: 0;
-  }
-}
