@@ -141,7 +141,7 @@ async function main() {
 
   // Build a global onComplete handler for Slack notifications.
   // Reads URL dynamically so GUI changes take effect without restart.
-  const globalOnComplete = (investigationId: string, service: string, report: import("../types/rca-types.js").RcaReport) => {
+  const globalOnComplete = (investigationId: string, service: string, report: import("../types/rca-types.js").RcaReport, _source: import("../types/notifications.js").NotificationSource) => {
     // GUI override (DB) → config.yaml fallback
     const url = db.getSetting("notifications.slack.webhookUrl") ?? config.webhook.slackWebhookUrl;
     if (!url) return;
@@ -213,6 +213,7 @@ async function main() {
           template: "standard",
           stackId,
           readOnlyTools: true,
+          source: "poller",
         });
       })
       .catch((err) => {
@@ -269,6 +270,7 @@ async function main() {
             template,
             stackId,
             readOnlyTools: true,
+            source: "scan",
           });
         })
         .catch((err) => {

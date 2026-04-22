@@ -55,6 +55,7 @@ describe("InvestigationRunner", () => {
       message: "investigate test-svc",
       investigationId: "inv_test_1",
       stackId: "stack-1",
+      source: "manual",
     });
 
     expect(report.rootCause).toBe("Memory leak");
@@ -75,6 +76,7 @@ describe("InvestigationRunner", () => {
       message: "test",
       investigationId: "inv_test_2",
       callbacks: { onComplete },
+      source: "manual",
     });
 
     expect(onComplete).toHaveBeenCalledWith("inv_test_2", expect.objectContaining({ rootCause: "Memory leak" }));
@@ -93,6 +95,7 @@ describe("InvestigationRunner", () => {
         message: "test",
         investigationId: "inv_fail",
         callbacks: { onFailed },
+        source: "manual",
       }),
     ).rejects.toThrow("LLM timeout");
 
@@ -105,6 +108,7 @@ describe("InvestigationRunner", () => {
     await runner.run({
       service: { name: "test-svc", metrics: [], logLabels: {} },
       message: "test",
+      source: "manual",
     });
 
     expect(db.createInvestigation).toHaveBeenCalledWith(
@@ -121,6 +125,7 @@ describe("InvestigationRunner", () => {
       service: { name: "test-svc", metrics: [], logLabels: {} },
       message: "test",
       investigationId: "inv_tokens",
+      source: "manual",
     });
 
     expect(db.updateInvestigation).toHaveBeenCalledWith("inv_tokens", expect.objectContaining({
@@ -147,6 +152,7 @@ describe("eventLog integration", () => {
       message: "investigate test-svc",
       investigationId: "inv_event_1",
       stackId: "stack-abc",
+      source: "manual",
     });
 
     const { events } = eventLog.recent(10);
@@ -175,6 +181,7 @@ describe("eventLog integration", () => {
         message: "test",
         investigationId: "inv_event_fail",
         stackId: "stack-xyz",
+        source: "manual",
       }),
     ).rejects.toThrow("LLM timeout");
 
