@@ -76,9 +76,17 @@ export async function notifyEmail(
   if (!deps.isGloballyEnabled()) return;
 
   const recipients = deps.listEnabledRecipients();
+  // Unknown severities (LLM drift, schema skew) would rank -1 via indexOf and
+  // silently drop every notification. Fail open to critical rank instead — an
+  // unknown severity is itself worth surfacing.
+  const reportRank = severityRank(report.severity);
+  const effectiveRank = reportRank === -1 ? severityRank("critical") : reportRank;
+  if (reportRank === -1) {
+    logger.warn({ investigationId, severity: report.severity }, "unknown report severity, treating as critical for filter");
+  }
   const matches = recipients.filter(
     (r) =>
-      severityRank(report.severity) >= severityRank(r.minSeverity) &&
+      effectiveRank >= severityRank(r.minSeverity) &&
       r.allowedSources.includes(source),
   );
 

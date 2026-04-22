@@ -541,6 +541,9 @@ async function main() {
     stackManager.stopAllPollers();
     stackManager.stopTtlReaper();
     stackManager.destroyAllMemory();
+    // Close SMTP connection pool if the email transport was lazily constructed.
+    // Nodemailer's close() is synchronous and a no-op on non-pooled transports.
+    try { emailTransport?.close(); } catch { /* best-effort on shutdown */ }
     db.close();
     server.close();
     process.exit(0);

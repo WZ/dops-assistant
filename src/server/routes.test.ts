@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { ServiceConfig } from "../config/schema.js";
 import express, { type Express } from "express";
 import request from "supertest";
+import nodemailer from "nodemailer";
 import { registerRoutes } from "./routes.js";
 import { Database } from "./db.js";
 import { unlinkSync } from "fs";
@@ -377,7 +378,7 @@ describe("import confirm logic", () => {
 
 // ── Email notifications CRUD endpoints ──────────────────────────────────────
 
-function makeEmailApp(): { app: Express; db: Database; cleanup: () => void } {
+function makeEmailApp(opts?: { withSmtp?: boolean }): { app: Express; db: Database; cleanup: () => void } {
   const dbPath = join(tmpdir(), `routes-email-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`);
   const db = new Database(dbPath);
   const app = express();
@@ -395,10 +396,19 @@ function makeEmailApp(): { app: Express; db: Database; cleanup: () => void } {
     getContext: () => mockStackContext,
     bumpActivity: () => {},
   } as any;
+  const emailCfg = opts?.withSmtp
+    ? {
+        enabled: false,
+        smtp: { host: "smtp.test.local", port: 587, secure: false, user: "u", pass: "p" },
+        from: "DOps Test <dops@test.local>",
+        appBaseUrl: "https://dops.test.local/",
+        retry: { attempts: 1, backoffMs: [] },
+      }
+    : undefined;
   registerRoutes(app, {
     db,
     stackManager: mockStackManager,
-    config: { notifications: { email: undefined }, webhook: {} } as any,
+    config: { notifications: { email: emailCfg }, webhook: {} } as any,
     skillStore: {} as any,
     sharedDedup: {} as any,
     llmModel: {} as any,
@@ -490,28 +500,76 @@ describe("/api/notifications/email", () => {
     expect(list.body.recipients).toHaveLength(0);
   });
 
-  it("POST /test sends a fixture email via nodemailer jsonTransport", async () => {
+  it("POST /test returns 403 when email notifications are globally disabled", async () => {
+    const withSmtp = makeEmailApp({ withSmtp: true });
+    try {
+      const created = await request(withSmtp.app).post("/api/notifications/email/recipients").send({
+        address: "sre@example.com", minSeverity: "low", allowedSources: ["manual"], enabled: true,
+      });
+      // Global toggle still off (enabled defaults to false). Expect 403.
+      const res = await request(withSmtp.app).post("/api/notifications/email/test").send({ recipientId: created.body.id });
+      expect(res.status).toBe(403);
+    } finally { withSmtp.cleanup(); }
+  });
+
+  it("POST /test returns 400 when SMTP is not configured", async () => {
+    // Default makeEmailApp has emailCfg undefined. Enable the global toggle so
+    // the 403 guard passes; the endpoint should then fail on missing SMTP.
     const created = await request(ctx.app).post("/api/notifications/email/recipients").send({
-      address: "sre@example.com",
-      minSeverity: "low",
-      allowedSources: ["manual"],
-      enabled: true,
+      address: "sre@example.com", minSeverity: "low", allowedSources: ["manual"], enabled: true,
     });
-    const res = await request(ctx.app)
-      .post("/api/notifications/email/test")
-      .send({ recipientId: created.body.id });
-    expect(res.status).toBe(200);
-    expect(res.body.ok).toBe(true);
-    expect(res.body.envelope).toMatchObject({
-      to: "sre@example.com",
-      subject: expect.stringContaining("test-service"),
-    });
+    await request(ctx.app).put("/api/notifications/email").send({ enabled: true });
+    const res = await request(ctx.app).post("/api/notifications/email/test").send({ recipientId: created.body.id });
+    expect(res.status).toBe(400);
   });
 
   it("POST /test returns 404 for unknown recipient id", async () => {
-    const res = await request(ctx.app)
-      .post("/api/notifications/email/test")
-      .send({ recipientId: 99999 });
-    expect(res.status).toBe(404);
+    const withSmtp = makeEmailApp({ withSmtp: true });
+    try {
+      await request(withSmtp.app).put("/api/notifications/email").send({ enabled: true });
+      const res = await request(withSmtp.app).post("/api/notifications/email/test").send({ recipientId: 99999 });
+      expect(res.status).toBe(404);
+    } finally { withSmtp.cleanup(); }
+  });
+
+  it("POST /test uses the recipient's own minSeverity so the severity filter matches", async () => {
+    // The test fixture used to hardcode severity: "high", which silently
+    // dropped critical-only recipients. Regression check: creating a
+    // critical-only recipient and ask for a test — the notifier must attempt
+    // to send, not silently filter out.
+    const withSmtp = makeEmailApp({ withSmtp: true });
+    try {
+      // Stub nodemailer.createTransport so sends don't actually leave the box.
+      const jsonT = nodemailer.createTransport({ jsonTransport: true });
+      const spy = vi.spyOn(nodemailer, "createTransport").mockReturnValue(jsonT);
+      try {
+        await request(withSmtp.app).put("/api/notifications/email").send({ enabled: true });
+        const created = await request(withSmtp.app).post("/api/notifications/email/recipients").send({
+          address: "crit@example.com", minSeverity: "critical", allowedSources: ["manual"], enabled: true,
+        });
+        const res = await request(withSmtp.app).post("/api/notifications/email/test").send({ recipientId: created.body.id });
+        expect(res.status).toBe(200);
+        expect(res.body.ok).toBe(true);
+        expect(res.body.envelope).toMatchObject({ to: "crit@example.com" });
+      } finally { spy.mockRestore(); }
+    } finally { withSmtp.cleanup(); }
+  });
+
+  it("POST /test surfaces SMTP errors as 500", async () => {
+    const withSmtp = makeEmailApp({ withSmtp: true });
+    try {
+      const failTransport = nodemailer.createTransport({ jsonTransport: true });
+      (failTransport as any).sendMail = async () => { throw Object.assign(new Error("auth failure"), { responseCode: 535 }); };
+      const spy = vi.spyOn(nodemailer, "createTransport").mockReturnValue(failTransport);
+      try {
+        await request(withSmtp.app).put("/api/notifications/email").send({ enabled: true });
+        const created = await request(withSmtp.app).post("/api/notifications/email/recipients").send({
+          address: "a@example.com", minSeverity: "low", allowedSources: ["manual"], enabled: true,
+        });
+        const res = await request(withSmtp.app).post("/api/notifications/email/test").send({ recipientId: created.body.id });
+        expect(res.status).toBe(500);
+        expect(res.body.error).toContain("auth failure");
+      } finally { spy.mockRestore(); }
+    } finally { withSmtp.cleanup(); }
   });
 });

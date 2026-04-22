@@ -1,6 +1,49 @@
 import BetterSqlite3 from "better-sqlite3";
 import type { StackRow } from "../types/stack-types.js";
 import type { SeverityLevel, NotificationSource, EmailRecipient } from "../types/notifications.js";
+import { ALL_SEVERITIES, ALL_SOURCES } from "../types/notifications.js";
+import { createLogger as _createLoggerForRecipientParser } from "../logger.js";
+const _emailRecipientLogger = _createLoggerForRecipientParser();
+
+/**
+ * Defensive parse for the `allowed_sources` column. The column stores a JSON
+ * array of NotificationSource strings. If the JSON is corrupt, not an array,
+ * or contains unknown values, we log and return an empty array. An empty
+ * `allowedSources` makes the recipient unreachable by `notifyEmail`'s filter,
+ * which fails closed (no notification sent) rather than silently misrouting.
+ */
+function parseAllowedSources(raw: string, recipientId: number): NotificationSource[] {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      _emailRecipientLogger.warn({ recipientId, raw }, "email_recipients.allowed_sources is not an array; treating as empty");
+      return [];
+    }
+    const out: NotificationSource[] = [];
+    for (const x of parsed) {
+      if (typeof x === "string" && (ALL_SOURCES as readonly string[]).includes(x)) {
+        out.push(x as NotificationSource);
+      } else {
+        _emailRecipientLogger.warn({ recipientId, value: x }, "email_recipients.allowed_sources contains unknown source; skipping");
+      }
+    }
+    return out;
+  } catch (err) {
+    _emailRecipientLogger.error({ err, recipientId, raw }, "email_recipients.allowed_sources is not valid JSON; treating as empty");
+    return [];
+  }
+}
+
+/**
+ * Defensive cast for the `min_severity` column. Invalid values fall back to
+ * "critical" — the strictest threshold — so unknown input fails closed
+ * (the recipient sees nothing rather than being silently widened to everything).
+ */
+function parseMinSeverity(raw: string, recipientId: number): SeverityLevel {
+  if ((ALL_SEVERITIES as readonly string[]).includes(raw)) return raw as SeverityLevel;
+  _emailRecipientLogger.warn({ recipientId, raw }, "email_recipients.min_severity is unknown; defaulting to critical");
+  return "critical";
+}
 
 /**
  * Converts a SQLite datetime string (YYYY-MM-DD HH:MM:SS, UTC) to ISO 8601.
@@ -952,8 +995,8 @@ export class Database {
       id: row.id,
       address: row.address,
       label: row.label ?? undefined,
-      minSeverity: row.min_severity as SeverityLevel,
-      allowedSources: JSON.parse(row.allowed_sources) as NotificationSource[],
+      minSeverity: parseMinSeverity(row.min_severity, row.id),
+      allowedSources: parseAllowedSources(row.allowed_sources, row.id),
       enabled: row.enabled === 1,
       createdAt: normalizeTimestamp(row.created_at),
       updatedAt: normalizeTimestamp(row.updated_at),
@@ -975,8 +1018,8 @@ export class Database {
       id: row.id,
       address: row.address,
       label: row.label ?? undefined,
-      minSeverity: row.min_severity as SeverityLevel,
-      allowedSources: JSON.parse(row.allowed_sources) as NotificationSource[],
+      minSeverity: parseMinSeverity(row.min_severity, row.id),
+      allowedSources: parseAllowedSources(row.allowed_sources, row.id),
       enabled: row.enabled === 1,
       createdAt: normalizeTimestamp(row.created_at),
       updatedAt: normalizeTimestamp(row.updated_at),

@@ -39,6 +39,23 @@ function joinUrl(base: string, path: string): string {
   return `${b}/${p}`;
 }
 
+const SAFE_ID_RE = /^[A-Za-z0-9_-]+$/;
+
+function safeInvestigationId(id: string): string {
+  return SAFE_ID_RE.test(id) ? id : "unknown";
+}
+
+/**
+ * The rest of the codebase stores confidenceScore as a 0–1 float (see
+ * `normalizeConfidence` in `src/web/lib/dashboard-utils.ts`), but historical
+ * fixtures sometimes use 0–100. Accept both: values ≤1 are treated as fraction,
+ * values >1 as percentage. Output is always 0–100 rounded to integer.
+ */
+function formatConfidencePct(raw: number | undefined | null): number {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return 0;
+  return raw <= 1 ? Math.round(raw * 100) : Math.round(raw);
+}
+
 function formatInvestigatedAt(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
@@ -56,10 +73,16 @@ function formatWindow(tr: { from: string; to: string } | undefined): string | un
   return `${hm(a)}–${hm(b)} UTC`;
 }
 
+function stripHeaderUnsafe(s: string): string {
+  // SMTP header injection defense: CR/LF in a header value lets an attacker
+  // append forged headers. Also strip NULs and other C0 controls.
+  return s.replace(/[\r\n\x00-\x1F\x7F]+/g, " ").trim();
+}
+
 export function renderSubject(report: RcaReport): string {
-  const sevTag = `[${report.severity.toUpperCase()}]`;
+  const sevTag = `[${(report.severity ?? "unknown").toUpperCase()}]`;
   const summary = truncateAtWordBoundary(report.summary ?? "", MAX_SUMMARY_IN_SUBJECT);
-  const raw = `${sevTag} ${report.service}: ${summary}`;
+  const raw = stripHeaderUnsafe(`${sevTag} ${report.service ?? "unknown"}: ${summary}`);
   return raw.length <= MAX_SUBJECT_LEN ? raw : truncateAtWordBoundary(raw, MAX_SUBJECT_LEN);
 }
 
@@ -69,13 +92,13 @@ export function renderBody(
   appBaseUrl: string,
   source: NotificationSource,
 ): string {
-  const color = SEVERITY_COLORS[report.severity];
+  const color = SEVERITY_COLORS[report.severity] ?? "#374151";
   const sevTag = escapeHtml(report.severity.toUpperCase());
   const svc = escapeHtml(report.service);
   const investigatedAt = escapeHtml(formatInvestigatedAt(report.investigatedAt));
   const win = formatWindow(report.timeRange);
   const src = escapeHtml(sourceDisplayText(source));
-  const investigationUrl = joinUrl(appBaseUrl, `investigations/${investigationId}`);
+  const investigationUrl = joinUrl(appBaseUrl, `investigations/${safeInvestigationId(investigationId)}`);
 
   const bannerSubline = [
     `Investigated ${investigatedAt}`,
@@ -133,7 +156,7 @@ export function renderBody(
 
   <h2 style="margin: 16px 0 6px; font-size: 16px;">Root cause</h2>
   <p style="margin: 0;">${escapeHtml(report.rootCause)}</p>
-  <p style="margin: 4px 0 12px; color: #4b5563;"><strong>Confidence:</strong> ${escapeHtml(report.confidence)} (${Number(report.confidenceScore)} / 100)</p>
+  <p style="margin: 4px 0 12px; color: #4b5563;"><strong>Confidence:</strong> ${escapeHtml(report.confidence)} (${formatConfidencePct(report.confidenceScore)} / 100)</p>
 
   <h2 style="margin: 16px 0 6px; font-size: 16px;">Contributing factors</h2>
   ${li(report.contributingFactors)}
@@ -185,7 +208,7 @@ export function renderTextFallback(
   lines.push("");
   lines.push("ROOT CAUSE");
   lines.push(report.rootCause);
-  lines.push(`Confidence: ${report.confidence} (${report.confidenceScore} / 100)`);
+  lines.push(`Confidence: ${report.confidence} (${formatConfidencePct(report.confidenceScore)} / 100)`);
   lines.push("");
   if (report.contributingFactors.length > 0) {
     lines.push("CONTRIBUTING FACTORS");
@@ -216,7 +239,7 @@ export function renderTextFallback(
     for (const d of report.dashboardLinks) lines.push(`  • ${d}`);
     lines.push("");
   }
-  lines.push(`Open investigation: ${joinUrl(appBaseUrl, `investigations/${investigationId}`)}`);
+  lines.push(`Open investigation: ${joinUrl(appBaseUrl, `investigations/${safeInvestigationId(investigationId)}`)}`);
   if (report.skillsUsed && report.skillsUsed.length > 0) {
     lines.push("");
     lines.push(`Skills used: ${report.skillsUsed.join(", ")}`);

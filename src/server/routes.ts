@@ -1424,22 +1424,42 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       res.status(400).json({ error: "recipientId must be a positive integer" });
       return;
     }
+
+    // (a) Require the global email-enabled flag before allowing any send.
+    // Prevents the endpoint from being used as an open SMTP relay by anyone
+    // with access to the /api surface while email is nominally off.
+    const emailCfg = config.notifications?.email;
+    const dbEnabled = db.getSetting("notifications.email.enabled");
+    const globalEnabled = dbEnabled !== undefined ? dbEnabled === "true" : emailCfg?.enabled ?? false;
+    if (!globalEnabled) {
+      res.status(403).json({ error: "Email notifications are disabled. Enable the global toggle first." });
+      return;
+    }
+
+    // (c) Require real SMTP config so we never fake success via jsonTransport.
+    // A user clicking "Test" expects a real round-trip; if SMTP isn't wired up,
+    // that's a 400 they can act on — not a green checkmark.
+    if (!emailCfg) {
+      res.status(400).json({ error: "SMTP is not configured. Set notifications.email in config.yaml." });
+      return;
+    }
+
     const recipient = db.getEmailRecipient(recipientId);
     if (!recipient) { res.status(404).json({ error: "Recipient not found" }); return; }
 
-    const emailCfg = config.notifications?.email;
-    const realTransport = emailCfg
-      ? nodemailer.createTransport({
-          host: emailCfg.smtp.host,
-          port: emailCfg.smtp.port,
-          secure: emailCfg.smtp.secure,
-          auth: { user: emailCfg.smtp.user, pass: emailCfg.smtp.pass },
-        })
-      : nodemailer.createTransport({ jsonTransport: true });
+    const realTransport = nodemailer.createTransport({
+      host: emailCfg.smtp.host,
+      port: emailCfg.smtp.port,
+      secure: emailCfg.smtp.secure,
+      auth: { user: emailCfg.smtp.user, pass: emailCfg.smtp.pass },
+    });
 
+    // (b) Use the recipient's own minSeverity as the fixture severity so the
+    // filter in notifyEmail always matches. Otherwise a hard-coded "high"
+    // fixture silently skips critical-only recipients — test button would lie.
     const fixture: RcaReport = {
       service: "test-service",
-      severity: "high",
+      severity: recipient.minSeverity,
       summary: "This is a test notification from DOps Assistant",
       impact: { duration: "0s", description: "No production impact — this is a test." },
       trigger: "Manual test from Notifications settings",
@@ -1450,15 +1470,24 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       dashboardLinks: [],
       recommendedActions: ["Confirm you received this email in your inbox or Teams channel"],
       confidence: "high",
-      confidenceScore: 100,
+      confidenceScore: 1,
       investigatedAt: new Date().toISOString(),
     };
 
+    // (d) Capture SMTP errors from the wrapped transport so we can surface
+    // them to the caller. `notifyEmail` swallows send failures by design,
+    // so the test endpoint has to watch the transport directly.
     const captured: unknown[] = [];
+    let sendError: unknown = null;
     const wrappedTransport = {
       sendMail: async (envelope: unknown) => {
         captured.push(envelope);
-        return realTransport.sendMail(envelope as any);
+        try {
+          return await realTransport.sendMail(envelope as any);
+        } catch (err) {
+          sendError = err;
+          throw err;
+        }
       },
     } as unknown as ReturnType<typeof nodemailer.createTransport>;
 
@@ -1468,8 +1497,8 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         listEnabledRecipients: () => [recipient],
         transport: wrappedTransport,
         config: {
-          from: emailCfg?.from ?? "dops@test.local",
-          appBaseUrl: emailCfg?.appBaseUrl ?? "https://dops.example.com/",
+          from: emailCfg.from,
+          appBaseUrl: emailCfg.appBaseUrl,
           retry: { attempts: 1, backoffMs: [] },
         },
       },
@@ -1477,6 +1506,12 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       fixture,
       recipient.allowedSources[0] ?? "manual",
     );
+
+    if (sendError) {
+      const msg = sendError instanceof Error ? sendError.message : String(sendError);
+      res.status(500).json({ error: `SMTP send failed: ${msg}` });
+      return;
+    }
 
     res.json({ ok: true, envelope: captured[0] ?? null });
   });
