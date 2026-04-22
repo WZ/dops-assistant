@@ -7,6 +7,16 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - **Sub-path is now runtime-configurable via `APP_BASE_PATH` env var** instead of baked into the image via `VITE_BASE_PATH` build-arg. Previous flow required rebuilding the image per deploy environment (blank page if you forgot). Now one generic image serves any sub-path: the server rewrites `index.html` asset references and injects `window.__APP_BASE__` at serve time; the web bundle reads the base from that global with fallback to `import.meta.env.BASE_URL`. `VITE_BASE_PATH` still works as a build-time default but is no longer required for sub-path deploys.
 
+## [0.0.10.0] - 2026-04-22
+
+### Added
+- **Email notifications, alongside the existing Slack notifier.** Every completed investigation can now be delivered to any email address — primary target: Microsoft Teams channel email addresses via Teams' email-to-channel feature. Recipients are filtered independently on two axes: minimum severity (low / medium / high / critical) and allowed trigger source (webhook, proactive scan, health poller, or manual investigation), so each inbox only sees what it wants. The HTML body is Teams-safe (inline styles, common-tag allowlist, no external CSS or images) and renders the full RCA report: severity-coloured banner, summary, impact, trigger, root cause with confidence, contributing factors, timeline, evidence (metrics/logs/infra/changes), recommended actions, dashboard links, and a deep link back to the investigation in the web UI. Plain-text fallback included.
+- **New `notifications.email` config section** with SMTP settings (`host`, `port`, `secure`, `user`, `pass` via env substitution), `from` address, `appBaseUrl` for building "Open investigation" links, and retry policy (`attempts` + `backoffMs`). Startup validation enforces `backoffMs.length === attempts - 1`.
+- **GUI for recipient management.** A new Email section appears beneath Slack on the Notifications tab. Add / edit / delete / toggle recipients without a server restart. Each recipient has a label, email address, severity threshold, source allowlist, and enable flag. A per-row "Test" button sends a fixture RCA through the real SMTP pipeline and surfaces failures inline — useful for validating Teams tenant sender-acceptance rules.
+- **Six new REST endpoints** under `/api/notifications/email/*` (global GET/PUT + recipient CRUD + test-send), following the existing Slack notification endpoint patterns.
+- **Notification source enum threaded through the runner.** Every `runner.run()` call now declares how the investigation was triggered (`webhook` / `scan` / `poller` / `manual`), so the notifier can route by source. Enforced by the type system — `source` is a required field on `RunOptions`.
+- **Setup guide at `docs/email-notifications-setup.md`** covering SMTP env vars, config schema, GUI walkthrough, Teams tenant acceptance rules, and troubleshooting.
+
 ## [0.0.9.2] - 2026-04-16
 
 ### Fixed

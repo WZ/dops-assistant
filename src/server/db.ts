@@ -1,5 +1,49 @@
 import BetterSqlite3 from "better-sqlite3";
 import type { StackRow } from "../types/stack-types.js";
+import type { SeverityLevel, NotificationSource, EmailRecipient } from "../types/notifications.js";
+import { ALL_SEVERITIES, ALL_SOURCES } from "../types/notifications.js";
+import { createLogger as _createLoggerForRecipientParser } from "../logger.js";
+const _emailRecipientLogger = _createLoggerForRecipientParser();
+
+/**
+ * Defensive parse for the `allowed_sources` column. The column stores a JSON
+ * array of NotificationSource strings. If the JSON is corrupt, not an array,
+ * or contains unknown values, we log and return an empty array. An empty
+ * `allowedSources` makes the recipient unreachable by `notifyEmail`'s filter,
+ * which fails closed (no notification sent) rather than silently misrouting.
+ */
+function parseAllowedSources(raw: string, recipientId: number): NotificationSource[] {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      _emailRecipientLogger.warn({ recipientId, raw }, "email_recipients.allowed_sources is not an array; treating as empty");
+      return [];
+    }
+    const out: NotificationSource[] = [];
+    for (const x of parsed) {
+      if (typeof x === "string" && (ALL_SOURCES as readonly string[]).includes(x)) {
+        out.push(x as NotificationSource);
+      } else {
+        _emailRecipientLogger.warn({ recipientId, value: x }, "email_recipients.allowed_sources contains unknown source; skipping");
+      }
+    }
+    return out;
+  } catch (err) {
+    _emailRecipientLogger.error({ err, recipientId, raw }, "email_recipients.allowed_sources is not valid JSON; treating as empty");
+    return [];
+  }
+}
+
+/**
+ * Defensive cast for the `min_severity` column. Invalid values fall back to
+ * "critical" — the strictest threshold — so unknown input fails closed
+ * (the recipient sees nothing rather than being silently widened to everything).
+ */
+function parseMinSeverity(raw: string, recipientId: number): SeverityLevel {
+  if ((ALL_SEVERITIES as readonly string[]).includes(raw)) return raw as SeverityLevel;
+  _emailRecipientLogger.warn({ recipientId, raw }, "email_recipients.min_severity is unknown; defaulting to critical");
+  return "critical";
+}
 
 /**
  * Converts a SQLite datetime string (YYYY-MM-DD HH:MM:SS, UTC) to ISO 8601.
@@ -105,6 +149,7 @@ export class Database {
     this.migrateServiceMetadata();
     this.migrateStacks();
     this.migrateDisabledSkills();
+    this.migrateEmailRecipients();
   }
 
   private migrate(): void {
@@ -183,6 +228,26 @@ export class Database {
         updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
       );
     `);
+  }
+
+  // ── Email recipients migration ─────────────────────────────────────────
+
+  private migrateEmailRecipients(): void {
+    this.db.prepare(`
+      CREATE TABLE IF NOT EXISTS email_recipients (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        address          TEXT NOT NULL,
+        label            TEXT,
+        min_severity     TEXT NOT NULL DEFAULT 'high',
+        allowed_sources  TEXT NOT NULL DEFAULT '["webhook","scan","poller"]',
+        enabled          INTEGER NOT NULL DEFAULT 1,
+        created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `).run();
+    this.db.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_email_recipients_enabled ON email_recipients(enabled)`
+    ).run();
   }
 
   // ── Stack migration ──────────────────────────────────────────────────────
@@ -270,6 +335,14 @@ export class Database {
         DROP TABLE IF EXISTS service_metadata;
         ALTER TABLE service_metadata_new RENAME TO service_metadata;
       `);
+    }
+
+    // Lane B Step 4 — add scan_override column for per-service probe overrides.
+    // Stored as JSON text (ScanServiceOverride shape) or NULL. Idempotent; runs
+    // after the composite-PK migration above so metaInfoPost reflects final schema.
+    const metaInfoPost = this.db.prepare("PRAGMA table_info(service_metadata)").all() as Array<{ name: string }>;
+    if (!metaInfoPost.some(col => col.name === "scan_override")) {
+      this.db.prepare("ALTER TABLE service_metadata ADD COLUMN scan_override TEXT").run();
     }
 
     // Indexes
@@ -812,6 +885,58 @@ export class Database {
   }
 
   /**
+   * Per-service scan override — the effective override shape for a service.
+   * Null means "no override" (use global rules). Caller is responsible for
+   * the JSON schema of the value; we just store + retrieve the string.
+   */
+  getScanOverride(stackId: string, service: string): string | null {
+    const row = this.db.prepare(
+      "SELECT scan_override FROM service_metadata WHERE stack_id = ? AND service = ?"
+    ).get(stackId, service) as { scan_override: string | null } | undefined;
+    return row?.scan_override ?? null;
+  }
+
+  /**
+   * Set the per-service scan override JSON. Upserts the metadata row if
+   * none exists yet (symmetric with `upsertServiceMetadata`).
+   */
+  setScanOverride(stackId: string, service: string, overrideJson: string): void {
+    this.db.prepare(`
+      INSERT INTO service_metadata (stack_id, service, scan_override, updated_at)
+      VALUES (?, ?, ?, datetime('now'))
+      ON CONFLICT(stack_id, service) DO UPDATE SET
+        scan_override = excluded.scan_override,
+        updated_at    = datetime('now')
+    `).run(stackId, service, overrideJson);
+  }
+
+  /**
+   * Clear the override, reverting the service to global rules. NULLs out the
+   * column without deleting the metadata row (which may still hold alias/tags).
+   */
+  clearScanOverride(stackId: string, service: string): void {
+    this.db.prepare(`
+      UPDATE service_metadata
+      SET scan_override = NULL, updated_at = datetime('now')
+      WHERE stack_id = ? AND service = ?
+    `).run(stackId, service);
+  }
+
+  /**
+   * Map of { service → overrideJson } for every service in a stack that has
+   * a non-null scan_override. Used by the scheduler to pass a cheap lookup
+   * into anomaly-probe without hitting the DB once per service per tick.
+   */
+  getAllScanOverrides(stackId: string): Record<string, string> {
+    const rows = this.db.prepare(
+      "SELECT service, scan_override FROM service_metadata WHERE stack_id = ? AND scan_override IS NOT NULL"
+    ).all(stackId) as Array<{ service: string; scan_override: string }>;
+    const out: Record<string, string> = {};
+    for (const row of rows) out[row.service] = row.scan_override;
+    return out;
+  }
+
+  /**
    * Explicitly clear a service's alias (sets alias column to NULL).
    * `upsertServiceMetadata` treats `null` as "don't change this column" to
    * support partial updates, so there's no way to clear via that path. This
@@ -854,6 +979,33 @@ export class Database {
   }
 
   /**
+   * Count scan-triggered investigations on this stack within a time window.
+   * Used by the Dashboard activity badge to show "N anomalies in last 24h".
+   *
+   * "Scan-triggered" is identified by the stable message prefix written by
+   * `buildInvestigationMessage()` in anomaly-probe.ts — kept in lockstep with
+   * `classifyTriggerSource()` in rca-eval.ts. If the prefix ever changes,
+   * BOTH must update (tested via shared fixtures in rca-eval.test.ts).
+   *
+   * Counts only investigations with `status = 'complete'` — pending/running
+   * shouldn't inflate the "anomalies found" number the operator sees.
+   */
+  countScanTriggeredInvestigationsSince(stackId: string, sinceIso: string): number {
+    // `created_at` is stored in SQLite's datetime('now') format — space-separated,
+    // no 'T', no 'Z'. An ISO-8601 input string compared directly fails lexically
+    // ("2026-04-22 06:00:00" < "2026-04-22T05:00:00.000Z" because ' ' < 'T').
+    // `datetime(?)` parses the ISO input into the same format before comparison.
+    const row = this.db.prepare(
+      "SELECT COUNT(*) as n FROM investigations " +
+        "WHERE stack_id = ? " +
+        "AND query LIKE 'Proactive scan detected anomaly%' " +
+        "AND status = 'complete' " +
+        "AND created_at >= datetime(?)"
+    ).get(stackId, sinceIso) as { n: number } | undefined;
+    return row?.n ?? 0;
+  }
+
+  /**
    * Epoch ms of the most recent COMPLETED investigation for this stack+service,
    * or null if none. Used by the scan scheduler's per-tick prioritization
    * ("oldest last-investigated wins" tiebreak when more services trip than
@@ -891,6 +1043,113 @@ export class Database {
 
   deleteSetting(key: string): void {
     this.db.prepare("DELETE FROM settings WHERE key = ?").run(key);
+  }
+
+  /**
+   * Run a function inside a SQLite transaction. Writes commit atomically;
+   * throws anywhere inside `fn` roll everything back. Delegates to
+   * better-sqlite3's `transaction()` which runs synchronously and is
+   * re-entrant-safe.
+   *
+   * Use for multi-write operations where partial state corrupts invariants
+   * (e.g., PUT /api/scan/settings writing cron + rules + enabled together —
+   * if one fails, the effective config is incoherent).
+   */
+  transaction<T>(fn: () => T): T {
+    return this.db.transaction(fn)();
+  }
+
+  // ── Email recipients ──────────────────────────────────────────────────────
+
+  createEmailRecipient(input: {
+    address: string;
+    label?: string;
+    minSeverity: SeverityLevel;
+    allowedSources: NotificationSource[];
+    enabled: boolean;
+  }): EmailRecipient {
+    const result = this.db.prepare(
+      `INSERT INTO email_recipients (address, label, min_severity, allowed_sources, enabled)
+       VALUES (?, ?, ?, ?, ?)`
+    ).run(
+      input.address,
+      input.label ?? null,
+      input.minSeverity,
+      JSON.stringify(input.allowedSources),
+      input.enabled ? 1 : 0,
+    );
+    const id = Number(result.lastInsertRowid);
+    return this.getEmailRecipient(id)!;
+  }
+
+  getEmailRecipient(id: number): EmailRecipient | undefined {
+    const row = this.db.prepare(
+      `SELECT id, address, label, min_severity, allowed_sources, enabled, created_at, updated_at
+       FROM email_recipients WHERE id = ?`
+    ).get(id) as {
+      id: number; address: string; label: string | null;
+      min_severity: string; allowed_sources: string; enabled: number;
+      created_at: string; updated_at: string;
+    } | undefined;
+    if (!row) return undefined;
+    return {
+      id: row.id,
+      address: row.address,
+      label: row.label ?? undefined,
+      minSeverity: parseMinSeverity(row.min_severity, row.id),
+      allowedSources: parseAllowedSources(row.allowed_sources, row.id),
+      enabled: row.enabled === 1,
+      createdAt: normalizeTimestamp(row.created_at),
+      updatedAt: normalizeTimestamp(row.updated_at),
+    };
+  }
+
+  listEmailRecipients(opts?: { enabledOnly?: boolean }): EmailRecipient[] {
+    const sql = opts?.enabledOnly
+      ? `SELECT id, address, label, min_severity, allowed_sources, enabled, created_at, updated_at
+         FROM email_recipients WHERE enabled = 1 ORDER BY id`
+      : `SELECT id, address, label, min_severity, allowed_sources, enabled, created_at, updated_at
+         FROM email_recipients ORDER BY id`;
+    const rows = this.db.prepare(sql).all() as Array<{
+      id: number; address: string; label: string | null;
+      min_severity: string; allowed_sources: string; enabled: number;
+      created_at: string; updated_at: string;
+    }>;
+    return rows.map((row) => ({
+      id: row.id,
+      address: row.address,
+      label: row.label ?? undefined,
+      minSeverity: parseMinSeverity(row.min_severity, row.id),
+      allowedSources: parseAllowedSources(row.allowed_sources, row.id),
+      enabled: row.enabled === 1,
+      createdAt: normalizeTimestamp(row.created_at),
+      updatedAt: normalizeTimestamp(row.updated_at),
+    }));
+  }
+
+  updateEmailRecipient(id: number, patch: {
+    address?: string;
+    label?: string | null;
+    minSeverity?: SeverityLevel;
+    allowedSources?: NotificationSource[];
+    enabled?: boolean;
+  }): EmailRecipient | undefined {
+    const fields: string[] = [];
+    const values: Array<string | number | null> = [];
+    if (patch.address !== undefined) { fields.push("address = ?"); values.push(patch.address); }
+    if (patch.label !== undefined) { fields.push("label = ?"); values.push(patch.label); }
+    if (patch.minSeverity !== undefined) { fields.push("min_severity = ?"); values.push(patch.minSeverity); }
+    if (patch.allowedSources !== undefined) { fields.push("allowed_sources = ?"); values.push(JSON.stringify(patch.allowedSources)); }
+    if (patch.enabled !== undefined) { fields.push("enabled = ?"); values.push(patch.enabled ? 1 : 0); }
+    if (fields.length === 0) return this.getEmailRecipient(id);
+    fields.push("updated_at = datetime('now', 'subsec')");
+    values.push(id);
+    this.db.prepare(`UPDATE email_recipients SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+    return this.getEmailRecipient(id);
+  }
+
+  deleteEmailRecipient(id: number): void {
+    this.db.prepare("DELETE FROM email_recipients WHERE id = ?").run(id);
   }
 
   close(): void {

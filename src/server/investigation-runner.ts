@@ -20,6 +20,7 @@ import type { ServiceConfig, InvestigationTemplate } from "../config/schema.js";
 import type { SkillStore } from "../skills/store.js";
 import type { PhaseStats, ServerMessage } from "../types/ws-types.js";
 import { eventLog } from "./event-log.js";
+import type { NotificationSource } from "../types/notifications.js";
 
 
 const logger = createLogger();
@@ -97,7 +98,7 @@ export interface RunnerDeps {
   investigationAgent: IInvestigationAgent;
   skillStore?: SkillStore;
   /** Global callback fired after every successful investigation (e.g. Slack notification) */
-  globalOnComplete?: (investigationId: string, service: string, report: RcaReport) => void;
+  globalOnComplete?: (investigationId: string, service: string, report: RcaReport, source: NotificationSource) => void;
 }
 
 export interface RunOptions {
@@ -116,13 +117,15 @@ export interface RunOptions {
   /** ID of the parent investigation (for re-runs). Stored for lineage tracking. */
   parentInvestigationId?: string;
   callbacks?: InvestigationCallbacks;
+  /** What triggered this investigation — threaded to globalOnComplete for notification filtering. */
+  source: NotificationSource;
 }
 
 export class InvestigationRunner {
   private db: Database;
   private investigationAgent: IInvestigationAgent;
   private skillStore?: SkillStore;
-  private globalOnComplete?: (investigationId: string, service: string, report: RcaReport) => void;
+  private globalOnComplete?: (investigationId: string, service: string, report: RcaReport, source: NotificationSource) => void;
 
   constructor(deps: RunnerDeps) {
     this.db = deps.db;
@@ -138,7 +141,7 @@ export class InvestigationRunner {
    * agent with phase/tool/token tracking, persists results, and emits callbacks.
    */
   async run(opts: RunOptions): Promise<RcaReport> {
-    const { service, message, callbacks, template, stackId, readOnlyTools, disabledSkillIds } = opts;
+    const { service, message, callbacks, template, stackId, readOnlyTools, disabledSkillIds, source } = opts;
     const invId = opts.investigationId ?? `inv_${ulid()}`;
 
     // 1. Create DB record
@@ -319,7 +322,7 @@ export class InvestigationRunner {
 
       // Fire global completion handler (e.g. Slack notifications)
       try {
-        this.globalOnComplete?.(invId, service.name, report);
+        this.globalOnComplete?.(invId, service.name, report, source);
       } catch (globalErr) {
         logger.warn({ err: globalErr, invId }, "Global onComplete handler failed");
       }

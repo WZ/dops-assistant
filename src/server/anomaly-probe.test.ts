@@ -220,6 +220,102 @@ describe("runProbe", () => {
   });
 });
 
+describe("runProbe — per-service overrides", () => {
+  beforeEach(() => {
+    mockTools = {};
+  });
+
+  it("skips disabled services entirely (no queries fired)", async () => {
+    const execute = vi.fn(async () => promResult(0));
+    mockTools = { query_prometheus: { execute } };
+
+    const state = new Map<string, number>();
+    await runProbe({
+      services: ["svc-a", "svc-b"],
+      probe: buildProbe({
+        metrics: [
+          { name: "availability", query: 'up{service="{service}"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 1 },
+        ],
+      }),
+      providers, datasourceUid: "uid",
+      consecutiveState: state,
+      getOverride: (svc) => svc === "svc-a" ? { disabled: true } : null,
+    });
+
+    // Only svc-b should have been probed. Check via expr substitution.
+    const calls = execute.mock.calls.map((c) => (c[0] as { expr: string }).expr);
+    expect(calls.every((expr) => expr.includes("svc-b"))).toBe(true);
+    expect(calls.some((expr) => expr.includes("svc-a"))).toBe(false);
+  });
+
+  it("uses override rules instead of globals for a specific service", async () => {
+    const execute = vi.fn(async () => promResult(0));
+    mockTools = { query_prometheus: { execute } };
+
+    const globalRules = [
+      { name: "global-rule", query: 'global_up{service="{service}"}', threshold: { op: "lt" as const, value: 1 }, consecutiveTicks: 1 },
+    ];
+    const customRules = [
+      { name: "custom-rule", query: 'custom_up{service="{service}"}', threshold: { op: "lt" as const, value: 1 }, consecutiveTicks: 1 },
+    ];
+
+    const state = new Map<string, number>();
+    await runProbe({
+      services: ["svc-a", "svc-b"],
+      probe: buildProbe({ metrics: globalRules }),
+      providers, datasourceUid: "uid",
+      consecutiveState: state,
+      getOverride: (svc) => svc === "svc-a" ? { rules: customRules } : null,
+    });
+
+    const calls = execute.mock.calls.map((c) => (c[0] as { expr: string }).expr);
+    // svc-a used custom_up, svc-b used global_up
+    expect(calls.some((expr) => expr.includes("custom_up") && expr.includes("svc-a"))).toBe(true);
+    expect(calls.some((expr) => expr.includes("global_up") && expr.includes("svc-b"))).toBe(true);
+    expect(calls.some((expr) => expr.includes("custom_up") && expr.includes("svc-b"))).toBe(false);
+    expect(calls.some((expr) => expr.includes("global_up") && expr.includes("svc-a"))).toBe(false);
+  });
+
+  it("falls back to globals when override has empty rules array", async () => {
+    // An empty override.rules array is effectively "no override" — we use
+    // globals rather than "run zero rules", which would defeat the probe.
+    // Operators who want zero rules should use {disabled: true}.
+    const execute = vi.fn(async () => promResult(1));
+    mockTools = { query_prometheus: { execute } };
+
+    const state = new Map<string, number>();
+    await runProbe({
+      services: ["svc-a"],
+      probe: buildProbe({
+        metrics: [
+          { name: "availability", query: 'up{service="{service}"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 1 },
+        ],
+      }),
+      providers, datasourceUid: "uid",
+      consecutiveState: state,
+      getOverride: () => ({ rules: [] }),
+    });
+
+    expect(execute).toHaveBeenCalled();
+  });
+
+  it("works without a getOverride getter at all (backwards compat)", async () => {
+    const execute = vi.fn(async () => promResult(0));
+    mockTools = { query_prometheus: { execute } };
+
+    const state = new Map<string, number>();
+    const hits = await runProbe({
+      services: ["svc-a"],
+      probe: buildProbe(),
+      providers, datasourceUid: "uid",
+      consecutiveState: state,
+      // no getOverride
+    });
+    // Availability threshold (<1, consecutiveTicks=1) trips on value=0
+    expect(hits.find(h => h.service === "svc-a" && h.ruleName === "availability")).toBeDefined();
+  });
+});
+
 describe("prioritizeHits", () => {
   const hitA: ProbeHit = { service: "a", ruleName: "error_rate", value: 0.5, query: "q", threshold: { op: "gt", value: 0.01 }, consecutiveTicks: 2, severity: 49 };
   const hitB: ProbeHit = { service: "b", ruleName: "latency_p99", value: 5, query: "q", threshold: { op: "gt", value: 2 }, consecutiveTicks: 1, severity: 1.5 };
