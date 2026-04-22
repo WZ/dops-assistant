@@ -1392,6 +1392,21 @@ export class Database {
   }
 
   /**
+   * Mark any `scan_runs` row stuck in 'running' as 'failed'. Called at server
+   * startup — if the previous process died mid-tick, its row stays 'running'
+   * forever. Idempotent; safe to call on every boot.
+   */
+  sweepStaleScanRuns(): void {
+    this.db.prepare(`
+      UPDATE scan_runs
+         SET status = 'failed',
+             error_message = 'Server restarted during tick',
+             finished_at = CAST(strftime('%s','now') AS INTEGER) * 1000
+       WHERE status = 'running'
+    `).run();
+  }
+
+  /**
    * All investigations linked to a scan_run, ordered by dispatch time
    * ascending — useful for rendering a chronological timeline on the
    * ScanRunDetail page.

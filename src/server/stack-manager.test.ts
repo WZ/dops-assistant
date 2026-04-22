@@ -589,3 +589,23 @@ describe("StackManager", () => {
     });
   });
 });
+
+describe("stale-scan-run sweep", () => {
+  it("flips status='running' rows to 'failed' with error_message + finished_at set", () => {
+    const db = new Database(":memory:");
+    const now = Date.now();
+    db.insertScanRun({ id: "r1", stackId: "s1", trigger: "cron", startedAt: now - 10_000 });
+    db.insertScanRun({ id: "r2", stackId: "s1", trigger: "manual", startedAt: now - 5_000 });
+    db.updateScanRun("r2", { status: "complete", finishedAt: now - 4_000 });
+
+    db.sweepStaleScanRuns();
+
+    const r1 = db.getScanRun("s1", "r1")!;
+    const r2 = db.getScanRun("s1", "r2")!;
+    expect(r1.status).toBe("failed");
+    expect(r1.errorMessage).toContain("Server restarted");
+    expect(r1.finishedAt).toBeGreaterThan(0);
+    expect(r2.status).toBe("complete");
+    db.close();
+  });
+});

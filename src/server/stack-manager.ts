@@ -77,6 +77,11 @@ export class StackManager {
    * 3. Initialize all stacks from DB
    */
   async initialize(): Promise<void> {
+    // Crash recovery: any scan_runs rows left in 'running' state mean the server
+    // died mid-tick. Flip them to 'failed' so the UI doesn't render them as
+    // perpetually in-flight.
+    this.db.sweepStaleScanRuns();
+
     // 1. Find or create default stack
     const existingDefault = this.db.getStackBySlug(DEFAULT_STACK_SLUG);
 
