@@ -93,6 +93,78 @@ describe("getEffectiveScanConfig", () => {
   });
 });
 
+describe("getEffectiveScanConfig — probe.metrics override", () => {
+  let db: Database;
+  beforeEach(() => { db = new Database(":memory:"); });
+  afterEach(() => { db.close(); });
+
+  const overrideRules = [
+    { name: "custom_availability", query: 'up{app="{service}"}', threshold: { op: "lt" as const, value: 1 }, consecutiveTicks: 1 },
+  ];
+
+  it("uses config.yaml rules when no DB override exists", () => {
+    const config = makeConfig();
+    const eff = getEffectiveScanConfig(db, config);
+    expect(eff.probe.metrics).toEqual(config.scan.probe.metrics);
+  });
+
+  it("DB override REPLACES config.yaml rules entirely", () => {
+    db.setSetting(SCAN_SETTING_KEYS.probeMetrics, JSON.stringify(overrideRules));
+    const eff = getEffectiveScanConfig(db, makeConfig());
+    expect(eff.probe.metrics).toEqual(overrideRules);
+    // Other probe fields (concurrency, queryTimeoutMs, logs) stay from config
+    expect(eff.probe.concurrency).toBe(8);
+  });
+
+  it("falls back to config.yaml on unparseable JSON", () => {
+    db.setSetting(SCAN_SETTING_KEYS.probeMetrics, "{ not json");
+    const config = makeConfig();
+    const eff = getEffectiveScanConfig(db, config);
+    expect(eff.probe.metrics).toEqual(config.scan.probe.metrics);
+  });
+
+  it("falls back to config.yaml when stored value is not an array", () => {
+    db.setSetting(SCAN_SETTING_KEYS.probeMetrics, JSON.stringify({ rules: [] }));
+    const config = makeConfig();
+    const eff = getEffectiveScanConfig(db, config);
+    expect(eff.probe.metrics).toEqual(config.scan.probe.metrics);
+  });
+
+  it("accepts an empty array override (intentional: zero rules)", () => {
+    db.setSetting(SCAN_SETTING_KEYS.probeMetrics, JSON.stringify([]));
+    const eff = getEffectiveScanConfig(db, makeConfig());
+    expect(eff.probe.metrics).toEqual([]);
+  });
+});
+
+describe("getScanSettingsView — rules + source", () => {
+  let db: Database;
+  beforeEach(() => { db = new Database(":memory:"); });
+  afterEach(() => { db.close(); });
+
+  it("reports source.rules='config' when no override", () => {
+    const view = getScanSettingsView(db, makeConfig());
+    expect(view.source.rules).toBe("config");
+    expect(view.rules).toEqual(makeConfig().scan.probe.metrics);
+  });
+
+  it("reports source.rules='gui' when valid override exists", () => {
+    db.setSetting(SCAN_SETTING_KEYS.probeMetrics, JSON.stringify([
+      { name: "x", query: 'up{service="{service}"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 1 },
+    ]));
+    const view = getScanSettingsView(db, makeConfig());
+    expect(view.source.rules).toBe("gui");
+    expect(view.rules).toHaveLength(1);
+    expect(view.rules[0]!.name).toBe("x");
+  });
+
+  it("reports source.rules='config' when override is unparseable (effective behavior matches)", () => {
+    db.setSetting(SCAN_SETTING_KEYS.probeMetrics, "garbage{{");
+    const view = getScanSettingsView(db, makeConfig());
+    expect(view.source.rules).toBe("config");
+  });
+});
+
 describe("getScanSettingsView", () => {
   let db: Database;
   beforeEach(() => { db = new Database(":memory:"); });
@@ -100,7 +172,7 @@ describe("getScanSettingsView", () => {
 
   it("reports source: config for every field when no overrides exist", () => {
     const view = getScanSettingsView(db, makeConfig());
-    expect(view.source).toEqual({ enabled: "config", cron: "config", timezone: "config" });
+    expect(view.source).toEqual({ enabled: "config", cron: "config", timezone: "config", rules: "config" });
   });
 
   it("reports source: gui for fields that have overrides", () => {

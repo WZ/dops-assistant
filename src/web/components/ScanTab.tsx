@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useStackContext } from "../contexts/StackContext";
+import { RuleList } from "./scan/RuleList";
+import type { RuleDraft } from "./scan/types";
 
 /**
- * ScanTab — GUI for enabling / disabling the proactive scan feature and
- * tuning its cadence. Mirrors NotificationsTab.tsx layout so operators
- * don't have to learn two different settings UIs.
+ * ScanTab — GUI for the proactive scan feature: toggle, cadence, and probe
+ * rule editor. Mirrors NotificationsTab.tsx layout so operators don't have
+ * to learn two different settings UIs.
  *
- * Only the three operator-flippable fields are exposed here (enabled,
- * cron, timezone). Everything else — probe rules, thresholds,
- * consecutiveTicks, maxInvestigationsPerTick, dedupWindowMinutes — stays
- * config.yaml until there's a concrete ask. Building a GUI for threshold
- * DSL + PromQL validation is a real project, not a settings tweak.
+ * GUI-editable: enabled, cron, timezone, probe rules. Everything else
+ * (maxInvestigationsPerTick, dedupWindowMinutes, probe.concurrency,
+ * probe.queryTimeoutMs) stays in config.yaml — low-touch operator knobs
+ * that don't need a UI for every tweak.
  */
 
 type Source = "gui" | "config";
@@ -20,7 +21,13 @@ interface ScanSettings {
   enabled: boolean;
   cron: string;
   timezone: string;
-  source: { enabled: Source; cron: Source; timezone: Source };
+  rules: RuleDraft[];
+  source: { enabled: Source; cron: Source; timezone: Source; rules: Source };
+}
+
+interface ValidationDetail {
+  path: string;
+  message: string;
 }
 
 interface ScanStatus {
@@ -62,9 +69,11 @@ export function ScanTab() {
   const [enabledInput, setEnabledInput] = useState(false);
   const [cronInput, setCronInput] = useState("");
   const [timezoneInput, setTimezoneInput] = useState("");
+  const [rulesInput, setRulesInput] = useState<RuleDraft[]>([]);
   const [dirty, setDirty] = useState(false);
   const [triggering, setTriggering] = useState(false);
   const [triggerMsg, setTriggerMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [ruleErrors, setRuleErrors] = useState<ValidationDetail[]>([]);
   // Tracks post-trigger status-refresh timers so we can clear them on unmount.
   // Without this, navigating away mid-trigger leaves 3 pending setTimeouts
   // that fire setState on an unmounted component (React warning + leaked
@@ -86,6 +95,7 @@ export function ScanTab() {
         setEnabledInput(settingsData.enabled);
         setCronInput(settingsData.cron);
         setTimezoneInput(settingsData.timezone);
+        setRulesInput(settingsData.rules);
       }
     } catch {
       /* network blip; leave prior state */
@@ -154,6 +164,7 @@ export function ScanTab() {
   const handleSave = async () => {
     setSaving(true);
     setSaveError(null);
+    setRuleErrors([]);
     try {
       const res = await stackFetch("/api/scan/settings", {
         method: "PUT",
@@ -162,10 +173,18 @@ export function ScanTab() {
           enabled: enabledInput,
           cron: cronInput,
           timezone: timezoneInput,
+          rules: rulesInput,
         }),
       });
       if (!res.ok) {
-        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        const err = (await res.json().catch(() => ({}))) as { error?: string; details?: ValidationDetail[] | string[] };
+        // Rule validation errors come back as { error: "Invalid probe rules",
+        // details: [{path, message}, ...] }. Surface per-rule, don't stuff
+        // into the generic top-level error banner.
+        if (Array.isArray(err.details) && err.details.length > 0 && typeof err.details[0] === "object") {
+          setRuleErrors(err.details as ValidationDetail[]);
+          throw new Error(err.error || "Rule validation failed");
+        }
         throw new Error(err.error || `Save failed: ${res.status}`);
       }
       setDirty(false);
@@ -305,6 +324,49 @@ export function ScanTab() {
             </div>
           )}
         </div>
+      </section>
+
+      {/* Section: RULES */}
+      <section aria-label="Probe rules" className="mb-6">
+        <div className="flex items-center gap-2 mb-3">
+          <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
+          <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
+            Probe rules
+          </h2>
+          {settings?.source.rules === "config" && (
+            <span className="font-mono text-[9px] text-muted-foreground/40 ml-1">
+              (from config.yaml)
+            </span>
+          )}
+        </div>
+
+        <p className="text-xs text-muted-foreground/60 mb-4 max-w-2xl">
+          Each tick, the probe runs these rules against every registered service.
+          A rule trips when its PromQL value crosses the threshold for the
+          configured consecutive ticks. Use Test to dry-run a rule against live
+          data before saving.
+        </p>
+
+        <RuleList
+          rules={rulesInput}
+          onChange={(next) => {
+            setRulesInput(next);
+            setDirty(true);
+          }}
+        />
+
+        {ruleErrors.length > 0 && (
+          <div className="mt-3 rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2 space-y-1">
+            <div className="text-[11px] font-mono font-semibold text-destructive">
+              {ruleErrors.length === 1 ? "1 rule error:" : `${ruleErrors.length} rule errors:`}
+            </div>
+            {ruleErrors.map((e, i) => (
+              <div key={i} className="text-[11px] font-mono text-destructive/90">
+                <span className="opacity-70">{e.path}:</span> {e.message}
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       {/* Section: STATUS */}
