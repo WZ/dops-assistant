@@ -21,6 +21,9 @@ import { SkillInputSchema } from "./sanitize.js";
 import { Cron } from "croner";
 import { z } from "zod";
 import { getScanSettingsView } from "./scan-settings.js";
+import nodemailer from "nodemailer";
+import type { RcaReport } from "../types/rca-types.js";
+import { notifyEmail } from "./email-notifier.js";
 
 /**
  * Zod schema for PUT /api/scan/settings body.
@@ -1413,5 +1416,68 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "Invalid id" }); return; }
     db.deleteEmailRecipient(id);
     res.status(204).end();
+  });
+
+  app.post("/api/notifications/email/test", async (req: Request, res: Response) => {
+    const { recipientId } = (req.body ?? {}) as { recipientId?: number };
+    if (typeof recipientId !== "number" || !Number.isInteger(recipientId) || recipientId <= 0) {
+      res.status(400).json({ error: "recipientId must be a positive integer" });
+      return;
+    }
+    const recipient = db.getEmailRecipient(recipientId);
+    if (!recipient) { res.status(404).json({ error: "Recipient not found" }); return; }
+
+    const emailCfg = config.notifications?.email;
+    const realTransport = emailCfg
+      ? nodemailer.createTransport({
+          host: emailCfg.smtp.host,
+          port: emailCfg.smtp.port,
+          secure: emailCfg.smtp.secure,
+          auth: { user: emailCfg.smtp.user, pass: emailCfg.smtp.pass },
+        })
+      : nodemailer.createTransport({ jsonTransport: true });
+
+    const fixture: RcaReport = {
+      service: "test-service",
+      severity: "high",
+      summary: "This is a test notification from DOps Assistant",
+      impact: { duration: "0s", description: "No production impact — this is a test." },
+      trigger: "Manual test from Notifications settings",
+      rootCause: "N/A (test notification)",
+      contributingFactors: ["Config validation in progress"],
+      timeline: [{ time: new Date().toISOString().slice(11, 16), event: "Test email triggered" }],
+      evidence: { metrics: ["cpu=12%"], logs: [], infra: [] },
+      dashboardLinks: [],
+      recommendedActions: ["Confirm you received this email in your inbox or Teams channel"],
+      confidence: "high",
+      confidenceScore: 100,
+      investigatedAt: new Date().toISOString(),
+    };
+
+    const captured: unknown[] = [];
+    const wrappedTransport = {
+      sendMail: async (envelope: unknown) => {
+        captured.push(envelope);
+        return realTransport.sendMail(envelope as any);
+      },
+    } as unknown as ReturnType<typeof nodemailer.createTransport>;
+
+    await notifyEmail(
+      {
+        isGloballyEnabled: () => true,
+        listEnabledRecipients: () => [recipient],
+        transport: wrappedTransport,
+        config: {
+          from: emailCfg?.from ?? "dops@test.local",
+          appBaseUrl: emailCfg?.appBaseUrl ?? "https://dops.example.com/",
+          retry: { attempts: 1, backoffMs: [] },
+        },
+      },
+      `test_${Date.now()}`,
+      fixture,
+      recipient.allowedSources[0] ?? "manual",
+    );
+
+    res.json({ ok: true, envelope: captured[0] ?? null });
   });
 }

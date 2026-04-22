@@ -489,4 +489,29 @@ describe("/api/notifications/email", () => {
     const list = await request(ctx.app).get("/api/notifications/email");
     expect(list.body.recipients).toHaveLength(0);
   });
+
+  it("POST /test sends a fixture email via nodemailer jsonTransport", async () => {
+    const created = await request(ctx.app).post("/api/notifications/email/recipients").send({
+      address: "sre@example.com",
+      minSeverity: "low",
+      allowedSources: ["manual"],
+      enabled: true,
+    });
+    const res = await request(ctx.app)
+      .post("/api/notifications/email/test")
+      .send({ recipientId: created.body.id });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.envelope).toMatchObject({
+      to: "sre@example.com",
+      subject: expect.stringContaining("test-service"),
+    });
+  });
+
+  it("POST /test returns 404 for unknown recipient id", async () => {
+    const res = await request(ctx.app)
+      .post("/api/notifications/email/test")
+      .send({ recipientId: 99999 });
+    expect(res.status).toBe(404);
+  });
 });
