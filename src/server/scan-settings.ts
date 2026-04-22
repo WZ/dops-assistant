@@ -18,6 +18,7 @@
 import type { Config, ProbeMetricRule, ScanConfig } from "../config/schema.js";
 import { createLogger } from "../logger.js";
 import type { Database } from "./db.js";
+import { validateRules } from "./scan-rule-validator.js";
 
 const logger = createLogger();
 
@@ -53,10 +54,16 @@ export interface ScanSettingsView {
 }
 
 /**
- * Parse the probe-rules DB setting. Returns null on any parse / type error —
- * caller falls back to config.yaml. We intentionally don't validate SHAPE here
- * (that's scan-rule-validator's job on write) since data already at rest was
- * validated when written. If somehow corrupt, fall back rather than crash.
+ * Parse the probe-rules DB setting. Returns null on any parse / type /
+ * shape error — caller falls back to config.yaml.
+ *
+ * We RE-VALIDATE shape on read via `validateRules` even though the PUT
+ * handler validated on write. Reasons: (1) manual SQL edits (`sqlite3
+ * dops.sqlite "update settings ..."`) bypass write-time validation; (2)
+ * future migrations could produce malformed rows; (3) schema drift across
+ * versions — an old row written by a future-me might not match current
+ * `ProbeMetricRule`. Without re-validate, `runProbe` would read
+ * `rule.name`/`rule.query` off an arbitrary JSON value and crash.
  */
 function parseProbeMetricsOverride(raw: string | undefined): ProbeMetricRule[] | null {
   if (!raw) return null;
@@ -66,7 +73,15 @@ function parseProbeMetricsOverride(raw: string | undefined): ProbeMetricRule[] |
       logger.warn({ raw }, "scan-settings: probe.metrics override is not an array, ignoring");
       return null;
     }
-    return parsed as ProbeMetricRule[];
+    const result = validateRules(parsed);
+    if (!result.ok) {
+      logger.warn({
+        rawPreview: raw.slice(0, 200),
+        errors: result.errors.slice(0, 3),
+      }, "scan-settings: stored probe.metrics failed re-validation, falling back to config.yaml");
+      return null;
+    }
+    return result.rules;
   } catch (err) {
     logger.warn({ err, rawPreview: raw.slice(0, 100) }, "scan-settings: failed to parse probe.metrics override, falling back to config.yaml");
     return null;

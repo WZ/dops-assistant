@@ -920,6 +920,20 @@ export class Database {
     this.db.prepare("DELETE FROM settings WHERE key = ?").run(key);
   }
 
+  /**
+   * Run a function inside a SQLite transaction. Writes commit atomically;
+   * throws anywhere inside `fn` roll everything back. Delegates to
+   * better-sqlite3's `transaction()` which runs synchronously and is
+   * re-entrant-safe.
+   *
+   * Use for multi-write operations where partial state corrupts invariants
+   * (e.g., PUT /api/scan/settings writing cron + rules + enabled together —
+   * if one fails, the effective config is incoherent).
+   */
+  transaction<T>(fn: () => T): T {
+    return this.db.transaction(fn)();
+  }
+
   close(): void {
     this.db.close();
   }

@@ -26,7 +26,14 @@ const ThresholdSchema = z.object({
 });
 
 const RuleSchema = z.object({
-  name: z.string().min(1, "name must be non-empty"),
+  // Names cannot contain ':' — the scheduler's consecutiveState Map keys by
+  // `"{service}:{ruleName}"` and splits on lastIndexOf(":"). A rule name with
+  // an embedded colon (e.g. "db:slow") would silently corrupt the per-rule
+  // state reset during reload diffs. Rather than refactor the key encoding
+  // now, forbid the delimiter at the validator.
+  name: z.string()
+    .min(1, "name must be non-empty")
+    .regex(/^[^:]+$/, "name must not contain ':' (reserved for internal state-key encoding)"),
   query: z.string().min(1, "query must be non-empty"),
   threshold: ThresholdSchema,
   consecutiveTicks: z.number().int().min(1, "consecutiveTicks must be >= 1").default(1),

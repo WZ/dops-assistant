@@ -419,18 +419,24 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       validatedRulesJson = JSON.stringify(result.rules);
     }
 
-    // `null` clears the override; otherwise persist the validated value.
-    if (body.enabled === null) db.deleteSetting("scan.enabled");
-    else if (typeof body.enabled === "boolean") db.setSetting("scan.enabled", String(body.enabled));
+    // Atomically persist all settings changes. Without the transaction, a
+    // crash or late-throw between the four setSetting calls leaves the
+    // effective config incoherent (e.g., new cron but old enabled flag).
+    // Validation already completed above; by this point every value is
+    // safe to write.
+    db.transaction(() => {
+      if (body.enabled === null) db.deleteSetting("scan.enabled");
+      else if (typeof body.enabled === "boolean") db.setSetting("scan.enabled", String(body.enabled));
 
-    if (body.cron === null) db.deleteSetting("scan.cron");
-    else if (typeof body.cron === "string") db.setSetting("scan.cron", body.cron);
+      if (body.cron === null) db.deleteSetting("scan.cron");
+      else if (typeof body.cron === "string") db.setSetting("scan.cron", body.cron);
 
-    if (body.timezone === null) db.deleteSetting("scan.timezone");
-    else if (typeof body.timezone === "string") db.setSetting("scan.timezone", body.timezone);
+      if (body.timezone === null) db.deleteSetting("scan.timezone");
+      else if (typeof body.timezone === "string") db.setSetting("scan.timezone", body.timezone);
 
-    if (validatedRulesJson === null) db.deleteSetting(SCAN_SETTING_KEYS.probeMetrics);
-    else if (typeof validatedRulesJson === "string") db.setSetting(SCAN_SETTING_KEYS.probeMetrics, validatedRulesJson);
+      if (validatedRulesJson === null) db.deleteSetting(SCAN_SETTING_KEYS.probeMetrics);
+      else if (typeof validatedRulesJson === "string") db.setSetting(SCAN_SETTING_KEYS.probeMetrics, validatedRulesJson);
+    });
 
     // Propagate to every running scheduler. Idempotent — reload() no-ops
     // when nothing changed.

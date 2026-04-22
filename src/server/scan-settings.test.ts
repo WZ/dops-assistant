@@ -135,6 +135,30 @@ describe("getEffectiveScanConfig — probe.metrics override", () => {
     const eff = getEffectiveScanConfig(db, makeConfig());
     expect(eff.probe.metrics).toEqual([]);
   });
+
+  it("falls back to config when stored override has malformed rule shape (review C4)", () => {
+    // Manually injected garbage (sqlite CLI / old schema / bug). Before the
+    // fix, parseProbeMetricsOverride cast blindly to ProbeMetricRule[] and
+    // runProbe would crash reading rule.name / rule.query. Now it re-
+    // validates via validateRules() and falls back cleanly.
+    db.setSetting(SCAN_SETTING_KEYS.probeMetrics, JSON.stringify([
+      { nope: "not a rule" },
+      42,
+      null,
+    ]));
+    const config = makeConfig();
+    const eff = getEffectiveScanConfig(db, config);
+    expect(eff.probe.metrics).toEqual(config.scan.probe.metrics);
+  });
+
+  it("falls back when stored override has a rule with ':' in name (write-validator reservation honored on read)", () => {
+    db.setSetting(SCAN_SETTING_KEYS.probeMetrics, JSON.stringify([
+      { name: "db:slow", query: 'up{service="{service}"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 1 },
+    ]));
+    const config = makeConfig();
+    const eff = getEffectiveScanConfig(db, config);
+    expect(eff.probe.metrics).toEqual(config.scan.probe.metrics);
+  });
 });
 
 describe("getScanSettingsView — rules + source", () => {

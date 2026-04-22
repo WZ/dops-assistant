@@ -79,6 +79,34 @@ describe("validateRules — structural", () => {
   });
 });
 
+describe("validateRules — name delimiter reservation (hysteresis key safety)", () => {
+  it("rejects a name containing ':'", () => {
+    // The scheduler encodes hysteresis state as '{service}:{ruleName}'.
+    // A rule name containing ':' would silently corrupt the per-rule state
+    // reset during reload diffs (lastIndexOf(':') ambiguity).
+    const r = validateRules([goodRule({ name: "db:slow" })]);
+    expect(r.ok).toBe(false);
+    expect(r.errors.some(e => e.message.includes(":"))).toBe(true);
+    // Path format is validator-specific — currently "rules.0.name" per
+    // scan-rule-validator.ts path-join logic. Just assert it identifies name.
+    expect(r.errors.some(e => e.path.endsWith(".name") || e.path === "rules.0.name")).toBe(true);
+  });
+
+  it("rejects name with ':' even when the rest is normal", () => {
+    const r = validateRules([goodRule({ name: "availability:1" })]);
+    expect(r.ok).toBe(false);
+  });
+
+  it("accepts names with hyphen / underscore / dot", () => {
+    const r = validateRules([
+      goodRule({ name: "http-5xx" }),
+      goodRule({ name: "db_lag" }),
+      goodRule({ name: "service.latency" }),
+    ]);
+    expect(r.ok).toBe(true);
+  });
+});
+
 describe("validateRules — name uniqueness", () => {
   it("rejects duplicate names", () => {
     const r = validateRules([
