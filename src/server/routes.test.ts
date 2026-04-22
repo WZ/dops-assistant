@@ -1,5 +1,8 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { ServiceConfig } from "../config/schema.js";
+import express, { type Express } from "express";
+import request from "supertest";
+import { registerRoutes } from "./routes.js";
 import { Database } from "./db.js";
 import { unlinkSync } from "fs";
 import { join } from "path";
@@ -369,5 +372,121 @@ describe("import confirm logic", () => {
       { config: providers[2], action: "skip", reason: "Cannot overwrite config provider" },
       { config: providers[3], action: "skip", reason: "Conflict not in overwrite list" },
     ]);
+  });
+});
+
+// ── Email notifications CRUD endpoints ──────────────────────────────────────
+
+function makeEmailApp(): { app: Express; db: Database; cleanup: () => void } {
+  const dbPath = join(tmpdir(), `routes-email-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`);
+  const db = new Database(dbPath);
+  const app = express();
+  app.use(express.json());
+  // Minimal stackManager mock: resolves to a single "default" stack context
+  const mockStackContext = {
+    slug: "default",
+    serviceRegistry: { load: () => [] },
+    providerRegistry: { getAll: () => [], getToolsForProvider: async () => [], updateEnabledTools: async () => {} },
+    investigationStore: {},
+    scanScheduler: null,
+  } as any;
+  const mockStackManager = {
+    resolveStackIdWithFallback: () => ({ id: "default", fallback: false }),
+    getContext: () => mockStackContext,
+    bumpActivity: () => {},
+  } as any;
+  registerRoutes(app, {
+    db,
+    stackManager: mockStackManager,
+    config: { notifications: { email: undefined }, webhook: {} } as any,
+    skillStore: {} as any,
+    sharedDedup: {} as any,
+    llmModel: {} as any,
+  });
+  return { app, db, cleanup: () => { db.close(); try { unlinkSync(dbPath); } catch {} } };
+}
+
+describe("/api/notifications/email", () => {
+  let ctx: ReturnType<typeof makeEmailApp>;
+  beforeEach(() => { ctx = makeEmailApp(); });
+  afterEach(() => { ctx.cleanup(); });
+
+  it("GET returns enabled=false and empty recipients on fresh DB", async () => {
+    const res = await request(ctx.app).get("/api/notifications/email");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ enabled: false, recipients: [] });
+  });
+
+  it("PUT updates global enabled", async () => {
+    const res = await request(ctx.app).put("/api/notifications/email").send({ enabled: true });
+    expect(res.status).toBe(200);
+    const get = await request(ctx.app).get("/api/notifications/email");
+    expect(get.body.enabled).toBe(true);
+  });
+
+  it("POST /recipients creates a recipient with validated fields", async () => {
+    const res = await request(ctx.app).post("/api/notifications/email/recipients").send({
+      address: "sre@example.com",
+      label: "#sre",
+      minSeverity: "high",
+      allowedSources: ["webhook", "scan"],
+      enabled: true,
+    });
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      address: "sre@example.com",
+      label: "#sre",
+      minSeverity: "high",
+      allowedSources: ["webhook", "scan"],
+      enabled: true,
+    });
+    expect(res.body.id).toBeGreaterThan(0);
+  });
+
+  it("POST /recipients rejects invalid email address", async () => {
+    const res = await request(ctx.app).post("/api/notifications/email/recipients").send({
+      address: "not-an-email",
+      minSeverity: "high",
+      allowedSources: ["webhook"],
+      enabled: true,
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /recipients rejects empty allowedSources", async () => {
+    const res = await request(ctx.app).post("/api/notifications/email/recipients").send({
+      address: "sre@example.com",
+      minSeverity: "high",
+      allowedSources: [],
+      enabled: true,
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("PUT /recipients/:id updates fields", async () => {
+    const created = await request(ctx.app).post("/api/notifications/email/recipients").send({
+      address: "a@x.com", minSeverity: "low", allowedSources: ["webhook"], enabled: true,
+    });
+    const res = await request(ctx.app).put(`/api/notifications/email/recipients/${created.body.id}`).send({
+      minSeverity: "critical", enabled: false,
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.minSeverity).toBe("critical");
+    expect(res.body.enabled).toBe(false);
+  });
+
+  it("PUT /recipients/:id returns 404 for unknown id", async () => {
+    const res = await request(ctx.app).put(`/api/notifications/email/recipients/99999`).send({ enabled: false });
+    expect(res.status).toBe(404);
+  });
+
+  it("DELETE /recipients/:id removes the row", async () => {
+    const created = await request(ctx.app).post("/api/notifications/email/recipients").send({
+      address: "a@x.com", minSeverity: "low", allowedSources: ["webhook"], enabled: true,
+    });
+    const del = await request(ctx.app).delete(`/api/notifications/email/recipients/${created.body.id}`);
+    expect(del.status).toBe(204);
+    const list = await request(ctx.app).get("/api/notifications/email");
+    expect(list.body.recipients).toHaveLength(0);
   });
 });

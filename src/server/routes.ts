@@ -1330,4 +1330,88 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       res.status(500).json({ error: err instanceof Error ? err.message : "Failed to send test notification" });
     }
   });
+
+  // ── Email notifications ─────────────────────────────────────────────────
+
+  const ALL_SOURCES_SET = new Set(["webhook", "scan", "poller", "manual"]);
+  const ALL_SEVERITIES_SET = new Set(["low", "medium", "high", "critical"]);
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  function validateRecipientBody(body: any, { partial }: { partial: boolean }): string | null {
+    if (!body || typeof body !== "object") return "Body must be an object";
+    if (!partial || body.address !== undefined) {
+      if (typeof body.address !== "string" || !EMAIL_RE.test(body.address)) return "Invalid email address";
+    }
+    if (!partial || body.minSeverity !== undefined) {
+      if (!ALL_SEVERITIES_SET.has(body.minSeverity)) return "Invalid minSeverity";
+    }
+    if (!partial || body.allowedSources !== undefined) {
+      if (!Array.isArray(body.allowedSources) || body.allowedSources.length === 0) return "allowedSources must be a non-empty array";
+      for (const s of body.allowedSources) {
+        if (!ALL_SOURCES_SET.has(s)) return `Invalid source: ${s}`;
+      }
+    }
+    if (!partial || body.enabled !== undefined) {
+      if (typeof body.enabled !== "boolean") return "enabled must be boolean";
+    }
+    if (body.label !== undefined && body.label !== null && typeof body.label !== "string") return "label must be string or null";
+    return null;
+  }
+
+  app.get("/api/notifications/email", (_req: Request, res: Response) => {
+    const dbEnabled = db.getSetting("notifications.email.enabled");
+    const emailCfg = config.notifications?.email;
+    const enabled = dbEnabled !== undefined ? dbEnabled === "true" : emailCfg?.enabled ?? false;
+    const recipients = db.listEmailRecipients();
+    res.json({ enabled, recipients });
+  });
+
+  app.put("/api/notifications/email", (req: Request, res: Response) => {
+    const { enabled } = (req.body ?? {}) as { enabled?: boolean };
+    if (typeof enabled !== "boolean") {
+      res.status(400).json({ error: "enabled must be boolean" });
+      return;
+    }
+    db.setSetting("notifications.email.enabled", String(enabled));
+    res.json({ ok: true, enabled });
+  });
+
+  app.get("/api/notifications/email/recipients", (_req: Request, res: Response) => {
+    res.json(db.listEmailRecipients());
+  });
+
+  app.post("/api/notifications/email/recipients", (req: Request, res: Response) => {
+    const err = validateRecipientBody(req.body, { partial: false });
+    if (err) { res.status(400).json({ error: err }); return; }
+    const body = req.body as {
+      address: string; label?: string; minSeverity: import("../types/notifications.js").SeverityLevel;
+      allowedSources: import("../types/notifications.js").NotificationSource[]; enabled: boolean;
+    };
+    const created = db.createEmailRecipient({
+      address: body.address,
+      label: body.label,
+      minSeverity: body.minSeverity,
+      allowedSources: body.allowedSources,
+      enabled: body.enabled,
+    });
+    res.status(201).json(created);
+  });
+
+  app.put("/api/notifications/email/recipients/:id", (req: Request, res: Response) => {
+    const id = Number(req.params["id"]);
+    if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "Invalid id" }); return; }
+    const err = validateRecipientBody(req.body, { partial: true });
+    if (err) { res.status(400).json({ error: err }); return; }
+    const existing = db.getEmailRecipient(id);
+    if (!existing) { res.status(404).json({ error: "Recipient not found" }); return; }
+    const updated = db.updateEmailRecipient(id, req.body);
+    res.json(updated);
+  });
+
+  app.delete("/api/notifications/email/recipients/:id", (req: Request, res: Response) => {
+    const id = Number(req.params["id"]);
+    if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "Invalid id" }); return; }
+    db.deleteEmailRecipient(id);
+    res.status(204).end();
+  });
 }
