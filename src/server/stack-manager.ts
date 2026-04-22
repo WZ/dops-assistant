@@ -182,6 +182,7 @@ export class StackManager {
       onAnomaliesDetected: (evt: ScanAnomaliesEvent) => {
         this.onScanAnomalies?.(evt);
       },
+      onScanRunComplete: (summary) => this.handleScanRunComplete(summary),
     });
 
     const ctx: StackContext = {
@@ -612,4 +613,14 @@ export class StackManager {
    * Scheduler does NOT await this callback — investigations run in background.
    */
   onScanAnomalies?: (evt: ScanAnomaliesEvent) => void;
+
+  /**
+   * Fired when a scan run completes successfully. Phase 4 will wire this to
+   * notifications (Slack / email) and the event log. For now it's a no-op so
+   * the scheduler can emit the signal without a downstream consumer.
+   */
+  private handleScanRunComplete(summary: import("./scan-run-store.js").ScanRunCompletedSummary): void {
+    // Intentionally empty — wired in Task 14 (Phase 4: Notifications).
+    void summary;
+  }
 }
