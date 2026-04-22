@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useStackContext } from "../contexts/StackContext";
 
@@ -65,6 +65,11 @@ export function ScanTab() {
   const [dirty, setDirty] = useState(false);
   const [triggering, setTriggering] = useState(false);
   const [triggerMsg, setTriggerMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // Tracks post-trigger status-refresh timers so we can clear them on unmount.
+  // Without this, navigating away mid-trigger leaves 3 pending setTimeouts
+  // that fire setState on an unmounted component (React warning + leaked
+  // closure captures).
+  const triggerRefreshTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -99,7 +104,14 @@ export function ScanTab() {
         .then((data: ScanStatus) => setStatus(data))
         .catch(() => { /* ignore */ });
     }, 10_000);
-    return () => clearInterval(interval);
+    const pendingTimers = triggerRefreshTimers.current;
+    return () => {
+      clearInterval(interval);
+      // Clear any post-trigger refresh timers still pending when the tab
+      // unmounts or the effect re-runs.
+      for (const t of pendingTimers) clearTimeout(t);
+      pendingTimers.length = 0;
+    };
   }, [fetchAll, stackFetch]);
 
   const refreshStatus = useCallback(async () => {
@@ -119,10 +131,13 @@ export function ScanTab() {
         setTriggerMsg({ ok: true, text: "Probe dispatched \u2014 watch the status below." });
         // A tick typically takes a few seconds once dispatched. Poll the status
         // a few extra times beyond the standard 10s interval so the operator
-        // sees lastRun update without waiting.
-        setTimeout(() => { void refreshStatus(); }, 1500);
-        setTimeout(() => { void refreshStatus(); }, 4000);
-        setTimeout(() => { void refreshStatus(); }, 8000);
+        // sees lastRun update without waiting. Handles tracked in a ref so
+        // unmount cleanup can clear any still-pending timers.
+        triggerRefreshTimers.current.push(
+          setTimeout(() => { void refreshStatus(); }, 1500),
+          setTimeout(() => { void refreshStatus(); }, 4000),
+          setTimeout(() => { void refreshStatus(); }, 8000),
+        );
       } else {
         const err = (await res.json().catch(() => ({}))) as { error?: string; hint?: string };
         setTriggerMsg({
