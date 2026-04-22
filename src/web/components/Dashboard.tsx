@@ -791,15 +791,15 @@ export function Dashboard({
             </section>
           )}
 
-          {/* Section G: Recent Events */}
-          <section aria-label="Recent events" className="mb-4">
+          {/* Section G: Recent Events (EventStream supplies its own <aside> landmark) */}
+          <div className="mb-4">
             <EventStream
               events={recentEvents}
               loading={recentEventsLoading}
               error={recentEventsError}
               truncated={recentEventsTruncated}
             />
-          </section>
+          </div>
         </>
       )}
 
