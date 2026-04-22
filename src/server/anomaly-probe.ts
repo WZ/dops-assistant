@@ -1,15 +1,33 @@
 /**
- * anomaly-probe — deterministic PromQL probe pass for scheduled system scans.
+ * anomaly-probe — deterministic PromQL + LogQL probe pass for scheduled system scans.
  *
- * The probe is the "cheap" half of the proactive scan pipeline: it runs a small
- * set of PromQL queries against every registered service, scores each result
- * against configured thresholds, and returns the services that tripped. It
- * does NOT call the LLM. Scan-triggered investigations are fired separately,
- * only for services the probe flags (capped by maxInvestigationsPerTick).
+ * Four-track evaluator (Slice C, 2026-04-22):
  *
- * Design doc: ~/.gstack/projects/WZ-dops-assistant/wli02-main-design-20260421-012829.md
+ *   Origin          Source of rules                          MCP role
+ *   ─────────────   ──────────────────────────────────────   ────────
+ *   global          services.yaml globalProbeRules           metrics
+ *                   (discovery-written, stack-aware)
+ *   service         services.yaml .probeRules[] (metrics)    metrics
+ *                   (e.g. pod_restarts for k8s workloads)
+ *   service (logs)  services.yaml .probeRules[] (logs)       logs
+ *                   (e.g. log_errors for services with logLabels)
+ *   default         config.yaml ProbeSchema.metrics          metrics
+ *                   (hardcoded k8s-native defaults from #115).
+ *                   Only fires when global rules are empty.
+ *
+ *   +  logs fallback  count_over_time over logLabels         logs
+ *                     when probe.logs.enabled, service has logLabels,
+ *                     and no per-service logs rule was written.
+ *
+ * Operator per-service overrides (scan-service-override) still win —
+ * `{disabled: true}` skips the service, `{rules: [...]}` replaces all
+ * four tracks. consecutiveState keys are `${service}:${origin}:${ruleName}`
+ * so rules with the same name on different tracks track hysteresis
+ * independently (eng-review decision).
+ *
+ * Design doc: ~/.gstack/projects/WZ-dops-assistant/wli02-feat-llm-driven-probe-rules-design-20260422-continuation.md
  * Decisions:
- *   - Direct MCP tool.execute(args, { abortSignal }) — verified at
+ *   - Direct MCP tool invocation with AbortSignal — verified at
  *     node_modules/@mastra/mcp/dist/index.js:947. Real cancel.
  *   - Bounded concurrency via a simple semaphore — no p-limit dep.
  *   - NaN / empty vector → entry scored as "did not trip". Never throws.
@@ -23,19 +41,25 @@ import { getToolsByRole } from "../mcp/provider.js";
 import { parsePrometheusResult } from "./service-health-poller.js";
 import type { ProbeConfig, ProbeMetricRule, Threshold } from "../config/schema.js";
 import type { ScanServiceOverride } from "./scan-service-override.js";
+import type { ServiceRegistryStore } from "../services/registry.js";
 
 const logger = createLogger();
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
+/** Which track a hit came from. Included in the state key so same-named rules on different tracks keep independent hysteresis. */
+export type RuleOrigin = "global" | "service" | "default" | "override" | "logs-fallback";
+
 export interface ProbeHit {
   /** Service name (as known to the registry). */
   service: string;
-  /** Rule name that tripped (e.g. "availability", "error_rate"). */
+  /** Rule name that tripped (e.g. "availability", "pod_restarts", "log_errors"). */
   ruleName: string;
-  /** Value returned by the rule's PromQL query. */
+  /** Which track the rule came from. Informational — already in the state key. */
+  origin: RuleOrigin;
+  /** Value returned by the rule's query. */
   value: number;
-  /** The PromQL query that produced this value (for the investigation message). */
+  /** The query string that produced this value (for the investigation message). */
   query: string;
   /** The threshold definition that was breached. */
   threshold: Threshold;
@@ -51,24 +75,35 @@ export interface ProbeOptions {
   providers: MastraProvider[];
   /** Prometheus datasource UID; if undefined, tick is aborted by the scheduler. */
   datasourceUid?: string;
-  /** Abort signal — passed through to MCP tool.execute. */
+  /**
+   * Loki datasource UID for log-source rules. If undefined, log-source
+   * rules and the probe.logs fallback both score NaN (no trip). Resolved
+   * by the scheduler from provider metadata the same way datasourceUid is.
+   */
+  lokiDatasourceUid?: string;
+  /** Abort signal — threaded through to the MCP tool invocation. */
   signal?: AbortSignal;
   /**
-   * Per (service, ruleName) state carrying how many consecutive ticks each
-   * metric has exceeded its threshold. The probe reads, decides, and writes
-   * back — caller owns the Map so scan-scheduler can persist it across ticks.
+   * Per (service, origin, ruleName) state carrying how many consecutive
+   * ticks each rule has exceeded its threshold. Caller owns the Map so the
+   * scheduler can persist it across ticks.
    */
   consecutiveState: Map<string, number>;
   /**
-   * Optional per-service override getter. Returns null/undefined for services
-   * using the global rules. When the override has `disabled: true`, the
-   * service is skipped entirely (no probe queries, no scoring). When it has
-   * `rules`, those replace the global rules for this service only.
-   *
+   * Optional per-service operator override (scan-service-override). When
+   * `disabled: true` the service is skipped entirely. When `rules` is
+   * non-empty, those replace every track's rules for this service.
    * Getter form (not a pre-built Map) so the caller can cheaply re-read DB
-   * each tick without copying for services that don't have overrides.
+   * each tick.
    */
   getOverride?: (service: string) => ScanServiceOverride | null;
+  /**
+   * Registry store — probe reads the atomic {services, globalProbeRules}
+   * snapshot once per tick. Required so Track 1 (globals) and Track 2/3
+   * (per-service probeRules) have a consistent view even if discovery
+   * runs mid-tick.
+   */
+  registryStore: ServiceRegistryStore;
 }
 
 interface ToolExecutor {
@@ -82,8 +117,13 @@ function sanitizeForPromQL(name: string): string {
   return name.replace(/[^a-zA-Z0-9_.\-]/g, "");
 }
 
-function stateKey(service: string, ruleName: string): string {
-  return `${service}:${ruleName}`;
+/**
+ * State key for hysteresis. Namespaced by origin so a global "availability"
+ * and a per-service "availability" with the same name track independently
+ * (eng-review decision 2026-04-22). Exported for tests.
+ */
+export function stateKey(service: string, origin: RuleOrigin, ruleName: string): string {
+  return `${service}:${origin}:${ruleName}`;
 }
 
 /**
@@ -101,6 +141,26 @@ function findMetricQueryTool(tools: Record<string, unknown>): ToolExecutor | nul
     const lower = name.toLowerCase();
     if ((lower.includes("query") || lower.includes("metric")) &&
         !lower.includes("loki") && !lower.includes("log") && !lower.includes("metadata")) {
+      return tool as ToolExecutor;
+    }
+  }
+  return null;
+}
+
+/**
+ * Find a Loki query tool from logs-role tools. Canonical name in Grafana
+ * MCP is `query_loki_logs`; also accepts generic log query tool names for
+ * non-Loki log providers that may appear in the future.
+ */
+function findLogQueryTool(tools: Record<string, unknown>): ToolExecutor | null {
+  for (const [name, tool] of Object.entries(tools)) {
+    if (name.endsWith("query_loki_logs") || name.endsWith("query_logs")) {
+      return tool as ToolExecutor;
+    }
+  }
+  for (const [name, tool] of Object.entries(tools)) {
+    const lower = name.toLowerCase();
+    if (lower.includes("log") && lower.includes("query") && !lower.includes("metadata") && !lower.includes("label")) {
       return tool as ToolExecutor;
     }
   }
@@ -152,12 +212,70 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-// ── PromQL execution ────────────────────────────────────────────────────────
+// ── Shared timeout + abort scaffolding ──────────────────────────────────────
 
 /**
- * Execute one instant PromQL query via MCP. Returns the numeric scalar value
- * (first entry's sample), or NaN if the vector is empty / parse fails / timeout.
- * Never throws — errors are logged and returned as NaN.
+ * Wrap an MCP tool invocation with a timeout-bounded AbortController that is
+ * also chained into the caller's signal. Never throws — returns `undefined`
+ * on any failure (network error, timeout, aborted signal, MCP server
+ * ignoring the abort). Each track's executor parses the returned raw value
+ * into its own scalar.
+ */
+async function withTimeoutAndAbort(
+  tool: ToolExecutor,
+  args: unknown,
+  signal: AbortSignal | undefined,
+  queryTimeoutMs: number,
+): Promise<unknown | undefined> {
+  const timeoutController = new AbortController();
+  const timeoutHandle = setTimeout(() => timeoutController.abort(), queryTimeoutMs);
+  // Chain the caller's signal into the timeout controller so an external
+  // abort tears this down too. Belt-and-suspenders: if the MCP server
+  // ignores abortSignal, the timeoutHandle still fires.
+  const onExternalAbort = () => timeoutController.abort();
+  if (signal) {
+    if (signal.aborted) timeoutController.abort();
+    else signal.addEventListener("abort", onExternalAbort, { once: true });
+  }
+  try {
+    return await tool.execute(args, { abortSignal: timeoutController.signal });
+  } catch (err) {
+    logger.warn({ err }, "anomaly-probe: tool invocation failed, scoring as no-trip");
+    return undefined;
+  } finally {
+    clearTimeout(timeoutHandle);
+    if (signal) signal.removeEventListener("abort", onExternalAbort);
+  }
+}
+
+/** Extract the first numeric scalar from a Prometheus-shaped result. NaN on miss. */
+function scalarFromPromResult(raw: unknown): number {
+  const entries = parsePrometheusResult(raw);
+  if (entries.length === 0) return Number.NaN;
+  const first = entries[0];
+  if (!first) return Number.NaN;
+  // Instant query shape: { value: [timestamp, "stringValue"] }
+  if (first.value && Array.isArray(first.value) && first.value.length >= 2) {
+    const parsed = parseFloat(String(first.value[1]));
+    return Number.isFinite(parsed) ? parsed : Number.NaN;
+  }
+  // Range query shape: { values: [[ts, "v"], ...] } — take the latest sample.
+  if (first.values && Array.isArray(first.values) && first.values.length > 0) {
+    const latest = first.values[first.values.length - 1];
+    if (latest && latest.length >= 2) {
+      const parsed = parseFloat(String(latest[1]));
+      return Number.isFinite(parsed) ? parsed : Number.NaN;
+    }
+  }
+  return Number.NaN;
+}
+
+// ── Instant query executors (metrics + logs) ────────────────────────────────
+
+/**
+ * Execute one instant PromQL query via the metrics MCP tool. Returns the
+ * numeric scalar (first entry's sample), or NaN if the vector is empty /
+ * parse fails / timeout. Never throws.
  */
 async function executeInstant(
   tool: ToolExecutor,
@@ -174,118 +292,241 @@ async function executeInstant(
     endTime: now.toISOString(),
   };
   if (datasourceUid) args.datasourceUid = datasourceUid;
+  const raw = await withTimeoutAndAbort(tool, args, signal, queryTimeoutMs);
+  if (raw === undefined) return Number.NaN;
+  return scalarFromPromResult(raw);
+}
 
-  // Belt-and-suspenders timeout: even with a real abort signal, some MCP servers
-  // may ignore it. The race ensures the probe never wedges a tick longer than
-  // queryTimeoutMs per query.
-  const timeoutController = new AbortController();
-  const timeoutHandle = setTimeout(() => timeoutController.abort(), queryTimeoutMs);
-  // Chain the caller's signal into the timeout controller so an external abort
-  // tears this down too.
-  const onExternalAbort = () => timeoutController.abort();
-  if (signal) {
-    if (signal.aborted) timeoutController.abort();
-    else signal.addEventListener("abort", onExternalAbort, { once: true });
-  }
+/**
+ * Log-source executor: scalar count from a LogQL `count_over_time(...)`
+ * query. Uses Grafana MCP `query_loki_logs` with `queryType: "metric"`,
+ * which returns a metric vector (same shape Prometheus instant queries
+ * return) rather than log lines. Never throws — NaN on failure, timeout,
+ * or when the logs tool isn't wired.
+ *
+ * If the tool rejects `queryType: "metric"` (older Grafana MCP versions),
+ * withTimeoutAndAbort catches the error and every log-source rule in the
+ * tick silently scores NaN. The scan-scheduler tick log surfaces the
+ * warning so operators notice and upgrade.
+ */
+async function executeInstantLogs(
+  tool: ToolExecutor,
+  query: string,
+  lokiDatasourceUid: string | undefined,
+  signal: AbortSignal | undefined,
+  queryTimeoutMs: number,
+): Promise<number> {
+  if (!lokiDatasourceUid) return Number.NaN;
+  const now = new Date();
+  const args: Record<string, unknown> = {
+    expr: query,
+    queryType: "metric",
+    datasourceUid: lokiDatasourceUid,
+    startTime: new Date(now.getTime() - 15 * 60 * 1000).toISOString(),
+    endTime: now.toISOString(),
+  };
+  const raw = await withTimeoutAndAbort(tool, args, signal, queryTimeoutMs);
+  if (raw === undefined) return Number.NaN;
+  return scalarFromPromResult(raw);
+}
 
-  try {
-    const raw = await tool.execute(args, { abortSignal: timeoutController.signal });
-    const entries = parsePrometheusResult(raw);
-    if (entries.length === 0) return Number.NaN;
-    const first = entries[0];
-    if (!first) return Number.NaN;
-    // Instant query shape: { value: [timestamp, "stringValue"] }
-    if (first.value && Array.isArray(first.value) && first.value.length >= 2) {
-      const parsed = parseFloat(String(first.value[1]));
-      return Number.isFinite(parsed) ? parsed : Number.NaN;
-    }
-    // Range query shape: { values: [[ts, "v"], ...] } — take the latest sample
-    if (first.values && Array.isArray(first.values) && first.values.length > 0) {
-      const latest = first.values[first.values.length - 1];
-      if (latest && latest.length >= 2) {
-        const parsed = parseFloat(String(latest[1]));
-        return Number.isFinite(parsed) ? parsed : Number.NaN;
-      }
-    }
-    return Number.NaN;
-  } catch (err) {
-    logger.warn({ err, query }, "anomaly-probe: query failed, scoring as no-trip");
-    return Number.NaN;
-  } finally {
-    clearTimeout(timeoutHandle);
-    if (signal) signal.removeEventListener("abort", onExternalAbort);
+// ── Track assembly helpers ──────────────────────────────────────────────────
+
+type Task = {
+  service: string;
+  rule: ProbeMetricRule;
+  origin: RuleOrigin;
+  query: string;
+  usesLogs: boolean;
+};
+
+/**
+ * Build the LogQL the probe.logs fallback uses: a basic
+ * `count_over_time({labels} |= error|fatal [window])` over the service's
+ * logLabels. Only called when the service has non-empty logLabels and no
+ * per-service log-source rule was written.
+ */
+function buildGenericLogQLFromLabels(
+  logLabels: Record<string, string>,
+  windowStr: string,
+): string {
+  const selectors = Object.entries(logLabels)
+    .map(([k, v]) => `${k}="${v.replaceAll(`"`, `\\"`)}"`)
+    .join(",");
+  return `sum(count_over_time({${selectors}} |= \`error\` or \`fatal\` [${windowStr}]))`;
+}
+
+/** Parse probe.logs.window ("15m", "5m", "1h", "30s", "1d") → minutes. */
+function parseWindowToMinutes(window: string): number {
+  const m = /^(\d+)\s*([smhd])$/.exec(window.trim());
+  if (!m) return 15;
+  const n = parseInt(m[1]!, 10);
+  switch (m[2]) {
+    case "s": return n / 60;
+    case "m": return n;
+    case "h": return n * 60;
+    case "d": return n * 60 * 24;
+    default:  return 15;
   }
 }
 
 // ── Probe orchestration ─────────────────────────────────────────────────────
 
 /**
- * Run the probe pass: for each (service, rule) pair, fire one instant query
- * and decide whether it trips. Consecutive-tick state is updated per key
- * (reset on non-trip, incremented on trip). Returns only rules that have
- * tripped for at least their configured `consecutiveTicks`.
+ * Run the four-track probe pass. For each (service, rule, origin) triple,
+ * fire one instant query and decide whether it trips. Consecutive-tick
+ * state is updated per stateKey (reset on non-trip, incremented on trip).
+ * Returns only rules that have tripped for at least their configured
+ * `consecutiveTicks`.
  *
  * Partial failures are silent (scored as no-trip). An external abort ends
  * pending queries but does not throw — callers see an empty result and log
  * "tick aborted".
  */
 export async function runProbe(opts: ProbeOptions): Promise<ProbeHit[]> {
-  const { services, probe, providers, datasourceUid, signal, consecutiveState } = opts;
+  const { services, probe, providers, datasourceUid, lokiDatasourceUid, signal, consecutiveState, registryStore } = opts;
 
   if (services.length === 0) return [];
 
-  // Resolve metrics MCP tool once per tick
-  let tools: Record<string, unknown>;
+  // Atomic registry snapshot — one read per tick, consistent view of
+  // services + globalProbeRules even if discovery runs concurrently.
+  const registry = registryStore.loadAll();
+  const serviceByName = new Map(registry.services.map((s) => [s.name, s] as const));
+
+  // Resolve metrics MCP tool once per tick.
+  let metricsTools: Record<string, unknown>;
   try {
-    tools = (await getToolsByRole(providers, "metrics")) as Record<string, unknown>;
+    metricsTools = (await getToolsByRole(providers, "metrics")) as Record<string, unknown>;
   } catch (err) {
     logger.warn({ err }, "anomaly-probe: failed to resolve metrics MCP tools, skipping tick");
     return [];
   }
-
-  const queryTool = findMetricQueryTool(tools);
-  if (!queryTool) {
+  const metricsTool = findMetricQueryTool(metricsTools);
+  if (!metricsTool) {
     logger.warn("anomaly-probe: no metric query tool found, skipping tick");
     return [];
   }
 
-  // Build the (service, rule) work list. Per-service overrides:
-  //   - override.disabled:true  → skip this service entirely (no tasks queued)
-  //   - override.rules present  → use those instead of probe.metrics
-  //   - no override             → use probe.metrics (global)
-  type Task = { service: string; rule: ProbeMetricRule; query: string };
+  // Resolve logs MCP tool if available. Missing logs tool is NOT fatal —
+  // metrics-source tracks continue; log-source tracks all score NaN.
+  let logsTool: ToolExecutor | null = null;
+  try {
+    const logsTools = (await getToolsByRole(providers, "logs")) as Record<string, unknown>;
+    logsTool = findLogQueryTool(logsTools);
+  } catch {
+    // getToolsByRole throws when no provider has the logs role — expected
+    // on metrics-only deployments. Silently fall through.
+  }
+
+  // ── Build task list across all four tracks ──────────────────────────────
   const tasks: Task[] = [];
-  const globalRules = probe.metrics;
+  const globalRules = registry.globalProbeRules;  // Track 1 — discovery-written
+  const defaultRules = probe.metrics;             // Track 4 — config.yaml fallback
+  const logWindowMinutes = parseWindowToMinutes(probe.logs.window);
+
   for (const service of services) {
+    // Operator per-service override wins over every track.
     const override = opts.getOverride?.(service);
     if (override?.disabled) continue;
-    const rulesForService = override?.rules && override.rules.length > 0 ? override.rules : globalRules;
+    if (override?.rules && override.rules.length > 0) {
+      const safeService = sanitizeForPromQL(service);
+      for (const rule of override.rules) {
+        tasks.push({
+          service,
+          rule,
+          origin: "override",
+          query: rule.query.replaceAll("{service}", safeService),
+          usesLogs: (rule.source ?? "metrics") === "logs",
+        });
+      }
+      continue;
+    }
+
     const safeService = sanitizeForPromQL(service);
-    for (const rule of rulesForService) {
+    const serviceConfig = serviceByName.get(service);
+    const perServiceRules = serviceConfig?.probeRules ?? [];
+
+    // Track 1 vs 4 — discovery-written globals REPLACE the config.yaml
+    // defaults for every service. Track 4 remains as the ultimate fallback
+    // for stacks where discovery has never run.
+    const baseRules = globalRules.length > 0 ? globalRules : defaultRules;
+    const baseOrigin: RuleOrigin = globalRules.length > 0 ? "global" : "default";
+    for (const rule of baseRules) {
       tasks.push({
         service,
         rule,
+        origin: baseOrigin,
         query: rule.query.replaceAll("{service}", safeService),
+        usesLogs: (rule.source ?? "metrics") === "logs",
       });
+    }
+
+    // Tracks 2 + 3 — per-service probeRules. Always additive to the base
+    // track above; these are the rules only the discovery agent had enough
+    // context to write (pod_restarts with real namespace, log_errors with
+    // real Loki labels).
+    for (const rule of perServiceRules) {
+      tasks.push({
+        service,
+        rule,
+        origin: "service",
+        query: rule.query.replaceAll("{service}", safeService),
+        usesLogs: (rule.source ?? "metrics") === "logs",
+      });
+    }
+
+    // probe.logs generic fallback — fires only when (a) probe.logs is
+    // enabled globally, (b) the service has logLabels, and (c) no
+    // per-service log-source rule was written for this service.
+    if (probe.logs.enabled) {
+      const labels = serviceConfig?.logLabels;
+      const hasLogLabels = labels && Object.keys(labels).length > 0;
+      const alreadyHasLogRule = perServiceRules.some((r) => (r.source ?? "metrics") === "logs");
+      if (hasLogLabels && !alreadyHasLogRule) {
+        const query = buildGenericLogQLFromLabels(labels!, probe.logs.window);
+        const threshold: Threshold = {
+          op: "gt",
+          // errorRateThreshold is per-minute; the query returns a raw count
+          // over the window, so scale by window length.
+          value: probe.logs.errorRateThreshold * logWindowMinutes,
+        };
+        tasks.push({
+          service,
+          rule: {
+            name: "log_errors_fallback",
+            query,
+            threshold,
+            consecutiveTicks: probe.logs.consecutiveTicks,
+            source: "logs",
+          },
+          origin: "logs-fallback",
+          query,
+          usesLogs: true,
+        });
+      }
     }
   }
 
-  // Execute with bounded concurrency, signal plumbed through
+  // ── Execute all tasks under one shared concurrency cap ──────────────────
   const values = await mapWithConcurrency(tasks, probe.concurrency, async (task) => {
     if (signal?.aborted) return Number.NaN;
-    return executeInstant(queryTool, task.query, datasourceUid, signal, probe.queryTimeoutMs);
+    if (task.usesLogs) {
+      if (!logsTool) return Number.NaN;
+      return executeInstantLogs(logsTool, task.query, lokiDatasourceUid, signal, probe.logsQueryTimeoutMs);
+    }
+    return executeInstant(metricsTool, task.query, datasourceUid, signal, probe.queryTimeoutMs);
   });
 
-  // Score: update consecutive-ticks state, collect hits that met consecutive requirement
+  // ── Score: update consecutive-ticks state, collect qualifying hits ──────
   const hits: ProbeHit[] = [];
   for (let i = 0; i < tasks.length; i++) {
     const task = tasks[i]!;
     const value = values[i]!;
-    const key = stateKey(task.service, task.rule.name);
+    const key = stateKey(task.service, task.origin, task.rule.name);
     const tripped = evaluateThreshold(value, task.rule.threshold);
 
     if (!tripped) {
-      // Reset hysteresis on any non-trip (including NaN)
+      // Reset hysteresis on any non-trip (including NaN).
       consecutiveState.delete(key);
       continue;
     }
@@ -297,6 +538,7 @@ export async function runProbe(opts: ProbeOptions): Promise<ProbeHit[]> {
       hits.push({
         service: task.service,
         ruleName: task.rule.name,
+        origin: task.origin,
         value,
         query: task.query,
         threshold: task.rule.threshold,
