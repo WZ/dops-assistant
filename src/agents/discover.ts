@@ -83,7 +83,20 @@ Infrastructure often dominates basic health check queries. Make sure to also dis
 
 ## Output Format
 
-Return a JSON array. Each object must have:
+Return a JSON OBJECT with two top-level fields:
+- "services": array of service objects (see shape below)
+- "globalProbeRules": array of stack-aware probe rule objects written AFTER you
+  introspect the Prometheus label key this stack actually uses (see section
+  "Global Probe Rules" below). Empty array is acceptable if the introspection
+  does not succeed.
+
+BACKWARD COMPAT: Clients still accept a bare JSON array of services (treated
+as { services: [...], globalProbeRules: [] }). Prefer the object form when
+you can produce globalProbeRules.
+
+## Per-Service Shape
+
+Each service in "services" must have:
 - "name": string — the service name
 - "metrics": array of { "query": string, "description": string } — a health check query for this service
 - "logLabels": object — key/value pairs identifying this service in whatever log
@@ -108,10 +121,94 @@ Return a JSON array. Each object must have:
     5. Use {} if no label info is available. A wrong label is worse than none —
        the logs agent will query with it and get empty results.
 
+- "probeRules" (OPTIONAL): array of per-service anomaly detection rules for the
+  proactive scan probe. Write rules here that the probe cannot infer from
+  global config because they require per-service label resolution. Two rules
+  to generate when context is available:
+
+  K8S POD RESTARTS (source: "metrics"):
+    If you discover this service runs as a k8s workload AND you can identify
+    its namespace and/or its deployment/statefulset/daemonset name, add:
+      {
+        "name": "pod_restarts",
+        "query": "rate(kube_pod_container_status_restarts_total{namespace=\"<ns>\"}[5m])",
+        "threshold": { "op": "gt", "value": 0.033 },
+        "consecutiveTicks": 2,
+        "source": "metrics"
+      }
+    0.033 per second ≈ 2 restarts per minute — the first-level trip threshold.
+    Prefer a \`namespace="..."\` selector when known; if the service is narrowed
+    by \`statefulset="..."\` or \`daemonset="..."\`, use that. Omit this rule if
+    you cannot determine a namespace or workload selector — a wrong namespace
+    is worse than no rule (probe scores it NaN either way, but an incorrect
+    rule sits in services.yaml confusingly).
+
+  LOG ERROR RATE (source: "logs"):
+    If logLabels is non-empty and a logs MCP provider is available, add:
+      {
+        "name": "log_errors",
+        "query": "sum(count_over_time({<logLabels as key=\\"value\\" selectors>} |= \`error\` or \`fatal\` [15m]))",
+        "threshold": { "op": "gt", "value": 75 },
+        "consecutiveTicks": 2,
+        "source": "logs"
+      }
+    Example — for logLabels={namespace:"checkout",container:"api"}:
+      "query": "sum(count_over_time({namespace=\\"checkout\\",container=\\"api\\"} |= \`error\` or \`fatal\` [15m]))"
+    Threshold 75 is a raw count over the 15m window (~5 errors/min × 15 min).
+    The probe does NOT divide by window duration — the scalar returned by the
+    logs tool is the raw count. Use the same logLabels you wrote in the
+    logLabels field; reuse them exactly. Omit this rule if logLabels is empty
+    or no logs tool is wired.
+
+  Leave probeRules: [] (or omit the field) if no context is available. A
+  wrong label is worse than none.
+
+- "gitlabProject" (optional): GitLab project path if you know it.
+- "corootAppId" (optional): Coroot application ID if you know it.
+
+## Global Probe Rules
+
+"globalProbeRules" is a top-level array of stack-aware probe rules. The probe
+applies each global rule to every registered service (by substituting
+"{service}" in the query for the service name). The purpose: write ONE set of
+rules with the RIGHT label key for this stack, so operators don't have to
+hand-edit config.yaml when their cluster uses \`app=\` instead of \`deployment=\`
+or \`service=\`.
+
+Process:
+  1. Inspect the Prometheus metrics you queried during service discovery.
+     Look at which labels appear most often across workload metrics — common
+     candidates are \`app\`, \`service\`, \`job\`, \`deployment\`, \`statefulset\`,
+     \`daemonset\`, \`workload\`, \`component\`.
+  2. Pick the MAJORITY-WINS key — the one that appears on the most service-
+     identifying metrics. For example, if most services surface via
+     \`up{app="..."}\` but a few via \`up{job="..."}\`, the majority key is \`app\`.
+  3. Write availability and (optionally) error-rate rules using that key.
+     These OVERRIDE the hardcoded config.yaml defaults for every service.
+
+Example — a stack where \`app\` is the majority label key:
+  "globalProbeRules": [
+    {
+      "name": "app_availability",
+      "query": "up{app=\\"{service}\\"}",
+      "threshold": { "op": "lt", "value": 1 },
+      "consecutiveTicks": 3,
+      "source": "metrics"
+    }
+  ]
+
+Example — a stack where \`deployment\` / \`statefulset\` / \`daemonset\`
+kube-state-metrics labels are standard (no rewrite needed):
+  "globalProbeRules": []      // fall through to the hardcoded k8s defaults
+
+Leave globalProbeRules: [] (or omit) if the stack's label convention matches
+the hardcoded config.yaml defaults (deployment / statefulset / daemonset
+kube-state-metrics labels) — the defaults already cover it, don't duplicate.
+
 Be thorough — discover ALL services. Return valid JSON.
 
 OUTPUT STRICTNESS: Return PURE JSON only. Do NOT include JavaScript-style
-comments (// or /* */), trailing commas, or section headers inside the array.
+comments (// or /* */), trailing commas, or section headers inside any array.
 If you want to group services conceptually, use an extra field like
 "category": "deployment" | "statefulset" | "daemonset" | "container" on
 the service object itself — do not use inline comments as dividers.${excludeList}`,

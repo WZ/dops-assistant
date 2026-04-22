@@ -7,7 +7,7 @@ import { join } from "path";
 import { stringify, parse } from "yaml";
 import type { IDiscoverAgent } from "../../types/agent-interfaces.js";
 import type { ValidatedServiceConfig } from "../../types/discovery-types.js";
-import type { ServiceConfig, DiscoveryConfig } from "../../config/schema.js";
+import type { ServiceConfig, DiscoveryConfig, ProbeMetricRule } from "../../config/schema.js";
 
 type Phase = "running" | "review" | "editing" | "done";
 
@@ -23,6 +23,7 @@ function DiscoverApp({ agent, config }: DiscoverAppProps) {
   const [iteration, setIteration] = useState({ current: 0, max: 0, label: "" });
   const [toolCalls, setToolCalls] = useState<string[]>([]);
   const [services, setServices] = useState<ValidatedServiceConfig[]>([]);
+  const [globalProbeRules, setGlobalProbeRules] = useState<ProbeMetricRule[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -37,7 +38,8 @@ function DiscoverApp({ agent, config }: DiscoverAppProps) {
         },
       )
       .then((result) => {
-        setServices(result);
+        setServices(result.services);
+        setGlobalProbeRules(result.globalProbeRules);
         setPhase("review");
       })
       .catch((err) => {
@@ -56,6 +58,7 @@ function DiscoverApp({ agent, config }: DiscoverAppProps) {
           probeRules: s.probeRules ?? [],
         })),
         "discovery",
+        globalProbeRules,
       ).then(() => {
         setPhase("done");
         setTimeout(() => exit(), 100);

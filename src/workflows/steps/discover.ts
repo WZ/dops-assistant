@@ -4,7 +4,7 @@ import { getToolsByRole } from "../../mcp/provider.js";
 import { wrapToolsWithCallbacks } from "../tool-utils.js";
 import type { LanguageModel } from "ai";
 import type { MastraProvider } from "../../mcp/provider.js";
-import type { ServiceConfig, DiscoveryConfig, DiscoveryRecipe } from "../../config/schema.js";
+import type { ServiceConfig, DiscoveryConfig, DiscoveryRecipe, ProbeMetricRule } from "../../config/schema.js";
 import type { OnToolCallEnriched, OnIteration } from "../../types/agent-interfaces.js";
 import type { Skill } from "../../skills/store.js";
 import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
@@ -117,7 +117,20 @@ function formatRecipeHints(recipes: DiscoveryRecipe[]): string {
   }).join("\n\n");
 }
 
-export async function runDiscoverStep(config: DiscoverStepConfig): Promise<ServiceConfig[]> {
+/**
+ * Output of `runDiscoverStep`. `services` is the per-service list the LLM
+ * wrote; `globalProbeRules` is the top-level stack-aware rule array the
+ * agent produced after introspecting the Prometheus label key (empty when
+ * the stack matches the hardcoded k8s defaults or the agent couldn't
+ * introspect — both are valid no-op outcomes, the probe falls through to
+ * the config.yaml defaults).
+ */
+export interface DiscoverStepResult {
+  services: ServiceConfig[];
+  globalProbeRules: ProbeMetricRule[];
+}
+
+export async function runDiscoverStep(config: DiscoverStepConfig): Promise<DiscoverStepResult> {
   let discoveryTools: Record<string, any>;
   try {
     const [metrics, infra] = await Promise.all([
@@ -262,11 +275,16 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
       });
 
       const parsed = safeJsonParse(result.text);
+      // Backward-compat: bare array → treat as {services, globalProbeRules: []}
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+        return { services: parsed, globalProbeRules: [] };
       }
+      // New object form: {services, globalProbeRules?}
       if (parsed?.services && Array.isArray(parsed.services) && parsed.services.length > 0) {
-        return parsed.services;
+        const globalProbeRules = Array.isArray(parsed.globalProbeRules)
+          ? parsed.globalProbeRules as ProbeMetricRule[]
+          : [];
+        return { services: parsed.services as ServiceConfig[], globalProbeRules };
       }
       const respLen = result.text?.length ?? 0;
       const first200 = result.text?.slice(0, 200) ?? "";
@@ -300,5 +318,5 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
     { maxRetries: MAX_RETRIES },
     "discovery: agent returned no parseable services after all retries — returning empty list (likely causes: LLM produced empty array, wrapped result in unexpected shape, or exhausted iterations without JSON output)",
   );
-  return [];
+  return { services: [], globalProbeRules: [] };
 }

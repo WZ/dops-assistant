@@ -3,7 +3,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { ulid } from "ulid";
 import { createLogger } from "../logger.js";
 import type { Database } from "./db.js";
-import type { IChatAgent, IInvestigationAgent, IDiscoverAgent } from "../types/agent-interfaces.js";
+import type { IChatAgent, IInvestigationAgent, IDiscoverAgent, DiscoveryResult } from "../types/agent-interfaces.js";
 import type { IntentRouter } from "../agents/intent.js";
 import { resolveServiceFromHistory } from "../agents/intent.js";
 import type { ServiceConfig, DiscoveryConfig, Config } from "../config/schema.js";
@@ -188,8 +188,11 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
       try { ws.ping(); } catch { /* socket transitioned to closing mid-tick */ }
     }, HEARTBEAT_INTERVAL_MS);
 
-    // Per-connection pending discovery state
-    let pendingDiscovery: ValidatedServiceConfig[] | null = null;
+    // Per-connection pending discovery state. Holds the full DiscoveryResult
+    // so the `discover:accept` handler can retrieve the server-side
+    // globalProbeRules (which the UI doesn't round-trip over the wire) and
+    // save both via registryStore.saveAll() atomically.
+    let pendingDiscovery: DiscoveryResult | null = null;
 
     const send = (m: ServerMessage) => {
       if (ws.readyState === WebSocket.OPEN) {
@@ -205,10 +208,10 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
         if (agents.discoverAgent) {
           agents.discoverAgent
             .discover(discoveryConfig)
-            .then((services) => {
-              pendingDiscovery = services;
-              if (services.length > 0) {
-                send({ type: "discover:pending", services });
+            .then((result) => {
+              pendingDiscovery = result;
+              if (result.services.length > 0) {
+                send({ type: "discover:pending", services: result.services });
               }
             })
             .catch((err) => {
@@ -255,7 +258,17 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
           msg = parsed as ClientMessage;
         }
 
-        await handleClientMessage(msg, send, deps, threadId, stackId, ctx, () => pendingDiscovery, () => { pendingDiscovery = null; });
+        await handleClientMessage(
+          msg,
+          send,
+          deps,
+          threadId,
+          stackId,
+          ctx,
+          () => pendingDiscovery,
+          (result: DiscoveryResult) => { pendingDiscovery = result; },
+          () => { pendingDiscovery = null; },
+        );
       } catch (err) {
         logger.error({ err }, "WebSocket message handling error");
         if (ws.readyState === WebSocket.OPEN) {
@@ -542,7 +555,8 @@ export async function handleClientMessage(
   threadId: string,
   stackId: string,
   ctx: StackContext,
-  getPendingDiscovery: () => ValidatedServiceConfig[] | null,
+  getPendingDiscovery: () => DiscoveryResult | null,
+  setPendingDiscovery: (result: DiscoveryResult) => void,
   clearPendingDiscovery: () => void,
 ): Promise<void> {
   const memory = ctx.conversationMemory;
@@ -587,7 +601,7 @@ export async function handleClientMessage(
       if (discoverySkills.length > 0) {
         logger.debug({ skillCount: discoverySkills.length, skills: discoverySkills.map(s => s.id) }, "Injecting discovery skills");
       }
-      const services = await agents.discoverAgent.discover(
+      const result = await agents.discoverAgent.discover(
         discoveryConfig ?? { autoRefresh: false, excludeServices: [], maxIterations: 40, discoveryRecipes: [] },
         (phase) => {
           // Emit usage for the phase that just ended
@@ -624,7 +638,11 @@ export async function handleClientMessage(
           send({ type: "discover:retry", attempt, maxRetries, reason });
         },
       );
-      if (services.length === 0) {
+      // Stash the full DiscoveryResult so the `discover:accept` handler
+      // can pull globalProbeRules out (they don't round-trip over the WS
+      // protocol — the UI only echoes back services).
+      setPendingDiscovery(result);
+      if (result.services.length === 0) {
         // Discovery returned zero services: validation never ran. Emit the
         // terminal phase marker so the UI can distinguish "validation done"
         // from "validation was never reached".
@@ -632,7 +650,7 @@ export async function handleClientMessage(
         send({ type: "discover:error", message: "Discovery completed but found no services. The LLM may have failed to parse Prometheus metrics — try again." });
       } else {
         send({ type: "discover:phase", phase: "validation", status: "complete" });
-        send({ type: "discover:complete", services });
+        send({ type: "discover:complete", services: result.services });
       }
 
       // Emit usage for the final phase
@@ -659,7 +677,13 @@ export async function handleClientMessage(
   }
 
   if (msg.type === "discover:accept" && agents.discoverAgent) {
-    await agents.discoverAgent.accept(msg.services, "discovery");
+    // Pull globalProbeRules from server-side pending state — the UI only
+    // echoes services back. If no pending result exists (client accepted
+    // without running discovery, or state was cleared), pass undefined so
+    // accept() falls through to the legacy save() path (services only,
+    // globals preserved from the current file).
+    const pending = getPendingDiscovery();
+    await agents.discoverAgent.accept(msg.services, "discovery", pending?.globalProbeRules);
     clearPendingDiscovery();
     return;
   }
