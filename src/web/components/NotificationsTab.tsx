@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useStackContext } from "../contexts/StackContext";
+import { EmailRecipientsSection } from "./EmailRecipientsSection.js";
 
 interface SlackConfig {
   webhookUrl: string | null;
@@ -192,10 +193,7 @@ export function NotificationsTab() {
         </div>
       </section>
 
-      {/* Future: other notification channels */}
-      <div className="text-[10px] font-mono text-muted-foreground/30 mt-4">
-        More channels coming soon (PagerDuty, email)
-      </div>
+      <EmailRecipientsSection stackFetch={stackFetch} />
     </div>
   );
 }

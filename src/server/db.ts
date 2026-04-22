@@ -1,5 +1,49 @@
 import BetterSqlite3 from "better-sqlite3";
 import type { StackRow } from "../types/stack-types.js";
+import type { SeverityLevel, NotificationSource, EmailRecipient } from "../types/notifications.js";
+import { ALL_SEVERITIES, ALL_SOURCES } from "../types/notifications.js";
+import { createLogger as _createLoggerForRecipientParser } from "../logger.js";
+const _emailRecipientLogger = _createLoggerForRecipientParser();
+
+/**
+ * Defensive parse for the `allowed_sources` column. The column stores a JSON
+ * array of NotificationSource strings. If the JSON is corrupt, not an array,
+ * or contains unknown values, we log and return an empty array. An empty
+ * `allowedSources` makes the recipient unreachable by `notifyEmail`'s filter,
+ * which fails closed (no notification sent) rather than silently misrouting.
+ */
+function parseAllowedSources(raw: string, recipientId: number): NotificationSource[] {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      _emailRecipientLogger.warn({ recipientId, raw }, "email_recipients.allowed_sources is not an array; treating as empty");
+      return [];
+    }
+    const out: NotificationSource[] = [];
+    for (const x of parsed) {
+      if (typeof x === "string" && (ALL_SOURCES as readonly string[]).includes(x)) {
+        out.push(x as NotificationSource);
+      } else {
+        _emailRecipientLogger.warn({ recipientId, value: x }, "email_recipients.allowed_sources contains unknown source; skipping");
+      }
+    }
+    return out;
+  } catch (err) {
+    _emailRecipientLogger.error({ err, recipientId, raw }, "email_recipients.allowed_sources is not valid JSON; treating as empty");
+    return [];
+  }
+}
+
+/**
+ * Defensive cast for the `min_severity` column. Invalid values fall back to
+ * "critical" — the strictest threshold — so unknown input fails closed
+ * (the recipient sees nothing rather than being silently widened to everything).
+ */
+function parseMinSeverity(raw: string, recipientId: number): SeverityLevel {
+  if ((ALL_SEVERITIES as readonly string[]).includes(raw)) return raw as SeverityLevel;
+  _emailRecipientLogger.warn({ recipientId, raw }, "email_recipients.min_severity is unknown; defaulting to critical");
+  return "critical";
+}
 
 /**
  * Converts a SQLite datetime string (YYYY-MM-DD HH:MM:SS, UTC) to ISO 8601.
@@ -105,6 +149,7 @@ export class Database {
     this.migrateServiceMetadata();
     this.migrateStacks();
     this.migrateDisabledSkills();
+    this.migrateEmailRecipients();
   }
 
   private migrate(): void {
@@ -183,6 +228,26 @@ export class Database {
         updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
       );
     `);
+  }
+
+  // ── Email recipients migration ─────────────────────────────────────────
+
+  private migrateEmailRecipients(): void {
+    this.db.prepare(`
+      CREATE TABLE IF NOT EXISTS email_recipients (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        address          TEXT NOT NULL,
+        label            TEXT,
+        min_severity     TEXT NOT NULL DEFAULT 'high',
+        allowed_sources  TEXT NOT NULL DEFAULT '["webhook","scan","poller"]',
+        enabled          INTEGER NOT NULL DEFAULT 1,
+        created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `).run();
+    this.db.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_email_recipients_enabled ON email_recipients(enabled)`
+    ).run();
   }
 
   // ── Stack migration ──────────────────────────────────────────────────────
@@ -992,6 +1057,99 @@ export class Database {
    */
   transaction<T>(fn: () => T): T {
     return this.db.transaction(fn)();
+  }
+
+  // ── Email recipients ──────────────────────────────────────────────────────
+
+  createEmailRecipient(input: {
+    address: string;
+    label?: string;
+    minSeverity: SeverityLevel;
+    allowedSources: NotificationSource[];
+    enabled: boolean;
+  }): EmailRecipient {
+    const result = this.db.prepare(
+      `INSERT INTO email_recipients (address, label, min_severity, allowed_sources, enabled)
+       VALUES (?, ?, ?, ?, ?)`
+    ).run(
+      input.address,
+      input.label ?? null,
+      input.minSeverity,
+      JSON.stringify(input.allowedSources),
+      input.enabled ? 1 : 0,
+    );
+    const id = Number(result.lastInsertRowid);
+    return this.getEmailRecipient(id)!;
+  }
+
+  getEmailRecipient(id: number): EmailRecipient | undefined {
+    const row = this.db.prepare(
+      `SELECT id, address, label, min_severity, allowed_sources, enabled, created_at, updated_at
+       FROM email_recipients WHERE id = ?`
+    ).get(id) as {
+      id: number; address: string; label: string | null;
+      min_severity: string; allowed_sources: string; enabled: number;
+      created_at: string; updated_at: string;
+    } | undefined;
+    if (!row) return undefined;
+    return {
+      id: row.id,
+      address: row.address,
+      label: row.label ?? undefined,
+      minSeverity: parseMinSeverity(row.min_severity, row.id),
+      allowedSources: parseAllowedSources(row.allowed_sources, row.id),
+      enabled: row.enabled === 1,
+      createdAt: normalizeTimestamp(row.created_at),
+      updatedAt: normalizeTimestamp(row.updated_at),
+    };
+  }
+
+  listEmailRecipients(opts?: { enabledOnly?: boolean }): EmailRecipient[] {
+    const sql = opts?.enabledOnly
+      ? `SELECT id, address, label, min_severity, allowed_sources, enabled, created_at, updated_at
+         FROM email_recipients WHERE enabled = 1 ORDER BY id`
+      : `SELECT id, address, label, min_severity, allowed_sources, enabled, created_at, updated_at
+         FROM email_recipients ORDER BY id`;
+    const rows = this.db.prepare(sql).all() as Array<{
+      id: number; address: string; label: string | null;
+      min_severity: string; allowed_sources: string; enabled: number;
+      created_at: string; updated_at: string;
+    }>;
+    return rows.map((row) => ({
+      id: row.id,
+      address: row.address,
+      label: row.label ?? undefined,
+      minSeverity: parseMinSeverity(row.min_severity, row.id),
+      allowedSources: parseAllowedSources(row.allowed_sources, row.id),
+      enabled: row.enabled === 1,
+      createdAt: normalizeTimestamp(row.created_at),
+      updatedAt: normalizeTimestamp(row.updated_at),
+    }));
+  }
+
+  updateEmailRecipient(id: number, patch: {
+    address?: string;
+    label?: string | null;
+    minSeverity?: SeverityLevel;
+    allowedSources?: NotificationSource[];
+    enabled?: boolean;
+  }): EmailRecipient | undefined {
+    const fields: string[] = [];
+    const values: Array<string | number | null> = [];
+    if (patch.address !== undefined) { fields.push("address = ?"); values.push(patch.address); }
+    if (patch.label !== undefined) { fields.push("label = ?"); values.push(patch.label); }
+    if (patch.minSeverity !== undefined) { fields.push("min_severity = ?"); values.push(patch.minSeverity); }
+    if (patch.allowedSources !== undefined) { fields.push("allowed_sources = ?"); values.push(JSON.stringify(patch.allowedSources)); }
+    if (patch.enabled !== undefined) { fields.push("enabled = ?"); values.push(patch.enabled ? 1 : 0); }
+    if (fields.length === 0) return this.getEmailRecipient(id);
+    fields.push("updated_at = datetime('now', 'subsec')");
+    values.push(id);
+    this.db.prepare(`UPDATE email_recipients SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+    return this.getEmailRecipient(id);
+  }
+
+  deleteEmailRecipient(id: number): void {
+    this.db.prepare("DELETE FROM email_recipients WHERE id = ?").run(id);
   }
 
   close(): void {

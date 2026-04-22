@@ -39,6 +39,8 @@ import { StackManager } from "./stack-manager.js";
 import { createMastraAdapters } from "./agents.js";
 import { notifySlack } from "./slack-notifier.js";
 import { buildInvestigationMessage } from "./anomaly-probe.js";
+import nodemailer, { type Transporter } from "nodemailer";
+import { notifyEmail } from "./email-notifier.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const logger = createLogger();
@@ -139,26 +141,71 @@ async function main() {
     db,
   });
 
-  // Build a global onComplete handler for Slack notifications.
-  // Reads URL dynamically so GUI changes take effect without restart.
-  const globalOnComplete = (investigationId: string, service: string, report: import("../types/rca-types.js").RcaReport) => {
-    // GUI override (DB) → config.yaml fallback
-    const url = db.getSetting("notifications.slack.webhookUrl") ?? config.webhook.slackWebhookUrl;
-    if (!url) return;
-    // Check if explicitly disabled via GUI
-    const enabled = db.getSetting("notifications.slack.enabled");
-    if (enabled === "false") return;
+  let emailTransport: Transporter | null = null;
+  const getEmailTransport = (): Transporter | null => {
+    const emailCfg = config.notifications?.email;
+    if (!emailCfg) return null;
+    if (!emailTransport) {
+      emailTransport = nodemailer.createTransport({
+        host: emailCfg.smtp.host,
+        port: emailCfg.smtp.port,
+        secure: emailCfg.smtp.secure,
+        auth: { user: emailCfg.smtp.user, pass: emailCfg.smtp.pass },
+      });
+    }
+    return emailTransport;
+  };
 
-    const defaultCtx = stackManager.getDefaultContext();
-    const dashProvider = defaultCtx.providerRegistry.getAll().find(
-      (p: { config: { roles: string[]; webUrl?: string } }) => p.config.roles.includes("dashboards") && p.config.webUrl,
-    );
-    notifySlack(
-      { slackWebhookUrl: url, grafanaUrl: dashProvider?.config.webUrl },
-      investigationId,
-      service,
-      report,
-    );
+  // Build a global onComplete handler for Slack + email notifications.
+  // Reads URL/settings dynamically so GUI changes take effect without restart.
+  const globalOnComplete = (
+    investigationId: string,
+    service: string,
+    report: import("../types/rca-types.js").RcaReport,
+    source: import("../types/notifications.js").NotificationSource,
+  ) => {
+    // ── Slack (existing) ────────────────────────────────────────────
+    const slackUrl = db.getSetting("notifications.slack.webhookUrl") ?? config.webhook.slackWebhookUrl;
+    const slackEnabled = db.getSetting("notifications.slack.enabled");
+    if (slackUrl && slackEnabled !== "false") {
+      const defaultCtx = stackManager.getDefaultContext();
+      const dashProvider = defaultCtx.providerRegistry.getAll().find(
+        (p: { config: { roles: string[]; webUrl?: string } }) => p.config.roles.includes("dashboards") && p.config.webUrl,
+      );
+      notifySlack(
+        { slackWebhookUrl: slackUrl, grafanaUrl: dashProvider?.config.webUrl },
+        investigationId,
+        service,
+        report,
+      );
+    }
+
+    // ── Email (new) ─────────────────────────────────────────────────
+    const emailCfg = config.notifications?.email;
+    const transport = getEmailTransport();
+    if (emailCfg && transport) {
+      const dbEnabled = db.getSetting("notifications.email.enabled");
+      const enabled = dbEnabled !== undefined ? dbEnabled === "true" : emailCfg.enabled;
+      if (enabled) {
+        notifyEmail(
+          {
+            isGloballyEnabled: () => true,
+            listEnabledRecipients: () => db.listEmailRecipients({ enabledOnly: true }),
+            transport,
+            config: {
+              from: emailCfg.from,
+              appBaseUrl: emailCfg.appBaseUrl,
+              retry: { attempts: emailCfg.retry.attempts, backoffMs: emailCfg.retry.backoffMs },
+            },
+          },
+          investigationId,
+          report,
+          source,
+        ).catch((err) => {
+          logger.warn({ err, investigationId }, "notifyEmail rejected unexpectedly");
+        });
+      }
+    }
   };
 
   // Wire health transition handler for auto-investigate
@@ -213,6 +260,7 @@ async function main() {
           template: "standard",
           stackId,
           readOnlyTools: true,
+          source: "poller",
         });
       })
       .catch((err) => {
@@ -269,6 +317,7 @@ async function main() {
             template,
             stackId,
             readOnlyTools: true,
+            source: "scan",
           });
         })
         .catch((err) => {
@@ -492,6 +541,9 @@ async function main() {
     stackManager.stopAllPollers();
     stackManager.stopTtlReaper();
     stackManager.destroyAllMemory();
+    // Close SMTP connection pool if the email transport was lazily constructed.
+    // Nodemailer's close() is synchronous and a no-op on non-pooled transports.
+    try { emailTransport?.close(); } catch { /* best-effort on shutdown */ }
     db.close();
     server.close();
     process.exit(0);

@@ -25,6 +25,9 @@ import { validateRules } from "./scan-rule-validator.js";
 import { validateOverride, parseOverride } from "./scan-service-override.js";
 import { getToolsByRole } from "../mcp/provider.js";
 import { parsePrometheusResult } from "./service-health-poller.js";
+import nodemailer from "nodemailer";
+import type { RcaReport } from "../types/rca-types.js";
+import { notifyEmail } from "./email-notifier.js";
 
 /**
  * Zod schema for PUT /api/scan/settings body.
@@ -1651,5 +1654,187 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : "Failed to send test notification" });
     }
+  });
+
+  // ── Email notifications ─────────────────────────────────────────────────
+
+  const ALL_SOURCES_SET = new Set(["webhook", "scan", "poller", "manual"]);
+  const ALL_SEVERITIES_SET = new Set(["low", "medium", "high", "critical"]);
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  function validateRecipientBody(body: any, { partial }: { partial: boolean }): string | null {
+    if (!body || typeof body !== "object") return "Body must be an object";
+    if (!partial || body.address !== undefined) {
+      if (typeof body.address !== "string" || !EMAIL_RE.test(body.address)) return "Invalid email address";
+    }
+    if (!partial || body.minSeverity !== undefined) {
+      if (!ALL_SEVERITIES_SET.has(body.minSeverity)) return "Invalid minSeverity";
+    }
+    if (!partial || body.allowedSources !== undefined) {
+      if (!Array.isArray(body.allowedSources) || body.allowedSources.length === 0) return "allowedSources must be a non-empty array";
+      for (const s of body.allowedSources) {
+        if (!ALL_SOURCES_SET.has(s)) return `Invalid source: ${s}`;
+      }
+    }
+    if (!partial || body.enabled !== undefined) {
+      if (typeof body.enabled !== "boolean") return "enabled must be boolean";
+    }
+    if (body.label !== undefined && body.label !== null && typeof body.label !== "string") return "label must be string or null";
+    return null;
+  }
+
+  app.get("/api/notifications/email", (_req: Request, res: Response) => {
+    const dbEnabled = db.getSetting("notifications.email.enabled");
+    const emailCfg = config.notifications?.email;
+    const enabled = dbEnabled !== undefined ? dbEnabled === "true" : emailCfg?.enabled ?? false;
+    const recipients = db.listEmailRecipients();
+    res.json({ enabled, recipients });
+  });
+
+  app.put("/api/notifications/email", (req: Request, res: Response) => {
+    const { enabled } = (req.body ?? {}) as { enabled?: boolean };
+    if (typeof enabled !== "boolean") {
+      res.status(400).json({ error: "enabled must be boolean" });
+      return;
+    }
+    db.setSetting("notifications.email.enabled", String(enabled));
+    res.json({ ok: true, enabled });
+  });
+
+  app.get("/api/notifications/email/recipients", (_req: Request, res: Response) => {
+    res.json(db.listEmailRecipients());
+  });
+
+  app.post("/api/notifications/email/recipients", (req: Request, res: Response) => {
+    const err = validateRecipientBody(req.body, { partial: false });
+    if (err) { res.status(400).json({ error: err }); return; }
+    const body = req.body as {
+      address: string; label?: string; minSeverity: import("../types/notifications.js").SeverityLevel;
+      allowedSources: import("../types/notifications.js").NotificationSource[]; enabled: boolean;
+    };
+    const created = db.createEmailRecipient({
+      address: body.address,
+      label: body.label,
+      minSeverity: body.minSeverity,
+      allowedSources: body.allowedSources,
+      enabled: body.enabled,
+    });
+    res.status(201).json(created);
+  });
+
+  app.put("/api/notifications/email/recipients/:id", (req: Request, res: Response) => {
+    const id = Number(req.params["id"]);
+    if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "Invalid id" }); return; }
+    const err = validateRecipientBody(req.body, { partial: true });
+    if (err) { res.status(400).json({ error: err }); return; }
+    const existing = db.getEmailRecipient(id);
+    if (!existing) { res.status(404).json({ error: "Recipient not found" }); return; }
+    const updated = db.updateEmailRecipient(id, req.body);
+    res.json(updated);
+  });
+
+  app.delete("/api/notifications/email/recipients/:id", (req: Request, res: Response) => {
+    const id = Number(req.params["id"]);
+    if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "Invalid id" }); return; }
+    db.deleteEmailRecipient(id);
+    res.status(204).end();
+  });
+
+  app.post("/api/notifications/email/test", async (req: Request, res: Response) => {
+    const { recipientId } = (req.body ?? {}) as { recipientId?: number };
+    if (typeof recipientId !== "number" || !Number.isInteger(recipientId) || recipientId <= 0) {
+      res.status(400).json({ error: "recipientId must be a positive integer" });
+      return;
+    }
+
+    // (a) Require the global email-enabled flag before allowing any send.
+    // Prevents the endpoint from being used as an open SMTP relay by anyone
+    // with access to the /api surface while email is nominally off.
+    const emailCfg = config.notifications?.email;
+    const dbEnabled = db.getSetting("notifications.email.enabled");
+    const globalEnabled = dbEnabled !== undefined ? dbEnabled === "true" : emailCfg?.enabled ?? false;
+    if (!globalEnabled) {
+      res.status(403).json({ error: "Email notifications are disabled. Enable the global toggle first." });
+      return;
+    }
+
+    // (c) Require real SMTP config so we never fake success via jsonTransport.
+    // A user clicking "Test" expects a real round-trip; if SMTP isn't wired up,
+    // that's a 400 they can act on — not a green checkmark.
+    if (!emailCfg) {
+      res.status(400).json({ error: "SMTP is not configured. Set notifications.email in config.yaml." });
+      return;
+    }
+
+    const recipient = db.getEmailRecipient(recipientId);
+    if (!recipient) { res.status(404).json({ error: "Recipient not found" }); return; }
+
+    const realTransport = nodemailer.createTransport({
+      host: emailCfg.smtp.host,
+      port: emailCfg.smtp.port,
+      secure: emailCfg.smtp.secure,
+      auth: { user: emailCfg.smtp.user, pass: emailCfg.smtp.pass },
+    });
+
+    // (b) Use the recipient's own minSeverity as the fixture severity so the
+    // filter in notifyEmail always matches. Otherwise a hard-coded "high"
+    // fixture silently skips critical-only recipients — test button would lie.
+    const fixture: RcaReport = {
+      service: "test-service",
+      severity: recipient.minSeverity,
+      summary: "This is a test notification from DOps Assistant",
+      impact: { duration: "0s", description: "No production impact — this is a test." },
+      trigger: "Manual test from Notifications settings",
+      rootCause: "N/A (test notification)",
+      contributingFactors: ["Config validation in progress"],
+      timeline: [{ time: new Date().toISOString().slice(11, 16), event: "Test email triggered" }],
+      evidence: { metrics: ["cpu=12%"], logs: [], infra: [] },
+      dashboardLinks: [],
+      recommendedActions: ["Confirm you received this email in your inbox or Teams channel"],
+      confidence: "high",
+      confidenceScore: 1,
+      investigatedAt: new Date().toISOString(),
+    };
+
+    // (d) Capture SMTP errors from the wrapped transport so we can surface
+    // them to the caller. `notifyEmail` swallows send failures by design,
+    // so the test endpoint has to watch the transport directly.
+    const captured: unknown[] = [];
+    let sendError: unknown = null;
+    const wrappedTransport = {
+      sendMail: async (envelope: unknown) => {
+        captured.push(envelope);
+        try {
+          return await realTransport.sendMail(envelope as any);
+        } catch (err) {
+          sendError = err;
+          throw err;
+        }
+      },
+    } as unknown as ReturnType<typeof nodemailer.createTransport>;
+
+    await notifyEmail(
+      {
+        isGloballyEnabled: () => true,
+        listEnabledRecipients: () => [recipient],
+        transport: wrappedTransport,
+        config: {
+          from: emailCfg.from,
+          appBaseUrl: emailCfg.appBaseUrl,
+          retry: { attempts: 1, backoffMs: [] },
+        },
+      },
+      `test_${Date.now()}`,
+      fixture,
+      recipient.allowedSources[0] ?? "manual",
+    );
+
+    if (sendError) {
+      const msg = sendError instanceof Error ? sendError.message : String(sendError);
+      res.status(500).json({ error: `SMTP send failed: ${msg}` });
+      return;
+    }
+
+    res.json({ ok: true, envelope: captured[0] ?? null });
   });
 }

@@ -322,3 +322,69 @@ describe("ConfigSchema – scan section", () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe("ConfigSchema — notifications.email", () => {
+  const base = {
+    llm,
+    providers: [grafanaProvider],
+  };
+
+  it("accepts a valid notifications.email config", () => {
+    const result = ConfigSchema.safeParse({
+      ...base,
+      notifications: {
+        email: {
+          enabled: false,
+          smtp: {
+            host: "smtp.example.com",
+            port: 587,
+            secure: false,
+            user: "u",
+            pass: "p",
+          },
+          from: "DOps <dops@example.com>",
+          appBaseUrl: "https://dops.example.com/",
+          retry: { attempts: 4, backoffMs: [1000, 5000, 30000] },
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("defaults the whole notifications section to undefined", () => {
+    const result = ConfigSchema.safeParse(base);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.notifications?.email).toBeUndefined();
+    }
+  });
+
+  it("rejects when backoffMs.length !== attempts - 1", () => {
+    const result = ConfigSchema.safeParse({
+      ...base,
+      notifications: {
+        email: {
+          smtp: { host: "x", port: 587, user: "u", pass: "p" },
+          from: "x@example.com",
+          appBaseUrl: "https://x.example.com/",
+          retry: { attempts: 4, backoffMs: [1000, 5000] },
+        },
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects invalid smtp.port", () => {
+    const result = ConfigSchema.safeParse({
+      ...base,
+      notifications: {
+        email: {
+          smtp: { host: "x", port: 99999, user: "u", pass: "p" },
+          from: "x@example.com",
+          appBaseUrl: "https://x.example.com/",
+        },
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+});
