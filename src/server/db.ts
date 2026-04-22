@@ -955,8 +955,8 @@ export class Database {
       minSeverity: row.min_severity as SeverityLevel,
       allowedSources: JSON.parse(row.allowed_sources) as NotificationSource[],
       enabled: row.enabled === 1,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
+      createdAt: normalizeTimestamp(row.created_at),
+      updatedAt: normalizeTimestamp(row.updated_at),
     };
   }
 
@@ -978,8 +978,8 @@ export class Database {
       minSeverity: row.min_severity as SeverityLevel,
       allowedSources: JSON.parse(row.allowed_sources) as NotificationSource[],
       enabled: row.enabled === 1,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
+      createdAt: normalizeTimestamp(row.created_at),
+      updatedAt: normalizeTimestamp(row.updated_at),
     }));
   }
 

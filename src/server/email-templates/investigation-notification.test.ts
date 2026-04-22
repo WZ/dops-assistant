@@ -117,6 +117,17 @@ describe("renderBody", () => {
     expect(withSlash).toContain("https://dops.example.com/investigations/inv_1");
     expect(withoutSlash).toContain("https://dops.example.com/investigations/inv_1");
   });
+
+  it("neutralizes non-http hrefs in dashboard links", () => {
+    const r = { ...fullReport, dashboardLinks: ["javascript:alert(1)", "https://grafana.example.com/d/ok"] };
+    const html = renderBody(r, "inv_1", "https://x/", "scan");
+    // The visible text is still shown (escaped)
+    expect(html).toContain("javascript:alert(1)");
+    // But the href for the bad entry is neutralized to "#"
+    expect(html).toMatch(/<a href="#"[^>]*>javascript:alert\(1\)<\/a>/);
+    // And the good URL still works
+    expect(html).toMatch(/<a href="https:\/\/grafana\.example\.com\/d\/ok"[^>]*>https:\/\/grafana\.example\.com\/d\/ok<\/a>/);
+  });
 });
 
 describe("renderTextFallback", () => {

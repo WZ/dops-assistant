@@ -92,7 +92,9 @@ export function renderBody(
   const linkList = (items: string[]): string =>
     items.length === 0 ? "" : `<ul style="margin: 4px 0 12px 20px; padding: 0;">${items.map((x) => {
       const safe = escapeHtml(x);
-      return `<li><a href="${safe}" style="color: #0369a1;">${safe}</a></li>`;
+      // Only permit http(s) URLs as hrefs. Anything else (javascript:, data:, etc.) renders as a neutralized "#".
+      const href = /^https?:\/\//i.test(x) ? safe : "#";
+      return `<li><a href="${href}" style="color: #0369a1;">${safe}</a></li>`;
     }).join("")}</ul>`;
 
   const timelineRows = report.timeline.map((t) => `
