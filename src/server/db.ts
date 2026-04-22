@@ -1407,6 +1407,48 @@ export class Database {
   }
 
   /**
+   * Delete old scan_runs rows. Per-stack retention:
+   *   - keep at least `keepLast` most-recent rows per stack
+   *   - pin rows with hits_dispatched > 0 (never reaped — they fired at
+   *     least one investigation so they're audit-worthy regardless of age)
+   *   - otherwise drop rows older than `maxAgeMs`
+   * scan_run_investigations rows are deleted explicitly (FK cascade is declarative-only).
+   */
+  reapScanRuns(opts: { keepLast: number; maxAgeMs: number }): number {
+    const cutoff = Date.now() - opts.maxAgeMs;
+    // Select the ids to delete first (window function + age predicate + pin predicate).
+    // `hits_dispatched > 0` pins the row regardless of age — operators need to
+    // keep the audit trail of what fired, even long after the tick itself.
+    const toDelete = this.db.prepare(`
+      SELECT id FROM (
+        SELECT
+          id,
+          hits_dispatched,
+          started_at,
+          ROW_NUMBER() OVER (PARTITION BY stack_id ORDER BY started_at DESC) AS rn
+        FROM scan_runs
+      )
+      WHERE rn > ?
+        AND started_at < ?
+        AND (hits_dispatched IS NULL OR hits_dispatched = 0)
+    `).all(opts.keepLast, cutoff) as Array<{ id: string }>;
+
+    if (toDelete.length === 0) return 0;
+
+    // Delete children first (FK cascade is declarative-only), then parents, in a transaction.
+    const deleteChildren = this.db.prepare(`DELETE FROM scan_run_investigations WHERE scan_run_id = ?`);
+    const deleteParent = this.db.prepare(`DELETE FROM scan_runs WHERE id = ?`);
+    const txn = this.db.transaction((ids: string[]) => {
+      for (const id of ids) {
+        deleteChildren.run(id);
+        deleteParent.run(id);
+      }
+    });
+    txn(toDelete.map(r => r.id));
+    return toDelete.length;
+  }
+
+  /**
    * All investigations linked to a scan_run, ordered by dispatch time
    * ascending — useful for rendering a chronological timeline on the
    * ScanRunDetail page.

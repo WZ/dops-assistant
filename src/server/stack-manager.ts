@@ -473,6 +473,19 @@ export class StackManager {
     if (result.markedInactive > 0 || result.softDeleted > 0) {
       logger.info(result, "StackManager: TTL reaper complete");
     }
+
+    // Scan runs: last 200 per stack OR last 30 days, whichever is larger.
+    // Rows that fired at least one investigation get a 30-day floor regardless.
+    try {
+      const deleted = this.db.reapScanRuns({
+        keepLast: 200,
+        maxAgeMs: 30 * 24 * 60 * 60 * 1000,
+      });
+      if (deleted > 0) logger.info({ deleted }, "ttl reaper: removed stale scan_runs");
+    } catch (err) {
+      logger.warn({ err }, "ttl reaper: scan_runs cleanup failed");
+    }
+
     return result;
   }
 

@@ -56,3 +56,47 @@ describe("scan_runs CRUD", () => {
     expect(links[0]!.investigationId).toBe("inv1");
   });
 });
+
+describe("reapScanRuns", () => {
+  let db: Database;
+  beforeEach(() => { db = new Database(":memory:"); });
+  afterEach(() => { db.close(); });
+
+  it("keeps last 200 rows per stack regardless of age", () => {
+    const stacks = ["s1", "s2"];
+    const base = Date.now() - 60 * 24 * 60 * 60 * 1000;
+    for (const stackId of stacks) {
+      for (let i = 0; i < 250; i++) {
+        db.insertScanRun({ id: `${stackId}-${i}`, stackId, trigger: "cron", startedAt: base + i * 1000 });
+        db.updateScanRun(`${stackId}-${i}`, { status: "complete", finishedAt: base + i * 1000 + 5 });
+      }
+    }
+    db.reapScanRuns({ keepLast: 200, maxAgeMs: 30 * 24 * 60 * 60 * 1000 });
+    const s1rows = db.listScanRuns({ stackId: "s1", limit: 500 });
+    const s2rows = db.listScanRuns({ stackId: "s2", limit: 500 });
+    expect(s1rows).toHaveLength(200);
+    expect(s2rows).toHaveLength(200);
+  });
+
+  it("pins runs with hits_dispatched>0 even past age cutoff", () => {
+    const base = Date.now() - 60 * 24 * 60 * 60 * 1000;
+    for (let i = 0; i < 10; i++) {
+      db.insertScanRun({ id: `r-${i}`, stackId: "s1", trigger: "cron", startedAt: base + i });
+      db.updateScanRun(`r-${i}`, { status: "complete", finishedAt: base + i, hitsDispatched: i === 0 ? 3 : 0 });
+    }
+    db.reapScanRuns({ keepLast: 5, maxAgeMs: 1 });
+    expect(db.getScanRun("s1", "r-0")).not.toBeNull();
+  });
+
+  it("cascade deletes scan_run_investigations when reaping", () => {
+    const base = Date.now() - 60 * 24 * 60 * 60 * 1000;
+    db.insertScanRun({ id: "r1", stackId: "s1", trigger: "cron", startedAt: base });
+    db.updateScanRun("r1", { status: "complete", finishedAt: base });
+    db.linkScanRunInvestigation("r1", "inv1", {
+      service: "api", ruleName: "availability", value: 0, severity: 0.5, dispatchedAt: base,
+    });
+    db.reapScanRuns({ keepLast: 0, maxAgeMs: 1 });
+    expect(db.getScanRun("s1", "r1")).toBeNull();
+    expect(db.getScanRunInvestigations("r1")).toEqual([]);
+  });
+});
