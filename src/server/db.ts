@@ -216,6 +216,7 @@ export class Database {
     this.migrateServiceHealthChecks();
     this.migrateHiddenServices();
     this.migrateSettings();
+    this.migrateScanRuns();
   }
 
   // ── Settings migration ─────────────────────────────────────────────────
@@ -227,6 +228,52 @@ export class Database {
         value       TEXT NOT NULL,
         updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
       );
+    `);
+  }
+
+  // ── Scan runs migration ────────────────────────────────────────────────
+
+  private migrateScanRuns(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS scan_runs (
+        id                  TEXT    PRIMARY KEY,
+        stack_id            TEXT    NOT NULL,
+        trigger             TEXT    NOT NULL,
+        status              TEXT    NOT NULL,
+        skip_reason         TEXT,
+        started_at          INTEGER NOT NULL,
+        finished_at         INTEGER,
+        services_probed     INTEGER NOT NULL DEFAULT 0,
+        rules_applied       INTEGER NOT NULL DEFAULT 0,
+        queries_executed    INTEGER NOT NULL DEFAULT 0,
+        probe_errors        INTEGER NOT NULL DEFAULT 0,
+        probe_duration_ms   INTEGER,
+        probe_detail_json   TEXT,
+        hits_raw            INTEGER NOT NULL DEFAULT 0,
+        hits_after_dedup    INTEGER NOT NULL DEFAULT 0,
+        hits_dispatched     INTEGER NOT NULL DEFAULT 0,
+        dropped_by_cap      INTEGER NOT NULL DEFAULT 0,
+        triage_detail_json  TEXT,
+        error_message       TEXT,
+        created_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
+      );
+
+      CREATE INDEX IF NOT EXISTS scan_runs_stack_started ON scan_runs(stack_id, started_at DESC);
+      CREATE INDEX IF NOT EXISTS scan_runs_status        ON scan_runs(status);
+
+      CREATE TABLE IF NOT EXISTS scan_run_investigations (
+        scan_run_id      TEXT NOT NULL,
+        investigation_id TEXT NOT NULL,
+        service          TEXT NOT NULL,
+        rule_name        TEXT NOT NULL,
+        value            REAL NOT NULL,
+        severity         REAL NOT NULL,
+        dispatched_at    INTEGER NOT NULL,
+        PRIMARY KEY (scan_run_id, investigation_id),
+        FOREIGN KEY (scan_run_id) REFERENCES scan_runs(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS scan_run_inv_by_inv ON scan_run_investigations(investigation_id);
     `);
   }
 
