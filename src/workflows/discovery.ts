@@ -8,7 +8,7 @@ import type { ValidatedServiceConfig } from "../types/discovery-types.js";
 import type { OnToolCallEnriched, OnIteration } from "../types/agent-interfaces.js";
 import type { Skill } from "../skills/store.js";
 
-const logger = createLogger("discovery");
+const logger = createLogger("discover");
 
 export interface DiscoveryWorkflowConfig {
   model: LanguageModel;
