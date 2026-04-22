@@ -7,7 +7,9 @@ import {
   scoreActionability,
   scoreFactualGrounding,
   scoreReport,
+  classifyTriggerSource,
 } from "./rca-eval.js";
+import { buildInvestigationMessage, type ProbeHit } from "../server/anomaly-probe.js";
 
 // ── Helper ─────────────────────────────────────────────────────────────────
 
@@ -411,5 +413,100 @@ describe("scoreReport", () => {
     const result = scoreReport(report);
     expect(result.total).toBe(70);
     expect(result.pass).toBe(true);
+  });
+});
+
+// ── classifyTriggerSource ──────────────────────────────────────────────────
+
+describe("classifyTriggerSource", () => {
+  it('classifies as "scan" when query starts with the scan-message prefix', () => {
+    const msg = "Proactive scan detected anomaly on api-gateway.";
+    expect(classifyTriggerSource(msg)).toBe("scan");
+  });
+
+  it("classifies a real buildInvestigationMessage output as scan", () => {
+    // Ensures the scan-side prefix and eval-side classifier never drift.
+    const hit: ProbeHit = {
+      service: "api-gateway",
+      ruleName: "availability",
+      value: 0,
+      query: 'up{service="api-gateway"}',
+      threshold: { op: "lt", value: 1 },
+      consecutiveTicks: 1,
+      severity: 1,
+    };
+    const msg = buildInvestigationMessage(hit);
+    expect(classifyTriggerSource(msg)).toBe("scan");
+  });
+
+  it('classifies as "webhook" when query starts with "Alert: "', () => {
+    expect(classifyTriggerSource("Alert: HighErrorRate (severity: warning)")).toBe("webhook");
+  });
+
+  it('classifies as "user" for anything else', () => {
+    expect(classifyTriggerSource("why is api-gateway slow today?")).toBe("user");
+    expect(classifyTriggerSource("")).toBe("user");
+    expect(classifyTriggerSource("investigate api-gateway")).toBe("user");
+  });
+
+  it('does not misclassify "proactive scan" mid-sentence as scan-triggered', () => {
+    // Prefix match only — a user-initiated chat mentioning scan in the middle
+    // must not be bucketed into the scan-source metric.
+    const confusing = "why did the proactive scan detected anomaly fire yesterday?";
+    expect(classifyTriggerSource(confusing)).toBe("user");
+  });
+});
+
+// ── Scan-triggered report end-to-end scoring ──────────────────────────────
+
+describe("scan-triggered reports meet design-doc ≥60 criterion", () => {
+  /**
+   * The design doc's success criterion: RCA eval score on scan-triggered
+   * investigations ≥ 60. Verifiable in CI via these synthetic reports —
+   * if scoreReport would judge a "good-enough scan RCA" below 60, either the
+   * rubric drifted or the fixture is stale. Either is a signal worth catching.
+   */
+
+  it("a realistic good scan-triggered RCA scores ≥ 60", () => {
+    const report = buildReport({
+      service: "payments-api",
+      severity: "high",
+      summary: "payments-api returned 5xx for 14 minutes starting 2026-04-21T10:15 UTC",
+      rootCause:
+        "Upstream database connection pool exhausted after a config push reduced max_connections from 200 to 50.",
+      trigger: "Config rollout at 2026-04-21T10:14 UTC reduced DB connection limit below peak demand.",
+      evidence: {
+        metrics: [
+          "error_rate climbed from 0.01 req/s to 8.2 req/s at 2026-04-21T10:15",
+          "db_connections_in_use hit 50 of 50 at 2026-04-21T10:16",
+        ],
+        logs: [
+          "2026-04-21T10:15:33 payments-api ERROR could not acquire connection after 30s",
+        ],
+        infra: [],
+      },
+      recommendedActions: [
+        "Roll back the config change that lowered max_connections",
+        "Add alerting on db_connections_in_use >= 0.9 * max_connections",
+        "Review the config-review checklist so DB limit changes require canary",
+      ],
+    });
+
+    const result = scoreReport(report);
+    expect(result.total).toBeGreaterThanOrEqual(60);
+  });
+
+  it("a low-quality scan RCA (vague rootCause, no evidence) scores below 60", () => {
+    const report = buildReport({
+      service: "payments-api",
+      severity: "medium",
+      summary: "payments-api had issues",
+      rootCause: "Unable to determine",
+      trigger: "Unknown",
+      evidence: { metrics: [], logs: [], infra: [] },
+      recommendedActions: [],
+    });
+    const result = scoreReport(report);
+    expect(result.total).toBeLessThan(60);
   });
 });

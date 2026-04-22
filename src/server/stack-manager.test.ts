@@ -91,6 +91,21 @@ function makeConfig(overrides?: Partial<Config>): Config {
     discovery: { autoRefresh: false, excludeServices: [], maxIterations: 40, discoveryRecipes: [] },
     memory: { storage: "memory", dbPath: ".dops/memory.db" },
     webhook: { dedupWindowSeconds: 300, maxConcurrent: 3, defaultTemplate: "standard", severityTemplateMap: {} },
+    scan: {
+      enabled: false,
+      cron: "0 */4 * * *",
+      timezone: "UTC",
+      maxInvestigationsPerTick: 5,
+      investigationTemplate: "standard",
+      runOnEnable: false,
+      dedupWindowMinutes: 30,
+      probe: {
+        concurrency: 8,
+        queryTimeoutMs: 3000,
+        metrics: [],
+        logs: { enabled: false, window: "15m", errorRateThreshold: 10, consecutiveTicks: 2 },
+      },
+    },
     branding: { title: "dops", subtitle: "assistant" },
     ...overrides,
   } as Config;

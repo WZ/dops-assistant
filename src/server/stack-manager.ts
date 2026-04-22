@@ -29,6 +29,8 @@ import { ProviderRegistry } from "../mcp/provider-registry.js";
 import { ConversationMemory } from "../memory/conversation.js";
 import { ServiceRegistryStore } from "../services/registry.js";
 import { ServiceHealthPoller, type HealthStatus } from "./service-health-poller.js";
+import { ScanScheduler, type ScanAnomaliesEvent } from "./scan-scheduler.js";
+import { getEffectiveScanConfig } from "./scan-settings.js";
 import type { Database } from "./db.js";
 import type { StackRow, StackSummary, StackConfig } from "../types/stack-types.js";
 import { DEFAULT_STACK_SLUG } from "../types/stack-types.js";
@@ -44,6 +46,7 @@ export interface StackContext {
   conversationMemory: ConversationMemory;
   serviceRegistry: ServiceRegistryStore;
   healthPoller: ServiceHealthPoller;
+  scanScheduler: ScanScheduler;
 }
 
 export class StackManager {
@@ -142,6 +145,10 @@ export class StackManager {
     // ServiceHealthPoller: per-stack with staggered start offset (0-30s)
     // Prometheus datasource UID is resolved lazily from the provider registry
     // (may not be available at init if remote MCP timed out, resolves on first successful test/poll)
+    const getDatasourceUid = () => providerRegistry.getAll().find(
+      p => p.config.roles.includes("metrics") && p.prometheusDatasourceUid,
+    )?.prometheusDatasourceUid;
+
     const healthPoller = new ServiceHealthPoller({
       providers: () => providerRegistry.getProviders(),
       registryStore: serviceRegistry,
@@ -151,9 +158,25 @@ export class StackManager {
         this.onHealthTransition?.(row.id, service, from, to);
       },
       getHiddenServices: () => this.db.getHiddenServices(row.id),
-      getPrometheusDatasourceUid: () => providerRegistry.getAll().find(
-        p => p.config.roles.includes("metrics") && p.prometheusDatasourceUid,
-      )?.prometheusDatasourceUid,
+      getPrometheusDatasourceUid: getDatasourceUid,
+    });
+
+    // ScanScheduler: per-stack. Emits onAnomaliesDetected — the actual
+    // dispatch to InvestigationRunner is wired in index.ts (lazy runner
+    // construction matches the existing onHealthTransition pattern).
+    // Use effective config so DB-stored GUI overrides take effect at boot,
+    // not just after the operator toggles again.
+    const scanScheduler = new ScanScheduler({
+      providers: () => providerRegistry.getProviders(),
+      registryStore: serviceRegistry,
+      db: this.db,
+      stackId: row.id,
+      scan: getEffectiveScanConfig(this.db, this.config),
+      getPrometheusDatasourceUid: getDatasourceUid,
+      getHiddenServices: () => this.db.getHiddenServices(row.id),
+      onAnomaliesDetected: (evt: ScanAnomaliesEvent) => {
+        this.onScanAnomalies?.(evt);
+      },
     });
 
     const ctx: StackContext = {
@@ -164,6 +187,7 @@ export class StackManager {
       conversationMemory,
       serviceRegistry,
       healthPoller,
+      scanScheduler,
     };
 
     this.stacks.set(row.id, ctx);
@@ -193,9 +217,10 @@ export class StackManager {
     this.skippedPollers.delete(stackId);
     logger.info(
       { stackId, slug: ctx.slug },
-      "StackManager: starting previously-skipped health poller — viable metrics provider became available",
+      "StackManager: starting previously-skipped health poller + scan scheduler — viable metrics provider became available",
     );
     ctx.healthPoller.start();
+    ctx.scanScheduler.start();
   }
 
   /**
@@ -300,11 +325,12 @@ export class StackManager {
     // don't immediately start spamming "metric query tool not found" logs.
     if (ctx.providerRegistry.hasViableMetricsProvider()) {
       ctx.healthPoller.start();
+      ctx.scanScheduler.start();
     } else {
       this.skippedPollers.add(ctx.id);
       logger.info(
         { stackId: ctx.id, slug: ctx.slug },
-        "StackManager: skipping health poller start — no viable metrics provider yet (will auto-start when one is added/healthy)",
+        "StackManager: skipping health poller + scan scheduler start — no viable metrics provider yet (will auto-start when one is added/healthy)",
       );
     }
     return ctx;
@@ -325,8 +351,9 @@ export class StackManager {
       throw new Error(`Stack not found: ${stackId}`);
     }
 
-    // Stop health poller
+    // Stop health poller + scan scheduler
     ctx.healthPoller.stop();
+    ctx.scanScheduler.stop();
 
     // Destroy conversation memory (clears eviction interval)
     ctx.conversationMemory.destroy();
@@ -428,6 +455,7 @@ export class StackManager {
       for (const [stackId, ctx] of Array.from(this.stacks.entries())) {
         if (!liveIds.has(stackId) && stackId !== this.defaultStackId) {
           try { ctx.healthPoller.stop(); } catch { /* ignore */ }
+          try { ctx.scanScheduler.stop(); } catch { /* ignore */ }
           try { ctx.conversationMemory.destroy(); } catch { /* ignore */ }
           this.stacks.delete(stackId);
           this.skippedPollers.delete(stackId);
@@ -460,21 +488,46 @@ export class StackManager {
         this.skippedPollers.add(ctx.id);
         logger.info(
           { stackId: ctx.id, slug: ctx.slug },
-          "StackManager: skipping health poller start — no viable metrics provider (will auto-start when one becomes available)",
+          "StackManager: skipping health poller + scan scheduler start — no viable metrics provider (will auto-start when one becomes available)",
         );
         continue;
       }
-      const delay = Math.floor(Math.random() * 30_000);
-      setTimeout(() => ctx.healthPoller.start(), delay);
+      const pollerDelay = Math.floor(Math.random() * 30_000);
+      setTimeout(() => ctx.healthPoller.start(), pollerDelay);
+      // Scan scheduler uses a wider 0-60s jitter (design decision #5) to reduce
+      // cross-stack cron collision when multiple stacks share "0 */4 * * *".
+      const scanDelay = Math.floor(Math.random() * 60_000);
+      setTimeout(() => ctx.scanScheduler.start(), scanDelay);
     }
   }
 
   /**
-   * Stop all health pollers.
+   * Stop all health pollers and scan schedulers.
    */
   stopAllPollers(): void {
     for (const ctx of this.stacks.values()) {
       ctx.healthPoller.stop();
+      ctx.scanScheduler.stop();
+    }
+  }
+
+  /**
+   * Re-apply effective scan config to every stack's scheduler. Called by
+   * PUT /api/scan/settings after DB settings change so operators don't have
+   * to restart the server for enable/cron/timezone edits to take effect.
+   *
+   * Each scheduler's reload() is idempotent and handles start/stop/reschedule
+   * based on the diff between its current live config and the new effective
+   * config.
+   */
+  reloadAllScanSchedulers(): void {
+    const effective = getEffectiveScanConfig(this.db, this.config);
+    for (const ctx of this.stacks.values()) {
+      // Gate on viable metrics provider: if a stack has no working metrics
+      // MCP, calling start() would log-spam. Skip here, poller-change listener
+      // will pick it up later if a provider is added.
+      if (!ctx.providerRegistry.hasViableMetricsProvider()) continue;
+      ctx.scanScheduler.reload(effective);
     }
   }
 
@@ -521,4 +574,12 @@ export class StackManager {
    * transitions between health states during polling.
    */
   onHealthTransition?: (stackId: string, service: string, from: string, to: string) => void;
+
+  /**
+   * Optional callback fired when the scan scheduler detects anomalies that
+   * passed dedup + prioritization + per-tick cap. The caller is responsible
+   * for running investigations (mark/run/complete with sharedDedup + runner).
+   * Scheduler does NOT await this callback — investigations run in background.
+   */
+  onScanAnomalies?: (evt: ScanAnomaliesEvent) => void;
 }
