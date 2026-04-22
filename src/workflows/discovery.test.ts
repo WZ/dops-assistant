@@ -9,6 +9,9 @@ vi.mock("../mcp/provider.js", () => ({
   listProviderTools: vi.fn().mockResolvedValue({}),
 }));
 
+// Switch used by individual tests to force the discover agent to return [].
+let mockDiscoverReturnsEmpty = false;
+
 vi.mock("@mastra/core/agent", () => ({
   Agent: class MockAgent {
     id: string;
@@ -16,6 +19,7 @@ vi.mock("@mastra/core/agent", () => ({
     constructor(opts: any) { this.id = opts.id; this.name = opts.name; }
     async generate(prompt: string) {
       if (this.id === "discover") {
+        if (mockDiscoverReturnsEmpty) return { text: "[]" };
         return { text: JSON.stringify([{ name: "svc1", metrics: [{ query: "up{}", description: "" }], logLabels: {} }]) };
       }
       if (this.id === "discover-validator") {
@@ -53,5 +57,24 @@ describe("runDiscovery", () => {
     await runDiscovery(config);
     expect(phases).toContain("discovery");
     expect(phases).toContain("validation");
+  });
+
+  it("emits 'complete-empty' phase and skips validation when discovery returns zero services", async () => {
+    mockDiscoverReturnsEmpty = true;
+    try {
+      const phases: string[] = [];
+      const config: DiscoveryWorkflowConfig = {
+        model: fakeModel,
+        providers: [],
+        discoveryConfig: { autoRefresh: false, excludeServices: [], maxIterations: 5, discoveryRecipes: [] },
+        onPhase: (phase) => phases.push(phase),
+      };
+      const result = await runDiscovery(config);
+      expect(result).toEqual([]);
+      expect(phases).toEqual(["discovery", "complete-empty"]);
+      expect(phases).not.toContain("validation");
+    } finally {
+      mockDiscoverReturnsEmpty = false;
+    }
   });
 });
