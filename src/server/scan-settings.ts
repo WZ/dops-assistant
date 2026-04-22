@@ -15,14 +15,25 @@
  * doesn't belong in v1.
  */
 
-import type { Config, ScanConfig } from "../config/schema.js";
+import type { Config, ProbeMetricRule, ScanConfig } from "../config/schema.js";
+import { createLogger } from "../logger.js";
 import type { Database } from "./db.js";
+import { validateRules } from "./scan-rule-validator.js";
+
+const logger = createLogger();
 
 /** DB setting keys — stringly typed on purpose since `db.settings` is key/value */
 export const SCAN_SETTING_KEYS = {
   enabled: "scan.enabled",
   cron: "scan.cron",
   timezone: "scan.timezone",
+  /**
+   * Probe rules stored as a JSON-encoded array. When present + valid,
+   * REPLACES `config.scan.probe.metrics` wholesale. We don't merge per-rule
+   * because rule identity is the `name` field, and partial merges create
+   * ambiguity over what "inherited" vs "overridden" means.
+   */
+  probeMetrics: "scan.probe.metrics",
 } as const;
 
 export type ScanSettingSource = "gui" | "config";
@@ -31,12 +42,50 @@ export interface ScanSettingsView {
   enabled: boolean;
   cron: string;
   timezone: string;
+  /** Effective probe rules — either the DB override or config.yaml defaults. */
+  rules: ProbeMetricRule[];
   /** Where each editable field's effective value came from. */
   source: {
     enabled: ScanSettingSource;
     cron: ScanSettingSource;
     timezone: ScanSettingSource;
+    rules: ScanSettingSource;
   };
+}
+
+/**
+ * Parse the probe-rules DB setting. Returns null on any parse / type /
+ * shape error — caller falls back to config.yaml.
+ *
+ * We RE-VALIDATE shape on read via `validateRules` even though the PUT
+ * handler validated on write. Reasons: (1) manual SQL edits (`sqlite3
+ * dops.sqlite "update settings ..."`) bypass write-time validation; (2)
+ * future migrations could produce malformed rows; (3) schema drift across
+ * versions — an old row written by a future-me might not match current
+ * `ProbeMetricRule`. Without re-validate, `runProbe` would read
+ * `rule.name`/`rule.query` off an arbitrary JSON value and crash.
+ */
+function parseProbeMetricsOverride(raw: string | undefined): ProbeMetricRule[] | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      logger.warn({ raw }, "scan-settings: probe.metrics override is not an array, ignoring");
+      return null;
+    }
+    const result = validateRules(parsed);
+    if (!result.ok) {
+      logger.warn({
+        rawPreview: raw.slice(0, 200),
+        errors: result.errors.slice(0, 3),
+      }, "scan-settings: stored probe.metrics failed re-validation, falling back to config.yaml");
+      return null;
+    }
+    return result.rules;
+  } catch (err) {
+    logger.warn({ err, rawPreview: raw.slice(0, 100) }, "scan-settings: failed to parse probe.metrics override, falling back to config.yaml");
+    return null;
+  }
 }
 
 /**
@@ -49,12 +98,16 @@ export function getEffectiveScanConfig(db: Database, config: Config): ScanConfig
   const dbEnabled = db.getSetting(SCAN_SETTING_KEYS.enabled);
   const dbCron = db.getSetting(SCAN_SETTING_KEYS.cron);
   const dbTimezone = db.getSetting(SCAN_SETTING_KEYS.timezone);
+  const dbProbeMetrics = parseProbeMetricsOverride(db.getSetting(SCAN_SETTING_KEYS.probeMetrics));
 
   return {
     ...base,
     enabled: dbEnabled !== undefined ? dbEnabled === "true" : base.enabled,
     cron: dbCron ?? base.cron,
     timezone: dbTimezone ?? base.timezone,
+    probe: dbProbeMetrics !== null
+      ? { ...base.probe, metrics: dbProbeMetrics }
+      : base.probe,
   };
 }
 
@@ -68,15 +121,21 @@ export function getScanSettingsView(db: Database, config: Config): ScanSettingsV
   const dbEnabled = db.getSetting(SCAN_SETTING_KEYS.enabled);
   const dbCron = db.getSetting(SCAN_SETTING_KEYS.cron);
   const dbTimezone = db.getSetting(SCAN_SETTING_KEYS.timezone);
+  const dbProbeMetrics = db.getSetting(SCAN_SETTING_KEYS.probeMetrics);
   const eff = getEffectiveScanConfig(db, config);
   return {
     enabled: eff.enabled,
     cron: eff.cron,
     timezone: eff.timezone,
+    rules: eff.probe.metrics,
     source: {
       enabled: dbEnabled !== undefined ? "gui" : "config",
       cron: dbCron !== undefined ? "gui" : "config",
       timezone: dbTimezone !== undefined ? "gui" : "config",
+      // "gui" only when DB has a parseable override; a malformed override
+      // falls back to config, so we report the source the operator actually
+      // sees (not where the bytes came from).
+      rules: dbProbeMetrics !== undefined && parseProbeMetricsOverride(dbProbeMetrics) !== null ? "gui" : "config",
     },
   };
 }

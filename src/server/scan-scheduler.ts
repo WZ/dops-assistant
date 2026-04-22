@@ -27,7 +27,7 @@ import { createLogger } from "../logger.js";
 import type { MastraProvider } from "../mcp/provider.js";
 import type { ServiceRegistryStore } from "../services/registry.js";
 import type { Database } from "./db.js";
-import type { ScanConfig } from "../config/schema.js";
+import type { ProbeMetricRule, ScanConfig } from "../config/schema.js";
 import {
   runProbe,
   prioritizeHits,
@@ -189,6 +189,13 @@ export class ScanScheduler {
     const prev = this.scan;
     this.scan = newConfig;
 
+    // Reset hysteresis state for any rule that was removed, renamed, or
+    // whose query/threshold changed. Services that were mid-breach under
+    // an old rule shouldn't suddenly fire an investigation under a new
+    // rule just because the name carries over. Unchanged rules keep
+    // their counters so reload doesn't lose the breach momentum.
+    this.resetHysteresisForChangedRules(prev.probe.metrics, newConfig.probe.metrics);
+
     const scheduleChanged =
       prev.cron !== newConfig.cron || prev.timezone !== newConfig.timezone;
 
@@ -244,6 +251,61 @@ export class ScanScheduler {
       dropsByConcurrency: this.dropsByConcurrency,
       ticking: this.ticking,
     };
+  }
+
+  /**
+   * Drop `consecutiveState` entries whose rule was removed or materially
+   * changed. A rule is "materially changed" if its query or threshold changed
+   * (same name, different semantics). Changes to `consecutiveTicks` alone
+   * don't invalidate the counter — the operator just moved the firing bar.
+   *
+   * Keys in `consecutiveState` are `"{service}:{ruleName}"`, so we match on
+   * the rule-name suffix after the last colon.
+   */
+  private resetHysteresisForChangedRules(
+    prevRules: ProbeMetricRule[],
+    nextRules: ProbeMetricRule[],
+  ): void {
+    const prevByName = new Map(prevRules.map((r) => [r.name, r]));
+    const nextByName = new Map(nextRules.map((r) => [r.name, r]));
+
+    const changedOrRemovedNames = new Set<string>();
+    for (const [name, prevRule] of prevByName) {
+      const nextRule = nextByName.get(name);
+      if (!nextRule) {
+        changedOrRemovedNames.add(name); // removed
+        continue;
+      }
+      if (
+        prevRule.query !== nextRule.query ||
+        prevRule.threshold.op !== nextRule.threshold.op ||
+        prevRule.threshold.value !== nextRule.threshold.value
+      ) {
+        changedOrRemovedNames.add(name); // materially changed
+      }
+    }
+
+    if (changedOrRemovedNames.size === 0) return;
+
+    let cleared = 0;
+    for (const key of Array.from(this.consecutiveState.keys())) {
+      // Key shape: "service:ruleName". Rule name comes after the last ":".
+      const colonIdx = key.lastIndexOf(":");
+      if (colonIdx < 0) continue; // malformed key, ignore
+      const ruleName = key.slice(colonIdx + 1);
+      if (changedOrRemovedNames.has(ruleName)) {
+        this.consecutiveState.delete(key);
+        cleared++;
+      }
+    }
+
+    if (cleared > 0) {
+      logger.info({
+        stackId: this.deps.stackId,
+        clearedKeys: cleared,
+        affectedRules: Array.from(changedOrRemovedNames),
+      }, "ScanScheduler: cleared hysteresis state for changed/removed rules");
+    }
   }
 
   // ── Internal tick orchestration ───────────────────────────────────────────

@@ -20,7 +20,10 @@ import { eventLog } from "./event-log.js";
 import { SkillInputSchema } from "./sanitize.js";
 import { Cron } from "croner";
 import { z } from "zod";
-import { getScanSettingsView } from "./scan-settings.js";
+import { getScanSettingsView, SCAN_SETTING_KEYS } from "./scan-settings.js";
+import { validateRules } from "./scan-rule-validator.js";
+import { getToolsByRole } from "../mcp/provider.js";
+import { parsePrometheusResult } from "./service-health-poller.js";
 
 /**
  * Zod schema for PUT /api/scan/settings body.
@@ -39,6 +42,10 @@ const ScanSettingsUpdateSchema = z.object({
   enabled: z.union([z.boolean(), z.null()]).optional(),
   cron: z.union([z.string().min(1, "cron must be non-empty or null"), z.null()]).optional(),
   timezone: z.union([z.string().min(1, "timezone must be non-empty or null"), z.null()]).optional(),
+  // Probe rules: either an array (validated via validateRules before write),
+  // null (clear override, revert to config.yaml), or absent (leave untouched).
+  // We don't shape-validate here — validateRules does that with richer errors.
+  rules: z.union([z.array(z.unknown()), z.null()]).optional(),
 }).strict();
 
 export interface DependencyNode {
@@ -394,21 +401,197 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       }
     }
 
-    // `null` clears the override; otherwise persist the validated value.
-    if (body.enabled === null) db.deleteSetting("scan.enabled");
-    else if (typeof body.enabled === "boolean") db.setSetting("scan.enabled", String(body.enabled));
+    // Rules: validate BEFORE writing any DB setting. If rules validation
+    // fails, abort the whole PUT so the settings stay in a consistent
+    // state — no partial updates where cron wrote but rules didn't.
+    let validatedRulesJson: string | null | undefined;
+    if (body.rules === null) {
+      validatedRulesJson = null; // sentinel for "clear override"
+    } else if (Array.isArray(body.rules)) {
+      const result = validateRules(body.rules);
+      if (!result.ok) {
+        res.status(400).json({
+          error: "Invalid probe rules",
+          details: result.errors,
+        });
+        return;
+      }
+      validatedRulesJson = JSON.stringify(result.rules);
+    }
 
-    if (body.cron === null) db.deleteSetting("scan.cron");
-    else if (typeof body.cron === "string") db.setSetting("scan.cron", body.cron);
+    // Atomically persist all settings changes. Without the transaction, a
+    // crash or late-throw between the four setSetting calls leaves the
+    // effective config incoherent (e.g., new cron but old enabled flag).
+    // Validation already completed above; by this point every value is
+    // safe to write.
+    db.transaction(() => {
+      if (body.enabled === null) db.deleteSetting("scan.enabled");
+      else if (typeof body.enabled === "boolean") db.setSetting("scan.enabled", String(body.enabled));
 
-    if (body.timezone === null) db.deleteSetting("scan.timezone");
-    else if (typeof body.timezone === "string") db.setSetting("scan.timezone", body.timezone);
+      if (body.cron === null) db.deleteSetting("scan.cron");
+      else if (typeof body.cron === "string") db.setSetting("scan.cron", body.cron);
+
+      if (body.timezone === null) db.deleteSetting("scan.timezone");
+      else if (typeof body.timezone === "string") db.setSetting("scan.timezone", body.timezone);
+
+      if (validatedRulesJson === null) db.deleteSetting(SCAN_SETTING_KEYS.probeMetrics);
+      else if (typeof validatedRulesJson === "string") db.setSetting(SCAN_SETTING_KEYS.probeMetrics, validatedRulesJson);
+    });
 
     // Propagate to every running scheduler. Idempotent — reload() no-ops
     // when nothing changed.
     stackManager.reloadAllScanSchedulers();
 
     res.json(getScanSettingsView(db, config));
+  });
+
+  /**
+   * POST /api/scan/rules/test — dry-run a single probe rule against real
+   * Prometheus data via the metrics MCP tool. Lets the operator hit "Test"
+   * in the UI before saving a rule and learn whether the query actually
+   * returns numeric values at all, and whether the threshold would trip
+   * right now.
+   *
+   * Body: { query, threshold, testService }
+   *   - query: PromQL with "{service}" placeholder
+   *   - threshold: { op, value } — op in gt|lt|gte|lte
+   *   - testService: name from the registry; if omitted, we pick the first
+   *     live service and return its name in the response so the UI can show
+   *     "(tested against 'payments-api')"
+   *
+   * Response:
+   *   200 { testedService, value, wouldTrip, rawResultCount, durationMs }
+   *   400 on bad body, no registered services, or no MCP metrics tool
+   */
+  const RuleTestSchema = z.object({
+    query: z.string().min(1),
+    threshold: z.object({
+      op: z.enum(["gt", "lt", "gte", "lte"]),
+      value: z.number(),
+    }),
+    testService: z.string().optional(),
+  }).strict();
+
+  app.post("/api/scan/rules/test", async (req: Request, res: Response) => {
+    if (!req.stackContext) {
+      res.status(400).json({ error: "No active stack" });
+      return;
+    }
+    const parsed = RuleTestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: "Invalid request body",
+        details: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`),
+      });
+      return;
+    }
+    const { query, threshold, testService } = parsed.data;
+    if (!query.includes("{service}")) {
+      res.status(400).json({ error: "Query must include the {service} placeholder" });
+      return;
+    }
+
+    // Pick test service: operator-specified, else first in the stack registry.
+    const services = req.stackContext.serviceRegistry.load();
+    let resolvedService = testService;
+    if (!resolvedService) {
+      resolvedService = services[0]?.name;
+      if (!resolvedService) {
+        res.status(400).json({
+          error: "No services registered",
+          hint: "Run discovery first so there's at least one service to test against.",
+        });
+        return;
+      }
+    } else if (!services.some((s) => s.name === resolvedService)) {
+      res.status(400).json({
+        error: `Service "${resolvedService}" not found in registry`,
+      });
+      return;
+    }
+
+    const providers = req.stackContext.providerRegistry.getProviders();
+    const datasourceUid = req.stackContext.providerRegistry.getAll().find(
+      (p) => p.config.roles.includes("metrics") && p.prometheusDatasourceUid,
+    )?.prometheusDatasourceUid;
+    if (!datasourceUid) {
+      res.status(400).json({ error: "No Prometheus datasource available on this stack" });
+      return;
+    }
+
+    let tools: Record<string, unknown>;
+    try {
+      tools = (await getToolsByRole(providers, "metrics")) as Record<string, unknown>;
+    } catch (err) {
+      res.status(500).json({ error: `MCP error: ${err instanceof Error ? err.message : String(err)}` });
+      return;
+    }
+    const queryToolEntry = Object.entries(tools).find(
+      ([name]) => name.endsWith("query_prometheus") || name.endsWith("get_metrics"),
+    ) ?? Object.entries(tools).find(([name]) => {
+      const lower = name.toLowerCase();
+      return (lower.includes("query") || lower.includes("metric")) &&
+        !lower.includes("loki") && !lower.includes("log") && !lower.includes("metadata");
+    });
+    if (!queryToolEntry) {
+      res.status(400).json({ error: "No metric query tool available from MCP" });
+      return;
+    }
+    const tool = queryToolEntry[1] as { execute: (args: unknown, ctx?: { abortSignal?: AbortSignal }) => Promise<unknown> };
+
+    const safeService = resolvedService.replace(/[^a-zA-Z0-9_.\-]/g, "");
+    const substituted = query.replaceAll("{service}", safeService);
+    const now = new Date();
+    const args = {
+      expr: substituted,
+      queryType: "instant",
+      startTime: new Date(now.getTime() - 5 * 60 * 1000).toISOString(),
+      endTime: now.toISOString(),
+      datasourceUid,
+    };
+
+    const timeoutMs = 5_000;
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    const startedMs = Date.now();
+    try {
+      const raw = await tool.execute(args, { abortSignal: ac.signal });
+      const entries = parsePrometheusResult(raw);
+      const durationMs = Date.now() - startedMs;
+      let value: number | null = null;
+      if (entries.length > 0) {
+        const first = entries[0]!;
+        if (first.value && first.value.length >= 2) {
+          const parsedVal = parseFloat(String(first.value[1]));
+          value = Number.isFinite(parsedVal) ? parsedVal : null;
+        }
+      }
+      const wouldTrip = value !== null && (() => {
+        switch (threshold.op) {
+          case "gt":  return value >  threshold.value;
+          case "gte": return value >= threshold.value;
+          case "lt":  return value <  threshold.value;
+          case "lte": return value <= threshold.value;
+        }
+      })();
+      res.json({
+        testedService: resolvedService,
+        query: substituted,
+        value,
+        wouldTrip,
+        rawResultCount: entries.length,
+        durationMs,
+      });
+    } catch (err) {
+      res.status(502).json({
+        error: `Query failed: ${err instanceof Error ? err.message : String(err)}`,
+        testedService: resolvedService,
+        query: substituted,
+        durationMs: Date.now() - startedMs,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
   });
 
   app.post("/api/stacks", async (req: Request, res: Response) => {
