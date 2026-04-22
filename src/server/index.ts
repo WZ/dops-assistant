@@ -38,6 +38,7 @@ import { startHealthMonitor, stopHealthMonitor, healthHandler } from "./health-m
 import { StackManager } from "./stack-manager.js";
 import { createMastraAdapters } from "./agents.js";
 import { notifySlack } from "./slack-notifier.js";
+import { buildInvestigationMessage } from "./anomaly-probe.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const logger = createLogger();
@@ -225,7 +226,6 @@ async function main() {
   // Wire scan anomaly handler: for each flagged service, dedup-check + lazy-runner
   // This mirrors the onHealthTransition pattern above. Scheduler does NOT await
   // this callback, so each investigation runs in the background.
-  const { buildInvestigationMessage } = await import("./anomaly-probe.js");
   stackManager.onScanAnomalies = ({ stackId, hits }) => {
     const ctx = stackManager.getContext(stackId);
     const allServices = [
