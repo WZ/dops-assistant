@@ -48,6 +48,59 @@ describe("Database", () => {
     });
   });
 
+  describe("countScanTriggeredInvestigationsSince", () => {
+    it("returns 0 when no investigations exist", () => {
+      const since = new Date(Date.now() - 24 * 3600_000).toISOString();
+      expect(db.countScanTriggeredInvestigationsSince(S, since)).toBe(0);
+    });
+
+    it("counts only rows whose query starts with the scan prefix", () => {
+      db.createInvestigation(S, { id: "scan_1", service: "svc-a", query: "Proactive scan detected anomaly on svc-a. Rule: availability", status: "complete" });
+      db.createInvestigation(S, { id: "scan_2", service: "svc-b", query: "Proactive scan detected anomaly on svc-b", status: "complete" });
+      db.createInvestigation(S, { id: "alert_1", service: "svc-c", query: "Alert: HighErrorRate", status: "complete" });
+      db.createInvestigation(S, { id: "user_1", service: "svc-d", query: "why is svc-d slow", status: "complete" });
+      const since = new Date(Date.now() - 3600_000).toISOString();
+      expect(db.countScanTriggeredInvestigationsSince(S, since)).toBe(2);
+    });
+
+    it("excludes in-progress and failed investigations", () => {
+      db.createInvestigation(S, { id: "scan_1", service: "svc-a", query: "Proactive scan detected anomaly on svc-a", status: "complete" });
+      db.createInvestigation(S, { id: "scan_2", service: "svc-b", query: "Proactive scan detected anomaly on svc-b", status: "running" });
+      db.createInvestigation(S, { id: "scan_3", service: "svc-c", query: "Proactive scan detected anomaly on svc-c", status: "failed" });
+      const since = new Date(Date.now() - 3600_000).toISOString();
+      expect(db.countScanTriggeredInvestigationsSince(S, since)).toBe(1);
+    });
+
+    it("respects the since cutoff", () => {
+      const rawDb = (db as unknown as { db: { prepare: (s: string) => { run: (...args: unknown[]) => void } } }).db;
+      rawDb.prepare(
+        "INSERT INTO investigations (id, stack_id, service, query, status, created_at) VALUES (?, ?, ?, ?, ?, datetime('now', '-48 hours'))"
+      ).run("scan_old", S, "svc", "Proactive scan detected anomaly on svc", "complete");
+      db.createInvestigation(S, { id: "scan_new", service: "svc", query: "Proactive scan detected anomaly on svc", status: "complete" });
+
+      const since24h = new Date(Date.now() - 24 * 3600_000).toISOString();
+      expect(db.countScanTriggeredInvestigationsSince(S, since24h)).toBe(1); // only "scan_new"
+
+      const since72h = new Date(Date.now() - 72 * 3600_000).toISOString();
+      expect(db.countScanTriggeredInvestigationsSince(S, since72h)).toBe(2);
+    });
+
+    it("scopes by stack_id", () => {
+      db.createInvestigation("stack-a", { id: "scan_1", service: "svc", query: "Proactive scan detected anomaly on svc", status: "complete" });
+      const since = new Date(Date.now() - 3600_000).toISOString();
+      expect(db.countScanTriggeredInvestigationsSince("stack-b", since)).toBe(0);
+      expect(db.countScanTriggeredInvestigationsSince("stack-a", since)).toBe(1);
+    });
+
+    it("does not match mid-sentence 'Proactive scan' (prefix match only)", () => {
+      // Regression: an operator chat ending up with "proactive scan" inside
+      // the query must not be counted as scan-triggered.
+      db.createInvestigation(S, { id: "user_1", service: "svc", query: "why did the proactive scan fire?", status: "complete" });
+      const since = new Date(Date.now() - 3600_000).toISOString();
+      expect(db.countScanTriggeredInvestigationsSince(S, since)).toBe(0);
+    });
+  });
+
   describe("getLastInvestigationAt", () => {
     it("returns null when no investigation exists", () => {
       expect(db.getLastInvestigationAt(S, "nonexistent")).toBeNull();

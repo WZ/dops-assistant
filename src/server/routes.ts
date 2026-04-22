@@ -247,6 +247,102 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   });
 
   /**
+   * GET /api/scan/activity — aggregate for the Dashboard badge.
+   *
+   * Combines the scheduler's status snapshot with a SQL count of scan-triggered
+   * investigations in the last N hours (default 24, override with `?window=`
+   * where value is e.g. "1h", "6h", "24h", "7d"). Separate from /api/scan/status
+   * so the Dashboard can poll a single endpoint and not pay a DB query cost on
+   * every operator hitting the Scan tab.
+   *
+   * Response shape is deliberately flat and UI-friendly — the badge component
+   * shouldn't need client-side computation over multiple fetches.
+   */
+  const ACTIVITY_WINDOW_HOURS: Record<string, number> = {
+    "1h": 1, "6h": 6, "24h": 24, "7d": 24 * 7,
+  };
+  app.get("/api/scan/activity", (req: Request, res: Response) => {
+    if (!req.stackContext) {
+      res.status(400).json({ error: "No active stack" });
+      return;
+    }
+    const windowParam = String(req.query["window"] ?? "24h");
+    const windowHours = ACTIVITY_WINDOW_HOURS[windowParam];
+    if (windowHours === undefined) {
+      res.status(400).json({
+        error: `Invalid window: ${windowParam}`,
+        hint: `Accepted: ${Object.keys(ACTIVITY_WINDOW_HOURS).join(", ")}`,
+      });
+      return;
+    }
+    const sinceIso = new Date(Date.now() - windowHours * 3600_000).toISOString();
+    const status = req.stackContext.scanScheduler.getStatus();
+    const recentAnomalies = db.countScanTriggeredInvestigationsSince(req.stackId ?? "", sinceIso);
+    res.json({
+      enabled: status.enabled,
+      ticking: status.ticking,
+      lastRun: status.lastRun,
+      nextRun: status.nextRun,
+      lastError: status.lastError,
+      dropsByConcurrency: status.dropsByConcurrency,
+      windowHours,
+      recentAnomalies,
+    });
+  });
+
+  /**
+   * POST /api/scan/trigger — fire one probe pass immediately, bypassing the
+   * cron schedule. Used by the "Scan now" button and by operators who want
+   * to smoke-test probe rules after an edit without waiting up to 4 hours.
+   *
+   * Response contract:
+   *  - 202 Accepted — probe dispatched; client should poll /api/scan/status
+   *    to see `ticking` clear and `lastRun` update. We don't wait for the
+   *    tick to complete because ticks can take 10+ seconds on real MCPs.
+   *  - 400 Bad Request — scan is disabled. "Enable first" is the right UX;
+   *    manual trigger on a disabled scheduler is not a sanctioned dry-run
+   *    path (would need new invariants in the scheduler we don't have).
+   *  - 409 Conflict — a tick is already in flight. Matches the scheduler's
+   *    own "skipping tick — previous still running" guard; prevents stacking
+   *    manual triggers while one is mid-flight.
+   */
+  app.post("/api/scan/trigger", (req: Request, res: Response) => {
+    if (!req.stackContext) {
+      res.status(400).json({ error: "No active stack" });
+      return;
+    }
+    const scheduler = req.stackContext.scanScheduler;
+    const status = scheduler.getStatus();
+    if (!status.enabled) {
+      res.status(400).json({
+        error: "Scan is disabled",
+        hint: "Enable in Settings \u2192 Scan first.",
+      });
+      return;
+    }
+    if (status.ticking) {
+      res.status(409).json({
+        error: "A scan tick is already in flight",
+        hint: "Wait for it to complete; check /api/scan/status.",
+      });
+      return;
+    }
+    eventLog.append({
+      kind: "scan_triggered_manually",
+      severity: "info",
+      summary: `manual scan trigger \u00b7 stack=${req.stackId ?? "(default)"}`,
+      stackId: req.stackId,
+    });
+    // Fire-and-forget — don't await. The tick runs asynchronously and the
+    // UI polls /api/scan/status to observe state transitions.
+    void scheduler.triggerNow();
+    res.status(202).json({
+      message: "Probe pass dispatched",
+      status: scheduler.getStatus(),
+    });
+  });
+
+  /**
    * PUT scan settings — writes `scan.enabled`, `scan.cron`, `scan.timezone`
    * to db.settings, validates cron via croner, then calls
    * stackManager.reloadAllScanSchedulers() so the change takes effect

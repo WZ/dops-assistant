@@ -13,6 +13,7 @@ import { Sidebar } from "./components/Sidebar";
 import type { SidebarPage } from "./components/Sidebar";
 import { ServicesPage } from "./components/ServicesPage";
 import { SettingsPage } from "./components/SettingsPage";
+import { ScanActivityBadge } from "./components/ScanActivityBadge";
 import { SetupStepper } from "./components/SetupStepper";
 import { useRoute, viewToUrl } from "./hooks/useRoute";
 import { StackSwitcher } from "./components/StackSwitcher";
@@ -315,6 +316,7 @@ export function App() {
             <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/75">
               {health.health?.version ? `v${health.health.version}` : "v\u2014"}
             </span>
+            <ScanActivityBadge onNavigate={() => setLeftPane({ type: "settings", initialTab: "scan" })} />
           </div>
         </header>
 
