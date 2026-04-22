@@ -487,255 +487,255 @@ export function Dashboard({
       ) : (
         <>
           {/* Section B: KPI Stat Cards */}
-              <section aria-label="Overview" className="mb-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
-                  <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
-                    Overview
-                  </h2>
-                </div>
-                <div className="grid grid-cols-3 gap-3 dashboard-kpi-grid">
-                  <StatCard
-                    label="Investigations"
-                    value={String(kpiStats?.investigations.total ?? 0)}
-                    detail={
-                      <>
-                        {kpiStats?.investigations.complete ?? 0} complete ·{" "}
-                        {kpiStats?.investigations.failed ?? 0} failed ·{" "}
-                        {kpiStats?.confidence.avg != null
-                          ? normalizeConfidence(kpiStats.confidence.avg)
-                          : "—"}{" "}
-                        confidence
-                      </>
-                    }
-                    loading={loading}
-                  />
-                  <StatCard
-                    label="Services Health"
-                    value={`${healthKpi.healthy}/${visibleServiceCount}`}
-                    variant={
-                      healthKpi.healthy === visibleServiceCount &&
-                      visibleServiceCount > 0
-                        ? "success"
-                        : "default"
-                    }
-                    detail={
-                      <>
-                        {healthKpi.down > 0 ? (
-                          <span className="text-destructive">
-                            {healthKpi.down} down
-                          </span>
-                        ) : (
-                          <>{healthKpi.down} down</>
-                        )}{" "}
-                        ·{" "}
-                        {healthKpi.degraded > 0 ? (
-                          <span className="text-warning">
-                            {healthKpi.degraded} degraded
-                          </span>
-                        ) : (
-                          <>{healthKpi.degraded} degraded</>
-                        )}{" "}
-                        · {healthKpi.unknown} unknown
-                      </>
-                    }
-                    loading={loading}
-                  />
-                  <StatCard
-                    label="Avg MTTR (7d)"
-                    value={
-                      kpiStats && kpiStats.mttr.completed7d > 0
-                        ? formatDuration(kpiStats.mttr.avg7d)
-                        : "\u2014"
-                    }
-                    detail={
-                      kpiStats && kpiStats.mttr.completed7d > 0
-                        ? `${kpiStats.mttr.completed7d} completed investigations`
-                        : "needs completed investigations"
-                    }
-                    trend={kpiStats?.mttr.trend}
-                    loading={loading}
-                  />
-                </div>
-              </section>
+          <section aria-label="Overview" className="mb-4">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
+              <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
+                Overview
+              </h2>
+            </div>
+            <div className="grid grid-cols-3 gap-3 dashboard-kpi-grid">
+              <StatCard
+                label="Investigations"
+                value={String(kpiStats?.investigations.total ?? 0)}
+                detail={
+                  <>
+                    {kpiStats?.investigations.complete ?? 0} complete ·{" "}
+                    {kpiStats?.investigations.failed ?? 0} failed ·{" "}
+                    {kpiStats?.confidence.avg != null
+                      ? normalizeConfidence(kpiStats.confidence.avg)
+                      : "—"}{" "}
+                    confidence
+                  </>
+                }
+                loading={loading}
+              />
+              <StatCard
+                label="Services Health"
+                value={`${healthKpi.healthy}/${visibleServiceCount}`}
+                variant={
+                  healthKpi.healthy === visibleServiceCount &&
+                  visibleServiceCount > 0
+                    ? "success"
+                    : "default"
+                }
+                detail={
+                  <>
+                    {healthKpi.down > 0 ? (
+                      <span className="text-destructive">
+                        {healthKpi.down} down
+                      </span>
+                    ) : (
+                      <>{healthKpi.down} down</>
+                    )}{" "}
+                    ·{" "}
+                    {healthKpi.degraded > 0 ? (
+                      <span className="text-warning">
+                        {healthKpi.degraded} degraded
+                      </span>
+                    ) : (
+                      <>{healthKpi.degraded} degraded</>
+                    )}{" "}
+                    · {healthKpi.unknown} unknown
+                  </>
+                }
+                loading={loading}
+              />
+              <StatCard
+                label="Avg MTTR (7d)"
+                value={
+                  kpiStats && kpiStats.mttr.completed7d > 0
+                    ? formatDuration(kpiStats.mttr.avg7d)
+                    : "\u2014"
+                }
+                detail={
+                  kpiStats && kpiStats.mttr.completed7d > 0
+                    ? `${kpiStats.mttr.completed7d} completed investigations`
+                    : "needs completed investigations"
+                }
+                trend={kpiStats?.mttr.trend}
+                loading={loading}
+              />
+            </div>
+          </section>
 
-              {/* Section C: Active Investigations */}
-              {activeList.length > 0 && (
-                <section aria-label="Active" className="mb-4 animate-fade-up">
-                  <div className="flex items-center gap-2 mb-3">
-                    <div className="w-0.5 h-3.5 rounded-full bg-accent/60" />
-                    <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
-                      Active
-                    </h2>
-                  </div>
-                  <div className="rounded-lg border-l-[3px] border-l-accent/70 border border-accent/25 bg-accent/5 p-3 space-y-2 glow-coral">
-                    {activeList.map((inv) => (
+          {/* Section C: Active Investigations */}
+          {activeList.length > 0 && (
+            <section aria-label="Active" className="mb-4 animate-fade-up">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-0.5 h-3.5 rounded-full bg-accent/60" />
+                <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
+                  Active
+                </h2>
+              </div>
+              <div className="rounded-lg border-l-[3px] border-l-accent/70 border border-accent/25 bg-accent/5 p-3 space-y-2 glow-coral">
+                {activeList.map((inv) => (
+                  <div
+                    key={inv.id}
+                    className="flex items-center justify-between"
+                  >
+                    <div className="flex items-center gap-2">
                       <div
-                        key={inv.id}
-                        className="flex items-center justify-between"
+                        className={`w-2 h-2 rounded-full ring-2 ${inv.failed ? "bg-destructive ring-destructive/25" : "bg-accent ring-accent/20 animate-status-pulse"}`}
+                      />
+                      <span className="font-body text-sm font-semibold text-foreground/90">
+                        {inv.service}
+                      </span>
+                      <Badge
+                        variant="secondary"
+                        className="text-[10px] py-0 h-4"
                       >
-                        <div className="flex items-center gap-2">
-                          <div
-                            className={`w-2 h-2 rounded-full ring-2 ${inv.failed ? "bg-destructive ring-destructive/25" : "bg-accent ring-accent/20 animate-status-pulse"}`}
-                          />
-                          <span className="font-body text-sm font-semibold text-foreground/90">
-                            {inv.service}
-                          </span>
-                          <Badge
-                            variant="secondary"
-                            className="text-[10px] py-0 h-4"
-                          >
-                            {inv.phase}
-                          </Badge>
-                        </div>
-                        <span className="font-mono text-[10px] tabular-nums text-accent/60 font-medium">
-                          {formatElapsed(inv.startTime)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              )}
-
-              {/* Section D: Services Health */}
-              {services.length > 0 && (
-                <section aria-label="Services" className="mb-8">
-                  <div className="flex items-center gap-2 mb-3">
-                    <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
-                    <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
-                      Services
-                    </h2>
-                  </div>
-                  <HealthStrip
-                    services={services
-                      .filter((s) => !hiddenSet.has(s.name))
-                      .map((s) => ({
-                        name: s.name,
-                        health: (healthData[s.name] ?? "unknown") as
-                          | "healthy"
-                          | "degraded"
-                          | "down"
-                          | "unknown",
-                      }))
-                      .filter((s) => s.health !== "unknown")}
-                    onClickService={onViewService}
-                    onViewAll={onViewAllServices}
-                  />
-                </section>
-              )}
-
-              {/* Section E: Investigation Log */}
-              <section aria-label="Investigation Log" className="mb-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <div className="w-0.5 h-4 rounded-full bg-primary" />
-                  <h2 className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-foreground/50">
-                    Investigation Log
-                  </h2>
-                  <span className="font-mono text-[9px] tabular-nums text-muted-foreground/40">
-                    {investigations.length}
-                  </span>
-                </div>
-                {loading ? (
-                  <div className="space-y-2">
-                    {[0, 1, 2].map((i) => (
-                      <div
-                        key={i}
-                        className="h-16 rounded-lg shimmer-skeleton"
-                        style={{ animationDelay: `${i * 0.1}s` }}
-                      />
-                    ))}
-                  </div>
-                ) : investigations.length === 0 ? (
-                  <div className="py-8 flex flex-col items-center gap-3">
-                    <svg
-                      width="48"
-                      height="48"
-                      viewBox="0 0 64 64"
-                      fill="none"
-                      className="text-muted-foreground/15"
-                      aria-hidden="true"
-                    >
-                      <rect
-                        x="12"
-                        y="8"
-                        width="32"
-                        height="44"
-                        rx="2"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                      />
-                      <line
-                        x1="20"
-                        y1="20"
-                        x2="36"
-                        y2="20"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                        strokeLinecap="round"
-                        opacity="0.3"
-                      />
-                      <line
-                        x1="20"
-                        y1="28"
-                        x2="36"
-                        y2="28"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                        strokeLinecap="round"
-                        opacity="0.3"
-                      />
-                      <line
-                        x1="20"
-                        y1="36"
-                        x2="28"
-                        y2="36"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                        strokeLinecap="round"
-                        opacity="0.3"
-                      />
-                      <circle
-                        cx="44"
-                        cy="44"
-                        r="12"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                      />
-                      <line
-                        x1="52"
-                        y1="52"
-                        x2="58"
-                        y2="58"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                      />
-                    </svg>
-                    <div className="text-center">
-                      <p className="font-display text-sm font-semibold text-muted-foreground/60">
-                        All quiet on the operations front
-                      </p>
-                      <p className="font-mono text-[10px] text-muted-foreground/40 mt-1">
-                        investigations will appear here as they run
-                      </p>
+                        {inv.phase}
+                      </Badge>
                     </div>
+                    <span className="font-mono text-[10px] tabular-nums text-accent/60 font-medium">
+                      {formatElapsed(inv.startTime)}
+                    </span>
                   </div>
-                ) : (
-                  <div className="space-y-1.5">
-                    {investigations.slice(0, 15).map((inv, i) => (
-                      <div
-                        key={inv.id}
-                        className={`animate-fade-up delay-${Math.min(i + 1, 8)}`}
-                      >
-                        <InvestigationRow
-                          investigation={inv}
-                          onClick={onInvestigationClick}
-                        />
-                      </div>
-                    ))}
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Section D: Services Health */}
+          {services.length > 0 && (
+            <section aria-label="Services" className="mb-8">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
+                <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
+                  Services
+                </h2>
+              </div>
+              <HealthStrip
+                services={services
+                  .filter((s) => !hiddenSet.has(s.name))
+                  .map((s) => ({
+                    name: s.name,
+                    health: (healthData[s.name] ?? "unknown") as
+                      | "healthy"
+                      | "degraded"
+                      | "down"
+                      | "unknown",
+                  }))
+                  .filter((s) => s.health !== "unknown")}
+                onClickService={onViewService}
+                onViewAll={onViewAllServices}
+              />
+            </section>
+          )}
+
+          {/* Section E: Investigation Log */}
+          <section aria-label="Investigation Log" className="mb-4">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-0.5 h-4 rounded-full bg-primary" />
+              <h2 className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-foreground/50">
+                Investigation Log
+              </h2>
+              <span className="font-mono text-[9px] tabular-nums text-muted-foreground/40">
+                {investigations.length}
+              </span>
+            </div>
+            {loading ? (
+              <div className="space-y-2">
+                {[0, 1, 2].map((i) => (
+                  <div
+                    key={i}
+                    className="h-16 rounded-lg shimmer-skeleton"
+                    style={{ animationDelay: `${i * 0.1}s` }}
+                  />
+                ))}
+              </div>
+            ) : investigations.length === 0 ? (
+              <div className="py-8 flex flex-col items-center gap-3">
+                <svg
+                  width="48"
+                  height="48"
+                  viewBox="0 0 64 64"
+                  fill="none"
+                  className="text-muted-foreground/15"
+                  aria-hidden="true"
+                >
+                  <rect
+                    x="12"
+                    y="8"
+                    width="32"
+                    height="44"
+                    rx="2"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                  />
+                  <line
+                    x1="20"
+                    y1="20"
+                    x2="36"
+                    y2="20"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    opacity="0.3"
+                  />
+                  <line
+                    x1="20"
+                    y1="28"
+                    x2="36"
+                    y2="28"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    opacity="0.3"
+                  />
+                  <line
+                    x1="20"
+                    y1="36"
+                    x2="28"
+                    y2="36"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    opacity="0.3"
+                  />
+                  <circle
+                    cx="44"
+                    cy="44"
+                    r="12"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                  />
+                  <line
+                    x1="52"
+                    y1="52"
+                    x2="58"
+                    y2="58"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  />
+                </svg>
+                <div className="text-center">
+                  <p className="font-display text-sm font-semibold text-muted-foreground/60">
+                    All quiet on the operations front
+                  </p>
+                  <p className="font-mono text-[10px] text-muted-foreground/40 mt-1">
+                    investigations will appear here as they run
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {investigations.slice(0, 15).map((inv, i) => (
+                  <div
+                    key={inv.id}
+                    className={`animate-fade-up delay-${Math.min(i + 1, 8)}`}
+                  >
+                    <InvestigationRow
+                      investigation={inv}
+                      onClick={onInvestigationClick}
+                    />
                   </div>
-                )}
-              </section>
+                ))}
+              </div>
+            )}
+          </section>
 
           {/* Section F: Learned Patterns */}
           {patterns.length > 0 && (
