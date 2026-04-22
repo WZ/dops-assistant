@@ -191,31 +191,44 @@ const ProbeSchema = z.object({
    * post-filtering bare `up` results (service-health-poller.ts:162-166), but
    * the probe needs a label-selector-scoped query to score per-service.
    *
+   * Each query is ANDed against a "desired > 0" guard so that:
+   *   - scaled-to-zero deployments (HPA min=0, maintenance mode, cron-style
+   *     workloads) don't fire false positives on `available = 0`
+   *   - arch-mismatched daemonsets (e.g. arm64 DS on amd64-only nodes —
+   *     `desired_number_scheduled = 0`) don't fire. Observed in the smoke
+   *     test: `kube-flannel-ds-arm` etc. would have tripped without the guard.
+   *   - statefulsets paused for maintenance (replicas=0) don't fire.
+   * When the guard fails (spec/desired = 0), the query returns an empty
+   * vector, scored as NaN, evaluated as "no trip" (see
+   * anomaly-probe.ts evaluateThreshold).
+   *
    * Application-level rules (error rate, latency) are too environment-
    * specific for defaults — operators with labeled HTTP metrics add them via
    * the GUI rule editor (Settings → Scan) or config.yaml override.
    *
    * `consecutiveTicks: 3` on all: rolling deploys briefly drop `_available`
-   * below desired. With the default 4h cron, 3 ticks = 12h, which is long
-   * enough to filter any reasonable rollout window without missing a real
-   * incident. Tune down for tighter cadences.
+   * below desired. On the default 4h cron, 3 consecutive ticks = ~8h between
+   * first breach and trip (breach detected at t=0, retained at t=4h, fires
+   * at t=8h). Long enough to filter any reasonable rollout window; short
+   * enough that a genuine outage gets caught on the next probe cadence.
+   * Tune down for tighter cron intervals.
    */
   metrics: z.array(ProbeMetricRuleSchema).default([
     {
       name: "deployment_availability",
-      query: 'kube_deployment_status_replicas_available{deployment="{service}"}',
+      query: 'kube_deployment_status_replicas_available{deployment="{service}"} and kube_deployment_spec_replicas{deployment="{service}"} > 0',
       threshold: { op: "lt", value: 1 },
       consecutiveTicks: 3,
     },
     {
       name: "statefulset_availability",
-      query: 'kube_statefulset_status_replicas_ready{statefulset="{service}"}',
+      query: 'kube_statefulset_status_replicas_ready{statefulset="{service}"} and kube_statefulset_replicas{statefulset="{service}"} > 0',
       threshold: { op: "lt", value: 1 },
       consecutiveTicks: 3,
     },
     {
       name: "daemonset_availability",
-      query: 'kube_daemonset_status_number_ready{daemonset="{service}"}',
+      query: 'kube_daemonset_status_number_ready{daemonset="{service}"} and kube_daemonset_status_desired_number_scheduled{daemonset="{service}"} > 0',
       threshold: { op: "lt", value: 1 },
       consecutiveTicks: 3,
     },

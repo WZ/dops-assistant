@@ -253,6 +253,16 @@ describe("ConfigSchema – scan section", () => {
     expect(result.scan.probe.metrics[0]!.query).toContain('deployment="{service}"');
     expect(result.scan.probe.metrics[1]!.query).toContain('statefulset="{service}"');
     expect(result.scan.probe.metrics[2]!.query).toContain('daemonset="{service}"');
+    // Every default MUST guard against scaled-to-zero workloads (spec=0 /
+    // desired=0) so scan doesn't false-positive on HPA-min-0 deployments,
+    // arch-mismatched daemonsets, or paused statefulsets. Review finding
+    // 2026-04-22.
+    expect(result.scan.probe.metrics[0]!.query).toContain("kube_deployment_spec_replicas");
+    expect(result.scan.probe.metrics[0]!.query).toContain("> 0");
+    expect(result.scan.probe.metrics[1]!.query).toContain("kube_statefulset_replicas");
+    expect(result.scan.probe.metrics[1]!.query).toContain("> 0");
+    expect(result.scan.probe.metrics[2]!.query).toContain("kube_daemonset_status_desired_number_scheduled");
+    expect(result.scan.probe.metrics[2]!.query).toContain("> 0");
     expect(result.scan.probe.logs.enabled).toBe(true);
     expect(result.scan.probe.logs.errorRateThreshold).toBe(10);
   });
