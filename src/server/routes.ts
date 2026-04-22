@@ -20,7 +20,14 @@ import { eventLog } from "./event-log.js";
 import { SkillInputSchema } from "./sanitize.js";
 import { Cron } from "croner";
 import { z } from "zod";
-import { getScanSettingsView } from "./scan-settings.js";
+import { getScanSettingsView, SCAN_SETTING_KEYS } from "./scan-settings.js";
+import { validateRules } from "./scan-rule-validator.js";
+import { validateOverride, parseOverride } from "./scan-service-override.js";
+import { getToolsByRole } from "../mcp/provider.js";
+import { parsePrometheusResult } from "./service-health-poller.js";
+import nodemailer from "nodemailer";
+import type { RcaReport } from "../types/rca-types.js";
+import { notifyEmail } from "./email-notifier.js";
 
 /**
  * Zod schema for PUT /api/scan/settings body.
@@ -39,6 +46,10 @@ const ScanSettingsUpdateSchema = z.object({
   enabled: z.union([z.boolean(), z.null()]).optional(),
   cron: z.union([z.string().min(1, "cron must be non-empty or null"), z.null()]).optional(),
   timezone: z.union([z.string().min(1, "timezone must be non-empty or null"), z.null()]).optional(),
+  // Probe rules: either an array (validated via validateRules before write),
+  // null (clear override, revert to config.yaml), or absent (leave untouched).
+  // We don't shape-validate here — validateRules does that with richer errors.
+  rules: z.union([z.array(z.unknown()), z.null()]).optional(),
 }).strict();
 
 export interface DependencyNode {
@@ -247,6 +258,102 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   });
 
   /**
+   * GET /api/scan/activity — aggregate for the Dashboard badge.
+   *
+   * Combines the scheduler's status snapshot with a SQL count of scan-triggered
+   * investigations in the last N hours (default 24, override with `?window=`
+   * where value is e.g. "1h", "6h", "24h", "7d"). Separate from /api/scan/status
+   * so the Dashboard can poll a single endpoint and not pay a DB query cost on
+   * every operator hitting the Scan tab.
+   *
+   * Response shape is deliberately flat and UI-friendly — the badge component
+   * shouldn't need client-side computation over multiple fetches.
+   */
+  const ACTIVITY_WINDOW_HOURS: Record<string, number> = {
+    "1h": 1, "6h": 6, "24h": 24, "7d": 24 * 7,
+  };
+  app.get("/api/scan/activity", (req: Request, res: Response) => {
+    if (!req.stackContext) {
+      res.status(400).json({ error: "No active stack" });
+      return;
+    }
+    const windowParam = String(req.query["window"] ?? "24h");
+    const windowHours = ACTIVITY_WINDOW_HOURS[windowParam];
+    if (windowHours === undefined) {
+      res.status(400).json({
+        error: `Invalid window: ${windowParam}`,
+        hint: `Accepted: ${Object.keys(ACTIVITY_WINDOW_HOURS).join(", ")}`,
+      });
+      return;
+    }
+    const sinceIso = new Date(Date.now() - windowHours * 3600_000).toISOString();
+    const status = req.stackContext.scanScheduler.getStatus();
+    const recentAnomalies = db.countScanTriggeredInvestigationsSince(req.stackId ?? "", sinceIso);
+    res.json({
+      enabled: status.enabled,
+      ticking: status.ticking,
+      lastRun: status.lastRun,
+      nextRun: status.nextRun,
+      lastError: status.lastError,
+      dropsByConcurrency: status.dropsByConcurrency,
+      windowHours,
+      recentAnomalies,
+    });
+  });
+
+  /**
+   * POST /api/scan/trigger — fire one probe pass immediately, bypassing the
+   * cron schedule. Used by the "Scan now" button and by operators who want
+   * to smoke-test probe rules after an edit without waiting up to 4 hours.
+   *
+   * Response contract:
+   *  - 202 Accepted — probe dispatched; client should poll /api/scan/status
+   *    to see `ticking` clear and `lastRun` update. We don't wait for the
+   *    tick to complete because ticks can take 10+ seconds on real MCPs.
+   *  - 400 Bad Request — scan is disabled. "Enable first" is the right UX;
+   *    manual trigger on a disabled scheduler is not a sanctioned dry-run
+   *    path (would need new invariants in the scheduler we don't have).
+   *  - 409 Conflict — a tick is already in flight. Matches the scheduler's
+   *    own "skipping tick — previous still running" guard; prevents stacking
+   *    manual triggers while one is mid-flight.
+   */
+  app.post("/api/scan/trigger", (req: Request, res: Response) => {
+    if (!req.stackContext) {
+      res.status(400).json({ error: "No active stack" });
+      return;
+    }
+    const scheduler = req.stackContext.scanScheduler;
+    const status = scheduler.getStatus();
+    if (!status.enabled) {
+      res.status(400).json({
+        error: "Scan is disabled",
+        hint: "Enable in Settings \u2192 Scan first.",
+      });
+      return;
+    }
+    if (status.ticking) {
+      res.status(409).json({
+        error: "A scan tick is already in flight",
+        hint: "Wait for it to complete; check /api/scan/status.",
+      });
+      return;
+    }
+    eventLog.append({
+      kind: "scan_triggered_manually",
+      severity: "info",
+      summary: `manual scan trigger \u00b7 stack=${req.stackId ?? "(default)"}`,
+      stackId: req.stackId,
+    });
+    // Fire-and-forget — don't await. The tick runs asynchronously and the
+    // UI polls /api/scan/status to observe state transitions.
+    void scheduler.triggerNow();
+    res.status(202).json({
+      message: "Probe pass dispatched",
+      status: scheduler.getStatus(),
+    });
+  });
+
+  /**
    * PUT scan settings — writes `scan.enabled`, `scan.cron`, `scan.timezone`
    * to db.settings, validates cron via croner, then calls
    * stackManager.reloadAllScanSchedulers() so the change takes effect
@@ -298,21 +405,197 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       }
     }
 
-    // `null` clears the override; otherwise persist the validated value.
-    if (body.enabled === null) db.deleteSetting("scan.enabled");
-    else if (typeof body.enabled === "boolean") db.setSetting("scan.enabled", String(body.enabled));
+    // Rules: validate BEFORE writing any DB setting. If rules validation
+    // fails, abort the whole PUT so the settings stay in a consistent
+    // state — no partial updates where cron wrote but rules didn't.
+    let validatedRulesJson: string | null | undefined;
+    if (body.rules === null) {
+      validatedRulesJson = null; // sentinel for "clear override"
+    } else if (Array.isArray(body.rules)) {
+      const result = validateRules(body.rules);
+      if (!result.ok) {
+        res.status(400).json({
+          error: "Invalid probe rules",
+          details: result.errors,
+        });
+        return;
+      }
+      validatedRulesJson = JSON.stringify(result.rules);
+    }
 
-    if (body.cron === null) db.deleteSetting("scan.cron");
-    else if (typeof body.cron === "string") db.setSetting("scan.cron", body.cron);
+    // Atomically persist all settings changes. Without the transaction, a
+    // crash or late-throw between the four setSetting calls leaves the
+    // effective config incoherent (e.g., new cron but old enabled flag).
+    // Validation already completed above; by this point every value is
+    // safe to write.
+    db.transaction(() => {
+      if (body.enabled === null) db.deleteSetting("scan.enabled");
+      else if (typeof body.enabled === "boolean") db.setSetting("scan.enabled", String(body.enabled));
 
-    if (body.timezone === null) db.deleteSetting("scan.timezone");
-    else if (typeof body.timezone === "string") db.setSetting("scan.timezone", body.timezone);
+      if (body.cron === null) db.deleteSetting("scan.cron");
+      else if (typeof body.cron === "string") db.setSetting("scan.cron", body.cron);
+
+      if (body.timezone === null) db.deleteSetting("scan.timezone");
+      else if (typeof body.timezone === "string") db.setSetting("scan.timezone", body.timezone);
+
+      if (validatedRulesJson === null) db.deleteSetting(SCAN_SETTING_KEYS.probeMetrics);
+      else if (typeof validatedRulesJson === "string") db.setSetting(SCAN_SETTING_KEYS.probeMetrics, validatedRulesJson);
+    });
 
     // Propagate to every running scheduler. Idempotent — reload() no-ops
     // when nothing changed.
     stackManager.reloadAllScanSchedulers();
 
     res.json(getScanSettingsView(db, config));
+  });
+
+  /**
+   * POST /api/scan/rules/test — dry-run a single probe rule against real
+   * Prometheus data via the metrics MCP tool. Lets the operator hit "Test"
+   * in the UI before saving a rule and learn whether the query actually
+   * returns numeric values at all, and whether the threshold would trip
+   * right now.
+   *
+   * Body: { query, threshold, testService }
+   *   - query: PromQL with "{service}" placeholder
+   *   - threshold: { op, value } — op in gt|lt|gte|lte
+   *   - testService: name from the registry; if omitted, we pick the first
+   *     live service and return its name in the response so the UI can show
+   *     "(tested against 'payments-api')"
+   *
+   * Response:
+   *   200 { testedService, value, wouldTrip, rawResultCount, durationMs }
+   *   400 on bad body, no registered services, or no MCP metrics tool
+   */
+  const RuleTestSchema = z.object({
+    query: z.string().min(1),
+    threshold: z.object({
+      op: z.enum(["gt", "lt", "gte", "lte"]),
+      value: z.number(),
+    }),
+    testService: z.string().optional(),
+  }).strict();
+
+  app.post("/api/scan/rules/test", async (req: Request, res: Response) => {
+    if (!req.stackContext) {
+      res.status(400).json({ error: "No active stack" });
+      return;
+    }
+    const parsed = RuleTestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: "Invalid request body",
+        details: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`),
+      });
+      return;
+    }
+    const { query, threshold, testService } = parsed.data;
+    if (!query.includes("{service}")) {
+      res.status(400).json({ error: "Query must include the {service} placeholder" });
+      return;
+    }
+
+    // Pick test service: operator-specified, else first in the stack registry.
+    const services = req.stackContext.serviceRegistry.load();
+    let resolvedService = testService;
+    if (!resolvedService) {
+      resolvedService = services[0]?.name;
+      if (!resolvedService) {
+        res.status(400).json({
+          error: "No services registered",
+          hint: "Run discovery first so there's at least one service to test against.",
+        });
+        return;
+      }
+    } else if (!services.some((s) => s.name === resolvedService)) {
+      res.status(400).json({
+        error: `Service "${resolvedService}" not found in registry`,
+      });
+      return;
+    }
+
+    const providers = req.stackContext.providerRegistry.getProviders();
+    const datasourceUid = req.stackContext.providerRegistry.getAll().find(
+      (p) => p.config.roles.includes("metrics") && p.prometheusDatasourceUid,
+    )?.prometheusDatasourceUid;
+    if (!datasourceUid) {
+      res.status(400).json({ error: "No Prometheus datasource available on this stack" });
+      return;
+    }
+
+    let tools: Record<string, unknown>;
+    try {
+      tools = (await getToolsByRole(providers, "metrics")) as Record<string, unknown>;
+    } catch (err) {
+      res.status(500).json({ error: `MCP error: ${err instanceof Error ? err.message : String(err)}` });
+      return;
+    }
+    const queryToolEntry = Object.entries(tools).find(
+      ([name]) => name.endsWith("query_prometheus") || name.endsWith("get_metrics"),
+    ) ?? Object.entries(tools).find(([name]) => {
+      const lower = name.toLowerCase();
+      return (lower.includes("query") || lower.includes("metric")) &&
+        !lower.includes("loki") && !lower.includes("log") && !lower.includes("metadata");
+    });
+    if (!queryToolEntry) {
+      res.status(400).json({ error: "No metric query tool available from MCP" });
+      return;
+    }
+    const tool = queryToolEntry[1] as { execute: (args: unknown, ctx?: { abortSignal?: AbortSignal }) => Promise<unknown> };
+
+    const safeService = resolvedService.replace(/[^a-zA-Z0-9_.\-]/g, "");
+    const substituted = query.replaceAll("{service}", safeService);
+    const now = new Date();
+    const args = {
+      expr: substituted,
+      queryType: "instant",
+      startTime: new Date(now.getTime() - 5 * 60 * 1000).toISOString(),
+      endTime: now.toISOString(),
+      datasourceUid,
+    };
+
+    const timeoutMs = 5_000;
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    const startedMs = Date.now();
+    try {
+      const raw = await tool.execute(args, { abortSignal: ac.signal });
+      const entries = parsePrometheusResult(raw);
+      const durationMs = Date.now() - startedMs;
+      let value: number | null = null;
+      if (entries.length > 0) {
+        const first = entries[0]!;
+        if (first.value && first.value.length >= 2) {
+          const parsedVal = parseFloat(String(first.value[1]));
+          value = Number.isFinite(parsedVal) ? parsedVal : null;
+        }
+      }
+      const wouldTrip = value !== null && (() => {
+        switch (threshold.op) {
+          case "gt":  return value >  threshold.value;
+          case "gte": return value >= threshold.value;
+          case "lt":  return value <  threshold.value;
+          case "lte": return value <= threshold.value;
+        }
+      })();
+      res.json({
+        testedService: resolvedService,
+        query: substituted,
+        value,
+        wouldTrip,
+        rawResultCount: entries.length,
+        durationMs,
+      });
+    } catch (err) {
+      res.status(502).json({
+        error: `Query failed: ${err instanceof Error ? err.message : String(err)}`,
+        testedService: resolvedService,
+        query: substituted,
+        durationMs: Date.now() - startedMs,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
   });
 
   app.post("/api/stacks", async (req: Request, res: Response) => {
@@ -557,6 +840,48 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     const { tags } = req.body as { tags: string[] };
     db.upsertServiceMetadata(req.stackId, name, { tags });
     res.json({ ok: true });
+  });
+
+  /**
+   * Per-service scan override CRUD (Lane B Step 4).
+   *
+   * GET returns the effective override (null when no override) + per-field
+   * source for the UI to show "global" vs "overridden".
+   * PUT upserts an override — body must specify `disabled`, `rules`, or both.
+   * DELETE clears the override (revert to global rules).
+   *
+   * All three trigger `reloadAllScanSchedulers` so the change takes effect
+   * on the NEXT tick without a server restart. Scheduler's reload clears
+   * any stale consecutiveState entries for rules that changed.
+   */
+  app.get("/api/services/:name/scan-override", (req: Request, res: Response) => {
+    const name = req.params["name"] as string;
+    if (!NAME_PATTERN.test(name)) { res.status(400).json({ error: "Invalid service name" }); return; }
+    const raw = db.getScanOverride(req.stackId, name);
+    res.json({ service: name, override: parseOverride(raw) });
+  });
+
+  app.put("/api/services/:name/scan-override", (req: Request, res: Response) => {
+    const name = req.params["name"] as string;
+    if (!NAME_PATTERN.test(name)) { res.status(400).json({ error: "Invalid service name" }); return; }
+    const result = validateOverride(req.body);
+    if (!result.ok) {
+      res.status(400).json({ error: "Invalid override", details: result.errors });
+      return;
+    }
+    db.setScanOverride(req.stackId, name, JSON.stringify(result.override));
+    // Reset hysteresis for this service: the rule set may have changed, so
+    // any in-flight breach counters from the prior set are now stale.
+    stackManager.resetScanHysteresisForService(req.stackId, name);
+    res.json({ service: name, override: result.override });
+  });
+
+  app.delete("/api/services/:name/scan-override", (req: Request, res: Response) => {
+    const name = req.params["name"] as string;
+    if (!NAME_PATTERN.test(name)) { res.status(400).json({ error: "Invalid service name" }); return; }
+    db.clearScanOverride(req.stackId, name);
+    stackManager.resetScanHysteresisForService(req.stackId, name);
+    res.json({ service: name, override: null });
   });
 
   // ── Service Metrics REST API ────────────────────────────────────────────
@@ -1329,5 +1654,187 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : "Failed to send test notification" });
     }
+  });
+
+  // ── Email notifications ─────────────────────────────────────────────────
+
+  const ALL_SOURCES_SET = new Set(["webhook", "scan", "poller", "manual"]);
+  const ALL_SEVERITIES_SET = new Set(["low", "medium", "high", "critical"]);
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  function validateRecipientBody(body: any, { partial }: { partial: boolean }): string | null {
+    if (!body || typeof body !== "object") return "Body must be an object";
+    if (!partial || body.address !== undefined) {
+      if (typeof body.address !== "string" || !EMAIL_RE.test(body.address)) return "Invalid email address";
+    }
+    if (!partial || body.minSeverity !== undefined) {
+      if (!ALL_SEVERITIES_SET.has(body.minSeverity)) return "Invalid minSeverity";
+    }
+    if (!partial || body.allowedSources !== undefined) {
+      if (!Array.isArray(body.allowedSources) || body.allowedSources.length === 0) return "allowedSources must be a non-empty array";
+      for (const s of body.allowedSources) {
+        if (!ALL_SOURCES_SET.has(s)) return `Invalid source: ${s}`;
+      }
+    }
+    if (!partial || body.enabled !== undefined) {
+      if (typeof body.enabled !== "boolean") return "enabled must be boolean";
+    }
+    if (body.label !== undefined && body.label !== null && typeof body.label !== "string") return "label must be string or null";
+    return null;
+  }
+
+  app.get("/api/notifications/email", (_req: Request, res: Response) => {
+    const dbEnabled = db.getSetting("notifications.email.enabled");
+    const emailCfg = config.notifications?.email;
+    const enabled = dbEnabled !== undefined ? dbEnabled === "true" : emailCfg?.enabled ?? false;
+    const recipients = db.listEmailRecipients();
+    res.json({ enabled, recipients });
+  });
+
+  app.put("/api/notifications/email", (req: Request, res: Response) => {
+    const { enabled } = (req.body ?? {}) as { enabled?: boolean };
+    if (typeof enabled !== "boolean") {
+      res.status(400).json({ error: "enabled must be boolean" });
+      return;
+    }
+    db.setSetting("notifications.email.enabled", String(enabled));
+    res.json({ ok: true, enabled });
+  });
+
+  app.get("/api/notifications/email/recipients", (_req: Request, res: Response) => {
+    res.json(db.listEmailRecipients());
+  });
+
+  app.post("/api/notifications/email/recipients", (req: Request, res: Response) => {
+    const err = validateRecipientBody(req.body, { partial: false });
+    if (err) { res.status(400).json({ error: err }); return; }
+    const body = req.body as {
+      address: string; label?: string; minSeverity: import("../types/notifications.js").SeverityLevel;
+      allowedSources: import("../types/notifications.js").NotificationSource[]; enabled: boolean;
+    };
+    const created = db.createEmailRecipient({
+      address: body.address,
+      label: body.label,
+      minSeverity: body.minSeverity,
+      allowedSources: body.allowedSources,
+      enabled: body.enabled,
+    });
+    res.status(201).json(created);
+  });
+
+  app.put("/api/notifications/email/recipients/:id", (req: Request, res: Response) => {
+    const id = Number(req.params["id"]);
+    if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "Invalid id" }); return; }
+    const err = validateRecipientBody(req.body, { partial: true });
+    if (err) { res.status(400).json({ error: err }); return; }
+    const existing = db.getEmailRecipient(id);
+    if (!existing) { res.status(404).json({ error: "Recipient not found" }); return; }
+    const updated = db.updateEmailRecipient(id, req.body);
+    res.json(updated);
+  });
+
+  app.delete("/api/notifications/email/recipients/:id", (req: Request, res: Response) => {
+    const id = Number(req.params["id"]);
+    if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "Invalid id" }); return; }
+    db.deleteEmailRecipient(id);
+    res.status(204).end();
+  });
+
+  app.post("/api/notifications/email/test", async (req: Request, res: Response) => {
+    const { recipientId } = (req.body ?? {}) as { recipientId?: number };
+    if (typeof recipientId !== "number" || !Number.isInteger(recipientId) || recipientId <= 0) {
+      res.status(400).json({ error: "recipientId must be a positive integer" });
+      return;
+    }
+
+    // (a) Require the global email-enabled flag before allowing any send.
+    // Prevents the endpoint from being used as an open SMTP relay by anyone
+    // with access to the /api surface while email is nominally off.
+    const emailCfg = config.notifications?.email;
+    const dbEnabled = db.getSetting("notifications.email.enabled");
+    const globalEnabled = dbEnabled !== undefined ? dbEnabled === "true" : emailCfg?.enabled ?? false;
+    if (!globalEnabled) {
+      res.status(403).json({ error: "Email notifications are disabled. Enable the global toggle first." });
+      return;
+    }
+
+    // (c) Require real SMTP config so we never fake success via jsonTransport.
+    // A user clicking "Test" expects a real round-trip; if SMTP isn't wired up,
+    // that's a 400 they can act on — not a green checkmark.
+    if (!emailCfg) {
+      res.status(400).json({ error: "SMTP is not configured. Set notifications.email in config.yaml." });
+      return;
+    }
+
+    const recipient = db.getEmailRecipient(recipientId);
+    if (!recipient) { res.status(404).json({ error: "Recipient not found" }); return; }
+
+    const realTransport = nodemailer.createTransport({
+      host: emailCfg.smtp.host,
+      port: emailCfg.smtp.port,
+      secure: emailCfg.smtp.secure,
+      auth: { user: emailCfg.smtp.user, pass: emailCfg.smtp.pass },
+    });
+
+    // (b) Use the recipient's own minSeverity as the fixture severity so the
+    // filter in notifyEmail always matches. Otherwise a hard-coded "high"
+    // fixture silently skips critical-only recipients — test button would lie.
+    const fixture: RcaReport = {
+      service: "test-service",
+      severity: recipient.minSeverity,
+      summary: "This is a test notification from DOps Assistant",
+      impact: { duration: "0s", description: "No production impact — this is a test." },
+      trigger: "Manual test from Notifications settings",
+      rootCause: "N/A (test notification)",
+      contributingFactors: ["Config validation in progress"],
+      timeline: [{ time: new Date().toISOString().slice(11, 16), event: "Test email triggered" }],
+      evidence: { metrics: ["cpu=12%"], logs: [], infra: [] },
+      dashboardLinks: [],
+      recommendedActions: ["Confirm you received this email in your inbox or Teams channel"],
+      confidence: "high",
+      confidenceScore: 1,
+      investigatedAt: new Date().toISOString(),
+    };
+
+    // (d) Capture SMTP errors from the wrapped transport so we can surface
+    // them to the caller. `notifyEmail` swallows send failures by design,
+    // so the test endpoint has to watch the transport directly.
+    const captured: unknown[] = [];
+    let sendError: unknown = null;
+    const wrappedTransport = {
+      sendMail: async (envelope: unknown) => {
+        captured.push(envelope);
+        try {
+          return await realTransport.sendMail(envelope as any);
+        } catch (err) {
+          sendError = err;
+          throw err;
+        }
+      },
+    } as unknown as ReturnType<typeof nodemailer.createTransport>;
+
+    await notifyEmail(
+      {
+        isGloballyEnabled: () => true,
+        listEnabledRecipients: () => [recipient],
+        transport: wrappedTransport,
+        config: {
+          from: emailCfg.from,
+          appBaseUrl: emailCfg.appBaseUrl,
+          retry: { attempts: 1, backoffMs: [] },
+        },
+      },
+      `test_${Date.now()}`,
+      fixture,
+      recipient.allowedSources[0] ?? "manual",
+    );
+
+    if (sendError) {
+      const msg = sendError instanceof Error ? sendError.message : String(sendError);
+      res.status(500).json({ error: `SMTP send failed: ${msg}` });
+      return;
+    }
+
+    res.json({ ok: true, envelope: captured[0] ?? null });
   });
 }

@@ -214,6 +214,34 @@ const ScanSchema = z.object({
   probe: ProbeSchema.optional().default({}),
 });
 
+const SmtpSchema = z.object({
+  host: z.string().min(1),
+  port: z.number().int().min(1).max(65535).default(587),
+  secure: z.boolean().default(false),
+  user: z.string().min(1),
+  pass: z.string().min(1),
+});
+
+const EmailRetrySchema = z.object({
+  attempts: z.number().int().min(1).max(10).default(4),
+  backoffMs: z.array(z.number().int().min(0)).default([1000, 5000, 30000]),
+}).refine(
+  (r) => r.backoffMs.length === r.attempts - 1,
+  { message: "retry.backoffMs.length must equal retry.attempts - 1" },
+);
+
+const NotificationsEmailSchema = z.object({
+  enabled: z.boolean().default(false),
+  smtp: SmtpSchema,
+  from: z.string().min(1),
+  appBaseUrl: z.string().url(),
+  retry: EmailRetrySchema.default({ attempts: 4, backoffMs: [1000, 5000, 30000] }),
+});
+
+const NotificationsSchema = z.object({
+  email: NotificationsEmailSchema.optional(),
+}).optional();
+
 export type ScanConfig = z.infer<typeof ScanSchema>;
 export type ProbeConfig = z.infer<typeof ProbeSchema>;
 export type ProbeMetricRule = z.infer<typeof ProbeMetricRuleSchema>;
@@ -239,6 +267,7 @@ export const ConfigSchema = z.object({
   memory: MemorySchema.optional().default({}),
   webhook: WebhookSchema.optional().default({}),
   scan: ScanSchema.optional().default({}),
+  notifications: NotificationsSchema,
   branding: BrandingSchema.optional().default({}),
 });
 
@@ -253,3 +282,7 @@ export type DiscoveryConfig = z.infer<typeof DiscoverySchema>;
 export type DiscoveryRecipe = z.infer<typeof DiscoveryRecipeSchema>;
 export type WebhookConfig = z.infer<typeof WebhookSchema>;
 export type BrandingConfig = z.infer<typeof BrandingSchema>;
+export type NotificationsConfig = z.infer<typeof NotificationsSchema>;
+export type NotificationsEmailConfig = z.infer<typeof NotificationsEmailSchema>;
+export type SmtpConfig = z.infer<typeof SmtpSchema>;
+export type EmailRetryConfig = z.infer<typeof EmailRetrySchema>;

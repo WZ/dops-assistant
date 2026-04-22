@@ -526,6 +526,7 @@ async function handleRerun(
       parentInvestigationId: msg.investigationId,
       disabledSkillIds: db.getDisabledSkills(stackId),
       callbacks: wsCallbacks,
+      source: "manual",
     });
   } catch {
     // Error handled by runner's onFailed callback
@@ -769,7 +770,7 @@ export async function handleClientMessage(
 
     const runner = new InvestigationRunner({ db, investigationAgent, skillStore: deps.skillStore, globalOnComplete: deps.globalOnComplete });
     try {
-      await runner.run({ service, message: msg.message, investigationId: invId, stackId, disabledSkillIds: deps.db.getDisabledSkills(stackId), callbacks: wsCallbacks });
+      await runner.run({ service, message: msg.message, investigationId: invId, stackId, disabledSkillIds: deps.db.getDisabledSkills(stackId), callbacks: wsCallbacks, source: "manual" });
     } catch {
       // Error already handled by runner's onFailed callback
     }
