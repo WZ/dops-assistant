@@ -193,10 +193,18 @@ export class ScanScheduler {
       prev.cron !== newConfig.cron || prev.timezone !== newConfig.timezone;
 
     if (prev.enabled && !newConfig.enabled) {
-      // Disabled: stop but keep `stopped` logic so start() can re-activate later.
+      // Disabled: match stop()'s behavior so an in-flight tick is actually
+      // cancelled — otherwise operator disables via GUI, the already-started
+      // probe finishes, and investigations still fire from that tick's
+      // scored hits. That's confusing UX at best (operator thinks "off"
+      // means "no more firing") and wasteful LLM spend at worst.
+      this.ac?.abort();
       this.cron?.stop();
       this.cron = undefined;
-      this.stopped = false; // allow start() to re-schedule if reload swings back
+      // Don't set `stopped = true` here — the scheduler is *logically*
+      // still alive, just with enabled=false. A subsequent reload with
+      // enabled=true should re-start via start() (which gates on the new
+      // config, not on `stopped`).
       logger.info({ stackId: this.deps.stackId }, "ScanScheduler: disabled via reload");
       return;
     }

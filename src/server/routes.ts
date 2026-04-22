@@ -19,7 +19,27 @@ import type { LanguageModel } from "ai";
 import { eventLog } from "./event-log.js";
 import { SkillInputSchema } from "./sanitize.js";
 import { Cron } from "croner";
+import { z } from "zod";
 import { getScanSettingsView } from "./scan-settings.js";
+
+/**
+ * Zod schema for PUT /api/scan/settings body.
+ *
+ * - `enabled` / `cron` / `timezone` each accept: a typed value (writes the
+ *   override), `null` (clears the override, reverts to config.yaml), or
+ *   absent (leaves the existing override untouched).
+ * - Empty strings are explicitly rejected — they otherwise silently soft-break
+ *   the scheduler ('' is a valid cron input that croner can't parse, and ''
+ *   is a nonsense timezone). Operators who want to clear an override should
+ *   send `null`.
+ * - `.strict()` rejects unknown keys so API misuse produces a loud 400 instead
+ *   of silently ignoring typos.
+ */
+const ScanSettingsUpdateSchema = z.object({
+  enabled: z.union([z.boolean(), z.null()]).optional(),
+  cron: z.union([z.string().min(1, "cron must be non-empty or null"), z.null()]).optional(),
+  timezone: z.union([z.string().min(1, "timezone must be non-empty or null"), z.null()]).optional(),
+}).strict();
 
 export interface DependencyNode {
   id: string;
@@ -236,28 +256,49 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
    * an override and revert to config.yaml, set the field to `null`.
    */
   app.put("/api/scan/settings", (req: Request, res: Response) => {
-    const body = req.body as {
-      enabled?: boolean | null;
-      cron?: string | null;
-      timezone?: string | null;
-    };
+    const parsed = ScanSettingsUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const errors = parsed.error.issues.map((i) => `${i.path.join(".") || "(body)"}: ${i.message}`);
+      res.status(400).json({ error: "Invalid request body", details: errors });
+      return;
+    }
+    const body = parsed.data;
 
-    // Validate cron BEFORE writing. Bad input should not corrupt DB.
-    if (typeof body.cron === "string" && body.cron.length > 0) {
+    // Validate cron + timezone BEFORE writing. Probe construction must use
+    // the same options the scheduler itself uses at start() — otherwise
+    // validation can pass but start() can throw on identical input, and the
+    // DB ends up holding a poisoned value.
+    //
+    // Validate if EITHER field is being changed: timezone-only changes also
+    // need to work with the existing cron, so we resolve the effective-after
+    // pair and validate that combination.
+    const willChangeCron = typeof body.cron === "string";
+    const willChangeTimezone = typeof body.timezone === "string";
+    if (willChangeCron || willChangeTimezone) {
+      const currentView = getScanSettingsView(db, config);
+      const effectiveCron = willChangeCron ? (body.cron as string) : currentView.cron;
+      const effectiveTimezone = willChangeTimezone ? (body.timezone as string) : currentView.timezone;
       try {
-        // croner's Cron constructor throws on invalid expressions. We
-        // instantiate with a no-op fn and immediately .stop() — cheap
-        // validation pass, no scheduling side effects.
-        const probe = new Cron(body.cron, { timezone: body.timezone ?? "UTC", paused: true }, () => {});
+        // Match scheduler's options exactly (scan-scheduler.ts `start()`):
+        // `protect: true` is intentional — any difference from start()'s
+        // options could let a value validate here but throw there.
+        const probe = new Cron(
+          effectiveCron,
+          { timezone: effectiveTimezone, protect: true, paused: true },
+          () => {},
+        );
         probe.stop();
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        res.status(400).json({ error: `Invalid cron expression: ${msg}` });
+        res.status(400).json({
+          error: "Invalid cron expression or timezone",
+          details: [msg, `resolved to: cron="${effectiveCron}", timezone="${effectiveTimezone}"`],
+        });
         return;
       }
     }
 
-    // `null` clears the override; otherwise string-encode and set.
+    // `null` clears the override; otherwise persist the validated value.
     if (body.enabled === null) db.deleteSetting("scan.enabled");
     else if (typeof body.enabled === "boolean") db.setSetting("scan.enabled", String(body.enabled));
 

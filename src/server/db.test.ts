@@ -84,6 +84,13 @@ describe("Database", () => {
       expect(db.getLastInvestigationAt(S, "flaky")).toBeNull();
     });
 
+    it("excludes in-progress investigations (running/pending) from the lookup", () => {
+      // Regression: a stuck-running investigation would otherwise pin its service
+      // at "most recently investigated" forever and starve it from scan prioritization.
+      db.createInvestigation(S, { id: "inv_1", service: "stuck", query: "q", status: "running" });
+      expect(db.getLastInvestigationAt(S, "stuck")).toBeNull();
+    });
+
     it("picks the most recent non-failed when mixed with failures", () => {
       db.createInvestigation(S, { id: "inv_1", service: "svc", query: "q", status: "complete" });
       const rawDb = (db as unknown as { db: { prepare: (s: string) => { run: (...args: unknown[]) => void } } }).db;
