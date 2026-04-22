@@ -354,6 +354,35 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   });
 
   /**
+   * GET /api/scan/runs — list scan runs for the resolved stack, newest first.
+   *
+   * Query params:
+   *  - `limit` — max rows to return. Defaults to 50. Hard-capped at 200 so
+   *    one unbounded fetch can't pull the entire history into memory. NaN /
+   *    non-positive values fall back to the default.
+   *  - `before` — optional epoch-ms cursor. Only rows with started_at
+   *    strictly less than `before` are returned. Used for pagination by the
+   *    Recent Scans UI. Non-integer values are ignored (no-op), matching
+   *    db.listScanRuns({ before: undefined }).
+   *
+   * Stack isolation is enforced by the /api middleware populating
+   * req.stackId; db.listScanRuns filters by stack_id server-side.
+   */
+  app.get("/api/scan/runs", (req: Request, res: Response) => {
+    const rawLimit = parseInt((req.query["limit"] as string) || "50", 10);
+    const limit = Math.min(Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 50, 200);
+    const beforeRaw = req.query["before"] as string | undefined;
+    const beforeParsed = beforeRaw !== undefined ? parseInt(beforeRaw, 10) : undefined;
+    const before = Number.isFinite(beforeParsed as number) ? beforeParsed : undefined;
+    const runs = db.listScanRuns({
+      stackId: req.stackId,
+      limit,
+      before,
+    });
+    res.json({ runs });
+  });
+
+  /**
    * PUT scan settings — writes `scan.enabled`, `scan.cron`, `scan.timezone`
    * to db.settings, validates cron via croner, then calls
    * stackManager.reloadAllScanSchedulers() so the change takes effect
