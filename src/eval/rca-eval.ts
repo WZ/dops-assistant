@@ -6,8 +6,10 @@
  *   npx tsx src/eval/rca-eval.ts --save
  *   npx tsx src/eval/rca-eval.ts --compare src/eval/baselines/2026-03-01.json
  *   npx tsx src/eval/rca-eval.ts --source scan    # filter by trigger source
+ *   npx tsx src/eval/rca-eval.ts --min-score 75   # fail (exit 1) if avg < threshold
  *
  * --source values: all (default) | scan | webhook | user
+ * --min-score: integer 0-100. Exits non-zero if the average total falls below it.
  *
  * Source classification is heuristic, based on the `query` column's prefix:
  *   - "Proactive scan detected anomaly"  → scan-triggered (see anomaly-probe.ts)
@@ -279,6 +281,13 @@ async function main(): Promise<void> {
   const compareFile = compareIdx !== -1 ? args[compareIdx + 1] : undefined;
   const sourceIdx = args.indexOf("--source");
   const sourceArg = sourceIdx !== -1 ? args[sourceIdx + 1] : "all";
+  const minScoreIdx = args.indexOf("--min-score");
+  const minScoreRaw = minScoreIdx !== -1 ? args[minScoreIdx + 1] : undefined;
+  const minScore = minScoreRaw !== undefined ? Number(minScoreRaw) : undefined;
+  if (minScoreRaw !== undefined && (!Number.isFinite(minScore) || minScore! < 0 || minScore! > 100)) {
+    console.error(`Invalid --min-score value: ${minScoreRaw}. Expected a number between 0 and 100.`);
+    process.exit(1);
+  }
   const validSources = new Set(["all", "scan", "webhook", "user"]);
   if (!validSources.has(sourceArg ?? "all")) {
     console.error(`Invalid --source value: ${sourceArg}. Expected one of: all, scan, webhook, user`);
@@ -346,6 +355,21 @@ async function main(): Promise<void> {
   }
 
   renderTable(entries, baseline);
+
+  // Gate on minimum score — for CI / pre-ship quality checks.
+  // Exits non-zero when the average total falls below the configured floor.
+  if (minScore !== undefined) {
+    const avgTotal = Math.round(
+      entries.reduce((a, e) => a + e.scores.total, 0) / entries.length,
+    );
+    if (avgTotal < minScore) {
+      console.error(
+        `\nFAIL: average score ${avgTotal}/100 is below --min-score ${minScore}/100`,
+      );
+      process.exit(1);
+    }
+    console.log(`\nPASS: average score ${avgTotal}/100 meets --min-score ${minScore}/100`);
+  }
 
   // Save baseline if requested
   if (saveFlag) {

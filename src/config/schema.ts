@@ -178,26 +178,59 @@ const ProbeLogsSchema = z.object({
 const ProbeSchema = z.object({
   concurrency: z.number().int().min(1).default(8),
   queryTimeoutMs: z.number().int().min(100).default(3_000),
+  /**
+   * Default probe rules — three k8s availability checks, one per workload type
+   * (Deployment / StatefulSet / DaemonSet). A service will typically match
+   * exactly one of these based on how it's scheduled; the others return empty
+   * vector and score 0 (no trip) harmlessly.
+   *
+   * Why not `up{service="..."}` or `http_requests_total{service="..."}`?
+   * Smoke test (2026-04-22) showed the `service=` label doesn't exist on
+   * most k8s Prometheus setups (kube-state-metrics uses `deployment=` /
+   * `statefulset=` / `daemonset=`). The service-health-poller compensates by
+   * post-filtering bare `up` results (service-health-poller.ts:162-166), but
+   * the probe needs a label-selector-scoped query to score per-service.
+   *
+   * Each query is ANDed against a "desired > 0" guard so that:
+   *   - scaled-to-zero deployments (HPA min=0, maintenance mode, cron-style
+   *     workloads) don't fire false positives on `available = 0`
+   *   - arch-mismatched daemonsets (e.g. arm64 DS on amd64-only nodes —
+   *     `desired_number_scheduled = 0`) don't fire. Observed in the smoke
+   *     test: `kube-flannel-ds-arm` etc. would have tripped without the guard.
+   *   - statefulsets paused for maintenance (replicas=0) don't fire.
+   * When the guard fails (spec/desired = 0), the query returns an empty
+   * vector, scored as NaN, evaluated as "no trip" (see
+   * anomaly-probe.ts evaluateThreshold).
+   *
+   * Application-level rules (error rate, latency) are too environment-
+   * specific for defaults — operators with labeled HTTP metrics add them via
+   * the GUI rule editor (Settings → Scan) or config.yaml override.
+   *
+   * `consecutiveTicks: 3` on all: rolling deploys briefly drop `_available`
+   * below desired. On the default 4h cron, 3 consecutive ticks = ~8h between
+   * first breach and trip (breach detected at t=0, retained at t=4h, fires
+   * at t=8h). Long enough to filter any reasonable rollout window; short
+   * enough that a genuine outage gets caught on the next probe cadence.
+   * Tune down for tighter cron intervals.
+   */
   metrics: z.array(ProbeMetricRuleSchema).default([
     {
-      name: "availability",
-      query: 'up{service="{service}"}',
+      name: "deployment_availability",
+      query: 'kube_deployment_status_replicas_available{deployment="{service}"} and kube_deployment_spec_replicas{deployment="{service}"} > 0',
       threshold: { op: "lt", value: 1 },
-      consecutiveTicks: 1,
+      consecutiveTicks: 3,
     },
     {
-      name: "error_rate",
-      query:
-        'sum(rate(http_requests_total{service="{service}",status=~"5.."}[5m])) / sum(rate(http_requests_total{service="{service}"}[5m]))',
-      threshold: { op: "gt", value: 0.01 },
-      consecutiveTicks: 2,
+      name: "statefulset_availability",
+      query: 'kube_statefulset_status_replicas_ready{statefulset="{service}"} and kube_statefulset_replicas{statefulset="{service}"} > 0',
+      threshold: { op: "lt", value: 1 },
+      consecutiveTicks: 3,
     },
     {
-      name: "latency_p99",
-      query:
-        'histogram_quantile(0.99, rate(http_request_duration_seconds_bucket{service="{service}"}[5m]))',
-      threshold: { op: "gt", value: 2.0 },
-      consecutiveTicks: 2,
+      name: "daemonset_availability",
+      query: 'kube_daemonset_status_number_ready{daemonset="{service}"} and kube_daemonset_status_desired_number_scheduled{daemonset="{service}"} > 0',
+      threshold: { op: "lt", value: 1 },
+      consecutiveTicks: 3,
     },
   ]),
   logs: ProbeLogsSchema.optional().default({}),
