@@ -623,10 +623,14 @@ export async function handleClientMessage(
           send({ type: "discover:retry", attempt, maxRetries, reason });
         },
       );
-      send({ type: "discover:phase", phase: "validation", status: "complete" });
       if (services.length === 0) {
+        // Discovery returned zero services: validation never ran. Emit the
+        // terminal phase marker so the UI can distinguish "validation done"
+        // from "validation was never reached".
+        send({ type: "discover:phase", phase: "complete-empty", status: "complete" });
         send({ type: "discover:error", message: "Discovery completed but found no services. The LLM may have failed to parse Prometheus metrics — try again." });
       } else {
+        send({ type: "discover:phase", phase: "validation", status: "complete" });
         send({ type: "discover:complete", services });
       }
 

@@ -296,5 +296,9 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
     }
   }
 
+  logger.error(
+    { maxRetries: MAX_RETRIES },
+    "discovery: agent returned no parseable services after all retries — returning empty list (likely causes: LLM produced empty array, wrapped result in unexpected shape, or exhausted iterations without JSON output)",
+  );
   return [];
 }
