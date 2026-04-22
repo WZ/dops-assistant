@@ -241,6 +241,8 @@ export class Database {
         trigger             TEXT    NOT NULL,
         status              TEXT    NOT NULL,
         skip_reason         TEXT,
+        -- Timestamps on scan_runs are epoch milliseconds (not SQLite datetime strings).
+        -- All *_at columns on this table follow the same convention.
         started_at          INTEGER NOT NULL,
         finished_at         INTEGER,
         services_probed     INTEGER NOT NULL DEFAULT 0,
@@ -270,6 +272,8 @@ export class Database {
         severity         REAL NOT NULL,
         dispatched_at    INTEGER NOT NULL,
         PRIMARY KEY (scan_run_id, investigation_id),
+        -- ON DELETE CASCADE is declarative only (PRAGMA foreign_keys is OFF in this project).
+        -- Actual cascade is performed by deleteStack() sweeping this table explicitly.
         FOREIGN KEY (scan_run_id) REFERENCES scan_runs(id) ON DELETE CASCADE
       );
 
@@ -531,6 +535,9 @@ export class Database {
 
   deleteStack(id: string): void {
     const tx = this.db.transaction(() => {
+      // Scan runs (and cascade to scan_run_investigations — FK cascade is declarative-only)
+      this.db.prepare("DELETE FROM scan_run_investigations WHERE scan_run_id IN (SELECT id FROM scan_runs WHERE stack_id = ?)").run(id);
+      this.db.prepare("DELETE FROM scan_runs WHERE stack_id = ?").run(id);
       this.db.prepare("DELETE FROM service_metadata WHERE stack_id = ?").run(id);
       this.db.prepare("DELETE FROM hidden_services WHERE stack_id = ?").run(id);
       this.db.prepare("DELETE FROM disabled_skills WHERE stack_id = ?").run(id);
