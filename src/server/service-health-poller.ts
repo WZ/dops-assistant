@@ -165,6 +165,7 @@ export function matchResultsToServices(
       metric["job"],
       metric["instance"],
       metric["service"],
+      metric["app"],
     ].filter((v): v is string => Boolean(v));
 
     for (const candidate of candidates) {
