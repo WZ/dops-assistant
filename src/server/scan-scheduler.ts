@@ -255,6 +255,32 @@ export class ScanScheduler {
   }
 
   /**
+   * Drop all `consecutiveState` entries for a given service. Called when the
+   * per-service override changes (set or cleared) — we can't cheaply diff the
+   * before/after rule sets (the old override shape isn't known here), so the
+   * safe move is to reset every counter for that service. The operator's
+   * intent is "this service's rules just changed", so starting fresh matches
+   * the behavior we already provide for global-rule changes.
+   *
+   * Keys are `"{service}:{ruleName}"` — we match by prefix up to the last
+   * colon, matching resetHysteresisForChangedRules' key-parsing rule.
+   */
+  resetHysteresisForService(service: string): void {
+    let cleared = 0;
+    for (const key of Array.from(this.consecutiveState.keys())) {
+      const colonIdx = key.lastIndexOf(":");
+      if (colonIdx < 0) continue;
+      if (key.slice(0, colonIdx) === service) {
+        this.consecutiveState.delete(key);
+        cleared++;
+      }
+    }
+    if (cleared > 0) {
+      logger.info({ stackId: this.deps.stackId, service, clearedKeys: cleared }, "ScanScheduler: cleared hysteresis state for per-service override change");
+    }
+  }
+
+  /**
    * Drop `consecutiveState` entries whose rule was removed or materially
    * changed. A rule is "materially changed" if its query or threshold changed
    * (same name, different semantics). Changes to `consecutiveTicks` alone

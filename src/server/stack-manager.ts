@@ -532,6 +532,18 @@ export class StackManager {
   }
 
   /**
+   * Reset probe hysteresis state for one service inside one stack. Routes
+   * call this after setting or clearing a per-service scan override, so the
+   * next tick evaluates the (possibly different) rule set from a clean slate
+   * instead of carrying over tick-counts from the prior rule set.
+   */
+  resetScanHysteresisForService(stackId: string, service: string): void {
+    const ctx = this.stacks.get(stackId);
+    if (!ctx) return;
+    ctx.scanScheduler.resetHysteresisForService(service);
+  }
+
+  /**
    * Kick off a recurring TTL reaper. The reaper runs once immediately (so
    * post-deploy the DB state is up to date) and then every `intervalMs`.
    * Returns a handle for the tests; index.ts doesn't need it since

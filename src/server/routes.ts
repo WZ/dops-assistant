@@ -867,7 +867,9 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       return;
     }
     db.setScanOverride(req.stackId, name, JSON.stringify(result.override));
-    stackManager.reloadAllScanSchedulers();
+    // Reset hysteresis for this service: the rule set may have changed, so
+    // any in-flight breach counters from the prior set are now stale.
+    stackManager.resetScanHysteresisForService(req.stackId, name);
     res.json({ service: name, override: result.override });
   });
 
@@ -875,7 +877,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     const name = req.params["name"] as string;
     if (!NAME_PATTERN.test(name)) { res.status(400).json({ error: "Invalid service name" }); return; }
     db.clearScanOverride(req.stackId, name);
-    stackManager.reloadAllScanSchedulers();
+    stackManager.resetScanHysteresisForService(req.stackId, name);
     res.json({ service: name, override: null });
   });
 
