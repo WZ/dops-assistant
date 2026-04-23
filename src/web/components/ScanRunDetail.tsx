@@ -636,6 +636,12 @@ function ExportMenu({
   const { stackFetch } = useStackContext();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState<{ kind: "ok" | "error"; message: string } | null>(null);
+
+  const flashToast = (kind: "ok" | "error", message: string) => {
+    setToast({ kind, message });
+    setTimeout(() => setToast((t) => (t?.message === message ? null : t)), 4000);
+  };
 
   const doCopyLink = async () => {
     try { await copyLink(); } catch { /* ignore */ }
@@ -676,19 +682,26 @@ function ExportMenu({
     }
   };
 
-  // NOTE: Task 26 adds `POST /api/notifications/scan-run/send`. Until then
-  // this will 404 silently — we swallow non-OK responses so the button
-  // lands now and Task 26 is a pure backend diff.
   const doSendToSlack = async () => {
     setBusy(true);
     try {
-      await stackFetch("/api/notifications/scan-run/send", {
+      const res = await stackFetch("/api/notifications/scan-run/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ runId: run.id }),
       });
-    } catch {
-      /* ignore */
+      if (res.ok) {
+        flashToast("ok", "Sent to Slack");
+      } else {
+        let msg = `Slack send failed (${res.status})`;
+        try {
+          const body = await res.json() as { error?: string };
+          if (body.error) msg = body.error;
+        } catch { /* no body */ }
+        flashToast("error", msg);
+      }
+    } catch (err) {
+      flashToast("error", err instanceof Error ? err.message : "Slack send failed");
     } finally {
       setBusy(false);
       setOpen(false);
@@ -705,6 +718,18 @@ function ExportMenu({
       >
         {busy ? "Working\u2026" : "\u22ef Export"}
       </button>
+      {toast && (
+        <div
+          role="status"
+          className={`absolute right-0 top-full z-20 mt-10 rounded-lg border px-3 py-1.5 text-xs shadow-md ${
+            toast.kind === "error"
+              ? "border-destructive/60 bg-destructive/10 text-destructive"
+              : "border-success/60 bg-success/10 text-success"
+          }`}
+        >
+          {toast.message}
+        </div>
+      )}
       {open && (
         <div className="absolute right-0 z-10 mt-1 flex min-w-[180px] flex-col rounded-lg border border-border/60 bg-card p-1 text-sm shadow-md">
           <button

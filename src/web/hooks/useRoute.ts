@@ -24,9 +24,8 @@ export function parseUrl(pathname: string): LeftPaneView {
   const invMatch = p.match(/^\/investigations\/(.+)$/);
   if (invMatch) return { type: "investigation", id: invMatch[1]! };
 
-  // /scan/runs/:id — scan run detail page (Task 23 will flesh out the view;
-  // Task 21 just wires the route + a thin placeholder so the Ops Desk
-  // "Recent Scans" rows have somewhere to navigate.)
+  // /scan/runs/:id — scan run detail page. Navigated to from the Ops Desk
+  // "Recent Scans" rows and the optimistic nav after a manual Scan now.
   const scanRunMatch = p.match(/^\/scan\/runs\/([^/]+)$/);
   if (scanRunMatch) return { type: "scanrun", runId: decodeURIComponent(scanRunMatch[1]!) };
 

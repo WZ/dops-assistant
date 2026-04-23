@@ -1807,7 +1807,9 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
           stackId: run.stackId,
           trigger: run.trigger,
           startedAt: run.startedAt,
-          durationMs: run.probeDurationMs ?? 0,
+          // Wall-clock duration of the full run, matching what the auto-notifier
+          // posts on `scan:complete`. Falls back to 0 for unfinished runs.
+          durationMs: (run.finishedAt ?? run.startedAt) - run.startedAt,
           servicesProbed: run.servicesProbed,
           hitsDispatched: run.hitsDispatched,
           dispatchedServices: investigations.map(i => i.service),
