@@ -44,6 +44,18 @@ const CRON_PRESETS: Array<{ label: string; value: string }> = [
   { label: "Weekly", value: "0 9 * * 1" },
 ];
 
+/**
+ * Browser-detected IANA timezone. Falls back to null on older engines
+ * where Intl.DateTimeFormat().resolvedOptions().timeZone isn't available.
+ */
+function detectBrowserTimezone(): string | null {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
+}
+
 export function ScanTab() {
   const { stackFetch } = useStackContext();
 
@@ -69,7 +81,17 @@ export function ScanTab() {
       if (!dirty) {
         setEnabledInput(settingsData.enabled);
         setCronInput(settingsData.cron);
-        setTimezoneInput(settingsData.timezone);
+        // If the user has never saved a GUI timezone (still using the
+        // config.yaml default), pre-fill with their browser timezone so the
+        // cron schedule runs in local time by default instead of UTC. Users
+        // who explicitly want UTC can clear the field and save.
+        const browserTz = detectBrowserTimezone();
+        if (settingsData.source.timezone === "config" && browserTz && browserTz !== settingsData.timezone) {
+          setTimezoneInput(browserTz);
+          setDirty(true);
+        } else {
+          setTimezoneInput(settingsData.timezone);
+        }
         setRulesInput(settingsData.rules);
       }
     } catch {
@@ -246,7 +268,7 @@ export function ScanTab() {
               spellCheck={false}
             />
             <p className="text-xs text-muted-foreground/50 mt-1.5">
-              The schedule above runs in this timezone. Use an IANA name like <span className="font-mono text-[11px]">America/New_York</span> or <span className="font-mono text-[11px]">UTC</span>.
+              Defaults to your browser's timezone. Accepts any IANA name like <span className="font-mono text-[11px]">America/New_York</span> or <span className="font-mono text-[11px]">UTC</span>.
             </p>
           </div>
 
