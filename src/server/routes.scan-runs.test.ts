@@ -297,3 +297,62 @@ describe("POST /api/scan/trigger — runId in response", () => {
     expect(res.body.runId).toBeNull();
   });
 });
+
+describe("POST /api/notifications/scan-run/send", () => {
+  let ctx: TestCtx;
+  afterEach(() => { ctx?.cleanup(); });
+
+  it("returns 400 when runId is missing", async () => {
+    ctx = makeApp(["stack-a"]);
+    const res = await request(ctx.app).post("/api/notifications/scan-run/send").set("X-Stack-Id", "stack-a").send({});
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 404 when the run does not exist in this stack", async () => {
+    ctx = makeApp(["stack-a"]);
+    const res = await request(ctx.app).post("/api/notifications/scan-run/send").set("X-Stack-Id", "stack-a").send({ runId: "missing" });
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 400 when Slack webhook is not configured", async () => {
+    ctx = makeApp(["stack-a"]);
+    ctx.db.insertScanRun({ id: "r1", stackId: "stack-a", trigger: "manual", startedAt: Date.now() });
+    const res = await request(ctx.app).post("/api/notifications/scan-run/send").set("X-Stack-Id", "stack-a").send({ runId: "r1" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/webhook/i);
+  });
+
+  it("returns 200 on success", async () => {
+    ctx = makeApp(["stack-a"]);
+    ctx.db.insertScanRun({ id: "r1", stackId: "stack-a", trigger: "manual", startedAt: Date.now() });
+    ctx.db.setSetting("notifications.slack.webhookUrl", "https://hooks.slack.com/test");
+    // Mock global fetch to capture the Slack post
+    const origFetch = global.fetch;
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    try {
+      const res = await request(ctx.app).post("/api/notifications/scan-run/send").set("X-Stack-Id", "stack-a").send({ runId: "r1" });
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(true);
+      expect(fetchMock).toHaveBeenCalledOnce();
+      const body = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string);
+      expect(JSON.stringify(body)).toContain("/scan/runs/r1");
+    } finally {
+      global.fetch = origFetch;
+    }
+  });
+
+  it("returns 502 when Slack fetch fails", async () => {
+    ctx = makeApp(["stack-a"]);
+    ctx.db.insertScanRun({ id: "r1", stackId: "stack-a", trigger: "manual", startedAt: Date.now() });
+    ctx.db.setSetting("notifications.slack.webhookUrl", "https://hooks.slack.com/test");
+    const origFetch = global.fetch;
+    global.fetch = vi.fn().mockRejectedValue(new Error("network")) as unknown as typeof fetch;
+    try {
+      const res = await request(ctx.app).post("/api/notifications/scan-run/send").set("X-Stack-Id", "stack-a").send({ runId: "r1" });
+      expect([502, 500]).toContain(res.status);
+    } finally {
+      global.fetch = origFetch;
+    }
+  });
+});

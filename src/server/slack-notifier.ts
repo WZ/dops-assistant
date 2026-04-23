@@ -119,11 +119,14 @@ export interface ScanRunSummary {
 }
 
 /**
- * Post a run-level scan summary to Slack. Called once per scan run (not per
- * dispatched investigation — those fire via the existing notifySlack path).
- * Fire-and-forget, never throws.
+ * Post a run-level scan summary to Slack. Builds the Block Kit payload and
+ * does the fetch — THROWS on fetch or non-OK response so callers that need
+ * to surface errors (e.g., a user-initiated "Send to Slack" action) can.
+ *
+ * For the automatic scan-complete path that must never disrupt the scan
+ * flow, use `notifySlackOnScanComplete` which wraps + swallows errors.
  */
-export async function notifySlackOnScanComplete(
+export async function sendSlackScanRunPost(
   opts: NotifySlackScanRunOptions,
   summary: ScanRunSummary,
 ): Promise<void> {
@@ -150,13 +153,28 @@ export async function notifySlackOnScanComplete(
     ],
   });
 
+  const resp = await fetch(opts.slackWebhookUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ blocks }),
+  });
+  if (!resp.ok) {
+    throw new Error(`Slack post failed: ${resp.status}`);
+  }
+}
+
+/**
+ * Post a run-level scan summary to Slack. Called once per scan run (not per
+ * dispatched investigation — those fire via the existing notifySlack path).
+ * Fire-and-forget, never throws.
+ */
+export async function notifySlackOnScanComplete(
+  opts: NotifySlackScanRunOptions,
+  summary: ScanRunSummary,
+): Promise<void> {
   try {
-    await fetch(opts.slackWebhookUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ blocks }),
-    });
+    await sendSlackScanRunPost(opts, summary);
   } catch (err) {
-    logger.warn({ err, runId: summary.runId }, "notifySlackOnScanComplete: fetch failed");
+    logger.warn({ err, runId: summary.runId }, "notifySlackOnScanComplete: post failed");
   }
 }

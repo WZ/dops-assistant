@@ -28,6 +28,7 @@ import { parsePrometheusResult } from "./service-health-poller.js";
 import nodemailer from "nodemailer";
 import type { RcaReport } from "../types/rca-types.js";
 import { notifyEmail } from "./email-notifier.js";
+import { sendSlackScanRunPost } from "./slack-notifier.js";
 import { ALL_SOURCES } from "../types/notifications.js";
 
 /**
@@ -1764,6 +1765,57 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       res.json({ ok: true });
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : "Failed to send test notification" });
+    }
+  });
+
+  /**
+   * POST /api/notifications/scan-run/send — user-initiated "Send to Slack"
+   * for a specific scan run (from the ScanRunDetail Export menu). Builds
+   * the same Block Kit payload as the automatic scan-complete notifier,
+   * but surfaces errors instead of swallowing them so the UI can show
+   * "webhook not configured" or "Slack post failed" to the operator.
+   *
+   * Response contract:
+   *  - 200 { ok: true } — Slack POST succeeded.
+   *  - 400 — runId missing or Slack webhook not configured.
+   *  - 404 — scan run not found in this stack.
+   *  - 502 — Slack endpoint rejected the payload or network error.
+   */
+  app.post("/api/notifications/scan-run/send", async (req: Request, res: Response) => {
+    const body = req.body as { runId?: string };
+    if (!body.runId || typeof body.runId !== "string") {
+      res.status(400).json({ error: "runId required" });
+      return;
+    }
+    const run = db.getScanRun(req.stackId, body.runId);
+    if (!run) {
+      res.status(404).json({ error: "Scan run not found" });
+      return;
+    }
+    const url = db.getSetting("notifications.slack.webhookUrl") ?? config.webhook?.slackWebhookUrl;
+    if (!url) {
+      res.status(400).json({ error: "Slack webhook not configured" });
+      return;
+    }
+    const investigations = db.getScanRunInvestigations(body.runId);
+    const appBaseUrl = config.notifications?.email?.appBaseUrl ?? "http://localhost:3000";
+    try {
+      await sendSlackScanRunPost(
+        { slackWebhookUrl: url, appBaseUrl },
+        {
+          runId: run.id,
+          stackId: run.stackId,
+          trigger: run.trigger,
+          startedAt: run.startedAt,
+          durationMs: run.probeDurationMs ?? 0,
+          servicesProbed: run.servicesProbed,
+          hitsDispatched: run.hitsDispatched,
+          dispatchedServices: investigations.map(i => i.service),
+        },
+      );
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
     }
   });
 
