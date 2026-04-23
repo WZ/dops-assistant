@@ -9,6 +9,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ChatPane } from "./components/ChatPane";
 import { Dashboard } from "./components/Dashboard";
 import { InvestigationPane } from "./components/InvestigationPane";
+import { ScanRunDetail } from "./components/ScanRunDetail";
 import { Sidebar } from "./components/Sidebar";
 import type { SidebarPage } from "./components/Sidebar";
 import { ServicesPage } from "./components/ServicesPage";
@@ -392,24 +393,12 @@ export function App() {
                       onProviderSaved={refreshSetupStage}
                     />
                   ) : leftPane.type === "scanrun" ? (
-                    // Placeholder — Task 23 replaces this with the real
-                    // ScanRunDetail page. Kept intentionally thin so the
-                    // /scan/runs/:id route exists the moment `RecentScansSection`
-                    // starts firing onOpenRun().
-                    <div className="h-full flex flex-col items-center justify-center gap-3 p-8 text-center">
-                      <h2 className="font-mono text-sm uppercase tracking-[0.12em] text-foreground/80">
-                        Scan run {leftPane.runId}
-                      </h2>
-                      <p className="font-mono text-[11px] text-muted-foreground/70 max-w-md">
-                        Detail page coming in the next task.
-                      </p>
-                      <button
-                        className="mt-2 font-mono text-[11px] uppercase tracking-[0.12em] text-primary hover:text-primary/80"
-                        onClick={() => setLeftPane({ type: "dashboard" })}
-                      >
-                        &larr; Back to dashboard
-                      </button>
-                    </div>
+                    <ScanRunDetail
+                      runId={leftPane.runId}
+                      onBack={() => setLeftPane({ type: "dashboard" })}
+                      onOpenInvestigation={(invId) => setLeftPane({ type: "investigation", id: invId })}
+                      onSwitchStack={switchStack}
+                    />
                   ) : leftPane.type === "notfound" ? (
                     <div className="h-full flex flex-col items-center justify-center gap-3 p-8 text-center">
                       <h2 className="font-mono text-sm uppercase tracking-[0.12em] text-foreground/80">
