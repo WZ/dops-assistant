@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.3.0] - 2026-04-23
+
+### Changed
+- **Services scaled to zero replicas now show as DOWN instead of UNKNOWN.** Previously, a deployment with `replicas=0` (intentionally scaled down or freshly turned off) was classified as UNKNOWN — the same bucket as services with no metric data at all. That matched the engineering intuition ("scaled down is not a failure") but not the operator intuition ("I turned this off — the system should notice"). Now every scaled-to-zero workload surfaces as DOWN in the Services page. Services with no metric presence at all still show as UNKNOWN.
+
+  The auto-investigation behavior is unchanged on boot: the poller continues to skip first-poll investigations for services that are DOWN only because of `replicas=0`, so a stack with N intentionally-disabled services does not fire N LLM investigations on every server restart. A real scrape failure (`up=0`) still auto-investigates on first poll, as before.
+
 ## [0.1.2.0] - 2026-04-23
 
 ### Added
