@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import express, { type Express } from "express";
 import request from "supertest";
 import { registerRoutes } from "./routes.js";
@@ -25,7 +25,14 @@ interface TestCtx {
   cleanup: () => void;
 }
 
-function makeApp(stacks: string[] = ["stack-a"]): TestCtx {
+interface MakeAppOptions {
+  stacks?: string[];
+  scanScheduler?: unknown;
+}
+
+function makeApp(optsOrStacks: string[] | MakeAppOptions = ["stack-a"]): TestCtx {
+  const opts: MakeAppOptions = Array.isArray(optsOrStacks) ? { stacks: optsOrStacks } : optsOrStacks;
+  const stacks = opts.stacks ?? ["stack-a"];
   const dbPath = join(tmpdir(), `routes-scan-runs-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`);
   const db = new Database(dbPath);
   const app = express();
@@ -39,7 +46,7 @@ function makeApp(stacks: string[] = ["stack-a"]): TestCtx {
     serviceRegistry: { load: () => [] },
     providerRegistry: { getAll: () => [], getToolsForProvider: async () => [], updateEnabledTools: async () => {} },
     investigationStore: {},
-    scanScheduler: null,
+    scanScheduler: opts.scanScheduler ?? null,
   }) as any;
 
   const mockStackManager = {
@@ -225,5 +232,68 @@ describe("GET /api/scan/runs/:id", () => {
 
     const res = await request(ctx.app).get("/api/scan/runs/r1").set("X-Stack-Id", "stack-a");
     expect(res.body.investigations[0].reportSummary).toBeNull();
+  });
+});
+
+describe("POST /api/scan/trigger — runId in response", () => {
+  let ctx: TestCtx;
+  afterEach(() => { ctx?.cleanup(); });
+
+  function makeScheduler(overrides: { enabled?: boolean; ticking?: boolean; lastRunId?: string | null } = {}) {
+    const triggerNow = vi.fn(async () => undefined);
+    const lastRunId = "lastRunId" in overrides ? overrides.lastRunId! : "fake-run-id";
+    const getLastRunId = vi.fn(() => lastRunId);
+    const getStatus = vi.fn(() => ({
+      enabled: overrides.enabled ?? true,
+      ticking: overrides.ticking ?? false,
+      cron: "0 */4 * * *",
+      timezone: "UTC",
+      nextRun: null,
+      lastRun: null,
+      lastError: null,
+      dropsByConcurrency: 0,
+    }));
+    return { triggerNow, getLastRunId, getStatus };
+  }
+
+  it("includes runId in the 202 success response body", async () => {
+    const scheduler = makeScheduler({ lastRunId: "run-xyz" });
+    ctx = makeApp({ stacks: ["stack-a"], scanScheduler: scheduler });
+
+    const res = await request(ctx.app).post("/api/scan/trigger").set("X-Stack-Id", "stack-a");
+    expect(res.status).toBe(202);
+    expect(res.body.runId).toBe("run-xyz");
+    expect(res.body.message).toBe("Probe pass dispatched");
+    expect(scheduler.triggerNow).toHaveBeenCalledWith("manual");
+    expect(scheduler.getLastRunId).toHaveBeenCalled();
+  });
+
+  it("returns 400 when scan is disabled (no runId in error body)", async () => {
+    const scheduler = makeScheduler({ enabled: false });
+    ctx = makeApp({ stacks: ["stack-a"], scanScheduler: scheduler });
+
+    const res = await request(ctx.app).post("/api/scan/trigger").set("X-Stack-Id", "stack-a");
+    expect(res.status).toBe(400);
+    expect(res.body.runId).toBeUndefined();
+    expect(scheduler.triggerNow).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 when a tick is already in flight (no runId in error body)", async () => {
+    const scheduler = makeScheduler({ ticking: true });
+    ctx = makeApp({ stacks: ["stack-a"], scanScheduler: scheduler });
+
+    const res = await request(ctx.app).post("/api/scan/trigger").set("X-Stack-Id", "stack-a");
+    expect(res.status).toBe(409);
+    expect(res.body.runId).toBeUndefined();
+    expect(scheduler.triggerNow).not.toHaveBeenCalled();
+  });
+
+  it("includes runId: null when no tick has ever run yet", async () => {
+    const scheduler = makeScheduler({ lastRunId: null });
+    ctx = makeApp({ stacks: ["stack-a"], scanScheduler: scheduler });
+
+    const res = await request(ctx.app).post("/api/scan/trigger").set("X-Stack-Id", "stack-a");
+    expect(res.status).toBe(202);
+    expect(res.body.runId).toBeNull();
   });
 });

@@ -361,10 +361,16 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     });
     // Fire-and-forget — don't await. The tick runs asynchronously and the
     // UI polls /api/scan/status to observe state transitions.
-    void scheduler.triggerNow();
+    //
+    // `scheduler.triggerNow()` is async but executes synchronously through
+    // `scanRunStore.begin(...)` before its first `await runProbe(...)`, so
+    // `getLastRunId()` on the next line reliably returns the new run's id.
+    // Clients use this to navigate to /scan/runs/:runId for live progress.
+    void scheduler.triggerNow("manual");
     res.status(202).json({
       message: "Probe pass dispatched",
       status: scheduler.getStatus(),
+      runId: scheduler.getLastRunId(),
     });
   });
 
