@@ -469,6 +469,7 @@ export class ScanScheduler {
         rulesApplied: computeApplicableRulesCount(services, parsedOverrides, this.scan.probe),
         queriesExecuted: probeResult.queriesExecuted,
         probeErrors: probeResult.probeErrors,
+        queriesEmpty: probeResult.queriesEmpty,
         durationMs: probeDurationMs,
         detail: { queryTimeoutMs: this.scan.probe.queryTimeoutMs },
       });

@@ -151,6 +151,7 @@ export interface ScanRunRow {
   rulesApplied: number;
   queriesExecuted: number;
   probeErrors: number;
+  queriesEmpty: number;
   probeDurationMs: number | null;
   probeDetailJson: string | null;
   hitsRaw: number;
@@ -187,6 +188,7 @@ export interface UpdateScanRunInput {
   rulesApplied?: number;
   queriesExecuted?: number;
   probeErrors?: number;
+  queriesEmpty?: number;
   probeDurationMs?: number;
   probeDetailJson?: string;
   hitsRaw?: number;
@@ -216,6 +218,8 @@ function scanRunFromDbRow(r: Record<string, unknown>): ScanRunRow {
     rulesApplied: r["rules_applied"] as number,
     queriesExecuted: r["queries_executed"] as number,
     probeErrors: r["probe_errors"] as number,
+    // Column added in a later migration; pre-existing rows default to 0.
+    queriesEmpty: (r["queries_empty"] as number | null) ?? 0,
     probeDurationMs: (r["probe_duration_ms"] as number | null) ?? null,
     probeDetailJson: (r["probe_detail_json"] as string | null) ?? null,
     hitsRaw: r["hits_raw"] as number,
@@ -338,6 +342,7 @@ export class Database {
         rules_applied       INTEGER NOT NULL DEFAULT 0,
         queries_executed    INTEGER NOT NULL DEFAULT 0,
         probe_errors        INTEGER NOT NULL DEFAULT 0,
+        queries_empty       INTEGER NOT NULL DEFAULT 0,
         probe_duration_ms   INTEGER,
         probe_detail_json   TEXT,
         hits_raw            INTEGER NOT NULL DEFAULT 0,
@@ -368,6 +373,12 @@ export class Database {
 
       CREATE INDEX IF NOT EXISTS scan_run_inv_by_inv ON scan_run_investigations(investigation_id);
     `);
+
+    // Additive migration: split the old `probe_errors` counter into real
+    // failures vs empty vectors. Existing rows default to 0 and will look
+    // the same in the UI until the next scan tick writes real numbers.
+    const addEmptyCol = "ALTER TABLE scan_runs ADD COLUMN queries_empty INTEGER NOT NULL DEFAULT 0";
+    try { this.db.exec(addEmptyCol); } catch { /* column already exists */ }
   }
 
   // ── Email recipients migration ─────────────────────────────────────────
@@ -1325,6 +1336,7 @@ export class Database {
       rulesApplied: "rules_applied",
       queriesExecuted: "queries_executed",
       probeErrors: "probe_errors",
+      queriesEmpty: "queries_empty",
       probeDurationMs: "probe_duration_ms",
       probeDetailJson: "probe_detail_json",
       hitsRaw: "hits_raw",

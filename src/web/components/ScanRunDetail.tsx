@@ -40,6 +40,7 @@ interface ScanRunApiRun {
   rulesApplied: number;
   queriesExecuted: number;
   probeErrors: number;
+  queriesEmpty: number;
   probeDurationMs: number | null;
   probeDetailJson: string | null;
   hitsRaw: number;
@@ -195,6 +196,7 @@ export function ScanRunDetail({ runId, onBack, onOpenInvestigation, onSwitchStac
               run.rulesApplied = s.rulesApplied;
               run.queriesExecuted = s.queriesExecuted;
               run.probeErrors = s.probeErrors;
+              run.queriesEmpty = s.queriesEmpty;
               run.probeDurationMs = s.durationMs;
             } else if (msg.type === "scan:triage_complete") {
               const d = msg.detail;
@@ -469,11 +471,22 @@ function ProbeCard({ run }: { run: ScanRunApiRun }) {
       <p className="text-sm text-foreground/90">
         {run.servicesProbed} services &middot; {run.queriesExecuted} queries &middot;{" "}
         <span className={run.probeErrors > 0 ? "text-warning" : undefined}>
-          {run.probeErrors} errors
+          {run.probeErrors} {run.probeErrors === 1 ? "error" : "errors"}
         </span>
+        {run.queriesEmpty > 0 && (
+          <>
+            {" "}&middot;{" "}
+            <span
+              className="text-muted-foreground"
+              title="Queries that completed successfully but returned no matching data. Normal for per-service rules that don't apply to every service."
+            >
+              {run.queriesEmpty} no-data
+            </span>
+          </>
+        )}
         {run.probeDurationMs != null && ` \u00b7 ${run.probeDurationMs}ms`}
       </p>
-      {detail !== null && run.probeErrors > 0 && (
+      {detail !== null && (run.probeErrors > 0 || run.queriesEmpty > 0) && (
         <>
           <button
             type="button"

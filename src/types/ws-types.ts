@@ -69,7 +69,7 @@ export type ServerMessage =
   | { type: "stack:health"; stacks: Array<{ id: string; slug: string; healthSummary: { healthy: number; degraded: number; down: number; unknown: number; total: number } }> }
   | { type: "stack:switched"; stackId: string }
   | { type: "scan:started"; runId: string; stackId: string; trigger: "manual" | "cron"; startedAt: number }
-  | { type: "scan:probe_complete"; runId: string; stackId: string; stats: { servicesProbed: number; rulesApplied: number; queriesExecuted: number; probeErrors: number; durationMs: number } }
+  | { type: "scan:probe_complete"; runId: string; stackId: string; stats: { servicesProbed: number; rulesApplied: number; queriesExecuted: number; probeErrors: number; queriesEmpty: number; durationMs: number } }
   | { type: "scan:triage_complete"; runId: string; stackId: string; detail: { hitsRaw: number; hitsAfterDedup: number; dispatched: Array<{ service: string; ruleName: string; value: number; severity: number }>; dropped: Array<{ service: string; ruleName: string; value: number; severity: number }>; dedupedList: Array<{ service: string; ruleName: string; reason: string }> } }
   | { type: "scan:investigation_dispatched"; runId: string; stackId: string; investigationId: string; service: string; ruleName: string }
   | { type: "scan:complete"; runId: string; stackId: string; status: "complete"; durationMs: number; hitsDispatched: number }

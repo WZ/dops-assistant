@@ -28,6 +28,7 @@ export interface ProbeStats {
   rulesApplied: number;
   queriesExecuted: number;
   probeErrors: number;
+  queriesEmpty: number;
   durationMs: number;
   detail?: unknown; // JSON-serializable; errors, slow queries, etc.
 }
@@ -122,6 +123,7 @@ export function createScanRunStore(deps: ScanRunStoreDeps): ScanRunStore {
             rulesApplied: stats.rulesApplied,
             queriesExecuted: stats.queriesExecuted,
             probeErrors: stats.probeErrors,
+            queriesEmpty: stats.queriesEmpty,
             probeDurationMs: stats.durationMs,
             probeDetailJson: stats.detail !== undefined ? JSON.stringify(stats.detail) : undefined,
           });

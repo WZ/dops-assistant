@@ -70,14 +70,30 @@ export interface ProbeHit {
 }
 
 /**
+ * Per-query outcome. `ok` carries a numeric scalar; `empty` means the query
+ * succeeded but returned no rows (no data for this service/rule combo);
+ * `error` means the MCP tool threw, timed out, or returned a parse-failing
+ * payload. Value is always NaN for `empty` and `error` so scoring code that
+ * treats NaN as no-trip keeps working.
+ */
+export type InstantOutcome = "ok" | "empty" | "error";
+export interface InstantResult {
+  kind: InstantOutcome;
+  value: number;
+}
+
+/**
  * Return shape for runProbe. Carries the scored hits alongside stats that
- * feed the per-scan-run dashboard (queries executed, query failures). NaN
- * results are the v1 proxy for "errored"; see runProbe body.
+ * feed the per-scan-run dashboard. `probeErrors` counts real MCP/parse
+ * failures. `queriesEmpty` counts queries that succeeded but returned no
+ * rows — most per-service rules on a healthy cluster fall here and it is
+ * NOT an error condition.
  */
 export interface ProbeResult {
   hits: ProbeHit[];
   queriesExecuted: number;
   probeErrors: number;
+  queriesEmpty: number;
 }
 
 export interface ProbeOptions {
@@ -284,9 +300,10 @@ function scalarFromPromResult(raw: unknown): number {
 // ── Instant query executors (metrics + logs) ────────────────────────────────
 
 /**
- * Execute one instant PromQL query via the metrics MCP tool. Returns the
- * numeric scalar (first entry's sample), or NaN if the vector is empty /
- * parse fails / timeout. Never throws.
+ * Execute one instant PromQL query via the metrics MCP tool. Never throws.
+ * Returns a discriminated outcome so the caller can distinguish real MCP
+ * failures from empty vectors (which are normal and expected whenever a
+ * rule's labels don't match any active series).
  */
 async function executeInstant(
   tool: ToolExecutor,
@@ -294,7 +311,7 @@ async function executeInstant(
   datasourceUid: string | undefined,
   signal: AbortSignal | undefined,
   queryTimeoutMs: number,
-): Promise<number> {
+): Promise<InstantResult> {
   const now = new Date();
   const args: Record<string, unknown> = {
     expr: query,
@@ -304,8 +321,11 @@ async function executeInstant(
   };
   if (datasourceUid) args.datasourceUid = datasourceUid;
   const raw = await withTimeoutAndAbort(tool, args, signal, queryTimeoutMs);
-  if (raw === undefined) return Number.NaN;
-  return scalarFromPromResult(raw);
+  if (raw === undefined) return { kind: "error", value: Number.NaN };
+  const value = scalarFromPromResult(raw);
+  return Number.isFinite(value)
+    ? { kind: "ok", value }
+    : { kind: "empty", value: Number.NaN };
 }
 
 /**
@@ -326,8 +346,9 @@ async function executeInstantLogs(
   lokiDatasourceUid: string | undefined,
   signal: AbortSignal | undefined,
   queryTimeoutMs: number,
-): Promise<number> {
-  if (!lokiDatasourceUid) return Number.NaN;
+): Promise<InstantResult> {
+  // No Loki datasource wired is a config gap, not a query error. Treat as empty.
+  if (!lokiDatasourceUid) return { kind: "empty", value: Number.NaN };
   const now = new Date();
   const args: Record<string, unknown> = {
     expr: query,
@@ -337,8 +358,11 @@ async function executeInstantLogs(
     endTime: now.toISOString(),
   };
   const raw = await withTimeoutAndAbort(tool, args, signal, queryTimeoutMs);
-  if (raw === undefined) return Number.NaN;
-  return scalarFromPromResult(raw);
+  if (raw === undefined) return { kind: "error", value: Number.NaN };
+  const value = scalarFromPromResult(raw);
+  return Number.isFinite(value)
+    ? { kind: "ok", value }
+    : { kind: "empty", value: Number.NaN };
 }
 
 // ── Track assembly helpers ──────────────────────────────────────────────────
@@ -404,7 +428,7 @@ function parseWindowToMinutes(window: string): number {
 export async function runProbe(opts: ProbeOptions): Promise<ProbeResult> {
   const { services, probe, providers, datasourceUid, lokiDatasourceUid, signal, consecutiveState, registryStore } = opts;
 
-  if (services.length === 0) return { hits: [], queriesExecuted: 0, probeErrors: 0 };
+  if (services.length === 0) return { hits: [], queriesExecuted: 0, probeErrors: 0, queriesEmpty: 0 };
 
   // Atomic registry snapshot — one read per tick, consistent view of
   // services + globalProbeRules even if discovery runs concurrently.
@@ -417,12 +441,12 @@ export async function runProbe(opts: ProbeOptions): Promise<ProbeResult> {
     metricsTools = (await getToolsByRole(providers, "metrics")) as Record<string, unknown>;
   } catch (err) {
     logger.warn({ err }, "anomaly-probe: failed to resolve metrics MCP tools, skipping tick");
-    return { hits: [], queriesExecuted: 0, probeErrors: 0 };
+    return { hits: [], queriesExecuted: 0, probeErrors: 0, queriesEmpty: 0 };
   }
   const metricsTool = findMetricQueryTool(metricsTools);
   if (!metricsTool) {
     logger.warn("anomaly-probe: no metric query tool found, skipping tick");
-    return { hits: [], queriesExecuted: 0, probeErrors: 0 };
+    return { hits: [], queriesExecuted: 0, probeErrors: 0, queriesEmpty: 0 };
   }
 
   // Resolve logs MCP tool if available. Missing logs tool is NOT fatal —
@@ -548,10 +572,14 @@ export async function runProbe(opts: ProbeOptions): Promise<ProbeResult> {
   }
 
   // ── Execute all tasks under one shared concurrency cap ──────────────────
-  const values = await mapWithConcurrency(tasks, probe.concurrency, async (task) => {
-    if (signal?.aborted) return Number.NaN;
+  const results = await mapWithConcurrency<Task, InstantResult>(tasks, probe.concurrency, async (task) => {
+    // External abort is not a query error — treat as empty so it doesn't
+    // inflate the error count.
+    if (signal?.aborted) return { kind: "empty", value: Number.NaN };
+    // Log-source rule on a stack without a Loki datasource wired: config
+    // gap, not a query failure.
     if (task.usesLogs) {
-      if (!logsTool) return Number.NaN;
+      if (!logsTool) return { kind: "empty", value: Number.NaN };
       return executeInstantLogs(logsTool, task.query, lokiDatasourceUid, signal, probe.logsQueryTimeoutMs);
     }
     return executeInstant(metricsTool, task.query, datasourceUid, signal, probe.queryTimeoutMs);
@@ -561,7 +589,7 @@ export async function runProbe(opts: ProbeOptions): Promise<ProbeResult> {
   const hits: ProbeHit[] = [];
   for (let i = 0; i < tasks.length; i++) {
     const task = tasks[i]!;
-    const value = values[i]!;
+    const value = results[i]!.value;
     const key = stateKey(task.service, task.origin, task.rule.name);
     const tripped = evaluateThreshold(value, task.rule.threshold);
 
@@ -588,13 +616,21 @@ export async function runProbe(opts: ProbeOptions): Promise<ProbeResult> {
     }
   }
 
-  // NaN values are the v1 proxy for "query errored or returned empty vector".
-  // If we ever need to split those two outcomes, promote executeInstant to
-  // return a discriminated union and track errors explicitly.
+  // Split outcomes: real failures (MCP threw / timeout / parse-fail) are
+  // surfaced as errors; empty vectors on a per-service rule are the common,
+  // healthy no-match case and tracked separately so they don't poison the
+  // error signal.
+  let probeErrors = 0;
+  let queriesEmpty = 0;
+  for (const r of results) {
+    if (r.kind === "error") probeErrors++;
+    else if (r.kind === "empty") queriesEmpty++;
+  }
   return {
     hits,
     queriesExecuted: tasks.length,
-    probeErrors: values.filter((v) => Number.isNaN(v)).length,
+    probeErrors,
+    queriesEmpty,
   };
 }
 

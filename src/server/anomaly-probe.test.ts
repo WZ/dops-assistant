@@ -736,6 +736,38 @@ describe("runProbe — stats return value", () => {
 
     expect(result.queriesExecuted).toBe(1);
     expect(result.probeErrors).toBe(1);
+    expect(result.queriesEmpty).toBe(0);
     expect(result.hits).toEqual([]);
+  });
+
+  it("separates empty-vector results from real errors (regression)", async () => {
+    // A rule that returns a valid but empty Prometheus vector is NOT an error —
+    // it's the healthy "no data matches these labels for this service" case.
+    // Before the split, both outcomes collapsed to `probeErrors` and the UI
+    // alarmed in amber on a healthy cluster. This test pins the split.
+    const execute = vi.fn()
+      .mockResolvedValueOnce(promResult(1))        // svc-a → ok (up=1, not tripped)
+      .mockResolvedValueOnce(emptyPromResult())    // svc-b → empty vector
+      .mockRejectedValueOnce(new Error("MCP dead")); // svc-c → real error
+
+    mockTools = { query_prometheus: { execute } };
+
+    const state = new Map<string, number>();
+    const result = await runProbe({
+      services: ["svc-a", "svc-b", "svc-c"],
+      probe: buildProbe({
+        metrics: [
+          { name: "availability", query: 'up{service="{service}"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 1 },
+        ],
+      }),
+      providers, datasourceUid: "uid",
+      consecutiveState: state,
+      registryStore: fakeRegistryStore(),
+    });
+
+    expect(result.queriesExecuted).toBe(3);
+    expect(result.probeErrors).toBe(1);   // only the real throw
+    expect(result.queriesEmpty).toBe(1);  // the empty-vector response
+    expect(result.hits).toEqual([]);      // nothing tripped (1 < 1 is false, NaN doesn't trip)
   });
 });
