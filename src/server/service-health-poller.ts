@@ -5,8 +5,19 @@
  * Health states:
  *   "healthy"  — service found with replicas/targets up
  *   "degraded" — partial results (some replicas/targets up but not all)
- *   "down"     — service found but no replicas/targets up
- *   "unknown"  — service not found in any metric query result
+ *   "down"     — service found but no replicas/targets up, OR the deployment
+ *                is scaled to zero. We treat both the same in the UI so that
+ *                "I turned this off" shows as DOWN (matching operator
+ *                intuition) rather than UNKNOWN.
+ *   "unknown"  — service not found in any metric query result (metric system
+ *                has no data about this service at all)
+ *
+ * First-poll silence: on server start, the poller fires onTransition for any
+ * service already DOWN so pre-existing outages trigger auto-investigation.
+ * An exception: if the only evidence of "down" is `replicas=0` (intentional
+ * scale-down), we suppress the first-poll fire to avoid burning LLM tokens
+ * on services that were turned off on purpose. The UI still shows DOWN; only
+ * the auto-investigation is silenced.
  *
  * Follows the health-monitor.ts pattern: timer + cached results + start/stop.
  */
@@ -127,8 +138,11 @@ export function parsePrometheusResult(raw: unknown): PrometheusResultEntry[] {
  * Label precedence for name matching (in order):
  *   deployment → statefulset → job → instance → service
  *
- * `zeroMeans` controls how `value === 0` is classified — the three batch queries
- * (replicas vs. `up`) have OPPOSITE semantics for zero:
+ * `zeroMeans` controls how `value === 0` is classified. Both replica batches
+ * and the `up` batch currently pass `"down"`, so `replicas=0` and `up=0` both
+ * surface as DOWN in the UI. The poller separately tracks which batch produced
+ * the DOWN verdict (`downViaUp`) so it can silence first-poll auto-investigations
+ * for workloads that are DOWN only because of `replicas=0`:
  *
  *                    matchResultsToServices (per-batch)
  *                              │
@@ -138,7 +152,7 @@ export function parsePrometheusResult(raw: unknown): PrometheusResultEntry[] {
  *                              no
  *                              │
  *                 entry.value == 0 ? ────── zeroMeans
- *                              │           ("down" for up, "unknown" for replicas)
+ *                              │
  *                              no (NaN / missing)
  *                              │
  *                              v
@@ -204,9 +218,11 @@ export function matchResultsToServices(
         } else if (val > 0) {
           result.set(matchedName, "healthy");
         } else {
-          // val === 0 — semantics depend on the metric family (zeroMeans).
-          // `up = 0` is a real scrape failure (down). `replicas = 0` is a
-          // scaled-down workload (unknown, not a failure).
+          // val === 0 — semantics depend on the caller-supplied `zeroMeans`.
+          // In the current poller wiring all four batches pass "down", so
+          // `replicas=0` (scaled-down) and `up=0` (scrape failure) both read
+          // as DOWN. The poller's outer loop keeps them apart via `downViaUp`
+          // to decide first-poll transition silencing.
           result.set(matchedName, zeroMeans);
         }
         break;
@@ -312,10 +328,14 @@ export class ServiceHealthPoller {
       // Run the 4 batch queries in parallel — query raw metrics (not > 0 / == 1)
       // so that zero-replica or down services appear in results with value 0.
       // matchResultsToServices handles value-based health classification.
-      // Each batch has different semantics for value=0:
-      //   - replicas metrics:        0 = intentionally scaled down (unknown)
-      //   - daemonset desired count: 0 = no nodes match selector (unknown)
-      //   - up metric:               0 = scrape target is down (down)
+      // All four batches now treat value=0 as DOWN so the UI reads the same way
+      // the operator expects ("I turned this off" → DOWN, not UNKNOWN). The
+      // difference between batches is captured by `silentOnFirstPoll`:
+      //   - replicas metrics (0 = intentionally scaled down): silent on first
+      //     poll so that a stack with 20 scaled-down services doesn't fire 20
+      //     auto-investigations on server boot.
+      //   - up metric (0 = scrape target unreachable, real outage): always
+      //     fires onTransition, including on first poll.
       const [deploymentEntries, statefulsetEntries, daemonsetEntries, upEntries] = await Promise.all([
         this.runQuery(queryTool, "kube_deployment_status_replicas", promDsUid),
         this.runQuery(queryTool, "kube_statefulset_status_replicas", promDsUid),
@@ -323,24 +343,30 @@ export class ServiceHealthPoller {
         this.runQuery(queryTool, "up", promDsUid),
       ]);
 
-      // Match each batch separately with its own zero-semantics, then merge
-      // with priority healthy > down > unknown.
+      // Match each batch separately, then merge with priority healthy > down > unknown.
       const batches = [
-        { entries: deploymentEntries, zeroMeans: "unknown" as const },
-        { entries: statefulsetEntries, zeroMeans: "unknown" as const },
-        { entries: daemonsetEntries, zeroMeans: "unknown" as const },
-        { entries: upEntries, zeroMeans: "down" as const },
+        { entries: deploymentEntries, silentOnFirstPoll: true },
+        { entries: statefulsetEntries, silentOnFirstPoll: true },
+        { entries: daemonsetEntries, silentOnFirstPoll: true },
+        { entries: upEntries, silentOnFirstPoll: false },
       ];
       const newHealth = new Map<string, HealthStatus>();
-      for (const { entries, zeroMeans } of batches) {
-        const partial = matchResultsToServices(entries, serviceNames, zeroMeans);
+      // Services whose DOWN status came from a non-silent batch (i.e. real
+      // scrape failure via `up=0`). Used below to decide whether first-poll
+      // transitions fire. A service absent from this set whose status is
+      // "down" is "down only because of replicas=0" → silent on first poll.
+      const downViaUp = new Set<string>();
+      for (const { entries, silentOnFirstPoll } of batches) {
+        const partial = matchResultsToServices(entries, serviceNames, "down");
         for (const [service, status] of partial) {
           const existing = newHealth.get(service);
           if (existing === "healthy") continue;
           if (status === "healthy") {
             newHealth.set(service, "healthy");
+            downViaUp.delete(service);
           } else if (status === "down") {
             newHealth.set(service, "down");
+            if (!silentOnFirstPoll) downViaUp.add(service);
           } else if (existing === undefined) {
             newHealth.set(service, "unknown");
           }
@@ -363,9 +389,12 @@ export class ServiceHealthPoller {
         // Fire transition when status changes. On first poll (previous=undefined),
         // treat "down" or "degraded" as a transition from "unknown" so pre-existing
         // failures trigger auto-investigation instead of being silently cached.
+        // Exception: if "down" came only from replicas=0 (scaled-down workload,
+        // not in downViaUp), skip the first-poll fire — the operator chose to
+        // turn it off, no need to auto-investigate.
         const isTransition = previous !== undefined
           ? previous !== status
-          : (status === "down" || status === "degraded");
+          : ((status === "down" && downViaUp.has(service)) || status === "degraded");
         if (isTransition && this.onTransition) {
           try {
             this.onTransition(service, previous ?? "unknown", status);

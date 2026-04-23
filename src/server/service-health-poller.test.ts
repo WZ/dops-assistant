@@ -342,7 +342,11 @@ describe("ServiceHealthPoller", () => {
       expect(summary.total).toBe(3);
     });
 
-    it("marks service as unknown when replicas = 0 (scaled-down workload is not an outage)", async () => {
+    it("marks service as down when replicas = 0 (scaled-down workload surfaces as DOWN in the UI)", async () => {
+      // After the B-minus change, replicas=0 classifies as "down" so the UI
+      // matches operator intuition ("I turned this off" → DOWN). The poller
+      // separately suppresses first-poll auto-investigations for this case —
+      // see the transition-detection test below.
       const { poller } = makePoller(
         ["api"],
         {
@@ -355,7 +359,7 @@ describe("ServiceHealthPoller", () => {
       );
 
       await poller.poll();
-      expect(poller.getHealth().get("api")).toBe("unknown");
+      expect(poller.getHealth().get("api")).toBe("down");
     });
 
     it("issues all four PromQL queries (deployment, statefulset, daemonset, up) per poll and classifies daemonset matches", async () => {
@@ -441,7 +445,11 @@ describe("ServiceHealthPoller", () => {
       expect(poller.getHealth().get("api")).toBe("healthy");
     });
 
-    it("merge priority: down (from up) wins over unknown (from replicas)", async () => {
+    it("merge: up=0 and replicas=0 both classify as down (converged on DOWN)", async () => {
+      // After B-minus, both zero-path batches produce "down". The merge still
+      // prefers "down" over "unknown" and "healthy" wins over everything; the
+      // up/replicas distinction is preserved via the separate downViaUp
+      // tracker (exercised by the transition-detection tests below).
       const { poller } = makePoller(
         ["api"],
         {
@@ -480,7 +488,7 @@ describe("ServiceHealthPoller", () => {
   });
 
   describe("transition detection", () => {
-    it("fires onTransition when a healthy service later reports replicas=0 (healthy → unknown)", async () => {
+    it("fires onTransition when a healthy service later reports replicas=0 (healthy → down)", async () => {
       const { poller, transitions } = makePoller(
         ["api"],
         {
@@ -513,7 +521,7 @@ describe("ServiceHealthPoller", () => {
 
       await poller.poll();
       expect(transitions).toHaveLength(1);
-      expect(transitions[0]).toEqual(["api", "healthy", "unknown"]);
+      expect(transitions[0]).toEqual(["api", "healthy", "down"]);
     });
 
     it("fires onTransition when a healthy service later reports up=0 (healthy → down)", async () => {
@@ -549,7 +557,11 @@ describe("ServiceHealthPoller", () => {
       expect(transitions[0]).toEqual(["api", "healthy", "down"]);
     });
 
-    it("does NOT fire onTransition on first poll when a service has replicas=0 (scaled-down is not a failure)", async () => {
+    it("does NOT fire onTransition on first poll when a service has replicas=0 (scaled-down shows as DOWN but skips auto-investigation)", async () => {
+      // B-minus invariant: a service that's DOWN only because of replicas=0
+      // (not up=0) should not auto-fire investigations on server restart.
+      // Prevents a stack with N intentionally-scaled-down services from
+      // firing N LLM investigations on boot.
       const { poller, transitions } = makePoller(
         ["scaled-down-svc"],
         {
@@ -563,7 +575,7 @@ describe("ServiceHealthPoller", () => {
 
       await poller.poll();
       expect(transitions).toHaveLength(0);
-      expect(poller.getHealth().get("scaled-down-svc")).toBe("unknown");
+      expect(poller.getHealth().get("scaled-down-svc")).toBe("down");
     });
 
     it("DOES fire onTransition on first poll when up=0 (regression test: commit 72fa3de)", async () => {
@@ -579,6 +591,26 @@ describe("ServiceHealthPoller", () => {
       await poller.poll();
       expect(transitions).toHaveLength(1);
       expect(transitions[0]).toEqual(["real-outage", "unknown", "down"]);
+    });
+
+    it("DOES fire onTransition on first poll when BOTH replicas=0 AND up=0 (up evidence overrides scaled-down silence)", async () => {
+      // B-minus invariant: scaled-down silence applies only when the ONLY
+      // evidence of DOWN is replicas=0. If up also reports 0 for the same
+      // service, that's a real scrape failure — fire the transition.
+      const { poller, transitions } = makePoller(
+        ["half-broken"],
+        {
+          "kube_deployment_status_replicas": [
+            makePrometheusEntry({ deployment: "half-broken" }, "0"),
+          ],
+          "kube_statefulset_status_replicas": [],
+          "up": [makePrometheusEntry({ job: "half-broken" }, "0")],
+        },
+      );
+
+      await poller.poll();
+      expect(transitions).toHaveLength(1);
+      expect(transitions[0]).toEqual(["half-broken", "unknown", "down"]);
     });
 
     it("does not fire onTransition when status is unchanged", async () => {
