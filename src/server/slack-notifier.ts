@@ -99,3 +99,82 @@ export async function notifySlack(
     logger.error({ err, investigationId, service }, "Failed to send Slack notification");
   }
 }
+
+export interface NotifySlackScanRunOptions {
+  /** Slack incoming webhook URL */
+  slackWebhookUrl: string;
+  /** App base URL for building the /scan/runs/:id deep link */
+  appBaseUrl: string;
+}
+
+export interface ScanRunSummary {
+  runId: string;
+  stackId: string;
+  trigger: "manual" | "cron";
+  startedAt: number;
+  durationMs: number;
+  servicesProbed: number;
+  hitsDispatched: number;
+  dispatchedServices: string[];
+}
+
+/**
+ * Post a run-level scan summary to Slack. Builds the Block Kit payload and
+ * does the fetch — THROWS on fetch or non-OK response so callers that need
+ * to surface errors (e.g., a user-initiated "Send to Slack" action) can.
+ *
+ * For the automatic scan-complete path that must never disrupt the scan
+ * flow, use `notifySlackOnScanComplete` which wraps + swallows errors.
+ */
+export async function sendSlackScanRunPost(
+  opts: NotifySlackScanRunOptions,
+  summary: ScanRunSummary,
+): Promise<void> {
+  const runLink = `${opts.appBaseUrl}/scan/runs/${summary.runId}`;
+  const emoji = summary.hitsDispatched > 0 ? ":mag:" : ":white_check_mark:";
+  const pluralS = summary.hitsDispatched === 1 ? "" : "s";
+  const text = summary.hitsDispatched > 0
+    ? `${emoji} Scan flagged ${summary.hitsDispatched} service${pluralS} (${summary.trigger})`
+    : `${emoji} Scan completed clean (${summary.trigger}, ${summary.servicesProbed} probed)`;
+
+  const blocks: unknown[] = [
+    { type: "section", text: { type: "mrkdwn", text } },
+  ];
+  if (summary.dispatchedServices.length > 0) {
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: "*Flagged:*\n" + summary.dispatchedServices.map(s => `• ${s}`).join("\n") },
+    });
+  }
+  blocks.push({
+    type: "context",
+    elements: [
+      { type: "mrkdwn", text: `<${runLink}|View run> · ${summary.servicesProbed} probed · ${Math.round(summary.durationMs)}ms` },
+    ],
+  });
+
+  const resp = await fetch(opts.slackWebhookUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ blocks }),
+  });
+  if (!resp.ok) {
+    throw new Error(`Slack post failed: ${resp.status}`);
+  }
+}
+
+/**
+ * Post a run-level scan summary to Slack. Called once per scan run (not per
+ * dispatched investigation — those fire via the existing notifySlack path).
+ * Fire-and-forget, never throws.
+ */
+export async function notifySlackOnScanComplete(
+  opts: NotifySlackScanRunOptions,
+  summary: ScanRunSummary,
+): Promise<void> {
+  try {
+    await sendSlackScanRunPost(opts, summary);
+  } catch (err) {
+    logger.warn({ err, runId: summary.runId }, "notifySlackOnScanComplete: post failed");
+  }
+}

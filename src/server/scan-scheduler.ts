@@ -34,6 +34,13 @@ import {
   type ProbeHit,
 } from "./anomaly-probe.js";
 import { parseOverride } from "./scan-service-override.js";
+import {
+  createScanRunStore,
+  type ScanRunStore,
+  type ScanEvent,
+  type ScanRunTracker,
+  type ScanRunCompletedSummary,
+} from "./scan-run-store.js";
 
 const logger = createLogger();
 
@@ -62,6 +69,10 @@ export interface ScanStatus {
 /** Emitted when the probe flags services above threshold + within cap. */
 export interface ScanAnomaliesEvent {
   stackId: string;
+  /** ID of the scan_run that produced these hits. Lets the caller link
+   * the subsequent investigation back to the tracker via
+   * `scheduler.linkInvestigationOnCurrentRun`. */
+  runId: string;
   hits: ProbeHit[];
   tickStartedAt: string;
 }
@@ -92,6 +103,11 @@ export interface ScanSchedulerDeps {
    * tick is not blocked on LLM duration.
    */
   onAnomaliesDetected: (evt: ScanAnomaliesEvent) => void;
+  /**
+   * Fires when a run completes successfully (not on skip/fail). Stack-manager
+   * wires notifications + eventLog here. Phase 4 will fill in the handler.
+   */
+  onScanRunComplete?: (summary: ScanRunCompletedSummary) => void;
 }
 
 // ── Scheduler ───────────────────────────────────────────────────────────────
@@ -114,10 +130,45 @@ export class ScanScheduler {
   private stopped = false;
   /** (service:ruleName) → consecutive-ticks-breached counter */
   private readonly consecutiveState = new Map<string, number>();
+  private readonly scanRunStore: ScanRunStore;
+  private eventListener: ((evt: ScanEvent) => void) | null = null;
+  private currentTracker: ScanRunTracker | null = null;
+  private lastRunIdValue: string | null = null;
 
   constructor(deps: ScanSchedulerDeps) {
     this.deps = deps;
     this.scan = deps.scan;
+    this.scanRunStore = createScanRunStore({
+      db: deps.db,
+      emit: (evt) => this.eventListener?.(evt),
+      onComplete: deps.onScanRunComplete,
+    });
+  }
+
+  /**
+   * Swap the per-run WS event listener. Used by the HTTP trigger route in
+   * Phase 3 — a manual trigger attaches its client's WS as the listener for
+   * the duration of the run so events stream to the UI.
+   */
+  setEventListener(fn: ((evt: ScanEvent) => void) | null): void {
+    this.eventListener = fn;
+  }
+
+  /** Last run ID started by this scheduler, or null if no run has started. */
+  getLastRunId(): string | null {
+    return this.lastRunIdValue;
+  }
+
+  /**
+   * Link an investigation to the currently-running scan (if any). Called by
+   * the anomaly-dispatch glue in index.ts after the runner returns an
+   * investigation ID. No-op between ticks.
+   */
+  linkInvestigationOnCurrentRun(
+    invId: string,
+    hit: { service: string; ruleName: string; value: number; severity: number },
+  ): void {
+    this.currentTracker?.linkInvestigation(invId, hit);
   }
 
   /**
@@ -136,7 +187,7 @@ export class ScanScheduler {
       this.cron = new Cron(
         this.scan.cron,
         { timezone: this.scan.timezone, protect: true },
-        () => { void this.tick(); },
+        () => { void this.tick("cron"); },
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -157,14 +208,14 @@ export class ScanScheduler {
     if (this.scan.runOnEnable) {
       // Defer to next tick so start() returns before the first tick begins —
       // avoids surprising callers who expect start() to be synchronous.
-      setImmediate(() => { void this.tick(); });
+      setImmediate(() => { void this.tick("cron"); });
     }
   }
 
   /** Trigger a tick immediately (e.g. via on-demand API). No-op if disabled. */
-  async triggerNow(): Promise<void> {
+  async triggerNow(trigger: "manual" | "cron" = "manual"): Promise<void> {
     if (!this.cron && !this.scan.enabled) return;
-    await this.tick();
+    await this.tick(trigger);
   }
 
   /**
@@ -353,7 +404,7 @@ export class ScanScheduler {
 
   // ── Internal tick orchestration ───────────────────────────────────────────
 
-  private async tick(): Promise<void> {
+  private async tick(trigger: "manual" | "cron" = "cron"): Promise<void> {
     if (this.stopped) return;
     if (this.ticking) {
       logger.info({ stackId: this.deps.stackId }, "ScanScheduler: skipping tick — previous still running");
@@ -363,10 +414,14 @@ export class ScanScheduler {
     this.ticking = true;
     this.ac = new AbortController();
     const tickStartedAt = new Date().toISOString();
+    const tracker = this.scanRunStore.begin({ stackId: this.deps.stackId, trigger });
+    this.currentTracker = tracker;
+    this.lastRunIdValue = tracker.id;
 
     try {
       const datasourceUid = this.deps.getPrometheusDatasourceUid();
       if (!datasourceUid) {
+        tracker.skip("no_provider");
         this.lastError = "no Prometheus datasource UID — metrics MCP unavailable";
         logger.info({ stackId: this.deps.stackId }, "ScanScheduler: no Prometheus datasource UID, skipping tick");
         return;
@@ -378,6 +433,7 @@ export class ScanScheduler {
         .filter((n) => !hidden.has(n));
 
       if (services.length === 0) {
+        tracker.skip("empty_registry");
         logger.info({ stackId: this.deps.stackId }, "ScanScheduler: empty registry, skipping tick");
         this.lastError = null;
         return;
@@ -394,7 +450,8 @@ export class ScanScheduler {
       const getOverride = (service: string) => parsedOverrides.get(service) ?? null;
 
       const lokiDatasourceUid = this.deps.getLokiDatasourceUid?.();
-      const rawHits = await runProbe({
+      const probeStart = Date.now();
+      const probeResult = await runProbe({
         services,
         probe: this.scan.probe,
         providers: this.deps.providers(),
@@ -405,20 +462,49 @@ export class ScanScheduler {
         getOverride,
         registryStore: this.deps.registryStore,
       });
+      const probeDurationMs = Date.now() - probeStart;
+
+      tracker.recordProbeComplete({
+        servicesProbed: services.length,
+        rulesApplied: computeApplicableRulesCount(services, parsedOverrides, this.scan.probe),
+        queriesExecuted: probeResult.queriesExecuted,
+        probeErrors: probeResult.probeErrors,
+        queriesEmpty: probeResult.queriesEmpty,
+        durationMs: probeDurationMs,
+        detail: {
+          queryTimeoutMs: this.scan.probe.queryTimeoutMs,
+          coverage: probeResult.coverage,
+        },
+      });
 
       if (this.stopped || this.ac.signal.aborted) {
+        tracker.fail("aborted");
         logger.info({ stackId: this.deps.stackId }, "ScanScheduler: tick aborted");
         return;
       }
+
+      const rawHits = probeResult.hits;
 
       // Pre-dedup: drop hits for services investigated within scan.dedupWindowMinutes
       // This is independent of the global webhook dedup (5min by default) —
       // a scan-dedup of 30min prevents the same service from being investigated
       // every 4 hours if it keeps tripping the same rule.
       const dedupSeconds = this.scan.dedupWindowMinutes * 60;
+      const dedupedList: Array<{
+        service: string;
+        ruleName: string;
+        value: number;
+        severity: number;
+        reason: "recently_investigated";
+      }> = [];
       const postDedupHits = rawHits.filter((hit) => {
         const recent = this.deps.db.hasRecentInvestigation(this.deps.stackId, hit.service, dedupSeconds);
         if (recent) {
+          dedupedList.push({
+            service: hit.service, ruleName: hit.ruleName,
+            value: hit.value, severity: hit.severity,
+            reason: "recently_investigated",
+          });
           logger.info({ stackId: this.deps.stackId, service: hit.service, rule: hit.ruleName }, "ScanScheduler: skipping — recently investigated");
         }
         return !recent;
@@ -430,28 +516,45 @@ export class ScanScheduler {
       );
       const cap = this.scan.maxInvestigationsPerTick;
       const selected = prioritized.slice(0, cap);
-      const dropped = prioritized.length - selected.length;
-      if (dropped > 0) {
-        this.dropsByConcurrency += dropped;
+      const dropped = prioritized.slice(selected.length);
+      if (dropped.length > 0) {
+        this.dropsByConcurrency += dropped.length;
         logger.info({
           stackId: this.deps.stackId,
           flagged: prioritized.length,
           fired: selected.length,
-          dropped,
-          droppedServices: prioritized.slice(cap).map((h) => h.service),
+          dropped: dropped.length,
+          droppedServices: dropped.map((h) => h.service),
         }, "ScanScheduler: per-tick cap reached, deferring overflow to next tick");
       }
+
+      tracker.recordTriageComplete({
+        hitsRaw: rawHits.length,
+        hitsAfterDedup: postDedupHits.length,
+        dispatched: selected.map((h) => ({
+          service: h.service, ruleName: h.ruleName,
+          value: h.value, severity: h.severity,
+        })),
+        dropped: dropped.map((h) => ({
+          service: h.service, ruleName: h.ruleName,
+          value: h.value, severity: h.severity,
+        })),
+        dedupedList,
+      });
 
       if (selected.length > 0) {
         this.deps.onAnomaliesDetected({
           stackId: this.deps.stackId,
+          runId: tracker.id,
           hits: selected,
           tickStartedAt,
         });
       }
 
+      tracker.finalize("complete");
       this.lastError = null;
     } catch (err) {
+      tracker.fail(err);
       const msg = err instanceof Error ? err.message : String(err);
       logger.error({ err, stackId: this.deps.stackId }, "ScanScheduler: tick failed");
       this.lastError = msg;
@@ -459,6 +562,28 @@ export class ScanScheduler {
       this.lastRunIso = tickStartedAt;
       this.ticking = false;
       this.ac = undefined;
+      this.currentTracker = null;
     }
   }
+}
+
+/**
+ * Count the total rules that will be evaluated this tick, factoring in
+ * per-service overrides. A disabled override contributes 0; a custom-rules
+ * override contributes its own rule count; no override means the global
+ * probe rule set applies.
+ */
+function computeApplicableRulesCount(
+  services: string[],
+  overrides: Map<string, ReturnType<typeof parseOverride>>,
+  probe: { metrics: ProbeMetricRule[] },
+): number {
+  let total = 0;
+  for (const svc of services) {
+    const ov = overrides.get(svc);
+    if (ov?.disabled) continue;
+    const rules = ov?.rules && ov.rules.length > 0 ? ov.rules : probe.metrics;
+    total += rules.length;
+  }
+  return total;
 }

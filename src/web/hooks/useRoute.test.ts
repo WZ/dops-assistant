@@ -38,6 +38,14 @@ describe("parseUrl", () => {
     expect(parseUrl("/settings/notifications")).toEqual({ type: "settings", initialTab: "notifications" });
   });
 
+  it("parses /scan/runs/:id as scanrun", () => {
+    expect(parseUrl("/scan/runs/run_01J")).toEqual({ type: "scanrun", runId: "run_01J" });
+  });
+
+  it("decodes percent-encoded scan run ids", () => {
+    expect(parseUrl("/scan/runs/run%3A01J")).toEqual({ type: "scanrun", runId: "run:01J" });
+  });
+
   it("returns notfound for unknown paths", () => {
     // Previously silently rendered the dashboard, which hid dead links and
     // routing bugs. Unknown paths now surface as an explicit 404 view.
@@ -82,6 +90,10 @@ describe("viewToUrl", () => {
   it("maps settings with tab to /settings/:tab", () => {
     expect(viewToUrl({ type: "settings", initialTab: "skills" })).toBe("/settings/skills");
   });
+
+  it("maps scanrun to /scan/runs/:id", () => {
+    expect(viewToUrl({ type: "scanrun", runId: "run_01J" })).toBe("/scan/runs/run_01J");
+  });
 });
 
 describe("roundtrip", () => {
@@ -93,6 +105,7 @@ describe("roundtrip", () => {
       { type: "services" as const, initialService: "my-svc" },
       { type: "settings" as const },
       { type: "settings" as const, initialTab: "providers" as const },
+      { type: "scanrun" as const, runId: "run_01J" },
       // notfound preserves the user-typed path verbatim so reload stays on
       // the 404 page instead of bouncing back to the dashboard.
       { type: "notfound" as const, path: "/bogus/path" },

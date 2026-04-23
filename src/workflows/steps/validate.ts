@@ -128,7 +128,7 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
 
     config.onIteration?.("validation", i + 1, enriched.length, `Checking ${service.name}`);
 
-    // Check metrics
+    // Check metrics — and repair if the agent's pick returns empty.
     if (promTool && service.metrics.length > 0) {
       try {
         const query = service.metrics[0].query;
@@ -143,6 +143,23 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
       } catch (err) {
         notes.push("metrics \u2717 query failed");
         config.onToolCall?.(promTool[0], { expr: service.metrics[0].query }, undefined, 0, String(err), "validation");
+      }
+
+      // Verify-before-keep: the agent's metric pick returned empty. This is
+      // the single largest source of scan-probe blind spots observed on
+      // real stacks — services where the agent speculated a query pattern
+      // without confirming it resolves. Try a small list of k8s-native
+      // fallbacks; keep the first one that returns data. Mutates the
+      // service's metrics[0] AND the paired service_availability probe
+      // rule so the probe actually uses the working query next tick.
+      if (!metricsOk) {
+        const replacement = await tryMetricFallback(promTool, service.name, config);
+        if (replacement) {
+          service.metrics[0] = { query: replacement, description: "validate-step fallback (original returned empty)" };
+          syncServiceAvailabilityRule(service, replacement);
+          metricsOk = true;
+          notes.push(`metrics \u2713 repaired via fallback (${replacement.slice(0, 60)}${replacement.length > 60 ? "\u2026" : ""})`);
+        }
       }
     } else {
       notes.push("metrics \u2717 no tool or no query");
@@ -193,6 +210,90 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
   logger.debug(`Done: ${verified} verified, ${partial} partial, ${unverified} unverified`);
 
   return results;
+}
+
+/**
+ * Strip k8s Service suffixes that don't appear on the backing workload name.
+ * A Service named `foo-headless` almost always fronts a workload named `foo`.
+ */
+function stripServiceSuffix(name: string): string {
+  return name.replace(/-(headless|svc|service)$/u, "");
+}
+
+/**
+ * Sanitize a service name for safe embedding in a PromQL label selector.
+ * Must match the sanitizer the probe uses in anomaly-probe.ts so the repair
+ * path produces the same string the probe will evaluate.
+ */
+function sanitizeForPromQL(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_.\-]/g, "");
+}
+
+/**
+ * Candidate availability queries tried in order when the agent's original
+ * pick returned empty. Ordered from most likely to resolve + most specific
+ * (workload-type kube-state-metrics labels) down to broad fallbacks (`up`
+ * by various label keys). First match wins.
+ *
+ * The substitutes use the exact service name AND a suffix-stripped form
+ * (`foo-headless` → `foo`) because Service-fronting-StatefulSet is the
+ * single biggest blind-spot pattern we've seen on real stacks.
+ */
+function buildFallbackCandidates(rawServiceName: string): string[] {
+  const safeOriginal = sanitizeForPromQL(rawServiceName);
+  const stripped = stripServiceSuffix(safeOriginal);
+  const bothNames = stripped !== safeOriginal ? [safeOriginal, stripped] : [safeOriginal];
+  const candidates: string[] = [];
+  for (const n of bothNames) {
+    candidates.push(`kube_deployment_status_replicas_available{deployment="${n}"}`);
+    candidates.push(`kube_statefulset_status_replicas_ready{statefulset="${n}"}`);
+    candidates.push(`kube_daemonset_status_number_ready{daemonset="${n}"}`);
+    candidates.push(`up{app="${n}"}`);
+    candidates.push(`up{job="${n}"}`);
+    candidates.push(`up{service="${n}"}`);
+  }
+  return candidates;
+}
+
+/**
+ * Probe each candidate query via the metrics MCP tool; return the first one
+ * that returns a non-empty result. Never throws — each attempt is isolated.
+ * Caller treats `undefined` as "give up, keep the agent's original".
+ */
+async function tryMetricFallback(
+  promTool: [string, Tool],
+  serviceName: string,
+  config: ValidateStepConfig,
+): Promise<string | undefined> {
+  for (const candidate of buildFallbackCandidates(serviceName)) {
+    try {
+      const start = Date.now();
+      const result = await promTool[1].execute!({ expr: candidate, queryType: "instant" }, {} as any);
+      const duration = Date.now() - start;
+      const resultStr = typeof result === "string" ? result : JSON.stringify(result);
+      config.onToolCall?.(promTool[0], { expr: candidate }, resultStr, duration, undefined, "validation");
+      if (resultStr.length > 10 && !resultStr.includes('"result":[]')) {
+        return candidate;
+      }
+    } catch {
+      // Candidate threw (e.g., MCP rejected the query shape) — try the next.
+      continue;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Keep `service_availability` probe rule in sync with metrics[0]. The
+ * service_availability rule was backfilled in validateDiscoveredServices
+ * as a copy of the original metrics[0].query. If validate-step just
+ * repaired metrics[0], the probe rule must update to match or the probe
+ * will keep hitting the broken original.
+ */
+function syncServiceAvailabilityRule(service: ServiceConfig, newQuery: string): void {
+  const rules = service.probeRules ?? [];
+  const rule = rules.find((r) => r.name === "service_availability");
+  if (rule) rule.query = newQuery;
 }
 
 /**

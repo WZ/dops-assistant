@@ -41,6 +41,7 @@ import { notifySlack } from "./slack-notifier.js";
 import { buildInvestigationMessage } from "./anomaly-probe.js";
 import nodemailer, { type Transporter } from "nodemailer";
 import { notifyEmail } from "./email-notifier.js";
+import { ulid } from "ulid";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const logger = createLogger();
@@ -156,6 +157,36 @@ async function main() {
     return emailTransport;
   };
 
+  /**
+   * Build the EmailNotifierDeps envelope used by both per-investigation
+   * notifications (globalOnComplete) and run-level scan notifications
+   * (StackManager.handleScanRunComplete). `isGloballyEnabled` reads the
+   * DB toggle dynamically so GUI changes take effect without a restart.
+   */
+  const buildEmailNotifierDeps = (): import("./email-notifier.js").EmailNotifierDeps | null => {
+    const emailCfg = config.notifications?.email;
+    const transport = getEmailTransport();
+    if (!emailCfg || !transport) return null;
+    return {
+      isGloballyEnabled: () => {
+        const dbEnabled = db.getSetting("notifications.email.enabled");
+        return dbEnabled !== undefined ? dbEnabled === "true" : emailCfg.enabled;
+      },
+      listEnabledRecipients: () => db.listEmailRecipients({ enabledOnly: true }),
+      transport,
+      config: {
+        from: emailCfg.from,
+        appBaseUrl: emailCfg.appBaseUrl,
+        retry: { attempts: emailCfg.retry.attempts, backoffMs: emailCfg.retry.backoffMs },
+      },
+    };
+  };
+
+  // Register email deps on the StackManager so handleScanRunComplete can
+  // dispatch run-level scan summary emails. Null-safe — if SMTP is not
+  // configured, email notifications are silently skipped.
+  stackManager.setEmailNotifierDeps(buildEmailNotifierDeps());
+
   // Build a global onComplete handler for Slack + email notifications.
   // Reads URL/settings dynamically so GUI changes take effect without restart.
   const globalOnComplete = (
@@ -181,30 +212,11 @@ async function main() {
     }
 
     // ── Email (new) ─────────────────────────────────────────────────
-    const emailCfg = config.notifications?.email;
-    const transport = getEmailTransport();
-    if (emailCfg && transport) {
-      const dbEnabled = db.getSetting("notifications.email.enabled");
-      const enabled = dbEnabled !== undefined ? dbEnabled === "true" : emailCfg.enabled;
-      if (enabled) {
-        notifyEmail(
-          {
-            isGloballyEnabled: () => true,
-            listEnabledRecipients: () => db.listEmailRecipients({ enabledOnly: true }),
-            transport,
-            config: {
-              from: emailCfg.from,
-              appBaseUrl: emailCfg.appBaseUrl,
-              retry: { attempts: emailCfg.retry.attempts, backoffMs: emailCfg.retry.backoffMs },
-            },
-          },
-          investigationId,
-          report,
-          source,
-        ).catch((err) => {
-          logger.warn({ err, investigationId }, "notifyEmail rejected unexpectedly");
-        });
-      }
+    const emailDeps = buildEmailNotifierDeps();
+    if (emailDeps && emailDeps.isGloballyEnabled()) {
+      notifyEmail(emailDeps, investigationId, report, source).catch((err) => {
+        logger.warn({ err, investigationId }, "notifyEmail rejected unexpectedly");
+      });
     }
   };
 
@@ -303,8 +315,24 @@ async function main() {
       const message = buildInvestigationMessage(hit);
       const template = config.scan.investigationTemplate;
 
+      // Pre-generate the investigation ID so we can link it to the active
+      // scan run SYNCHRONOUSLY — before we await the Mastra adapter build.
+      // The scheduler clears `currentTracker` in the tick's `finally` block
+      // right after this callback returns, so any async gap would risk
+      // linking into a stale/null tracker. Passing the same ID into
+      // runner.run below ensures the DB row the runner creates matches
+      // what we linked. linkInvestigationOnCurrentRun is the sole authority
+      // for scan_runs.hits_dispatched — skipping it leaves the column at 0.
+      const invId = `inv_${ulid()}`;
+      ctx.scanScheduler.linkInvestigationOnCurrentRun(invId, {
+        service: hit.service,
+        ruleName: hit.ruleName,
+        value: hit.value,
+        severity: hit.severity,
+      });
+
       logger.info({
-        stackId, service: hit.service, rule: hit.ruleName, severity: hit.severity, template,
+        stackId, service: hit.service, rule: hit.ruleName, severity: hit.severity, template, invId,
       }, "ScanScheduler: triggering auto-investigate");
 
       const providers = ctx.providerRegistry.getProviders();
@@ -318,6 +346,7 @@ async function main() {
             stackId,
             readOnlyTools: true,
             source: "scan",
+            investigationId: invId,
           });
         })
         .catch((err) => {
