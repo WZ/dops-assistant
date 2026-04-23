@@ -176,4 +176,66 @@ describe("runDiscoverStep — adversarial-review fixes (2026-04-22)", () => {
     // Bad-op rule dropped. Services list retained.
     expect(result.globalProbeRules).toEqual([]);
   });
+
+  it("backfills service_availability when the LLM omits it but metrics[0] exists", async () => {
+    // Real-world regression: gpt-oss-120b consistently skips the
+    // service_availability rule no matter how explicit the prompt gets. The
+    // rule is mechanically derivable from metrics[0].query, so
+    // validateDiscoveredServices prepends it deterministically.
+    mockDiscoverReplyOverride = JSON.stringify({
+      services: [
+        {
+          name: "svc-from-consul",
+          metrics: [{ query: 'consul_catalog_service_node_healthy{service_name="svc-from-consul"}', description: "" }],
+          logLabels: { container: "svc-from-consul" },
+          probeRules: [
+            // LLM wrote log_errors but NOT service_availability.
+            { name: "log_errors", query: 'sum(count_over_time({container="svc-from-consul"} |= `error` [15m]))', threshold: { op: "gt", value: 75 }, consecutiveTicks: 2, source: "logs" },
+          ],
+        },
+      ],
+      globalProbeRules: [],
+    });
+    const result = await runDiscovery(baseConfig);
+    expect(result.services).toHaveLength(1);
+    const svc = result.services[0]!;
+    const names = (svc.probeRules ?? []).map((r) => r.name);
+    expect(names).toContain("service_availability");
+    expect(names).toContain("log_errors");
+    const availability = (svc.probeRules ?? []).find((r) => r.name === "service_availability")!;
+    expect(availability.query).toBe('consul_catalog_service_node_healthy{service_name="svc-from-consul"}');
+    expect(availability.threshold).toEqual({ op: "lt", value: 1 });
+    expect(availability.consecutiveTicks).toBe(3);
+  });
+
+  it("does not backfill service_availability if metrics is empty", async () => {
+    mockDiscoverReplyOverride = JSON.stringify({
+      services: [
+        { name: "no-metrics-service", metrics: [], logLabels: {}, probeRules: [] },
+      ],
+      globalProbeRules: [],
+    });
+    const result = await runDiscovery(baseConfig);
+    const names = (result.services[0]?.probeRules ?? []).map((r) => r.name);
+    expect(names).not.toContain("service_availability");
+  });
+
+  it("does not double-backfill when the LLM already wrote service_availability", async () => {
+    mockDiscoverReplyOverride = JSON.stringify({
+      services: [
+        {
+          name: "svc",
+          metrics: [{ query: 'up{app="svc"}', description: "" }],
+          logLabels: {},
+          probeRules: [
+            { name: "service_availability", query: 'up{app="svc"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 3, source: "metrics" },
+          ],
+        },
+      ],
+      globalProbeRules: [],
+    });
+    const result = await runDiscovery(baseConfig);
+    const availRules = (result.services[0]?.probeRules ?? []).filter((r) => r.name === "service_availability");
+    expect(availRules).toHaveLength(1);
+  });
 });

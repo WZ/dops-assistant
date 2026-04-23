@@ -191,9 +191,49 @@ function validateDiscoveredServices(raw: unknown[]): ServiceConfig[] {
     }
     const rawProbeRules = Array.isArray(svc.probeRules) ? svc.probeRules : [];
     const probeRules = validateDiscoveredRules(rawProbeRules, `service.${svc.name}.probeRules`);
+    backfillServiceAvailability(svc.name, svc.metrics, probeRules);
     out.push({ ...(svc as ServiceConfig), probeRules });
   }
   return out;
+}
+
+/**
+ * Deterministic backfill of the `service_availability` probe rule.
+ *
+ * The prompt asks the LLM to promote the service's `metrics[0].query` into
+ * a `service_availability` rule (the query is, by definition, known to
+ * identify this specific service). In practice LLM compliance on this is
+ * unreliable — a real run on gpt-oss-120b against an 82-service stack
+ * produced 0 of 61 services with the rule, and the remaining blind spots
+ * were exactly the services whose global availability rule silently missed.
+ *
+ * The rule is mechanically derivable — query = metrics[0].query, threshold
+ * = lt 1, consecutiveTicks = 3 (matches globalProbeRule hysteresis). There
+ * is no discovery-time judgment the LLM needs to contribute beyond picking
+ * metrics[0], which it already did. So we do it here, deterministically.
+ *
+ * Pre-prepended (not appended) so operators reading services.yaml see the
+ * cross-workload availability signal first, before the namespace-scoped
+ * pod_restarts / log-source rules.
+ */
+function backfillServiceAvailability(
+  serviceName: string,
+  rawMetrics: unknown,
+  probeRules: ProbeMetricRule[],
+): void {
+  if (probeRules.some((r) => r.name === "service_availability")) return;
+  if (!Array.isArray(rawMetrics) || rawMetrics.length === 0) return;
+  const first = rawMetrics[0] as Record<string, unknown> | undefined;
+  const query = first && typeof first.query === "string" ? first.query.trim() : "";
+  if (!query) return;
+  probeRules.unshift({
+    name: "service_availability",
+    query,
+    threshold: { op: "lt", value: 1 },
+    consecutiveTicks: 3,
+    source: "metrics",
+  });
+  logger.debug({ service: serviceName, query }, "discovery: backfilled service_availability rule from metrics[0]");
 }
 
 export async function runDiscoverStep(config: DiscoverStepConfig): Promise<DiscoverStepResult> {
