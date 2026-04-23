@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.2.0] - 2026-04-23
+
+### Added
+- **Cron schedule presets on Settings → Scan.** Five one-click pills (Every 15 min, Hourly, Every 4 hours, Daily, Weekly) fill the schedule field for you. The pill matching the current value is highlighted so you can see at a glance which cadence your scan is on, if any. Typing a custom expression still works.
+- **Timezone now defaults to your browser's timezone** on first visit to Settings → Scan (previously defaulted to UTC). The Save button lights up so you can persist it with one click. Users who explicitly want UTC or another timezone can type it in and save.
+
+### Changed
+- **Settings → Scan reads like product copy, not engineer copy.** Every helper sentence on the tab has been rewritten without internal jargon (no more "probe", "tick", "trip", "PromQL" where it isn't needed). Helper text has been lifted to a readable size. The page blurb now leads with what the feature does for the user, not how it works internally. The Probe Rules editor was re-labeled to match ("Scans in a row" instead of "Consecutive ticks").
+- **Rule cards on Settings → Scan now look tidy.** The three per-rule header actions (move up, move down, remove) are a single compact icon strip instead of three differently-styled bordered buttons. Destructive hover only on the × icon.
+- **Add / Edit recipient modal on Settings → Notifications now matches the dark theme.** The modal was rendering on a white card with default browser form controls; it now uses the same `bg-card` surface, semantic color tokens, `accent-primary` radios/checkboxes, and the shared `Button` component as the rest of the page. Backdrop gains blur. Dialog gets proper ARIA.
+
+### Removed
+- **Duplicate Status block on Settings → Scan.** Live status (next run, last run, "Scan now") already lives in the Operation Desk view; keeping a second copy in Settings forced a 10s polling loop that tab didn't need. The Settings tab is now settings-only.
+
 ## [0.1.1.0] - 2026-04-23
 
 ### Fixed
