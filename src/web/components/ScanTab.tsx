@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useStackContext } from "../contexts/StackContext";
 import { RuleList } from "./scan/RuleList";
@@ -6,8 +6,8 @@ import type { RuleDraft } from "./scan/types";
 
 /**
  * ScanTab — GUI for the proactive scan feature: toggle, cadence, and probe
- * rule editor. Mirrors NotificationsTab.tsx layout so operators don't have
- * to learn two different settings UIs.
+ * rule editor. Live status (next run / last run / Scan now) lives in the
+ * Operation Desk view; this tab is settings-only.
  *
  * GUI-editable: enabled, cron, timezone, probe rules. Everything else
  * (maxInvestigationsPerTick, dedupWindowMinutes, probe.concurrency,
@@ -30,37 +30,16 @@ interface ValidationDetail {
   message: string;
 }
 
-interface ScanStatus {
-  enabled: boolean;
-  cron: string;
-  timezone: string;
-  nextRun: string | null;
-  lastRun: string | null;
-  lastError: string | null;
-  dropsByConcurrency: number;
-  ticking: boolean;
-}
-
 const LABEL_CLASS =
   "font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/60";
 
 const INPUT_CLASS =
   "w-full rounded-md border border-border/40 bg-card/50 px-3 py-2 font-mono text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/15";
 
-function formatTimestamp(iso: string | null): string {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleString();
-  } catch {
-    return iso;
-  }
-}
-
 export function ScanTab() {
   const { stackFetch } = useStackContext();
 
   const [settings, setSettings] = useState<ScanSettings | null>(null);
-  const [status, setStatus] = useState<ScanStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -71,25 +50,13 @@ export function ScanTab() {
   const [timezoneInput, setTimezoneInput] = useState("");
   const [rulesInput, setRulesInput] = useState<RuleDraft[]>([]);
   const [dirty, setDirty] = useState(false);
-  const [triggering, setTriggering] = useState(false);
-  const [triggerMsg, setTriggerMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [ruleErrors, setRuleErrors] = useState<ValidationDetail[]>([]);
-  // Tracks post-trigger status-refresh timers so we can clear them on unmount.
-  // Without this, navigating away mid-trigger leaves 3 pending setTimeouts
-  // that fire setState on an unmounted component (React warning + leaked
-  // closure captures).
-  const triggerRefreshTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const fetchAll = useCallback(async () => {
     try {
-      const [settingsRes, statusRes] = await Promise.all([
-        stackFetch("/api/scan/settings"),
-        stackFetch("/api/scan/status"),
-      ]);
+      const settingsRes = await stackFetch("/api/scan/settings");
       const settingsData = (await settingsRes.json()) as ScanSettings;
-      const statusData = (await statusRes.json()) as ScanStatus;
       setSettings(settingsData);
-      setStatus(statusData);
       // Only reset the form on first load or after a save (dirty=false).
       if (!dirty) {
         setEnabledInput(settingsData.enabled);
@@ -105,61 +72,7 @@ export function ScanTab() {
 
   useEffect(() => {
     fetchAll();
-    // Poll status every 10s so nextRun/lastRun reflect reality. Settings
-    // change only on save, no need to poll them — the fetchAll call above
-    // refreshes both after each save.
-    const interval = setInterval(() => {
-      stackFetch("/api/scan/status")
-        .then((r) => r.json())
-        .then((data: ScanStatus) => setStatus(data))
-        .catch(() => { /* ignore */ });
-    }, 10_000);
-    const pendingTimers = triggerRefreshTimers.current;
-    return () => {
-      clearInterval(interval);
-      // Clear any post-trigger refresh timers still pending when the tab
-      // unmounts or the effect re-runs.
-      for (const t of pendingTimers) clearTimeout(t);
-      pendingTimers.length = 0;
-    };
-  }, [fetchAll, stackFetch]);
-
-  const refreshStatus = useCallback(async () => {
-    try {
-      const res = await stackFetch("/api/scan/status");
-      const data = (await res.json()) as ScanStatus;
-      setStatus(data);
-    } catch { /* ignore */ }
-  }, [stackFetch]);
-
-  const handleTriggerNow = async () => {
-    setTriggering(true);
-    setTriggerMsg(null);
-    try {
-      const res = await stackFetch("/api/scan/trigger", { method: "POST" });
-      if (res.status === 202) {
-        setTriggerMsg({ ok: true, text: "Probe dispatched \u2014 watch the status below." });
-        // A tick typically takes a few seconds once dispatched. Poll the status
-        // a few extra times beyond the standard 10s interval so the operator
-        // sees lastRun update without waiting. Handles tracked in a ref so
-        // unmount cleanup can clear any still-pending timers.
-        triggerRefreshTimers.current.push(
-          setTimeout(() => { void refreshStatus(); }, 1500),
-          setTimeout(() => { void refreshStatus(); }, 4000),
-          setTimeout(() => { void refreshStatus(); }, 8000),
-        );
-      } else {
-        const err = (await res.json().catch(() => ({}))) as { error?: string; hint?: string };
-        setTriggerMsg({
-          ok: false,
-          text: err.error ? `${err.error}${err.hint ? ` \u00b7 ${err.hint}` : ""}` : `Trigger failed: ${res.status}`,
-        });
-      }
-    } catch (err) {
-      setTriggerMsg({ ok: false, text: err instanceof Error ? err.message : "Trigger failed" });
-    }
-    setTriggering(false);
-  };
+  }, [fetchAll]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -369,86 +282,6 @@ export function ScanTab() {
         )}
       </section>
 
-      {/* Section: STATUS */}
-      {status && (
-        <section aria-label="Scan status" className="mb-4">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-0.5 h-3.5 rounded-full bg-muted-foreground/40" />
-            <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
-              Status
-            </h2>
-          </div>
-
-          <div className="rounded-lg border border-border/40 bg-card/50 p-4 space-y-4">
-            <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-xs font-mono">
-              <Field label="Next run" value={formatTimestamp(status.nextRun)} />
-              <Field label="Last run" value={formatTimestamp(status.lastRun)} />
-              <Field label="Ticking" value={status.ticking ? "yes" : "no"} />
-              <Field
-                label="Drops (overflow)"
-                value={String(status.dropsByConcurrency)}
-                hint={
-                  status.dropsByConcurrency > 0
-                    ? "Services flagged but dropped by per-tick cap. Tune config.yaml's scan.maxInvestigationsPerTick if this grows."
-                    : undefined
-                }
-              />
-              {status.lastError && (
-                <div className="col-span-2">
-                  <div className={LABEL_CLASS}>Last error</div>
-                  <div className="text-destructive mt-1 text-[11px] break-all">
-                    {status.lastError}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Scan now — fires one probe pass immediately, bypassing cron.
-                Disabled when scan is off (route returns 400) or already ticking
-                (route returns 409). These are also enforced server-side so the
-                UI state is just a friendly nudge, not the real guard. */}
-            <div className="flex items-center gap-2 pt-2 border-t border-border/30">
-              <Button
-                variant="outline"
-                onClick={handleTriggerNow}
-                disabled={triggering || !status.enabled || status.ticking || dirty}
-                className="font-mono text-xs font-medium h-9 rounded-lg px-4"
-                title={
-                  !status.enabled ? "Enable the scan first"
-                    : status.ticking ? "A tick is already running"
-                    : dirty ? "Save your changes first"
-                    : "Fire one probe pass immediately"
-                }
-              >
-                {triggering ? "Triggering..." : "Scan now"}
-              </Button>
-              {triggerMsg && (
-                <span className={`text-[11px] font-mono ${
-                  triggerMsg.ok
-                    ? "text-success/80"
-                    : "text-destructive"
-                }`}>
-                  {triggerMsg.text}
-                </span>
-              )}
-            </div>
-          </div>
-        </section>
-      )}
-
-      <div className="text-[10px] font-mono text-muted-foreground/30 mt-4">
-        Probe rules, thresholds, and per-tick cap are set in config.yaml (not editable here)
-      </div>
-    </div>
-  );
-}
-
-function Field({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  return (
-    <div>
-      <div className={LABEL_CLASS}>{label}</div>
-      <div className="mt-0.5 text-foreground/90">{value}</div>
-      {hint && <div className="text-[10px] text-muted-foreground/50 mt-0.5">{hint}</div>}
     </div>
   );
 }
