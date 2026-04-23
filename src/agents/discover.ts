@@ -121,47 +121,72 @@ Each service in "services" must have:
     5. Use {} if no label info is available. A wrong label is worse than none —
        the logs agent will query with it and get empty results.
 
-- "probeRules" (OPTIONAL): array of per-service anomaly detection rules for the
-  proactive scan probe. Write rules here that the probe cannot infer from
-  global config because they require per-service label resolution. Two rules
-  to generate when context is available:
+- "probeRules" (REQUIRED when minimum context exists — you almost always have it):
+  array of per-service anomaly detection rules for the proactive scan probe.
+  These are the rules that CANNOT be written as globalProbeRules because they
+  need the SERVICE'S specific labels (its namespace, its log container). A
+  service.yaml with empty probeRules on every service means the probe cannot
+  detect pod-restart storms or log-error bursts — the two most common k8s
+  failure modes. Discovery writing these rules is the whole point of slicing
+  per-service context out of your tool calls.
 
-  K8S POD RESTARTS (source: "metrics"):
-    If you discover this service runs as a k8s workload AND you can identify
-    its namespace and/or its deployment/statefulset/daemonset name, add:
-      {
-        "name": "pod_restarts",
-        "query": "rate(kube_pod_container_status_restarts_total{namespace=\"<ns>\"}[5m])",
-        "threshold": { "op": "gt", "value": 0.033 },
-        "consecutiveTicks": 2,
-        "source": "metrics"
-      }
-    0.033 per second ≈ 2 restarts per minute — the first-level trip threshold.
-    Prefer a \`namespace="..."\` selector when known; if the service is narrowed
-    by \`statefulset="..."\` or \`daemonset="..."\`, use that. Omit this rule if
-    you cannot determine a namespace or workload selector — a wrong namespace
-    is worse than no rule (probe scores it NaN either way, but an incorrect
-    rule sits in services.yaml confusingly).
+  EMIT BOTH OF THESE RULES FOR EACH SERVICE unless the explicit omission
+  clause below applies. Do not ship \`probeRules: []\` as a default — that is
+  an escape hatch for the rare service with zero context, NOT a safe default.
 
-  LOG ERROR RATE (source: "logs"):
-    If logLabels is non-empty and a logs MCP provider is available, add:
-      {
-        "name": "log_errors",
-        "query": "sum(count_over_time({<logLabels as key=\\"value\\" selectors>} |= \`error\` or \`fatal\` [15m]))",
-        "threshold": { "op": "gt", "value": 75 },
-        "consecutiveTicks": 2,
-        "source": "logs"
-      }
-    Example — for logLabels={namespace:"checkout",container:"api"}:
-      "query": "sum(count_over_time({namespace=\\"checkout\\",container=\\"api\\"} |= \`error\` or \`fatal\` [15m]))"
-    Threshold 75 is a raw count over the 15m window (~5 errors/min × 15 min).
-    The probe does NOT divide by window duration — the scalar returned by the
-    logs tool is the raw count. Use the same logLabels you wrote in the
-    logLabels field; reuse them exactly. Omit this rule if logLabels is empty
-    or no logs tool is wired.
+  (1) pod_restarts (source: "metrics") — EMIT whenever you know the service's
+      namespace OR a workload selector (deployment/statefulset/daemonset name).
+      You almost always know at least one of these from your discovery queries
+      — \`kube_pod_info\`, \`kube_deployment_status_replicas\`, pod lists, etc.
+      all carry a namespace label.
 
-  Leave probeRules: [] (or omit the field) if no context is available. A
-  wrong label is worse than none.
+        {
+          "name": "pod_restarts",
+          "query": "rate(kube_pod_container_status_restarts_total{namespace=\"<ns>\"}[5m])",
+          "threshold": { "op": "gt", "value": 0.033 },
+          "consecutiveTicks": 2,
+          "source": "metrics"
+        }
+
+      Selector priority: prefer \`namespace="..."\` (broadest + most reliably
+      available). If the service is narrowed by \`statefulset="..."\` or
+      \`daemonset="..."\`, use that instead. 0.033 per second ≈ 2 restarts per
+      minute — the first-level trip threshold.
+
+      Only omit this rule if you truly could not identify a namespace NOR a
+      workload selector for this service. That is rare — state it explicitly
+      in a \`"description"\` field on the service if you hit this case, so an
+      operator can see why the rule is missing.
+
+  (2) log_errors (source: "logs") — EMIT whenever \`logLabels\` is non-empty.
+      You already wrote logLabels one field above; reuse them verbatim.
+
+        {
+          "name": "log_errors",
+          "query": "sum(count_over_time({<logLabels as key=\\"value\\" selectors>} |= \`error\` or \`fatal\` [15m]))",
+          "threshold": { "op": "gt", "value": 75 },
+          "consecutiveTicks": 2,
+          "source": "logs"
+        }
+
+      Example — for logLabels={namespace:"checkout",container:"api"}:
+        "query": "sum(count_over_time({namespace=\\"checkout\\",container=\\"api\\"} |= \`error\` or \`fatal\` [15m]))"
+
+      Threshold 75 is a raw count over the 15m window (~5 errors/min × 15 min).
+      The probe does NOT divide by window duration — the scalar returned by the
+      logs tool is the raw count. A wrong Loki provider is fine — the probe
+      scores NaN and moves on, no false-positive risk.
+
+      Only omit this rule if \`logLabels\` is genuinely empty (no log labels
+      could be discovered). If you wrote logLabels, write log_errors.
+
+  When to write \`probeRules: []\`:
+    ONLY when BOTH (namespace AND workload selector) are unknown AND logLabels
+    is empty. That combination means you truly have no per-service context —
+    which is unusual for a service that made it into the registry at all.
+    Every service with \`logLabels\` non-empty gets at least log_errors.
+    Every service discovered via a namespace-bearing metric gets at least
+    pod_restarts. Most get both.
 
 - "gitlabProject" (optional): GitLab project path if you know it.
 - "corootAppId" (optional): Coroot application ID if you know it.
