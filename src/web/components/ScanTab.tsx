@@ -145,11 +145,10 @@ export function ScanTab() {
           )}
         </div>
 
-        <p className="text-xs text-muted-foreground/60 mb-4 max-w-2xl">
-          Runs a cheap PromQL probe across every registered service on a cron
-          schedule. Services that trip thresholds for the configured number of
-          consecutive ticks get a focused investigation. Probe rules, thresholds,
-          and caps live in <span className="font-mono text-[11px]">config.yaml</span>.
+        <p className="text-sm text-muted-foreground/70 mb-4 max-w-2xl">
+          Automatically check every service on a schedule. When a service crosses
+          a threshold for several scans in a row, a full investigation starts
+          without anyone needing to click.
         </p>
 
         <div className="rounded-lg border border-border/40 bg-card/50 p-4 space-y-4">
@@ -158,7 +157,7 @@ export function ScanTab() {
             <div>
               <label className={LABEL_CLASS}>Enabled</label>
               <p className="text-xs text-muted-foreground/60 mt-0.5">
-                Fires the probe on the cron schedule. Off by default.
+                Scans only run while this is on.
               </p>
             </div>
             <button
@@ -182,9 +181,9 @@ export function ScanTab() {
             </button>
           </div>
 
-          {/* Cron */}
+          {/* Schedule */}
           <div>
-            <label className={LABEL_CLASS}>Cron expression</label>
+            <label className={LABEL_CLASS}>Schedule</label>
             <input
               type="text"
               value={cronInput}
@@ -196,8 +195,8 @@ export function ScanTab() {
               className={`${INPUT_CLASS} mt-1`}
               spellCheck={false}
             />
-            <p className="text-[10px] text-muted-foreground/40 mt-1 font-mono">
-              5-field cron (no seconds). Example: <span>0 */4 * * *</span> = every 4 hours.
+            <p className="text-xs text-muted-foreground/50 mt-1.5">
+              A 5-field cron expression. For example, <span className="font-mono text-[11px]">0 */4 * * *</span> runs every 4 hours.
             </p>
           </div>
 
@@ -215,8 +214,8 @@ export function ScanTab() {
               className={`${INPUT_CLASS} mt-1`}
               spellCheck={false}
             />
-            <p className="text-[10px] text-muted-foreground/40 mt-1 font-mono">
-              IANA tz name (e.g. <span>UTC</span>, <span>America/New_York</span>). Defaults to UTC.
+            <p className="text-xs text-muted-foreground/50 mt-1.5">
+              The schedule above runs in this timezone. Use an IANA name like <span className="font-mono text-[11px]">America/New_York</span> or <span className="font-mono text-[11px]">UTC</span>.
             </p>
           </div>
 
@@ -253,10 +252,10 @@ export function ScanTab() {
           )}
         </div>
 
-        <p className="text-xs text-muted-foreground/60 mb-4 max-w-2xl">
-          Each tick, the probe runs these rules against every registered service.
-          A rule trips when its PromQL value crosses the threshold for the
-          configured consecutive ticks. Use Test to dry-run a rule against live
+        <p className="text-sm text-muted-foreground/70 mb-4 max-w-2xl">
+          Every scheduled scan runs these checks against each service. A check
+          triggers when the query result crosses its threshold for the set
+          number of scans in a row. Use <span className="text-foreground/80">Test</span> to try a check against live
           data before saving.
         </p>
 
