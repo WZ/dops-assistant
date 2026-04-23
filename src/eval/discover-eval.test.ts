@@ -179,4 +179,35 @@ describe("discover-eval / top-level evalDiscoverOutput", () => {
     const result = evalDiscoverOutput(input);
     expect(result.total).toBe(50);
   });
+
+  it("detects the real-world regression mode: total passes --min-score but per_service_present is 0", () => {
+    // This is the exact shape we caught in the wild on 2026-04-23:
+    // globalProbeRules present + parses + logs fine, but every service has
+    // probeRules: []. Total scored 75/100 (pass under default min-score 75)
+    // even though the per_service_present dimension was 0/25. The fix is the
+    // --require-per-service gate below — this test pins the regression mode.
+    const input = {
+      services: Array.from({ length: 10 }, (_, i) => ({
+        name: `svc-${i}`,
+        metrics: [{ query: `up{deployment="svc-${i}"}`, description: "" }],
+        logLabels: { namespace: "default", container: `svc-${i}` },
+        probeRules: [],
+      })),
+      globalProbeRules: [{
+        name: "container_availability",
+        query: 'up{container="{service}"}',
+        threshold: { op: "lt" as const, value: 1 },
+        consecutiveTicks: 3,
+        source: "metrics" as const,
+      }],
+    };
+    const result = evalDiscoverOutput(input);
+    const perService = result.dimensions.find((d) => d.name === "per_service_present")!;
+    // Total stays above the default gate...
+    expect(result.total).toBeGreaterThanOrEqual(75);
+    // ...but the per-service dimension is 0. --require-per-service is the
+    // CLI flag that turns this into a test failure.
+    expect(perService.score).toBe(0);
+    expect(perService.notes[0]).toContain("no service has non-empty probeRules");
+  });
 });

@@ -6,6 +6,7 @@
  *   npx tsx src/eval/discover-eval.ts --input path/to/services.yaml
  *   npx tsx src/eval/discover-eval.ts --input fixture.json --fixture
  *   npx tsx src/eval/discover-eval.ts --min-score 75               # exits non-zero below threshold
+ *   npx tsx src/eval/discover-eval.ts --require-per-service        # also fails if per_service_present dimension == 0
  *
  * The eval scores what Slice B of the discovery-owned probe rules change
  * produces: per-service `probeRules` and top-level `globalProbeRules` written
@@ -241,15 +242,17 @@ interface CliArgs {
   inputPath: string;
   fixture: boolean;
   minScore: number | null;
+  requirePerService: boolean;
 }
 
 function parseArgs(argv: string[]): CliArgs {
-  const args: CliArgs = { inputPath: "services.yaml", fixture: false, minScore: null };
+  const args: CliArgs = { inputPath: "services.yaml", fixture: false, minScore: null, requirePerService: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--input" && argv[i + 1]) { args.inputPath = argv[++i]!; continue; }
     if (a === "--fixture") { args.fixture = true; continue; }
     if (a === "--min-score" && argv[i + 1]) { args.minScore = parseInt(argv[++i]!, 10); continue; }
+    if (a === "--require-per-service") { args.requirePerService = true; continue; }
   }
   return args;
 }
@@ -263,10 +266,23 @@ function main(): void {
   console.log("");
   const result = evalDiscoverOutput(input);
   console.log(result.summary);
+  let failed = false;
   if (args.minScore !== null && result.total < args.minScore) {
     console.log(`\nFAIL: score ${result.total} < min-score ${args.minScore}`);
-    process.exit(1);
+    failed = true;
   }
+  // The per-service dimension can silently score 0 while total still passes —
+  // we caught this in the wild on 2026-04-23: a real services.yaml with 120
+  // services and zero probeRules scored 75/100 because globals + parses were
+  // fine. Gate this dimension explicitly when the caller opts in.
+  if (args.requirePerService) {
+    const dim = result.dimensions.find((d) => d.name === "per_service_present");
+    if (dim && dim.score === 0) {
+      console.log(`\nFAIL: per_service_present dimension is 0/25 (required by --require-per-service). ${dim.notes.join("; ")}`);
+      failed = true;
+    }
+  }
+  if (failed) process.exit(1);
   console.log("\nPASS");
 }
 
