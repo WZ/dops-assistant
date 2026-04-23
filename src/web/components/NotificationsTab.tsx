@@ -3,10 +3,13 @@ import { Button } from "@/components/ui/button";
 import { useStackContext } from "../contexts/StackContext";
 import { EmailRecipientsSection } from "./EmailRecipientsSection.js";
 
+type OnScanCompleteMode = "always" | "hits-only" | "off";
+
 interface SlackConfig {
   webhookUrl: string | null;
   enabled: boolean;
   source: "gui" | "config" | "none";
+  onScanComplete: OnScanCompleteMode;
 }
 
 const LABEL_CLASS =
@@ -17,13 +20,19 @@ const INPUT_CLASS =
 
 export function NotificationsTab() {
   const { stackFetch } = useStackContext();
-  const [slack, setSlack] = useState<SlackConfig>({ webhookUrl: null, enabled: false, source: "none" });
+  const [slack, setSlack] = useState<SlackConfig>({
+    webhookUrl: null,
+    enabled: false,
+    source: "none",
+    onScanComplete: "hits-only",
+  });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
   const [urlInput, setUrlInput] = useState("");
   const [enabledInput, setEnabledInput] = useState(false);
+  const [onScanCompleteInput, setOnScanCompleteInput] = useState<OnScanCompleteMode>("hits-only");
   const [showUrl, setShowUrl] = useState(false);
   const [dirty, setDirty] = useState(false);
 
@@ -34,6 +43,7 @@ export function NotificationsTab() {
       setSlack(data.slack);
       setUrlInput(data.slack.webhookUrl ?? "");
       setEnabledInput(data.slack.enabled);
+      setOnScanCompleteInput(data.slack.onScanComplete ?? "hits-only");
     } catch { /* ignore */ }
     setLoading(false);
   }, [stackFetch]);
@@ -51,6 +61,7 @@ export function NotificationsTab() {
           slack: {
             webhookUrl: urlInput || null,
             enabled: enabledInput,
+            onScanComplete: onScanCompleteInput,
           },
         }),
       });
@@ -158,6 +169,28 @@ export function NotificationsTab() {
             </div>
             <p className="text-[10px] text-muted-foreground/40 mt-1 font-mono">
               Create at slack.com → Apps → Incoming Webhooks
+            </p>
+          </div>
+
+          {/* Scan run summary mode */}
+          <div>
+            <label className={LABEL_CLASS}>Scan run summary</label>
+            <div className="flex gap-4 mt-2">
+              {(["always", "hits-only", "off"] as const).map(mode => (
+                <label key={mode} className="flex items-center gap-2 text-xs font-mono text-foreground">
+                  <input
+                    type="radio"
+                    name="slack-scan-run-mode"
+                    value={mode}
+                    checked={onScanCompleteInput === mode}
+                    onChange={() => { setOnScanCompleteInput(mode); setDirty(true); }}
+                  />
+                  {mode === "always" ? "Always" : mode === "hits-only" ? "Hits only" : "Off"}
+                </label>
+              ))}
+            </div>
+            <p className="text-[10px] text-muted-foreground/40 mt-1 font-mono">
+              When to post a scan run summary to Slack. "Hits only" posts when the scan flagged services.
             </p>
           </div>
 

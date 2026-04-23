@@ -28,6 +28,7 @@ import { parsePrometheusResult } from "./service-health-poller.js";
 import nodemailer from "nodemailer";
 import type { RcaReport } from "../types/rca-types.js";
 import { notifyEmail } from "./email-notifier.js";
+import { ALL_SOURCES } from "../types/notifications.js";
 
 /**
  * Zod schema for PUT /api/scan/settings body.
@@ -1666,26 +1667,42 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
   // ── Notifications REST API ──────────────────────────────────────────
 
+  const SLACK_ON_SCAN_COMPLETE_VALUES = new Set(["always", "hits-only", "off"]);
+
   app.get("/api/notifications", (_req: Request, res: Response) => {
     const slackUrl = db.getSetting("notifications.slack.webhookUrl");
     const slackEnabled = db.getSetting("notifications.slack.enabled");
     // Fall back to config.yaml if no GUI override
     const effectiveUrl = slackUrl ?? config.webhook.slackWebhookUrl ?? null;
     const effectiveEnabled = slackEnabled !== undefined ? slackEnabled === "true" : !!effectiveUrl;
+    const onScanComplete = db.getSetting("notifications.slack.onScanComplete") ?? "hits-only";
     res.json({
       slack: {
         webhookUrl: effectiveUrl,
         enabled: effectiveEnabled,
         source: slackUrl ? "gui" : (config.webhook.slackWebhookUrl ? "config" : "none"),
+        onScanComplete,
       },
     });
   });
 
   app.put("/api/notifications", (req: Request, res: Response) => {
-    const { slack } = req.body as { slack?: { webhookUrl?: string | null; enabled?: boolean } };
+    const { slack } = req.body as {
+      slack?: {
+        webhookUrl?: string | null;
+        enabled?: boolean;
+        onScanComplete?: "always" | "hits-only" | "off";
+      };
+    };
     if (!slack) {
       res.status(400).json({ error: "Missing slack configuration" });
       return;
+    }
+    if (slack.onScanComplete !== undefined) {
+      if (!SLACK_ON_SCAN_COMPLETE_VALUES.has(slack.onScanComplete)) {
+        res.status(400).json({ error: "onScanComplete must be one of: always, hits-only, off" });
+        return;
+      }
     }
     if (slack.webhookUrl !== undefined) {
       if (slack.webhookUrl === null || slack.webhookUrl === "") {
@@ -1707,6 +1724,9 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     }
     if (slack.enabled !== undefined) {
       db.setSetting("notifications.slack.enabled", String(slack.enabled));
+    }
+    if (slack.onScanComplete !== undefined) {
+      db.setSetting("notifications.slack.onScanComplete", slack.onScanComplete);
     }
     res.json({ ok: true });
   });
@@ -1749,7 +1769,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
   // ── Email notifications ─────────────────────────────────────────────────
 
-  const ALL_SOURCES_SET = new Set(["webhook", "scan", "poller", "manual"]);
+  const ALL_SOURCES_SET = new Set<string>(ALL_SOURCES);
   const ALL_SEVERITIES_SET = new Set(["low", "medium", "high", "critical"]);
   const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
