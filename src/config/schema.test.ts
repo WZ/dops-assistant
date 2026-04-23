@@ -344,6 +344,125 @@ describe("ConfigSchema – scan section", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it("defaults probe rule source to 'metrics' when omitted (legacy config)", () => {
+    const result = ConfigSchema.parse({ llm, providers: [grafanaProvider] });
+    // All three k8s-availability defaults must be classified as metrics-sourced
+    // so the probe dispatches them to the Prometheus tool. If this assertion
+    // ever fails, an upgrade changed the default source and will silently
+    // reroute every shipped rule to the wrong MCP tool.
+    for (const rule of result.scan.probe.metrics) {
+      expect(rule.source).toBe("metrics");
+    }
+  });
+
+  it("accepts probe rule with source: 'logs'", () => {
+    const result = ConfigSchema.safeParse({
+      llm,
+      providers: [grafanaProvider],
+      scan: {
+        probe: {
+          metrics: [
+            {
+              name: "log_errors",
+              query: 'sum(count_over_time({container="api"} |= `error` [15m]))',
+              threshold: { op: "gt", value: 75 },
+              consecutiveTicks: 2,
+              source: "logs",
+            },
+          ],
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.scan.probe.metrics[0]!.source).toBe("logs");
+    }
+  });
+
+  it("rejects invalid probe rule source", () => {
+    const result = ConfigSchema.safeParse({
+      llm,
+      providers: [grafanaProvider],
+      scan: {
+        probe: {
+          metrics: [
+            {
+              name: "x",
+              query: "q",
+              threshold: { op: "gt", value: 0 },
+              source: "traces",
+            },
+          ],
+        },
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("defaults logsQueryTimeoutMs to 10_000 (Loki needs more headroom than Prom)", () => {
+    const result = ConfigSchema.parse({ llm, providers: [grafanaProvider] });
+    expect(result.scan.probe.logsQueryTimeoutMs).toBe(10_000);
+  });
+
+  it("rejects logsQueryTimeoutMs below 100", () => {
+    const result = ConfigSchema.safeParse({
+      llm,
+      providers: [grafanaProvider],
+      scan: { probe: { logsQueryTimeoutMs: 50 } },
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("ConfigSchema – per-service probeRules", () => {
+  it("defaults probeRules to an empty array when a service omits the field", () => {
+    // discovery agent writes probeRules; services.yaml files predating Slice B
+    // will not have the field. Parse must tolerate that shape and produce [].
+    const result = ConfigSchema.safeParse({
+      llm,
+      providers: [grafanaProvider],
+      services: [{ name: "checkout" }],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.services[0]!.probeRules).toEqual([]);
+    }
+  });
+
+  it("accepts per-service probeRules with both metrics- and logs-sourced entries", () => {
+    const result = ConfigSchema.safeParse({
+      llm,
+      providers: [grafanaProvider],
+      services: [
+        {
+          name: "checkout",
+          probeRules: [
+            {
+              name: "pod_restarts",
+              query: 'rate(kube_pod_container_status_restarts_total{namespace="checkout"}[5m])',
+              threshold: { op: "gt", value: 0.033 },
+              consecutiveTicks: 2,
+              source: "metrics",
+            },
+            {
+              name: "log_errors",
+              query: 'sum(count_over_time({container="api"} |= `error` or `fatal` [15m]))',
+              threshold: { op: "gt", value: 75 },
+              consecutiveTicks: 2,
+              source: "logs",
+            },
+          ],
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.services[0]!.probeRules).toHaveLength(2);
+      expect(result.data.services[0]!.probeRules[0]!.source).toBe("metrics");
+      expect(result.data.services[0]!.probeRules[1]!.source).toBe("logs");
+    }
+  });
 });
 
 describe("ConfigSchema — notifications.email", () => {

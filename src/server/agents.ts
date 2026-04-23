@@ -26,6 +26,8 @@ import type { InvestigationTemplate } from "../config/schema.js";
 import type { ChatRequest, ChatResponse, ImageAttachment } from "../types/agent-types.js";
 import type { TokenUsage } from "../types/llm-types.js";
 import type { ValidatedServiceConfig } from "../types/discovery-types.js";
+import type { DiscoveryResult } from "../types/agent-interfaces.js";
+import type { ProbeMetricRule } from "../config/schema.js";
 import { createChatAgent } from "../agents/chat.js";
 import { wrapUntrusted } from "../agents/shared/prompt-helpers.js";
 import { logLlmCall, logLlmCallFirstChunk, logLlmCallStart, logToolCall, newCallId, type ToolCallEvent } from "./llm-logger.js";
@@ -408,7 +410,7 @@ export class MastraDiscoverAdapter implements IDiscoverAgent {
     onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void,
     skills?: import("../skills/store.js").Skill[],
     onRetry?: (attempt: number, maxRetries: number, reason: string) => void,
-  ): Promise<ValidatedServiceConfig[]> {
+  ): Promise<DiscoveryResult> {
     return runDiscovery({
       model: this.deps.model,
       providers: this.deps.providers,
@@ -422,7 +424,23 @@ export class MastraDiscoverAdapter implements IDiscoverAgent {
     });
   }
 
-  async accept(services: ServiceConfig[], source: "discovery" | "manual"): Promise<string> {
+  async accept(
+    services: ServiceConfig[],
+    source: "discovery" | "manual",
+    globalProbeRules?: ProbeMetricRule[],
+  ): Promise<string> {
+    // When discovery writes globals, persist both atomically via saveAll()
+    // — one version history entry, no mid-write state where a concurrent
+    // probe tick could read services from one save and globals from
+    // another. When globals are absent (manual UI edit, CLI rename,
+    // rollback), fall through to save() which internally preserves the
+    // file's current globals so they can never be silently clobbered.
+    if (globalProbeRules !== undefined) {
+      return this.deps.registryStore.saveAll(
+        { services, globalProbeRules },
+        source,
+      );
+    }
     return this.deps.registryStore.save(services, source);
   }
 }

@@ -5,6 +5,31 @@ const MetricSchema = z.object({
   description: z.string(),
 });
 
+// Threshold + ProbeMetricRuleSchema are declared up here (rather than alongside
+// ProbeSchema below) so `ServiceSchema.probeRules` can reference them. The probe
+// rule shape is shared between the global probe defaults (`ProbeSchema.metrics`)
+// and per-service rules (`ServiceSchema.probeRules`). The `source` discriminator
+// tells the probe which MCP tool role to dispatch against: "metrics" → Prometheus
+// query tool, "logs" → Loki query tool with queryType:"metric".
+const ThresholdSchema = z.object({
+  op: z.enum(["gt", "lt", "gte", "lte"]),
+  value: z.number(),
+});
+
+// Exported so the discovery-path validator in src/workflows/steps/discover.ts
+// can safeParse LLM-written rules before they're persisted. Keep this in
+// lockstep with scan-rule-validator's RuleSchema (same fields, same defaults);
+// the only intentional divergence is that scan-rule-validator is `.strict()`
+// (rejects unknown keys to catch typo'd GUI input) while this schema tolerates
+// unknown keys so future field additions don't break in-flight rules.
+export const ProbeMetricRuleSchema = z.object({
+  name: z.string(),
+  query: z.string(),
+  threshold: ThresholdSchema,
+  consecutiveTicks: z.number().int().min(1).default(1),
+  source: z.enum(["metrics", "logs"]).default("metrics"),
+});
+
 const ServiceSchema = z.object({
   name: z.string(),
   metrics: z.array(MetricSchema).optional().default([]),
@@ -12,6 +37,15 @@ const ServiceSchema = z.object({
   gitlabProject: z.string().optional(),
   /** Coroot application ID (e.g. "default:Deployment:ingestion-server"). Set by discovery. */
   corootAppId: z.string().optional(),
+  /**
+   * Per-service probe rules written by the discovery agent (e.g. `pod_restarts`
+   * with the service's actual k8s namespace, `log_errors` using the service's
+   * Loki labels). Empty by default; populated on `npm run discover` when the
+   * agent has enough context to write a correctly-labeled query. The probe
+   * merges these with the top-level `globalProbeRules` from services.yaml and
+   * the hardcoded `ProbeSchema.metrics` defaults (four-track evaluator).
+   */
+  probeRules: z.array(ProbeMetricRuleSchema).optional().default([]),
 });
 
 const McpServerSchema = z.discriminatedUnion("transport", [
@@ -156,18 +190,6 @@ const WebhookSchema = z.object({
  * `maxInvestigationsPerTick`). Design doc:
  * ~/.gstack/projects/WZ-dops-assistant/wli02-main-design-20260421-012829.md
  */
-const ThresholdSchema = z.object({
-  op: z.enum(["gt", "lt", "gte", "lte"]),
-  value: z.number(),
-});
-
-const ProbeMetricRuleSchema = z.object({
-  name: z.string(),
-  query: z.string(),
-  threshold: ThresholdSchema,
-  consecutiveTicks: z.number().int().min(1).default(1),
-});
-
 const ProbeLogsSchema = z.object({
   enabled: z.boolean().default(true),
   window: z.string().default("15m"),
@@ -178,6 +200,14 @@ const ProbeLogsSchema = z.object({
 const ProbeSchema = z.object({
   concurrency: z.number().int().min(1).default(8),
   queryTimeoutMs: z.number().int().min(100).default(3_000),
+  /**
+   * Separate timeout for log-source probe rules. Loki `count_over_time` queries
+   * across a 15m window on a busy log stream regularly take 5-20s; reusing the
+   * 3s Prometheus-sized `queryTimeoutMs` produces silent false negatives (NaN
+   * looks identical to "no errors"). Operators on slower Loki clusters can tune
+   * up; fast Loki clusters can tune down to match the metric timeout.
+   */
+  logsQueryTimeoutMs: z.number().int().min(100).default(10_000),
   /**
    * Default probe rules — three k8s availability checks, one per workload type
    * (Deployment / StatefulSet / DaemonSet). A service will typically match

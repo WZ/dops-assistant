@@ -1,0 +1,63 @@
+# Fixture: expected discovery output on a k8s cluster that uses `app=` as
+# the majority label key. Used by src/eval/discover-eval.ts to exercise the
+# four scoring dimensions. A real services.yaml written by the agent after
+# Slice B should produce a score of 100/100 on this kind of stack.
+#
+# Regenerate from a live run: `npm run discover` then copy the resulting
+# services.yaml here (strip any secrets). Refresh when the discovery prompt
+# changes meaningfully.
+
+services:
+  - name: checkout-api
+    metrics:
+      - query: 'up{app="checkout-api"}'
+        description: "checkout-api is up"
+    logLabels:
+      namespace: "checkout"
+      container: "api"
+    probeRules:
+      - name: pod_restarts
+        query: 'rate(kube_pod_container_status_restarts_total{namespace="checkout"}[5m])'
+        threshold: { op: gt, value: 0.033 }
+        consecutiveTicks: 2
+        source: metrics
+      - name: log_errors
+        query: 'sum(count_over_time({namespace="checkout",container="api"} |= `error` or `fatal` [15m]))'
+        threshold: { op: gt, value: 75 }
+        consecutiveTicks: 2
+        source: logs
+
+  - name: payments-worker
+    metrics:
+      - query: 'up{app="payments-worker"}'
+        description: "payments-worker is up"
+    logLabels:
+      namespace: "payments"
+      container: "worker"
+    probeRules:
+      - name: pod_restarts
+        query: 'rate(kube_pod_container_status_restarts_total{namespace="payments"}[5m])'
+        threshold: { op: gt, value: 0.033 }
+        consecutiveTicks: 2
+        source: metrics
+      - name: log_errors
+        query: 'sum(count_over_time({namespace="payments",container="worker"} |= `error` or `fatal` [15m]))'
+        threshold: { op: gt, value: 75 }
+        consecutiveTicks: 2
+        source: logs
+
+  - name: notify-dispatcher
+    metrics:
+      - query: 'up{app="notify-dispatcher"}'
+        description: "notify-dispatcher is up"
+    logLabels:
+      namespace: "notifications"
+      container: "dispatcher"
+    probeRules: []
+
+globalProbeRules:
+  - name: app_availability
+    query: 'up{app="{service}"} == 1'
+    threshold: { op: lt, value: 1 }
+    consecutiveTicks: 3
+    source: metrics

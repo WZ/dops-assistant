@@ -75,6 +75,13 @@ export interface ScanSchedulerDeps {
   scan: ScanConfig;
   /** Getter for Prometheus datasource UID (re-read from provider registry). */
   getPrometheusDatasourceUid: () => string | undefined;
+  /**
+   * Optional getter for Loki datasource UID. When undefined, log-source
+   * probe rules and the probe.logs fallback both score NaN (no trip) —
+   * metrics-source tracks continue unaffected. Re-read per tick so
+   * operators can wire Loki later without restarting.
+   */
+  getLokiDatasourceUid?: () => string | undefined;
   /** Getter for hidden service names — they're excluded from probe. */
   getHiddenServices?: () => Set<string>;
   /**
@@ -262,15 +269,16 @@ export class ScanScheduler {
    * intent is "this service's rules just changed", so starting fresh matches
    * the behavior we already provide for global-rule changes.
    *
-   * Keys are `"{service}:{ruleName}"` — we match by prefix up to the last
-   * colon, matching resetHysteresisForChangedRules' key-parsing rule.
+   * Keys are `"{service}:{origin}:{ruleName}"` (Slice C, origin-namespaced
+   * for independent per-track hysteresis). Service always lives in the
+   * leading segment, so a prefix match is sufficient and avoids any
+   * ambiguity about how many colons are in the tail.
    */
   resetHysteresisForService(service: string): void {
     let cleared = 0;
+    const prefix = service + ":";
     for (const key of Array.from(this.consecutiveState.keys())) {
-      const colonIdx = key.lastIndexOf(":");
-      if (colonIdx < 0) continue;
-      if (key.slice(0, colonIdx) === service) {
+      if (key.startsWith(prefix)) {
         this.consecutiveState.delete(key);
         cleared++;
       }
@@ -286,8 +294,10 @@ export class ScanScheduler {
    * (same name, different semantics). Changes to `consecutiveTicks` alone
    * don't invalidate the counter — the operator just moved the firing bar.
    *
-   * Keys in `consecutiveState` are `"{service}:{ruleName}"`, so we match on
-   * the rule-name suffix after the last colon.
+   * Keys in `consecutiveState` are `"{service}:{origin}:{ruleName}"` (Slice C).
+   * The rule name is still the suffix after the last colon, so the existing
+   * parser works unchanged — origin doesn't affect which rule-name a key
+   * belongs to.
    */
   private resetHysteresisForChangedRules(
     prevRules: ProbeMetricRule[],
@@ -316,7 +326,13 @@ export class ScanScheduler {
 
     let cleared = 0;
     for (const key of Array.from(this.consecutiveState.keys())) {
-      // Key shape: "service:ruleName". Rule name comes after the last ":".
+      // Key shape (Slice C): "service:origin:ruleName". Rule name is still
+      // the suffix after the last colon — lastIndexOf + slice(+1) extracts
+      // it correctly regardless of whether the key is the 2-part legacy
+      // shape or the 3-part origin-namespaced one. DO NOT use this index
+      // to extract the service prefix (it now includes ":origin"); use
+      // `startsWith(service + ":")` for service matching as in
+      // resetHysteresisForService.
       const colonIdx = key.lastIndexOf(":");
       if (colonIdx < 0) continue; // malformed key, ignore
       const ruleName = key.slice(colonIdx + 1);
@@ -377,14 +393,17 @@ export class ScanScheduler {
       }
       const getOverride = (service: string) => parsedOverrides.get(service) ?? null;
 
+      const lokiDatasourceUid = this.deps.getLokiDatasourceUid?.();
       const rawHits = await runProbe({
         services,
         probe: this.scan.probe,
         providers: this.deps.providers(),
         datasourceUid,
+        lokiDatasourceUid,
         signal: this.ac.signal,
         consecutiveState: this.consecutiveState,
         getOverride,
+        registryStore: this.deps.registryStore,
       });
 
       if (this.stopped || this.ac.signal.aborted) {

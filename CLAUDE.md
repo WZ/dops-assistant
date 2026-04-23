@@ -24,6 +24,7 @@ npm run web              # Start web server (port 3000, loads dev/.env)
 npm run build:web        # Build frontend (Vite → dist/web/) — MUST rebuild after src/web/ changes
 npm run cli              # Terminal UI (Ink) — doesn't work inside Claude Code
 npm run discover         # Run AI service discovery
+npm run test:discover-eval            # Score discovery output quality (gates at 75/100)
 npx tsx src/eval/rca-eval.ts          # Score RCA report quality
 npx tsx src/eval/rca-eval.ts --save   # Score + save baseline
 npx tsx src/eval/rca-eval.ts --compare src/eval/baselines/2026-03-22.json  # Compare to baseline
@@ -46,8 +47,11 @@ npx tsc --noEmit         # Type check
 | Intent classification | `src/agents/intent.ts` (AI SDK `generateText`) |
 | MCP tool routing | `src/mcp/provider.ts` — role-based routing via `@mastra/mcp`, tool classification (`classifyToolAccess`) |
 | Config schema | `src/config/schema.ts` — Zod schema, validated at startup |
-| Service discovery | `src/agents/discover.ts` + `src/workflows/discovery.ts` → writes `services.yaml` |
-| Service registry | `src/services/registry.ts` — loads `services.yaml`, static overrides in `config.yaml` take precedence |
+| Service discovery | `src/agents/discover.ts` + `src/workflows/discovery.ts` → writes `services.yaml` (incl. per-service `probeRules` + top-level `globalProbeRules`) |
+| Discovery eval harness | `src/eval/discover-eval.ts` — scores LLM discovery output across 4 dimensions (globals, per-service rules, PromQL parse, LogQL parse). Fixture: `src/eval/fixtures/discover-k8s-fixture.yaml` |
+| Service registry | `src/services/registry.ts` — loads `services.yaml` (`{services, globalProbeRules}` shape, flat-array forward-compat), static overrides in `config.yaml` take precedence |
+| Proactive scan probe | `src/server/anomaly-probe.ts` — four-track evaluator: (1) discovery globals, (2) per-service metric rules, (3) per-service log-source rules (Loki metric-queryType), (4) config.yaml defaults. Hysteresis state keyed by `${service}:${origin}:${ruleName}`, orphan GC on tick |
+| Scan scheduler | `src/server/scan-scheduler.ts` — cron-driven scheduler that invokes the anomaly probe |
 | Web UI | `src/web/` — React SPA (Vite). Server serves built files from `dist/web/` |
 | CLI commands | `src/cli/commands/` — investigate, chat, mcp-check, discover, e2e |
 | Server + WebSocket | `src/server/index.ts`, `src/server/ws-handler.ts` |
@@ -77,7 +81,7 @@ npx tsc --noEmit         # Type check
 - **Run all**: `npx vitest run`
 - **Run one**: `npx vitest run src/agents/chat.test.ts`
 - **Watch mode**: `npx vitest` (alias: `npm run test:watch`)
-- **73 test files** across agents, CLI commands, server, workflows, config, eval, and web components
+- **100+ test files** across agents, CLI commands, server, workflows, config, eval, and web components
 
 ## Dev Setup
 
@@ -98,7 +102,8 @@ npx tsc --noEmit         # Type check
 - **Role-based MCP routing**: `providers` in config assign roles (metrics, logs, dashboards) to MCP servers. `src/mcp/provider.ts` routes tool calls by role, not by provider name.
 - **Step factories**: Investigation workflow uses factory functions in `src/workflows/steps/` that produce Mastra workflow steps. Each agent is wired as a step.
 - **Graceful degradation**: Agent step failures produce empty findings rather than crashing the workflow.
-- **Discovery → services.yaml**: `npm run discover` uses AI to find services via Prometheus metrics, writes `services.yaml`. Static overrides in `config.yaml` take precedence.
+- **Discovery → services.yaml**: `npm run discover` uses AI to find services via Prometheus metrics, writes `services.yaml` (per-service `probeRules` + top-level `globalProbeRules`). Static overrides in `config.yaml` take precedence. LLM-emitted rules are Zod-validated before persistence; malformed entries are dropped with a warn log.
+- **Four-track scan probe**: `src/server/anomaly-probe.ts` evaluates rules in four tracks — (1) discovery-written globals (`globalProbeRules`), (2) per-service `probeRules` with `source: metric`, (3) per-service `probeRules` with `source: log` (Loki `count_over_time` via `queryType: "metric"`), (4) hardcoded `config.yaml` defaults as fallback. A `logs` fallback auto-generates LogQL from `logLabels` when discovery didn't write a log rule.
 - **`prepareStep` hook**: Intercepts every LLM call to handle truncation, quirk workarounds, and tool filtering. Lives in `src/agents/shared/prepare-step.ts`.
 - **Investigation templates**: `quick` (metrics only), `standard` (metrics+logs), `full` (all phases + changes). Configured via `config.yaml` webhook section or GUI. See `src/workflows/investigation.ts`.
 - **Alert webhook**: `POST /api/webhook/alert` receives Alertmanager payloads, validates bearer token, dedup window, and runs headless investigations. See `src/server/webhook-handler.ts`.

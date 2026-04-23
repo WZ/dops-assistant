@@ -4,7 +4,8 @@ import { getToolsByRole } from "../../mcp/provider.js";
 import { wrapToolsWithCallbacks } from "../tool-utils.js";
 import type { LanguageModel } from "ai";
 import type { MastraProvider } from "../../mcp/provider.js";
-import type { ServiceConfig, DiscoveryConfig, DiscoveryRecipe } from "../../config/schema.js";
+import type { ServiceConfig, DiscoveryConfig, DiscoveryRecipe, ProbeMetricRule } from "../../config/schema.js";
+import { ProbeMetricRuleSchema } from "../../config/schema.js";
 import type { OnToolCallEnriched, OnIteration } from "../../types/agent-interfaces.js";
 import type { Skill } from "../../skills/store.js";
 import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
@@ -117,7 +118,85 @@ function formatRecipeHints(recipes: DiscoveryRecipe[]): string {
   }).join("\n\n");
 }
 
-export async function runDiscoverStep(config: DiscoverStepConfig): Promise<ServiceConfig[]> {
+/**
+ * Output of `runDiscoverStep`. `services` is the per-service list the LLM
+ * wrote; `globalProbeRules` is the top-level stack-aware rule array the
+ * agent produced after introspecting the Prometheus label key (empty when
+ * the stack matches the hardcoded k8s defaults or the agent couldn't
+ * introspect — both are valid no-op outcomes, the probe falls through to
+ * the config.yaml defaults).
+ */
+export interface DiscoverStepResult {
+  services: ServiceConfig[];
+  globalProbeRules: ProbeMetricRule[];
+}
+
+/**
+ * Rule-name regex — matches scan-rule-validator (GUI path). Names cannot
+ * contain `:` because the scheduler's consecutiveState Map keys by
+ * `{service}:{origin}:{ruleName}` and splits on colons. A rule name with
+ * an embedded colon would silently corrupt state-key parsing.
+ */
+const SAFE_RULE_NAME_RE = /^[^:]+$/;
+
+/**
+ * Zod-validate LLM-written probe rules before they touch the registry or
+ * the scan probe. Drops (and logs) any rule that fails shape validation
+ * or contains an unsafe name. Addresses the LLM-trust-boundary gap
+ * surfaced in the 2026-04-22 adversarial review.
+ */
+function validateDiscoveredRules(raw: unknown[], source: string): ProbeMetricRule[] {
+  const out: ProbeMetricRule[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const entry = raw[i];
+    const parsed = ProbeMetricRuleSchema.safeParse(entry);
+    if (!parsed.success) {
+      logger.warn({
+        source,
+        index: i,
+        rawEntry: entry,
+        errors: parsed.error.issues.slice(0, 3).map((x) => ({ path: x.path.join("."), message: x.message })),
+      }, `discovery: dropping invalid ${source} rule at index ${i} — fails ProbeMetricRuleSchema`);
+      continue;
+    }
+    if (!SAFE_RULE_NAME_RE.test(parsed.data.name)) {
+      logger.warn({
+        source,
+        index: i,
+        ruleName: parsed.data.name,
+      }, `discovery: dropping ${source} rule with unsafe name (colon reserved for state-key encoding)`);
+      continue;
+    }
+    out.push(parsed.data);
+  }
+  return out;
+}
+
+/**
+ * Best-effort shape check for an LLM-written services array. The full
+ * `ServiceSchema` is Zod-validated downstream via runValidateStep, which
+ * drops services that fail shape. Here we only scrub the `probeRules`
+ * field before validation sees it — the same LLM-trust-boundary concern
+ * as globalProbeRules. Services whose own fields are malformed continue
+ * to reach validation for richer diagnostics there.
+ */
+function validateDiscoveredServices(raw: unknown[]): ServiceConfig[] {
+  const out: ServiceConfig[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const svc = entry as Record<string, unknown>;
+    if (typeof svc.name !== "string") {
+      logger.warn({ rawEntry: entry }, "discovery: dropping service with missing/non-string name");
+      continue;
+    }
+    const rawProbeRules = Array.isArray(svc.probeRules) ? svc.probeRules : [];
+    const probeRules = validateDiscoveredRules(rawProbeRules, `service.${svc.name}.probeRules`);
+    out.push({ ...(svc as ServiceConfig), probeRules });
+  }
+  return out;
+}
+
+export async function runDiscoverStep(config: DiscoverStepConfig): Promise<DiscoverStepResult> {
   let discoveryTools: Record<string, any>;
   try {
     const [metrics, infra] = await Promise.all([
@@ -262,11 +341,22 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
       });
 
       const parsed = safeJsonParse(result.text);
+      // Backward-compat: bare array → treat as {services, globalProbeRules: []}
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+        return { services: parsed as ServiceConfig[], globalProbeRules: [] };
       }
-      if (parsed?.services && Array.isArray(parsed.services) && parsed.services.length > 0) {
-        return parsed.services;
+      // New object form: {services, globalProbeRules?}. Accept when EITHER
+      // services or globalProbeRules is non-empty — a discovery run that
+      // only succeeded at label-key introspection (globals populated, zero
+      // services found) is still a valid, useful result.
+      if (parsed && typeof parsed === "object") {
+        const rawServices = Array.isArray(parsed.services) ? parsed.services : [];
+        const rawGlobals = Array.isArray(parsed.globalProbeRules) ? parsed.globalProbeRules : [];
+        const globalProbeRules = validateDiscoveredRules(rawGlobals, "globalProbeRules");
+        const services = validateDiscoveredServices(rawServices);
+        if (services.length > 0 || globalProbeRules.length > 0) {
+          return { services, globalProbeRules };
+        }
       }
       const respLen = result.text?.length ?? 0;
       const first200 = result.text?.slice(0, 200) ?? "";
@@ -300,5 +390,5 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Servi
     { maxRetries: MAX_RETRIES },
     "discovery: agent returned no parseable services after all retries — returning empty list (likely causes: LLM produced empty array, wrapped result in unexpected shape, or exhausted iterations without JSON output)",
   );
-  return [];
+  return { services: [], globalProbeRules: [] };
 }

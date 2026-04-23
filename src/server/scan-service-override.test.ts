@@ -34,7 +34,7 @@ describe("validateOverride", () => {
     expect(r.ok).toBe(true);
     expect(r.override).toEqual({
       disabled: false,
-      rules: [{ name: "x", query: 'up{service="{service}"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 1 }],
+      rules: [{ name: "x", query: 'up{service="{service}"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 1, source: "metrics" }],
     });
   });
 
@@ -101,7 +101,7 @@ describe("parseOverride", () => {
       rules: [{ name: "x", query: 'up{service="{service}"}', threshold: { op: "lt", value: 1 } }],
     });
     expect(parseOverride(raw)).toEqual({
-      rules: [{ name: "x", query: 'up{service="{service}"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 1 }],
+      rules: [{ name: "x", query: 'up{service="{service}"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 1, source: "metrics" }],
     });
   });
 
