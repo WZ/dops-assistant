@@ -27,16 +27,21 @@ const ThresholdSchema = z.object({
 
 const RuleSchema = z.object({
   // Names cannot contain ':' — the scheduler's consecutiveState Map keys by
-  // `"{service}:{ruleName}"` and splits on lastIndexOf(":"). A rule name with
-  // an embedded colon (e.g. "db:slow") would silently corrupt the per-rule
-  // state reset during reload diffs. Rather than refactor the key encoding
-  // now, forbid the delimiter at the validator.
+  // `"{service}:{origin}:{ruleName}"` (Slice C) and splits on ':'. A rule
+  // name with an embedded colon (e.g. "db:slow") would silently corrupt the
+  // per-rule state reset during reload diffs. Rather than refactor the key
+  // encoding, forbid the delimiter at the validator.
   name: z.string()
     .min(1, "name must be non-empty")
     .regex(/^[^:]+$/, "name must not contain ':' (reserved for internal state-key encoding)"),
   query: z.string().min(1, "query must be non-empty"),
   threshold: ThresholdSchema,
   consecutiveTicks: z.number().int().min(1, "consecutiveTicks must be >= 1").default(1),
+  // source defaults to "metrics" for GUI-authored rules — log-source rules
+  // come from discovery in Slice B, not via this editor in v1. The field is
+  // present so `result.rules` matches the canonical `ProbeMetricRule` shape
+  // downstream consumers expect.
+  source: z.enum(["metrics", "logs"]).default("metrics"),
 }).strict();
 
 const RulesArraySchema = z.array(RuleSchema);

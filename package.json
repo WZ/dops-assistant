@@ -1,6 +1,6 @@
 {
   "name": "dops-assistant",
-  "version": "0.1.14",
+  "version": "0.1.0.0",
   "description": "Agentic infrastructure monitoring assistant — Grafana MCP + CLI",
   "type": "module",
   "main": "dist/index.js",
@@ -12,6 +12,7 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:rca-eval": "tsx src/eval/rca-eval.ts --min-score 20",
+    "test:discover-eval": "tsx src/eval/discover-eval.ts --input src/eval/fixtures/discover-k8s-fixture.yaml --min-score 75",
     "cli": "NODE_TLS_REJECT_UNAUTHORIZED=0 NODE_NO_WARNINGS=1 tsx src/cli/index.tsx",
     "cli:investigate": "NODE_TLS_REJECT_UNAUTHORIZED=0 NODE_NO_WARNINGS=1 tsx src/cli/index.tsx investigate",
     "cli:chat": "NODE_TLS_REJECT_UNAUTHORIZED=0 NODE_NO_WARNINGS=1 tsx src/cli/index.tsx chat",

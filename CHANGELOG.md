@@ -4,8 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.0.0] - 2026-04-22
+
+### Added
+- **Operators stop hand-crafting probe rules.** The discovery agent (`npm run discover`) now writes the rules the scan probe evaluates. Every service gets per-service `probeRules` (e.g. `pod_restarts` with the service's real k8s namespace, `log_errors` with the service's actual Loki labels). A top-level `globalProbeRules` block carries stack-aware availability rules written after the agent introspects whichever label key the stack actually uses (`app`, `service`, `job`, `deployment`, etc.). Stacks that match the hardcoded k8s defaults leave `globalProbeRules: []` and fall through to the config.yaml defaults — no duplication.
+- **The probe now catches k8s pod restart storms and log error bursts.** Previously the probe only ran PromQL against Prometheus. New four-track evaluator: track 1 is discovery-written globals, track 2 is per-service metric rules (k8s restarts), track 3 is per-service log-source rules (Loki `count_over_time(... |= error)`), track 4 is the hardcoded config.yaml defaults as the fallback when discovery has never run. A `probe.logs` fallback auto-generates a LogQL from a service's `logLabels` when discovery didn't write one and the label set is non-empty.
+- **Loki log-count queries are now scalar-returning.** `executeInstantLogs` calls Grafana MCP's `query_loki_logs` with `queryType: "metric"` so `sum(count_over_time(...))` returns a scalar (vs. log lines). Falls back to NaN silently when the Loki MCP tool doesn't support that mode — metrics-source rules keep running.
+- **Separate `probe.logsQueryTimeoutMs` config** (default 10s) for log-source rules. The 3s Prometheus timeout regularly expires on 15m Loki windows; using it for both produced silent false negatives that looked indistinguishable from "no errors."
+- **Discovery output quality gate.** New `npm run test:discover-eval` scores the LLM's discovery output across four 25-point dimensions: globals present, per-service rules present, PromQL parses, LogQL parses. Fixture at `src/eval/fixtures/discover-k8s-fixture.yaml` scores 100/100; CI gates at 75. Catches prompt regressions before they reach runtime.
+- **Hysteresis state is origin-namespaced.** Consecutive-tick counters are keyed by `${service}:${origin}:${ruleName}` so a discovery-written global `availability` rule and an operator-written per-service `availability` rule never share a counter — each tracks independently.
+- **Orphan garbage collection at tick start.** The probe drops consecutive-tick counters whose rule is no longer active (renamed by discovery, removed, service hidden). Prevents unbounded Map growth across re-discovery runs.
+
 ### Changed
+- **`services.yaml` shape inverted** from a flat service array to `{services, globalProbeRules}`. Existing installs continue to work: the forward-compat reader transparently converts the old flat array on first load, and the next write upgrades the on-disk format. Every `registryStore.save()` call now preserves the current file's `globalProbeRules` so routes.ts-driven edits (rename, metadata PUT, rollback) cannot silently clobber the discovery-written top-level rules.
 - **Sub-path is now runtime-configurable via `APP_BASE_PATH` env var** instead of baked into the image via `VITE_BASE_PATH` build-arg. Previous flow required rebuilding the image per deploy environment (blank page if you forgot). Now one generic image serves any sub-path: the server rewrites `index.html` asset references and injects `window.__APP_BASE__` at serve time; the web bundle reads the base from that global with fallback to `import.meta.env.BASE_URL`. `VITE_BASE_PATH` still works as a build-time default but is no longer required for sub-path deploys.
+
+### Fixed
+- **LLM-written probe rules are validated before persistence.** `runDiscoverStep` now safeParses every discovery-emitted rule through `ProbeMetricRuleSchema` and rejects names containing `:` (the state-key delimiter). Malformed threshold ops, wrong-enum `source` values ("log" typo → silent routing to the Prometheus tool), and colon-bearing names are dropped with a warn log per-rule instead of propagating into services.yaml and corrupting the scan-scheduler state.
+- **Discovery's `globalProbeRules` now survive an empty service sweep.** Previously a transient zero-services run would silently erase the learned label-key override; `runDiscoverStep` now accepts the object form when either services or `globalProbeRules` is non-empty.
+- **Sync `package.json.version` back in line with the VERSION file.** Stale from the old 3-digit scheme; now both report `0.1.0.0`.
 
 ## [0.0.10.0] - 2026-04-22
 

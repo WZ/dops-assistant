@@ -1,8 +1,10 @@
 // src/web/components/scan/types.ts
 //
-// Shared types for the probe-rule editor UI. Keep in lockstep with the
-// ProbeMetricRule shape in src/config/schema.ts — the editor only speaks this
-// type locally; the server validates the final shape on PUT.
+// Shared types for the probe-rule editor UI. Structurally aligned with the
+// ProbeMetricRule shape in src/config/schema.ts. The GUI editor stays
+// metrics-only for v1 — log-source rules come from discovery (Slice B),
+// not this editor. The `source` field is intentionally omitted here; the
+// server's scan-rule-validator defaults it to "metrics" on PUT.
 
 export type ThresholdOp = "gt" | "lt" | "gte" | "lte";
 

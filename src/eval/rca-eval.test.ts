@@ -429,6 +429,7 @@ describe("classifyTriggerSource", () => {
     const hit: ProbeHit = {
       service: "api-gateway",
       ruleName: "availability",
+      origin: "default",
       value: 0,
       query: 'up{service="api-gateway"}',
       threshold: { op: "lt", value: 1 },
