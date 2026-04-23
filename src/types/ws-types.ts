@@ -10,7 +10,8 @@ export type ClientMessage =
   | { type: "new_session" }
   | { type: "discover" }
   | { type: "discover:accept"; services: ServiceConfig[] }
-  | { type: "discover:reject" };
+  | { type: "discover:reject" }
+  | { type: "scan:trigger" };
 
 // Phase stats emitted on phase completion
 export type PhaseStats = {
@@ -66,4 +67,11 @@ export type ServerMessage =
   | { type: "error"; message: string }
   | { type: "stack:list"; stacks: StackSummary[] }
   | { type: "stack:health"; stacks: Array<{ id: string; slug: string; healthSummary: { healthy: number; degraded: number; down: number; unknown: number; total: number } }> }
-  | { type: "stack:switched"; stackId: string };
+  | { type: "stack:switched"; stackId: string }
+  | { type: "scan:started"; runId: string; stackId: string; trigger: "manual" | "cron"; startedAt: number }
+  | { type: "scan:probe_complete"; runId: string; stackId: string; stats: { servicesProbed: number; rulesApplied: number; queriesExecuted: number; probeErrors: number; queriesEmpty: number; durationMs: number } }
+  | { type: "scan:triage_complete"; runId: string; stackId: string; detail: { hitsRaw: number; hitsAfterDedup: number; dispatched: Array<{ service: string; ruleName: string; value: number; severity: number }>; dropped: Array<{ service: string; ruleName: string; value: number; severity: number }>; dedupedList: Array<{ service: string; ruleName: string; reason: string }> } }
+  | { type: "scan:investigation_dispatched"; runId: string; stackId: string; investigationId: string; service: string; ruleName: string }
+  | { type: "scan:complete"; runId: string; stackId: string; status: "complete"; durationMs: number; hitsDispatched: number }
+  | { type: "scan:failed"; runId: string; stackId: string; error: string }
+  | { type: "scan:skipped"; runId: string; stackId: string; reason: string };

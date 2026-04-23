@@ -577,6 +577,29 @@ export async function handleClientMessage(
     return;
   }
 
+  if (msg.type === "scan:trigger") {
+    const scheduler = ctx.scanScheduler;
+    if (!scheduler) {
+      send({ type: "error", message: "Scan scheduler not available on this stack" });
+      return;
+    }
+    // Forward all scan:* ScanEvents from the scheduler to THIS connection for
+    // the duration of the trigger call. After triggerNow() resolves, unbind —
+    // future cron ticks (if any) should not push to this socket. ScanEvent
+    // shapes match the scan:* ServerMessage variants declared in ws-types.ts
+    // but the type system treats them as separate declarations, so we cast
+    // via unknown across the structural boundary.
+    scheduler.setEventListener((evt) => {
+      send(evt as unknown as ServerMessage);
+    });
+    try {
+      await scheduler.triggerNow("manual");
+    } finally {
+      scheduler.setEventListener(null);
+    }
+    return;
+  }
+
   const agents = await getOrCreateAgents(stackId, ctx, deps.config);
 
   if (msg.type === "discover" && agents.discoverAgent) {

@@ -11,6 +11,8 @@ import { createLogger } from "../logger.js";
 import type { RcaReport } from "../types/rca-types.js";
 import { type EmailRecipient, type NotificationSource, severityRank } from "../types/notifications.js";
 import { renderSubject, renderBody, renderTextFallback } from "./email-templates/investigation-notification.js";
+import { renderScanRunSubject, renderScanRunHtml, renderScanRunText } from "./email-templates/scan-run-notification.js";
+import type { ScanRunSummary } from "./slack-notifier.js";
 
 const logger = createLogger();
 
@@ -102,6 +104,38 @@ export async function notifyEmail(
   await Promise.allSettled(
     matches.map((r) =>
       sendWithRetry(deps, r, investigationId, {
+        from: deps.config.from,
+        to: r.address,
+        subject,
+        html,
+        text,
+      }),
+    ),
+  );
+}
+
+/**
+ * Send run-level scan summary emails. Mirrors notifyEmail but filters on the
+ * "scan-run" source and uses the scan-run template. Fire-and-forget per
+ * recipient; per-recipient failures don't block other recipients.
+ */
+export async function notifyEmailScanRun(
+  deps: EmailNotifierDeps,
+  summary: ScanRunSummary,
+): Promise<void> {
+  if (!deps.isGloballyEnabled()) return;
+  const recipients = deps.listEnabledRecipients().filter((r) =>
+    r.allowedSources.includes("scan-run"),
+  );
+  if (recipients.length === 0) return;
+
+  const subject = renderScanRunSubject(summary);
+  const html = renderScanRunHtml(summary, deps.config.appBaseUrl);
+  const text = renderScanRunText(summary, deps.config.appBaseUrl);
+
+  await Promise.allSettled(
+    recipients.map((r) =>
+      sendWithRetry(deps, r, summary.runId, {
         from: deps.config.from,
         to: r.address,
         subject,

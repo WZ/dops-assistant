@@ -9,6 +9,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ChatPane } from "./components/ChatPane";
 import { Dashboard } from "./components/Dashboard";
 import { InvestigationPane } from "./components/InvestigationPane";
+import { ScanRunDetail } from "./components/ScanRunDetail";
 import { Sidebar } from "./components/Sidebar";
 import type { SidebarPage } from "./components/Sidebar";
 import { ServicesPage } from "./components/ServicesPage";
@@ -39,6 +40,7 @@ export type LeftPaneView =
   | { type: "investigation"; id: string }
   | { type: "services"; initialService?: string }
   | { type: "settings"; initialTab?: "providers" | "skills" | "stacks" | "scan" | "notifications" }
+  | { type: "scanrun"; runId: string }
   | { type: "notfound"; path: string };
 
 /**
@@ -50,7 +52,7 @@ export type LeftPaneView =
  * notfound) are left alone so a concurrent sidebar click isn't clobbered.
  */
 export function shouldResetOnStackSwitch(paneType: LeftPaneView["type"]): boolean {
-  return paneType === "services" || paneType === "investigation";
+  return paneType === "services" || paneType === "investigation" || paneType === "scanrun";
 }
 
 function useTheme() {
@@ -338,9 +340,11 @@ export function App() {
                   {leftPane.type === "dashboard" ? (
                     <Dashboard
                       wsMessages={ws.messages}
+                      wsSend={ws.send}
                       onInvestigationClick={(id) => setLeftPane({ type: "investigation", id })}
                       onViewService={(name) => setLeftPane({ type: "services", initialService: name })}
                       onViewAllServices={() => setLeftPane({ type: "services" })}
+                      onOpenScanRun={(runId) => setLeftPane({ type: "scanrun", runId })}
                       stackName={hasMultipleStacks ? activeStack?.name : undefined}
                       setupStage={setupStage}
                       setupDismissed={setupDismissed}
@@ -387,6 +391,14 @@ export function App() {
                       onSwitchStack={switchStack}
                       onRefetchStacks={refetchStacks}
                       onProviderSaved={refreshSetupStage}
+                    />
+                  ) : leftPane.type === "scanrun" ? (
+                    <ScanRunDetail
+                      runId={leftPane.runId}
+                      onBack={() => setLeftPane({ type: "dashboard" })}
+                      onOpenInvestigation={(invId) => setLeftPane({ type: "investigation", id: invId })}
+                      onSwitchStack={switchStack}
+                      wsMessages={ws.messages}
                     />
                   ) : leftPane.type === "notfound" ? (
                     <div className="h-full flex flex-col items-center justify-center gap-3 p-8 text-center">
