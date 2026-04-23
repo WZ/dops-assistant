@@ -57,15 +57,36 @@ test("history collapse: N consecutive clean cron ticks render as a single group"
   `).run(hitsId, stackId, now - 1000, now - 900);
   db.close();
 
-  // Dismiss the setup wizard before navigating. The CI fixture config has
-  // providers: [] so the app auto-routes to /settings with a
-  // "needs-provider" stepper covering the Ops Desk — Recent Scans never
-  // renders and the assertion below hangs for 10s. Writing the dismiss
-  // flag via addInitScript hits localStorage before React's first render,
-  // so useSetupStage reads it synchronously and suppresses the stepper.
+  // Two things have to be true for Dashboard to render RecentScansSection:
+  //   1. The setup stepper has to be dismissed (top banner covering the desk)
+  //   2. useSetupStage has to derive stage === "complete"
+  //
+  // On CI the fixture has providers: [] and services: [], so stage resolves
+  // to "needs-provider" and Dashboard.tsx:442 shows an empty-state placeholder
+  // instead of RecentScansSection. Dismissing the stepper alone is not enough.
+  // We also need to make the stage-derive think the stack is fully set up.
+  //
+  // Intercept /api/providers and /api/services to return a fake connected
+  // provider + one fake service. Cheap, scoped to this test, no DB mutation
+  // (useSetupStage only reads these two endpoints). Dashboard sees
+  // stage="complete" and renders RecentScansSection with the seeded rows.
   await page.addInitScript((sid) => {
     localStorage.setItem(`dops:setup_dismissed:${sid}`, "true");
   }, stackId);
+  await page.route("**/api/providers", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([{ name: "e2e-fake", status: "connected" }]),
+    });
+  });
+  await page.route("**/api/services", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([{ name: "e2e-fake-service" }]),
+    });
+  });
 
   await page.goto("/");
 
