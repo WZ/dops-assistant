@@ -36,6 +36,14 @@ const LABEL_CLASS =
 const INPUT_CLASS =
   "w-full rounded-md border border-border/40 bg-card/50 px-3 py-2 font-mono text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/15";
 
+const CRON_PRESETS: Array<{ label: string; value: string }> = [
+  { label: "Every 15 min", value: "*/15 * * * *" },
+  { label: "Hourly", value: "0 * * * *" },
+  { label: "Every 4 hours", value: "0 */4 * * *" },
+  { label: "Daily", value: "0 0 * * *" },
+  { label: "Weekly", value: "0 9 * * 1" },
+];
+
 export function ScanTab() {
   const { stackFetch } = useStackContext();
 
@@ -184,6 +192,29 @@ export function ScanTab() {
           {/* Schedule */}
           <div>
             <label className={LABEL_CLASS}>Schedule</label>
+            <div className="flex flex-wrap gap-1.5 mt-1.5 mb-2">
+              {CRON_PRESETS.map((p) => {
+                const active = cronInput.trim() === p.value;
+                return (
+                  <button
+                    key={p.value}
+                    type="button"
+                    onClick={() => {
+                      setCronInput(p.value);
+                      setDirty(true);
+                    }}
+                    className={
+                      active
+                        ? "px-2.5 py-1 text-[11px] font-mono rounded-md border border-primary/60 bg-primary/15 text-foreground"
+                        : "px-2.5 py-1 text-[11px] font-mono rounded-md border border-border/40 bg-card/40 text-muted-foreground hover:border-border hover:text-foreground transition-colors"
+                    }
+                    title={p.value}
+                  >
+                    {p.label}
+                  </button>
+                );
+              })}
+            </div>
             <input
               type="text"
               value={cronInput}
@@ -192,11 +223,11 @@ export function ScanTab() {
                 setDirty(true);
               }}
               placeholder="0 */4 * * *"
-              className={`${INPUT_CLASS} mt-1`}
+              className={INPUT_CLASS}
               spellCheck={false}
             />
             <p className="text-xs text-muted-foreground/50 mt-1.5">
-              A 5-field cron expression. For example, <span className="font-mono text-[11px]">0 */4 * * *</span> runs every 4 hours.
+              Pick a preset, or type a 5-field cron expression. Example: <span className="font-mono text-[11px]">0 */4 * * *</span> runs every 4 hours.
             </p>
           </div>
 
