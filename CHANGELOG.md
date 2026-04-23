@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.1.0] - 2026-04-23
+
+### Fixed
+- **Email recipients section on Settings → Notifications now matches the dark theme.** The recipients list was rendering against a white background with a dark pill button, a visual break in the otherwise dark SOC operations console. The section now lives in the same bordered card as the Slack section, uses the semantic color tokens (`bg-card`, `border-border`, `text-muted-foreground`) the rest of the app uses, and reuses the shared `Button` component for "+ Add recipient" and the per-row Test / Edit / Delete actions. Added an `| EMAIL` uppercase section label and a global enable/disable toggle that mirrors Slack's, so both notification channels now read as siblings at a glance.
+
 ## [0.1.0.0] - 2026-04-22
 
 ### Added
