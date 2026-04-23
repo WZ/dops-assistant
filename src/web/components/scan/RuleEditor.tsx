@@ -58,15 +58,18 @@ export function RuleEditor({ rule, index, totalCount, onChange, onRemove, onMove
 
   const handleRemove = () => {
     const name = rule.name || `rule ${index + 1}`;
-    if (window.confirm(`Remove rule "${name}"? This clears any hysteresis state it accumulated.`)) {
+    if (window.confirm(`Remove rule "${name}"? Its running count of consecutive triggers will reset.`)) {
       onRemove();
     }
   };
 
+  const iconBtn =
+    "h-7 w-7 inline-flex items-center justify-center rounded text-muted-foreground hover:bg-secondary/60 hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted-foreground transition-colors";
+
   return (
     <div className="rounded-lg border border-border/40 bg-card/50 p-3 space-y-3">
-      {/* Header row: name + reorder/remove */}
-      <div className="flex items-start gap-2">
+      {/* Header row: name input fills the row; actions sit in a compact strip on the right */}
+      <div className="flex items-end gap-2">
         <div className="flex-1">
           <label className={LABEL_CLASS}>Name</label>
           <input
@@ -79,12 +82,12 @@ export function RuleEditor({ rule, index, totalCount, onChange, onRemove, onMove
             data-testid={`rule-name-${index}`}
           />
         </div>
-        <div className="flex flex-col gap-1 pt-5">
+        <div className="flex items-center gap-0.5">
           <button
             type="button"
             onClick={onMoveUp}
             disabled={index === 0}
-            className="px-2 py-0.5 text-[10px] font-mono rounded border border-border/40 disabled:opacity-30 hover:bg-secondary/40"
+            className={iconBtn}
             aria-label="Move rule up"
             title="Move up"
           >
@@ -94,21 +97,22 @@ export function RuleEditor({ rule, index, totalCount, onChange, onRemove, onMove
             type="button"
             onClick={onMoveDown}
             disabled={index === totalCount - 1}
-            className="px-2 py-0.5 text-[10px] font-mono rounded border border-border/40 disabled:opacity-30 hover:bg-secondary/40"
+            className={iconBtn}
             aria-label="Move rule down"
             title="Move down"
           >
             &darr;
           </button>
+          <button
+            type="button"
+            onClick={handleRemove}
+            className="h-7 w-7 inline-flex items-center justify-center rounded text-muted-foreground hover:bg-destructive/15 hover:text-destructive transition-colors"
+            aria-label="Remove rule"
+            title="Remove rule"
+          >
+            &times;
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={handleRemove}
-          className="mt-5 px-2.5 py-1 text-[10px] font-mono rounded border border-destructive/30 text-destructive/80 hover:bg-destructive/10"
-          title="Remove rule"
-        >
-          remove
-        </button>
       </div>
 
       {/* PromQL query */}
@@ -122,8 +126,8 @@ export function RuleEditor({ rule, index, totalCount, onChange, onRemove, onMove
           spellCheck={false}
           data-testid={`rule-query-${index}`}
         />
-        <p className="text-[10px] text-muted-foreground/40 mt-1 font-mono">
-          Must include <code className="text-foreground/70">{"{service}"}</code>. Probe substitutes the service name per query.
+        <p className="text-[11px] text-muted-foreground/50 mt-1">
+          Must include <code className="font-mono text-foreground/70">{"{service}"}</code>. Each service's name is substituted in before the query runs.
         </p>
       </div>
 
@@ -155,7 +159,7 @@ export function RuleEditor({ rule, index, totalCount, onChange, onRemove, onMove
           />
         </div>
         <div>
-          <label className={LABEL_CLASS}>Consecutive ticks</label>
+          <label className={LABEL_CLASS}>Scans in a row</label>
           <input
             type="number"
             value={rule.consecutiveTicks}
@@ -165,9 +169,6 @@ export function RuleEditor({ rule, index, totalCount, onChange, onRemove, onMove
             step={1}
             data-testid={`rule-ticks-${index}`}
           />
-          <p className="text-[10px] text-muted-foreground/40 mt-1 font-mono">
-            N in a row before firing. Defaults to 1 (no hysteresis).
-          </p>
         </div>
       </div>
 
