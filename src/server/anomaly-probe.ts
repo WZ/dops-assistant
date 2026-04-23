@@ -507,7 +507,17 @@ export async function runProbe(opts: ProbeOptions): Promise<ProbeResult> {
     // Track 1 vs 4 — discovery-written globals REPLACE the config.yaml
     // defaults for every service. Track 4 remains as the ultimate fallback
     // for stacks where discovery has never run.
-    const baseRules = globalRules.length > 0 ? globalRules : defaultRules;
+    //
+    // Redundancy suppression: when the service has its own
+    // `service_availability` per-service rule, the base-track workload-type
+    // probes (deployment/statefulset/daemonset availability) are
+    // definitionally redundant — each service can only be ONE workload
+    // kind, so two of the three default globals always return an empty
+    // vector for it. That flood of empties is the single biggest source of
+    // no-data noise in the scan run view. Skip the base track in that case
+    // and let the per-service rule carry the availability signal.
+    const hasOwnAvailability = perServiceRules.some((r) => r.name === "service_availability");
+    const baseRules = hasOwnAvailability ? [] : (globalRules.length > 0 ? globalRules : defaultRules);
     const baseOrigin: RuleOrigin = globalRules.length > 0 ? "global" : "default";
     for (const rule of baseRules) {
       tasks.push({

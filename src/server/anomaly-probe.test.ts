@@ -419,6 +419,80 @@ describe("runProbe — four-track evaluator (Slice C)", () => {
     expect(hit!.origin).toBe("default");
   });
 
+  it("suppresses base-track availability rules when service has its own service_availability", async () => {
+    // Regression: with 72 services and 3 hardcoded workload-type default
+    // globals (deployment/statefulset/daemonset availability), the base
+    // track would fire ~216 empty-vector queries per tick on any stack
+    // where the discovery agent wrote a per-service service_availability
+    // rule. The per-service rule IS the availability signal for that
+    // service; the workload-type globals are definitionally redundant
+    // (each service is only one workload kind, so 2 of 3 always miss).
+    // Suppression drops the noise without losing coverage.
+    const execute = vi.fn(async () => promResult(1));
+    mockTools = { query_prometheus: { execute } };
+
+    const state = new Map<string, number>();
+    await runProbe({
+      services: ["svc-a"],
+      probe: buildProbe({
+        // Three workload-type defaults on the base track — simulates the
+        // config.yaml defaults that fire when globalProbeRules is empty.
+        metrics: [
+          { name: "deployment_availability", query: 'kube_deployment_status_replicas_available{deployment="{service}"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 3 },
+          { name: "statefulset_availability", query: 'kube_statefulset_status_replicas_ready{statefulset="{service}"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 3 },
+          { name: "daemonset_availability", query: 'kube_daemonset_status_number_ready{daemonset="{service}"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 3 },
+        ],
+      }),
+      providers, datasourceUid: "uid",
+      consecutiveState: state,
+      registryStore: fakeRegistryStore({
+        services: [{
+          name: "svc-a", metrics: [], logLabels: {},
+          probeRules: [metricsRule({ name: "service_availability", query: 'up{app="svc-a"}', threshold: { op: "lt", value: 1 } })],
+        } as ServiceConfig],
+        globalProbeRules: [],
+      }),
+    });
+
+    const calls = execute.mock.calls.map((c) => (c[0] as { expr: string }).expr);
+    // Per-service availability fires.
+    expect(calls.some((e) => e.includes('up{app="svc-a"}'))).toBe(true);
+    // None of the three base-track workload-type defaults fire.
+    expect(calls.some((e) => e.includes("kube_deployment_status_replicas_available"))).toBe(false);
+    expect(calls.some((e) => e.includes("kube_statefulset_status_replicas_ready"))).toBe(false);
+    expect(calls.some((e) => e.includes("kube_daemonset_status_number_ready"))).toBe(false);
+  });
+
+  it("still fires base-track defaults for services WITHOUT service_availability", async () => {
+    // Suppression is conditional — a service that has no per-service
+    // availability rule must still get the workload-type fallback.
+    const execute = vi.fn(async () => promResult(1));
+    mockTools = { query_prometheus: { execute } };
+
+    const state = new Map<string, number>();
+    await runProbe({
+      services: ["svc-a"],
+      probe: buildProbe({
+        metrics: [
+          { name: "deployment_availability", query: 'kube_deployment_status_replicas_available{deployment="{service}"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 3 },
+        ],
+      }),
+      providers, datasourceUid: "uid",
+      consecutiveState: state,
+      registryStore: fakeRegistryStore({
+        services: [{
+          name: "svc-a", metrics: [], logLabels: {},
+          // No service_availability rule here — just pod_restarts.
+          probeRules: [metricsRule({ name: "pod_restarts", query: 'rate(restarts[5m])', threshold: { op: "gt", value: 0.033 } })],
+        } as ServiceConfig],
+        globalProbeRules: [],
+      }),
+    });
+
+    const calls = execute.mock.calls.map((c) => (c[0] as { expr: string }).expr);
+    expect(calls.some((e) => e.includes("kube_deployment_status_replicas_available"))).toBe(true);
+  });
+
   it("Track 2: per-service probeRules ADD to the base track (do not replace)", async () => {
     const execute = vi.fn(async () => promResult(0));
     mockTools = { query_prometheus: { execute } };
