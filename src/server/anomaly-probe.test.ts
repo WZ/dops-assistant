@@ -377,7 +377,7 @@ describe("runProbe — four-track evaluator (Slice C)", () => {
     mockTools = { query_prometheus: { execute } };
 
     const state = new Map<string, number>();
-    const hits = await runProbe({
+    const { hits } = await runProbe({
       services: ["svc-a"],
       probe: buildProbe(),
       providers, datasourceUid: "uid",
@@ -401,7 +401,7 @@ describe("runProbe — four-track evaluator (Slice C)", () => {
     mockTools = { query_prometheus: { execute } };
 
     const state = new Map<string, number>();
-    const hits = await runProbe({
+    const { hits } = await runProbe({
       services: ["svc-a"],
       probe: buildProbe(),
       providers, datasourceUid: "uid",
@@ -424,7 +424,7 @@ describe("runProbe — four-track evaluator (Slice C)", () => {
     mockTools = { query_prometheus: { execute } };
 
     const state = new Map<string, number>();
-    const hits = await runProbe({
+    const { hits } = await runProbe({
       services: ["svc-a"],
       probe: buildProbe(),
       providers, datasourceUid: "uid",
@@ -452,7 +452,7 @@ describe("runProbe — four-track evaluator (Slice C)", () => {
     mockLogsTools = { query_loki_logs: { execute: logsExecute } };
 
     const state = new Map<string, number>();
-    const hits = await runProbe({
+    const { hits } = await runProbe({
       services: ["svc-a"],
       probe: buildProbe(),
       providers, datasourceUid: "uid",
@@ -482,7 +482,7 @@ describe("runProbe — four-track evaluator (Slice C)", () => {
     mockLogsTools = {};  // no logs tool available
 
     const state = new Map<string, number>();
-    const hits = await runProbe({
+    const { hits } = await runProbe({
       services: ["svc-a"],
       probe: buildProbe(),
       providers, datasourceUid: "uid",
@@ -508,7 +508,7 @@ describe("runProbe — four-track evaluator (Slice C)", () => {
     mockLogsTools = { query_loki_logs: { execute: logsExecute } };
 
     const state = new Map<string, number>();
-    const hits = await runProbe({
+    const { hits } = await runProbe({
       services: ["svc-a"],
       probe: buildProbe({ logs: { enabled: true, window: "15m", errorRateThreshold: 10, consecutiveTicks: 1 } }),
       providers, datasourceUid: "uid",
@@ -708,6 +708,7 @@ describe("runProbe — stats return value", () => {
       }),
       providers, datasourceUid: "uid",
       consecutiveState: state,
+      registryStore: fakeRegistryStore(),
     });
 
     expect(result.queriesExecuted).toBe(2);
@@ -730,6 +731,7 @@ describe("runProbe — stats return value", () => {
       }),
       providers, datasourceUid: "uid",
       consecutiveState: state,
+      registryStore: fakeRegistryStore(),
     });
 
     expect(result.queriesExecuted).toBe(1);
