@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useStackContext } from "../contexts/StackContext";
 import { RuleList } from "./scan/RuleList";
@@ -6,8 +6,8 @@ import type { RuleDraft } from "./scan/types";
 
 /**
  * ScanTab — GUI for the proactive scan feature: toggle, cadence, and probe
- * rule editor. Mirrors NotificationsTab.tsx layout so operators don't have
- * to learn two different settings UIs.
+ * rule editor. Live status (next run / last run / Scan now) lives in the
+ * Operation Desk view; this tab is settings-only.
  *
  * GUI-editable: enabled, cron, timezone, probe rules. Everything else
  * (maxInvestigationsPerTick, dedupWindowMinutes, probe.concurrency,
@@ -30,29 +30,29 @@ interface ValidationDetail {
   message: string;
 }
 
-interface ScanStatus {
-  enabled: boolean;
-  cron: string;
-  timezone: string;
-  nextRun: string | null;
-  lastRun: string | null;
-  lastError: string | null;
-  dropsByConcurrency: number;
-  ticking: boolean;
-}
-
 const LABEL_CLASS =
   "font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/60";
 
 const INPUT_CLASS =
   "w-full rounded-md border border-border/40 bg-card/50 px-3 py-2 font-mono text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/15";
 
-function formatTimestamp(iso: string | null): string {
-  if (!iso) return "—";
+const CRON_PRESETS: Array<{ label: string; value: string }> = [
+  { label: "Every 15 min", value: "*/15 * * * *" },
+  { label: "Hourly", value: "0 * * * *" },
+  { label: "Every 4 hours", value: "0 */4 * * *" },
+  { label: "Daily", value: "0 0 * * *" },
+  { label: "Weekly", value: "0 9 * * 1" },
+];
+
+/**
+ * Browser-detected IANA timezone. Falls back to null on older engines
+ * where Intl.DateTimeFormat().resolvedOptions().timeZone isn't available.
+ */
+function detectBrowserTimezone(): string | null {
   try {
-    return new Date(iso).toLocaleString();
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
   } catch {
-    return iso;
+    return null;
   }
 }
 
@@ -60,7 +60,6 @@ export function ScanTab() {
   const { stackFetch } = useStackContext();
 
   const [settings, setSettings] = useState<ScanSettings | null>(null);
-  const [status, setStatus] = useState<ScanStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -71,30 +70,28 @@ export function ScanTab() {
   const [timezoneInput, setTimezoneInput] = useState("");
   const [rulesInput, setRulesInput] = useState<RuleDraft[]>([]);
   const [dirty, setDirty] = useState(false);
-  const [triggering, setTriggering] = useState(false);
-  const [triggerMsg, setTriggerMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [ruleErrors, setRuleErrors] = useState<ValidationDetail[]>([]);
-  // Tracks post-trigger status-refresh timers so we can clear them on unmount.
-  // Without this, navigating away mid-trigger leaves 3 pending setTimeouts
-  // that fire setState on an unmounted component (React warning + leaked
-  // closure captures).
-  const triggerRefreshTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const fetchAll = useCallback(async () => {
     try {
-      const [settingsRes, statusRes] = await Promise.all([
-        stackFetch("/api/scan/settings"),
-        stackFetch("/api/scan/status"),
-      ]);
+      const settingsRes = await stackFetch("/api/scan/settings");
       const settingsData = (await settingsRes.json()) as ScanSettings;
-      const statusData = (await statusRes.json()) as ScanStatus;
       setSettings(settingsData);
-      setStatus(statusData);
       // Only reset the form on first load or after a save (dirty=false).
       if (!dirty) {
         setEnabledInput(settingsData.enabled);
         setCronInput(settingsData.cron);
-        setTimezoneInput(settingsData.timezone);
+        // If the user has never saved a GUI timezone (still using the
+        // config.yaml default), pre-fill with their browser timezone so the
+        // cron schedule runs in local time by default instead of UTC. Users
+        // who explicitly want UTC can clear the field and save.
+        const browserTz = detectBrowserTimezone();
+        if (settingsData.source.timezone === "config" && browserTz && browserTz !== settingsData.timezone) {
+          setTimezoneInput(browserTz);
+          setDirty(true);
+        } else {
+          setTimezoneInput(settingsData.timezone);
+        }
         setRulesInput(settingsData.rules);
       }
     } catch {
@@ -105,61 +102,7 @@ export function ScanTab() {
 
   useEffect(() => {
     fetchAll();
-    // Poll status every 10s so nextRun/lastRun reflect reality. Settings
-    // change only on save, no need to poll them — the fetchAll call above
-    // refreshes both after each save.
-    const interval = setInterval(() => {
-      stackFetch("/api/scan/status")
-        .then((r) => r.json())
-        .then((data: ScanStatus) => setStatus(data))
-        .catch(() => { /* ignore */ });
-    }, 10_000);
-    const pendingTimers = triggerRefreshTimers.current;
-    return () => {
-      clearInterval(interval);
-      // Clear any post-trigger refresh timers still pending when the tab
-      // unmounts or the effect re-runs.
-      for (const t of pendingTimers) clearTimeout(t);
-      pendingTimers.length = 0;
-    };
-  }, [fetchAll, stackFetch]);
-
-  const refreshStatus = useCallback(async () => {
-    try {
-      const res = await stackFetch("/api/scan/status");
-      const data = (await res.json()) as ScanStatus;
-      setStatus(data);
-    } catch { /* ignore */ }
-  }, [stackFetch]);
-
-  const handleTriggerNow = async () => {
-    setTriggering(true);
-    setTriggerMsg(null);
-    try {
-      const res = await stackFetch("/api/scan/trigger", { method: "POST" });
-      if (res.status === 202) {
-        setTriggerMsg({ ok: true, text: "Probe dispatched \u2014 watch the status below." });
-        // A tick typically takes a few seconds once dispatched. Poll the status
-        // a few extra times beyond the standard 10s interval so the operator
-        // sees lastRun update without waiting. Handles tracked in a ref so
-        // unmount cleanup can clear any still-pending timers.
-        triggerRefreshTimers.current.push(
-          setTimeout(() => { void refreshStatus(); }, 1500),
-          setTimeout(() => { void refreshStatus(); }, 4000),
-          setTimeout(() => { void refreshStatus(); }, 8000),
-        );
-      } else {
-        const err = (await res.json().catch(() => ({}))) as { error?: string; hint?: string };
-        setTriggerMsg({
-          ok: false,
-          text: err.error ? `${err.error}${err.hint ? ` \u00b7 ${err.hint}` : ""}` : `Trigger failed: ${res.status}`,
-        });
-      }
-    } catch (err) {
-      setTriggerMsg({ ok: false, text: err instanceof Error ? err.message : "Trigger failed" });
-    }
-    setTriggering(false);
-  };
+  }, [fetchAll]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -232,11 +175,10 @@ export function ScanTab() {
           )}
         </div>
 
-        <p className="text-xs text-muted-foreground/60 mb-4 max-w-2xl">
-          Runs a cheap PromQL probe across every registered service on a cron
-          schedule. Services that trip thresholds for the configured number of
-          consecutive ticks get a focused investigation. Probe rules, thresholds,
-          and caps live in <span className="font-mono text-[11px]">config.yaml</span>.
+        <p className="text-sm text-muted-foreground/70 mb-4 max-w-2xl">
+          Automatically check every service on a schedule. When a service crosses
+          a threshold for several scans in a row, a full investigation starts
+          without anyone needing to click.
         </p>
 
         <div className="rounded-lg border border-border/40 bg-card/50 p-4 space-y-4">
@@ -245,7 +187,7 @@ export function ScanTab() {
             <div>
               <label className={LABEL_CLASS}>Enabled</label>
               <p className="text-xs text-muted-foreground/60 mt-0.5">
-                Fires the probe on the cron schedule. Off by default.
+                Scans only run while this is on.
               </p>
             </div>
             <button
@@ -269,9 +211,32 @@ export function ScanTab() {
             </button>
           </div>
 
-          {/* Cron */}
+          {/* Schedule */}
           <div>
-            <label className={LABEL_CLASS}>Cron expression</label>
+            <label className={LABEL_CLASS}>Schedule</label>
+            <div className="flex flex-wrap gap-1.5 mt-1.5 mb-2">
+              {CRON_PRESETS.map((p) => {
+                const active = cronInput.trim() === p.value;
+                return (
+                  <button
+                    key={p.value}
+                    type="button"
+                    onClick={() => {
+                      setCronInput(p.value);
+                      setDirty(true);
+                    }}
+                    className={
+                      active
+                        ? "px-2.5 py-1 text-[11px] font-mono rounded-md border border-primary/60 bg-primary/15 text-foreground"
+                        : "px-2.5 py-1 text-[11px] font-mono rounded-md border border-border/40 bg-card/40 text-muted-foreground hover:border-border hover:text-foreground transition-colors"
+                    }
+                    title={p.value}
+                  >
+                    {p.label}
+                  </button>
+                );
+              })}
+            </div>
             <input
               type="text"
               value={cronInput}
@@ -280,11 +245,11 @@ export function ScanTab() {
                 setDirty(true);
               }}
               placeholder="0 */4 * * *"
-              className={`${INPUT_CLASS} mt-1`}
+              className={INPUT_CLASS}
               spellCheck={false}
             />
-            <p className="text-[10px] text-muted-foreground/40 mt-1 font-mono">
-              5-field cron (no seconds). Example: <span>0 */4 * * *</span> = every 4 hours.
+            <p className="text-xs text-muted-foreground/50 mt-1.5">
+              Pick a preset, or type a 5-field cron expression. Example: <span className="font-mono text-[11px]">0 */4 * * *</span> runs every 4 hours.
             </p>
           </div>
 
@@ -302,8 +267,8 @@ export function ScanTab() {
               className={`${INPUT_CLASS} mt-1`}
               spellCheck={false}
             />
-            <p className="text-[10px] text-muted-foreground/40 mt-1 font-mono">
-              IANA tz name (e.g. <span>UTC</span>, <span>America/New_York</span>). Defaults to UTC.
+            <p className="text-xs text-muted-foreground/50 mt-1.5">
+              Defaults to your browser's timezone. Accepts any IANA name like <span className="font-mono text-[11px]">America/New_York</span> or <span className="font-mono text-[11px]">UTC</span>.
             </p>
           </div>
 
@@ -340,10 +305,10 @@ export function ScanTab() {
           )}
         </div>
 
-        <p className="text-xs text-muted-foreground/60 mb-4 max-w-2xl">
-          Each tick, the probe runs these rules against every registered service.
-          A rule trips when its PromQL value crosses the threshold for the
-          configured consecutive ticks. Use Test to dry-run a rule against live
+        <p className="text-sm text-muted-foreground/70 mb-4 max-w-2xl">
+          Every scheduled scan runs these checks against each service. A check
+          triggers when the query result crosses its threshold for the set
+          number of scans in a row. Use <span className="text-foreground/80">Test</span> to try a check against live
           data before saving.
         </p>
 
@@ -369,86 +334,6 @@ export function ScanTab() {
         )}
       </section>
 
-      {/* Section: STATUS */}
-      {status && (
-        <section aria-label="Scan status" className="mb-4">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-0.5 h-3.5 rounded-full bg-muted-foreground/40" />
-            <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
-              Status
-            </h2>
-          </div>
-
-          <div className="rounded-lg border border-border/40 bg-card/50 p-4 space-y-4">
-            <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-xs font-mono">
-              <Field label="Next run" value={formatTimestamp(status.nextRun)} />
-              <Field label="Last run" value={formatTimestamp(status.lastRun)} />
-              <Field label="Ticking" value={status.ticking ? "yes" : "no"} />
-              <Field
-                label="Drops (overflow)"
-                value={String(status.dropsByConcurrency)}
-                hint={
-                  status.dropsByConcurrency > 0
-                    ? "Services flagged but dropped by per-tick cap. Tune config.yaml's scan.maxInvestigationsPerTick if this grows."
-                    : undefined
-                }
-              />
-              {status.lastError && (
-                <div className="col-span-2">
-                  <div className={LABEL_CLASS}>Last error</div>
-                  <div className="text-destructive mt-1 text-[11px] break-all">
-                    {status.lastError}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Scan now — fires one probe pass immediately, bypassing cron.
-                Disabled when scan is off (route returns 400) or already ticking
-                (route returns 409). These are also enforced server-side so the
-                UI state is just a friendly nudge, not the real guard. */}
-            <div className="flex items-center gap-2 pt-2 border-t border-border/30">
-              <Button
-                variant="outline"
-                onClick={handleTriggerNow}
-                disabled={triggering || !status.enabled || status.ticking || dirty}
-                className="font-mono text-xs font-medium h-9 rounded-lg px-4"
-                title={
-                  !status.enabled ? "Enable the scan first"
-                    : status.ticking ? "A tick is already running"
-                    : dirty ? "Save your changes first"
-                    : "Fire one probe pass immediately"
-                }
-              >
-                {triggering ? "Triggering..." : "Scan now"}
-              </Button>
-              {triggerMsg && (
-                <span className={`text-[11px] font-mono ${
-                  triggerMsg.ok
-                    ? "text-success/80"
-                    : "text-destructive"
-                }`}>
-                  {triggerMsg.text}
-                </span>
-              )}
-            </div>
-          </div>
-        </section>
-      )}
-
-      <div className="text-[10px] font-mono text-muted-foreground/30 mt-4">
-        Probe rules, thresholds, and per-tick cap are set in config.yaml (not editable here)
-      </div>
-    </div>
-  );
-}
-
-function Field({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  return (
-    <div>
-      <div className={LABEL_CLASS}>{label}</div>
-      <div className="mt-0.5 text-foreground/90">{value}</div>
-      {hint && <div className="text-[10px] text-muted-foreground/50 mt-0.5">{hint}</div>}
     </div>
   );
 }

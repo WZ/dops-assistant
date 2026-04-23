@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
 
 type Severity = "low" | "medium" | "high" | "critical";
 type Source = "webhook" | "scan" | "poller" | "manual";
@@ -26,6 +27,11 @@ const SOURCE_HELP: Record<Source, string> = {
   poller: "Health poller",
   manual: "Manual investigation",
 };
+
+const LABEL_CLASS =
+  "block font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/60 mb-1.5";
+const INPUT_CLASS =
+  "w-full h-9 px-3 rounded-lg border border-border/40 bg-background/40 text-xs text-foreground placeholder:text-muted-foreground/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
 export function EmailRecipientEditor({ stackFetch, existing, onClose, onSaved }: Props) {
   const [address, setAddress] = useState(existing?.address ?? "");
@@ -75,61 +81,100 @@ export function EmailRecipientEditor({ stackFetch, existing, onClose, onSaved }:
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-sm font-semibold mb-4">{existing ? "Edit recipient" : "Add recipient"}</h3>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label={existing ? "Edit recipient" : "Add recipient"}
+    >
+      <div
+        className="relative w-full max-w-md mx-4 rounded-lg border border-border/40 bg-card shadow-xl p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2 mb-4">
+          <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
+          <h3 className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
+            {existing ? "Edit recipient" : "Add recipient"}
+          </h3>
+        </div>
 
-        <label className="block text-xs font-medium mb-1">Email address</label>
+        <label className={LABEL_CLASS}>Email address</label>
         <input
           type="email"
           value={address}
           onChange={(e) => setAddress(e.target.value)}
           placeholder="channel-name@org.onmicrosoft.com"
-          className="w-full h-9 px-3 rounded-lg border border-gray-300 text-xs mb-3"
+          className={`${INPUT_CLASS} mb-3`}
         />
 
-        <label className="block text-xs font-medium mb-1">Label (optional)</label>
+        <label className={LABEL_CLASS}>Label (optional)</label>
         <input
           type="text"
           value={label}
           onChange={(e) => setLabel(e.target.value)}
           placeholder="#sre-alerts"
-          className="w-full h-9 px-3 rounded-lg border border-gray-300 text-xs mb-3"
+          className={`${INPUT_CLASS} mb-3`}
         />
 
-        <label className="block text-xs font-medium mb-1">Minimum severity</label>
-        <div className="flex gap-3 mb-3 text-xs">
+        <label className={LABEL_CLASS}>Minimum severity</label>
+        <div className="flex gap-4 mb-3 text-xs text-foreground">
           {(["low", "medium", "high", "critical"] as Severity[]).map((s) => (
-            <label key={s} className="flex items-center gap-1">
-              <input type="radio" name="sev" checked={minSeverity === s} onChange={() => setMinSeverity(s)} />
+            <label key={s} className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="radio"
+                name="sev"
+                checked={minSeverity === s}
+                onChange={() => setMinSeverity(s)}
+                className="accent-primary"
+              />
               {s}
             </label>
           ))}
         </div>
 
-        <label className="block text-xs font-medium mb-1">Trigger sources</label>
-        <div className="grid grid-cols-2 gap-2 mb-3 text-xs">
+        <label className={LABEL_CLASS}>Trigger sources</label>
+        <div className="grid grid-cols-2 gap-2 mb-3 text-xs text-foreground">
           {ALL_SOURCES.map((s) => (
-            <label key={s} className="flex items-center gap-2">
-              <input type="checkbox" checked={sources.has(s)} onChange={() => toggleSource(s)} />
+            <label key={s} className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={sources.has(s)}
+                onChange={() => toggleSource(s)}
+                className="accent-primary"
+              />
               {SOURCE_HELP[s]}
             </label>
           ))}
         </div>
 
-        <label className="flex items-center gap-2 text-xs mb-4">
-          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+        <label className="flex items-center gap-2 text-xs text-foreground mb-4 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => setEnabled(e.target.checked)}
+            className="accent-primary"
+          />
           Enabled
         </label>
 
-        {error && <p className="text-xs text-red-600 mb-3">{error}</p>}
+        {error && <p className="font-mono text-xs text-destructive mb-3">{error}</p>}
 
         <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="h-9 px-3 rounded-lg border border-gray-300 text-xs hover:bg-gray-50">Cancel</button>
-          <button onClick={() => void save()} disabled={saving}
-            className="h-9 px-3 rounded-lg bg-gray-900 text-white text-xs hover:bg-gray-700 disabled:opacity-50">
+          <Button
+            variant="outline"
+            onClick={onClose}
+            className="font-mono text-xs font-medium h-9 rounded-lg px-3"
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={() => void save()}
+            disabled={saving}
+            className="font-mono text-xs font-medium h-9 rounded-lg px-3"
+          >
             {saving ? "Saving…" : "Save"}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
