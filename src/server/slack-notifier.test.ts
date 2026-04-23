@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { notifySlack } from "./slack-notifier.js";
+import { notifySlack, notifySlackOnScanComplete } from "./slack-notifier.js";
 import type { RcaReport } from "../types/rca-types.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -133,5 +133,70 @@ describe("notifySlack", () => {
         makeReport(),
       ),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe("notifySlackOnScanComplete", () => {
+  const origFetch = global.fetch;
+  afterEach(() => { global.fetch = origFetch; });
+
+  it("posts a summary block with run deep-link and flagged services", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    await notifySlackOnScanComplete({
+      slackWebhookUrl: "https://hooks.slack.com/test",
+      appBaseUrl: "https://dops.example",
+    }, {
+      runId: "r1", stackId: "s1", trigger: "manual",
+      startedAt: Date.now(), durationMs: 2300,
+      servicesProbed: 117, hitsDispatched: 3,
+      dispatchedServices: ["payments-api", "search-svc", "auth-gateway"],
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    // Assert URL
+    expect(fetchMock.mock.calls[0]![0]).toBe("https://hooks.slack.com/test");
+    // Assert body contents
+    const body = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string);
+    const bodyStr = JSON.stringify(body);
+    expect(bodyStr).toContain("/scan/runs/r1");
+    expect(bodyStr).toContain("dops.example");
+    expect(bodyStr).toContain("payments-api");
+    expect(bodyStr).toContain("search-svc");
+    expect(bodyStr).toContain("auth-gateway");
+    expect(bodyStr).toContain("117");
+  });
+
+  it("uses 'clean' phrasing when no hits dispatched", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    await notifySlackOnScanComplete(
+      { slackWebhookUrl: "https://hooks.slack.com/test", appBaseUrl: "https://x" },
+      { runId: "r1", stackId: "s1", trigger: "cron", startedAt: 0, durationMs: 0, servicesProbed: 50, hitsDispatched: 0, dispatchedServices: [] },
+    );
+    const body = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string);
+    const bodyStr = JSON.stringify(body);
+    expect(bodyStr).toContain("clean");
+    // No "Flagged" section when dispatchedServices is empty
+    expect(bodyStr).not.toContain("Flagged");
+  });
+
+  it("swallows fetch errors (fire-and-forget)", async () => {
+    global.fetch = vi.fn().mockRejectedValue(new Error("network")) as unknown as typeof fetch;
+    await expect(notifySlackOnScanComplete(
+      { slackWebhookUrl: "https://hooks.slack.com/test", appBaseUrl: "https://x" },
+      { runId: "r1", stackId: "s1", trigger: "cron", startedAt: 0, durationMs: 0, servicesProbed: 0, hitsDispatched: 0, dispatchedServices: [] },
+    )).resolves.toBeUndefined();
+  });
+
+  it("uses singular 'service' when hitsDispatched === 1", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    await notifySlackOnScanComplete(
+      { slackWebhookUrl: "https://hooks.slack.com/test", appBaseUrl: "https://x" },
+      { runId: "r1", stackId: "s1", trigger: "manual", startedAt: 0, durationMs: 0, servicesProbed: 10, hitsDispatched: 1, dispatchedServices: ["only-one"] },
+    );
+    const body = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string);
+    expect(JSON.stringify(body)).toContain("1 service ");
+    expect(JSON.stringify(body)).not.toContain("1 services");
   });
 });
