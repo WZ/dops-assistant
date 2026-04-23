@@ -41,6 +41,7 @@ import { notifySlack } from "./slack-notifier.js";
 import { buildInvestigationMessage } from "./anomaly-probe.js";
 import nodemailer, { type Transporter } from "nodemailer";
 import { notifyEmail } from "./email-notifier.js";
+import { ulid } from "ulid";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const logger = createLogger();
@@ -314,8 +315,24 @@ async function main() {
       const message = buildInvestigationMessage(hit);
       const template = config.scan.investigationTemplate;
 
+      // Pre-generate the investigation ID so we can link it to the active
+      // scan run SYNCHRONOUSLY — before we await the Mastra adapter build.
+      // The scheduler clears `currentTracker` in the tick's `finally` block
+      // right after this callback returns, so any async gap would risk
+      // linking into a stale/null tracker. Passing the same ID into
+      // runner.run below ensures the DB row the runner creates matches
+      // what we linked. linkInvestigationOnCurrentRun is the sole authority
+      // for scan_runs.hits_dispatched — skipping it leaves the column at 0.
+      const invId = `inv_${ulid()}`;
+      ctx.scanScheduler.linkInvestigationOnCurrentRun(invId, {
+        service: hit.service,
+        ruleName: hit.ruleName,
+        value: hit.value,
+        severity: hit.severity,
+      });
+
       logger.info({
-        stackId, service: hit.service, rule: hit.ruleName, severity: hit.severity, template,
+        stackId, service: hit.service, rule: hit.ruleName, severity: hit.severity, template, invId,
       }, "ScanScheduler: triggering auto-investigate");
 
       const providers = ctx.providerRegistry.getProviders();
@@ -329,6 +346,7 @@ async function main() {
             stackId,
             readOnlyTools: true,
             source: "scan",
+            investigationId: invId,
           });
         })
         .catch((err) => {
