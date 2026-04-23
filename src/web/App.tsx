@@ -398,6 +398,7 @@ export function App() {
                       onBack={() => setLeftPane({ type: "dashboard" })}
                       onOpenInvestigation={(invId) => setLeftPane({ type: "investigation", id: invId })}
                       onSwitchStack={switchStack}
+                      wsMessages={ws.messages}
                     />
                   ) : leftPane.type === "notfound" ? (
                     <div className="h-full flex flex-col items-center justify-center gap-3 p-8 text-center">

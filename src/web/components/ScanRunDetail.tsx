@@ -5,8 +5,11 @@
  * (Probe -> Triage -> Investigate) in a sidebar stepper alongside three
  * evidence cards that unpack the run's metadata, triage breakdown, and
  * dispatched investigations. While the run is still `running`, the page
- * polls every 1.5s; once terminal it fetches once and stops. Task 24 will
- * add live WS updates.
+ * polls every 1.5s as a belt-and-suspenders fallback. Live WebSocket
+ * updates (scan:* and investigation:* lifecycle events) layer on top and
+ * reduce perceived latency; they're applied idempotently and ignored when
+ * `runId` doesn't match so fast navigation between runs can't pollute the
+ * current view.
  *
  * Cross-stack 404 handling: if the API returns 404 with `expectedStackId`,
  * renders a banner that lets the user jump to the owning stack rather than
@@ -17,10 +20,11 @@
  * is added by Task 26 — until then the button returns 404, which the UI
  * silently swallows. Including it now keeps the Task 26 diff UI-free.
  */
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useStackContext } from "../contexts/StackContext";
 import { ScanRunPhaseStepper, type ScanPhaseState } from "./ScanRunPhaseStepper";
 import { copyLink, copyMarkdown, downloadPng } from "../lib/exportScanRun";
+import type { ServerMessage } from "../../types/ws-types.js";
 
 // === Types =============================================================
 
@@ -76,15 +80,40 @@ interface Props {
   onBack: () => void;
   onOpenInvestigation?: (investigationId: string) => void;
   onSwitchStack?: (stackId: string) => void;
+  wsMessages?: ServerMessage[];
 }
 
 // === Component =========================================================
 
-export function ScanRunDetail({ runId, onBack, onOpenInvestigation, onSwitchStack }: Props) {
+export function ScanRunDetail({ runId, onBack, onOpenInvestigation, onSwitchStack, wsMessages }: Props) {
   const { stackFetch } = useStackContext();
   const [data, setData] = useState<ScanRunData | null>(null);
   const [error, setError] = useState<{ status: number; expectedStackId?: string; message: string } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const processedIdxRef = useRef(0);
+  const refetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Refetch helper — debounced to coalesce bursts of `investigation_dispatched`
+  // events (which don't carry enough data on the wire to synthesize a full
+  // investigation row; we need the DB join for status/reportSummary).
+  const queueRefetch = useCallback(() => {
+    if (refetchTimerRef.current) clearTimeout(refetchTimerRef.current);
+    refetchTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await stackFetch(`/api/scan/runs/${encodeURIComponent(runId)}`);
+        if (res.ok) {
+          const json = (await res.json()) as ScanRunData;
+          setData(json);
+        }
+      } catch { /* ignore — polling will retry */ }
+    }, 300);
+  }, [runId, stackFetch]);
+
+  // Reset WS cursor when switching runs so stale events from a previous run
+  // can't apply to the new view.
+  useEffect(() => {
+    processedIdxRef.current = 0;
+  }, [runId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -108,7 +137,9 @@ export function ScanRunDetail({ runId, onBack, onOpenInvestigation, onSwitchStac
         if (!cancelled) {
           setData(json);
           setError(null);
-          // Poll while running. Task 24 will replace polling with live WS updates.
+          // Keep the 1.5s poll as a defensive fallback against dropped WS
+          // events. WS updates layer on top to reduce perceived latency;
+          // polling is authoritative (server DB view) so races are benign.
           if (json.run.status === "running") {
             timer = setTimeout(() => { void load(); }, 1500);
           }
@@ -125,6 +156,124 @@ export function ScanRunDetail({ runId, onBack, onOpenInvestigation, onSwitchStac
       if (timer) clearTimeout(timer);
     };
   }, [runId, stackFetch]);
+
+  // Cleanup the debounce timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (refetchTimerRef.current) {
+        clearTimeout(refetchTimerRef.current);
+        refetchTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  // Process live WebSocket messages. Applied idempotently — the same event
+  // re-played twice produces the same state. Events for other runIds and
+  // unknown investigation IDs are dropped.
+  useEffect(() => {
+    if (!wsMessages) return;
+    if (typeof document !== "undefined" && document.hidden) return;
+
+    for (let i = processedIdxRef.current; i < wsMessages.length; i++) {
+      const msg = wsMessages[i];
+      if (!msg || typeof msg.type !== "string") continue;
+
+      // Scan-run-level events for this runId.
+      if (msg.type.startsWith("scan:") && "runId" in msg && msg.runId === runId) {
+        if (msg.type === "scan:investigation_dispatched") {
+          // WS event carries investigationId/service/ruleName but not the
+          // full investigation row (status/reportSummary/severity/value/
+          // dispatchedAt). Refetch to pull the authoritative DB view.
+          queueRefetch();
+        } else {
+          setData((prev) => {
+            if (!prev) return prev;
+            const run = { ...prev.run };
+            if (msg.type === "scan:probe_complete") {
+              const s = msg.stats;
+              run.servicesProbed = s.servicesProbed;
+              run.rulesApplied = s.rulesApplied;
+              run.queriesExecuted = s.queriesExecuted;
+              run.probeErrors = s.probeErrors;
+              run.probeDurationMs = s.durationMs;
+            } else if (msg.type === "scan:triage_complete") {
+              const d = msg.detail;
+              run.hitsRaw = d.hitsRaw;
+              run.hitsAfterDedup = d.hitsAfterDedup;
+              run.hitsDispatched = d.dispatched.length;
+              run.droppedByCap = d.dropped.length;
+              // Keep triageDetailJson in sync so the breakdown UI works live.
+              // Shape matches what the API returns: { hits, deduped, cappedOut }.
+              run.triageDetailJson = JSON.stringify({
+                hits: d.dispatched,
+                deduped: d.dedupedList,
+                cappedOut: d.dropped,
+              });
+            } else if (msg.type === "scan:complete") {
+              run.status = "complete";
+              run.hitsDispatched = msg.hitsDispatched;
+            } else if (msg.type === "scan:failed") {
+              run.status = "failed";
+              run.errorMessage = msg.error;
+            } else if (msg.type === "scan:skipped") {
+              run.status = "skipped";
+              run.skipReason = msg.reason;
+            }
+            return { ...prev, run };
+          });
+        }
+      }
+
+      // Investigation-level events for our child investigations.
+      if (
+        msg.type === "investigation:started" ||
+        msg.type === "investigation:phase" ||
+        msg.type === "investigation:complete" ||
+        msg.type === "investigation:failed"
+      ) {
+        const invId = msg.id;
+        if (!invId) continue;
+        setData((prev) => {
+          if (!prev) return prev;
+          const idx = prev.investigations.findIndex((i) => i.investigationId === invId);
+          if (idx === -1) return prev;
+          const next = [...prev.investigations];
+          const child = { ...next[idx]! };
+          if (msg.type === "investigation:complete") {
+            child.status = "complete";
+            const report = msg.report as { summary?: unknown } | null | undefined;
+            if (report && typeof report === "object" && "summary" in report && typeof report.summary === "string") {
+              child.reportSummary = report.summary;
+            }
+          } else if (msg.type === "investigation:failed") {
+            child.status = "failed";
+          } else if (msg.type === "investigation:phase" || msg.type === "investigation:started") {
+            if (child.status !== "complete" && child.status !== "failed") {
+              child.status = "running";
+            }
+          }
+          next[idx] = child;
+          return { ...prev, investigations: next };
+        });
+      }
+    }
+    processedIdxRef.current = wsMessages.length;
+  }, [wsMessages, runId, queueRefetch]);
+
+  // When returning to a hidden tab, make sure we resume processing without
+  // skipping any messages that arrived while hidden. Self-healing fallback
+  // is the 1.5s poll, so this is just polish to reduce perceived latency.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (!document.hidden && wsMessages) {
+        // Clamp the cursor so we don't skip past messages that arrived while
+        // hidden — they'll be picked up next time the process-effect runs.
+        processedIdxRef.current = Math.min(processedIdxRef.current, wsMessages.length);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [wsMessages]);
 
   const phaseStates: ScanPhaseState[] = useMemo(() => {
     if (!data) return [];
