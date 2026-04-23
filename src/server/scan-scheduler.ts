@@ -471,7 +471,10 @@ export class ScanScheduler {
         probeErrors: probeResult.probeErrors,
         queriesEmpty: probeResult.queriesEmpty,
         durationMs: probeDurationMs,
-        detail: { queryTimeoutMs: this.scan.probe.queryTimeoutMs },
+        detail: {
+          queryTimeoutMs: this.scan.probe.queryTimeoutMs,
+          coverage: probeResult.coverage,
+        },
       });
 
       if (this.stopped || this.ac.signal.aborted) {

@@ -83,17 +83,33 @@ export interface InstantResult {
 }
 
 /**
+ * Per-service coverage snapshot emitted alongside the aggregate stats.
+ * Lets the UI answer "which services had zero rules return data?" — a
+ * structural blind spot where the rule templates don't match the service's
+ * actual metric labels.
+ */
+export interface ServiceCoverage {
+  service: string;
+  rulesApplied: number;
+  ok: number;
+  empty: number;
+  error: number;
+}
+
+/**
  * Return shape for runProbe. Carries the scored hits alongside stats that
  * feed the per-scan-run dashboard. `probeErrors` counts real MCP/parse
  * failures. `queriesEmpty` counts queries that succeeded but returned no
  * rows — most per-service rules on a healthy cluster fall here and it is
- * NOT an error condition.
+ * NOT an error condition. `coverage` carries the per-service breakdown
+ * used by the detail pane.
  */
 export interface ProbeResult {
   hits: ProbeHit[];
   queriesExecuted: number;
   probeErrors: number;
   queriesEmpty: number;
+  coverage: ServiceCoverage[];
 }
 
 export interface ProbeOptions {
@@ -428,7 +444,7 @@ function parseWindowToMinutes(window: string): number {
 export async function runProbe(opts: ProbeOptions): Promise<ProbeResult> {
   const { services, probe, providers, datasourceUid, lokiDatasourceUid, signal, consecutiveState, registryStore } = opts;
 
-  if (services.length === 0) return { hits: [], queriesExecuted: 0, probeErrors: 0, queriesEmpty: 0 };
+  if (services.length === 0) return { hits: [], queriesExecuted: 0, probeErrors: 0, queriesEmpty: 0, coverage: [] };
 
   // Atomic registry snapshot — one read per tick, consistent view of
   // services + globalProbeRules even if discovery runs concurrently.
@@ -441,12 +457,12 @@ export async function runProbe(opts: ProbeOptions): Promise<ProbeResult> {
     metricsTools = (await getToolsByRole(providers, "metrics")) as Record<string, unknown>;
   } catch (err) {
     logger.warn({ err }, "anomaly-probe: failed to resolve metrics MCP tools, skipping tick");
-    return { hits: [], queriesExecuted: 0, probeErrors: 0, queriesEmpty: 0 };
+    return { hits: [], queriesExecuted: 0, probeErrors: 0, queriesEmpty: 0, coverage: [] };
   }
   const metricsTool = findMetricQueryTool(metricsTools);
   if (!metricsTool) {
     logger.warn("anomaly-probe: no metric query tool found, skipping tick");
-    return { hits: [], queriesExecuted: 0, probeErrors: 0, queriesEmpty: 0 };
+    return { hits: [], queriesExecuted: 0, probeErrors: 0, queriesEmpty: 0, coverage: [] };
   }
 
   // Resolve logs MCP tool if available. Missing logs tool is NOT fatal —
@@ -619,18 +635,32 @@ export async function runProbe(opts: ProbeOptions): Promise<ProbeResult> {
   // Split outcomes: real failures (MCP threw / timeout / parse-fail) are
   // surfaced as errors; empty vectors on a per-service rule are the common,
   // healthy no-match case and tracked separately so they don't poison the
-  // error signal.
+  // error signal. Also build a per-service coverage map so the UI can flag
+  // services whose rules all returned empty (structural blind spot).
   let probeErrors = 0;
   let queriesEmpty = 0;
-  for (const r of results) {
-    if (r.kind === "error") probeErrors++;
-    else if (r.kind === "empty") queriesEmpty++;
+  const coverageMap = new Map<string, ServiceCoverage>();
+  for (let i = 0; i < results.length; i++) {
+    const kind = results[i]!.kind;
+    if (kind === "error") probeErrors++;
+    else if (kind === "empty") queriesEmpty++;
+    const svc = tasks[i]!.service;
+    let cov = coverageMap.get(svc);
+    if (!cov) {
+      cov = { service: svc, rulesApplied: 0, ok: 0, empty: 0, error: 0 };
+      coverageMap.set(svc, cov);
+    }
+    cov.rulesApplied++;
+    if (kind === "ok") cov.ok++;
+    else if (kind === "empty") cov.empty++;
+    else cov.error++;
   }
   return {
     hits,
     queriesExecuted: tasks.length,
     probeErrors,
     queriesEmpty,
+    coverage: Array.from(coverageMap.values()),
   };
 }
 
