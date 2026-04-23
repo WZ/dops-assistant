@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { EmailRecipientEditor } from "./EmailRecipientEditor.js";
 
 interface Recipient {
@@ -32,6 +33,9 @@ const SEVERITY_LABELS: Record<Recipient["minSeverity"], string> = {
   high: "high+",
   critical: "crit+",
 };
+
+const LABEL_CLASS =
+  "font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/60";
 
 export function EmailRecipientsSection({ stackFetch }: Props) {
   const [cfg, setCfg] = useState<EmailConfig | null>(null);
@@ -103,75 +107,126 @@ export function EmailRecipientsSection({ stackFetch }: Props) {
   const openAdd = () => { setEditing(null); setEditorOpen(true); };
   const openEdit = (r: Recipient) => { setEditing(r); setEditorOpen(true); };
 
-  if (loading && !cfg) return <div className="text-xs text-gray-500">Loading email settings…</div>;
-  if (error) return <div className="text-xs text-red-600">Error: {error}</div>;
+  if (loading && !cfg) {
+    return <div className="font-mono text-xs text-muted-foreground/60">Loading email settings…</div>;
+  }
+  if (error) return <div className="font-mono text-xs text-destructive">Error: {error}</div>;
   if (!cfg) return <></>;
 
   return (
-    <section className="mt-8">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold">Email</h3>
-        <label className="flex items-center gap-2 text-xs">
-          <input type="checkbox" checked={cfg.enabled} onChange={(e) => void toggleGlobal(e.target.checked)} />
-          Enable email notifications
-        </label>
+    <section aria-label="Email notifications" className="mt-8">
+      <div className="flex items-center gap-2 mb-3">
+        <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
+        <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
+          Email
+        </h2>
       </div>
 
-      <div className="border border-gray-200 rounded-lg overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-2 bg-gray-50 border-b border-gray-200">
-          <span className="text-xs font-medium text-gray-700">Recipients</span>
+      <div className="rounded-lg border border-border/40 bg-card/50 p-4 space-y-4">
+        {/* Global enable toggle — mirrors Slack section */}
+        <div className="flex items-center justify-between">
+          <div>
+            <label className={LABEL_CLASS}>Enabled</label>
+            <p className="text-xs text-muted-foreground/60 mt-0.5">
+              Send investigation results to the recipients below
+            </p>
+          </div>
           <button
-            onClick={openAdd}
-            className="h-9 px-3 rounded-lg bg-gray-900 text-white text-xs hover:bg-gray-700"
+            type="button"
+            role="switch"
+            aria-checked={cfg.enabled}
+            onClick={() => void toggleGlobal(!cfg.enabled)}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+              cfg.enabled ? "bg-primary" : "bg-muted-foreground/20"
+            }`}
           >
-            + Add recipient
+            <span className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
+              cfg.enabled ? "translate-x-6" : "translate-x-1"
+            }`} />
           </button>
         </div>
 
-        {cfg.recipients.length === 0 ? (
-          <div className="px-4 py-6 text-xs text-gray-500 text-center">No recipients configured.</div>
-        ) : (
-          <ul className="divide-y divide-gray-200">
-            {cfg.recipients.map((r) => (
-              <li key={r.id} className="flex items-center gap-3 px-4 py-2 text-xs">
-                <div className="flex-1 min-w-0">
-                  <div className="font-mono truncate">{r.label ?? r.address}</div>
-                  {r.label && <div className="text-gray-500 truncate">{r.address}</div>}
-                </div>
-                <span className="text-gray-600">{SEVERITY_LABELS[r.minSeverity]}</span>
-                <div className="flex gap-1">
-                  {r.allowedSources.map((s) => (
-                    <span key={s} className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-700 text-[10px]">
-                      {SOURCE_LABELS[s]}
-                    </span>
-                  ))}
-                </div>
-                <label className="flex items-center">
-                  <input type="checkbox" checked={r.enabled} onChange={() => void toggleRow(r)} />
-                </label>
-                <button onClick={() => void testSend(r)} disabled={testingId === r.id}
-                  className="h-9 px-2 rounded-lg border border-gray-300 hover:bg-gray-50 text-xs">
-                  {testingId === r.id ? "…" : "Test"}
-                </button>
-                <button onClick={() => openEdit(r)}
-                  className="h-9 px-2 rounded-lg border border-gray-300 hover:bg-gray-50 text-xs">
-                  Edit
-                </button>
-                <button onClick={() => void deleteRow(r)}
-                  className="h-9 px-2 rounded-lg border border-red-300 text-red-700 hover:bg-red-50 text-xs">
-                  Delete
-                </button>
-              </li>
-            ))}
-          </ul>
+        {/* Recipients list */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className={LABEL_CLASS}>Recipients</label>
+            <Button
+              variant="outline"
+              onClick={openAdd}
+              className="font-mono text-xs font-medium h-9 rounded-lg px-3"
+            >
+              + Add recipient
+            </Button>
+          </div>
+
+          {cfg.recipients.length === 0 ? (
+            <div className="rounded-md border border-border/40 bg-background/40 px-4 py-6 font-mono text-xs text-muted-foreground/60 text-center">
+              No recipients configured
+            </div>
+          ) : (
+            <ul className="rounded-md border border-border/40 divide-y divide-border/40 overflow-hidden">
+              {cfg.recipients.map((r) => (
+                <li key={r.id} className="flex items-center gap-3 px-3 py-2 text-xs bg-background/40">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-mono text-foreground truncate">{r.label ?? r.address}</div>
+                    {r.label && <div className="font-mono text-muted-foreground/60 truncate">{r.address}</div>}
+                  </div>
+                  <span className="font-mono text-muted-foreground">{SEVERITY_LABELS[r.minSeverity]}</span>
+                  <div className="flex gap-1">
+                    {r.allowedSources.map((s) => (
+                      <span
+                        key={s}
+                        className="font-mono px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground text-[10px]"
+                      >
+                        {SOURCE_LABELS[s]}
+                      </span>
+                    ))}
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={r.enabled}
+                    onChange={() => void toggleRow(r)}
+                    className="accent-primary"
+                    aria-label={`Enable ${r.label ?? r.address}`}
+                  />
+                  <Button
+                    variant="outline"
+                    onClick={() => void testSend(r)}
+                    disabled={testingId === r.id}
+                    className="font-mono text-xs font-medium h-9 rounded-lg px-2"
+                  >
+                    {testingId === r.id ? "…" : "Test"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => openEdit(r)}
+                    className="font-mono text-xs font-medium h-9 rounded-lg px-2"
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => void deleteRow(r)}
+                    className="font-mono text-xs font-medium h-9 rounded-lg px-2 border-destructive/40 text-destructive hover:bg-destructive/10"
+                  >
+                    Delete
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {testResult && (
+          <div className={`font-mono text-xs px-3 py-2 rounded-md ${
+            testResult.ok
+              ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+              : "bg-destructive/10 text-destructive"
+          }`}>
+            Recipient #{testResult.id}: {testResult.msg}
+          </div>
         )}
       </div>
-
-      {testResult && (
-        <p className={`mt-2 text-xs ${testResult.ok ? "text-green-700" : "text-red-600"}`}>
-          Recipient #{testResult.id}: {testResult.msg}
-        </p>
-      )}
 
       {editorOpen && (
         <EmailRecipientEditor
