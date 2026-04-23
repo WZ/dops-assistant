@@ -57,6 +57,16 @@ test("history collapse: N consecutive clean cron ticks render as a single group"
   `).run(hitsId, stackId, now - 1000, now - 900);
   db.close();
 
+  // Dismiss the setup wizard before navigating. The CI fixture config has
+  // providers: [] so the app auto-routes to /settings with a
+  // "needs-provider" stepper covering the Ops Desk — Recent Scans never
+  // renders and the assertion below hangs for 10s. Writing the dismiss
+  // flag via addInitScript hits localStorage before React's first render,
+  // so useSetupStage reads it synchronously and suppresses the stepper.
+  await page.addInitScript((sid) => {
+    localStorage.setItem(`dops:setup_dismissed:${sid}`, "true");
+  }, stackId);
+
   await page.goto("/");
 
   // The collapsed-group row shows "5 clean cron ticks" — scoped to the
