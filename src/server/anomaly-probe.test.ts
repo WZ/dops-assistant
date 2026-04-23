@@ -5,17 +5,24 @@ import {
   runProbe,
   prioritizeHits,
   buildInvestigationMessage,
+  stateKey,
   type ProbeHit,
 } from "./anomaly-probe.js";
-import type { ProbeConfig } from "../config/schema.js";
+import type { ProbeConfig, ServiceConfig, ProbeMetricRule } from "../config/schema.js";
 import type { MastraProvider } from "../mcp/provider.js";
+import type { ServiceRegistryStore, RegistryFile } from "../services/registry.js";
 
 // ── getToolsByRole mock ─────────────────────────────────────────────────────
 // getToolsByRole reads tool definitions from providers; we mock it at the
-// module level so the probe sees a fake tool we control.
+// module level so the probe sees a fake tool we control. Also mocked per
+// role so log-source tests can supply a separate logs tool.
 let mockTools: Record<string, unknown> = {};
+let mockLogsTools: Record<string, unknown> = {};
 vi.mock("../mcp/provider.js", () => ({
-  getToolsByRole: vi.fn(async () => mockTools),
+  getToolsByRole: vi.fn(async (_providers: unknown, role: string) => {
+    if (role === "logs") return mockLogsTools;
+    return mockTools;
+  }),
 }));
 
 // ── Shared fixtures ─────────────────────────────────────────────────────────
@@ -24,9 +31,10 @@ function buildProbe(overrides: Partial<ProbeConfig> = {}): ProbeConfig {
   return {
     concurrency: 4,
     queryTimeoutMs: 1000,
+    logsQueryTimeoutMs: 10_000,
     metrics: [
-      { name: "availability", query: 'up{service="{service}"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 1 },
-      { name: "error_rate", query: 'err{service="{service}"}', threshold: { op: "gt", value: 0.01 }, consecutiveTicks: 2 },
+      { name: "availability", query: 'up{service="{service}"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 1, source: "metrics" },
+      { name: "error_rate", query: 'err{service="{service}"}', threshold: { op: "gt", value: 0.01 }, consecutiveTicks: 2, source: "metrics" },
     ],
     logs: { enabled: false, window: "15m", errorRateThreshold: 10, consecutiveTicks: 2 },
     ...overrides,
@@ -34,6 +42,23 @@ function buildProbe(overrides: Partial<ProbeConfig> = {}): ProbeConfig {
 }
 
 const providers: MastraProvider[] = [];
+
+/**
+ * Build a minimal ServiceRegistryStore-shaped mock. Most tests don't care
+ * about what the registry returns — they just need `loadAll()` to exist so
+ * the probe's atomic-snapshot read doesn't throw. Tests that exercise
+ * track-1 globals or track-2/3 per-service rules pass a richer file.
+ */
+function fakeRegistryStore(file: Partial<RegistryFile> = {}): ServiceRegistryStore {
+  const full: RegistryFile = {
+    services: file.services ?? [],
+    globalProbeRules: file.globalProbeRules ?? [],
+  };
+  return { loadAll: () => full } as unknown as ServiceRegistryStore;
+}
+
+/** Convenience — the two state-key origins the legacy tests rely on. */
+const defaultKey = (service: string, ruleName: string) => stateKey(service, "default", ruleName);
 
 /** Build a fake MCP instant-query response for a numeric value. */
 function promResult(value: number): unknown {
@@ -82,7 +107,7 @@ describe("runProbe", () => {
   it("returns empty when services list is empty", async () => {
     const state = new Map<string, number>();
     const hits = await runProbe({
-      services: [], probe: buildProbe(), providers, datasourceUid: "uid", consecutiveState: state,
+      services: [], probe: buildProbe(), providers, datasourceUid: "uid", consecutiveState: state, registryStore: fakeRegistryStore(),
     });
     expect(hits).toEqual([]);
   });
@@ -91,7 +116,7 @@ describe("runProbe", () => {
     mockTools = {}; // no tools → findMetricQueryTool returns null
     const state = new Map<string, number>();
     const hits = await runProbe({
-      services: ["svc-a"], probe: buildProbe(), providers, datasourceUid: "uid", consecutiveState: state,
+      services: ["svc-a"], probe: buildProbe(), providers, datasourceUid: "uid", consecutiveState: state, registryStore: fakeRegistryStore(),
     });
     expect(hits).toEqual([]);
   });
@@ -102,7 +127,7 @@ describe("runProbe", () => {
 
     const state = new Map<string, number>();
     const hits = await runProbe({
-      services: ["svc-a"], probe: buildProbe(), providers, datasourceUid: "uid", consecutiveState: state,
+      services: ["svc-a"], probe: buildProbe(), providers, datasourceUid: "uid", consecutiveState: state, registryStore: fakeRegistryStore(),
     });
 
     const avail = hits.find(h => h.ruleName === "availability");
@@ -123,11 +148,11 @@ describe("runProbe", () => {
 
     const state = new Map<string, number>();
     const hits = await runProbe({
-      services: ["svc-a"], probe: buildProbe(), providers, datasourceUid: "uid", consecutiveState: state,
+      services: ["svc-a"], probe: buildProbe(), providers, datasourceUid: "uid", consecutiveState: state, registryStore: fakeRegistryStore(),
     });
 
     expect(hits).toEqual([]); // hysteresis swallows the first tick
-    expect(state.get("svc-a:error_rate")).toBe(1);
+    expect(state.get(defaultKey("svc-a", "error_rate"))).toBe(1);
   });
 
   it("flags after 2 consecutive ticks with consecutiveTicks=2", async () => {
@@ -139,11 +164,11 @@ describe("runProbe", () => {
 
     const state = new Map<string, number>();
     // Tick 1: should not fire (count=1)
-    await runProbe({ services: ["svc-a"], probe: buildProbe(), providers, datasourceUid: "uid", consecutiveState: state });
-    expect(state.get("svc-a:error_rate")).toBe(1);
+    await runProbe({ services: ["svc-a"], probe: buildProbe(), providers, datasourceUid: "uid", consecutiveState: state, registryStore: fakeRegistryStore() });
+    expect(state.get(defaultKey("svc-a", "error_rate"))).toBe(1);
 
     // Tick 2: should fire
-    const hits = await runProbe({ services: ["svc-a"], probe: buildProbe(), providers, datasourceUid: "uid", consecutiveState: state });
+    const hits = await runProbe({ services: ["svc-a"], probe: buildProbe(), providers, datasourceUid: "uid", consecutiveState: state, registryStore: fakeRegistryStore() });
     const err = hits.find(h => h.ruleName === "error_rate");
     expect(err).toBeDefined();
     expect(err!.consecutiveTicks).toBe(2);
@@ -151,13 +176,13 @@ describe("runProbe", () => {
 
   it("resets hysteresis on any non-trip including NaN", async () => {
     const state = new Map<string, number>();
-    state.set("svc-a:error_rate", 3); // pre-loaded
+    state.set(defaultKey("svc-a", "error_rate"), 3); // pre-loaded
 
     // empty result → NaN → not tripped → state should reset
     mockTools = { query_prometheus: { execute: vi.fn(async () => emptyPromResult()) } };
-    await runProbe({ services: ["svc-a"], probe: buildProbe(), providers, datasourceUid: "uid", consecutiveState: state });
+    await runProbe({ services: ["svc-a"], probe: buildProbe(), providers, datasourceUid: "uid", consecutiveState: state, registryStore: fakeRegistryStore() });
 
-    expect(state.get("svc-a:error_rate")).toBeUndefined();
+    expect(state.get(defaultKey("svc-a", "error_rate"))).toBeUndefined();
   });
 
   it("continues after a partial failure (one query throws)", async () => {
@@ -178,7 +203,7 @@ describe("runProbe", () => {
       ],
     });
 
-    const hits = await runProbe({ services: ["svc-a"], probe, providers, datasourceUid: "uid", consecutiveState: state });
+    const hits = await runProbe({ services: ["svc-a"], probe, providers, datasourceUid: "uid", consecutiveState: state, registryStore: fakeRegistryStore() });
     // first query (availability) threw → no hit
     // second query (error_rate) tripped → hit
     expect(hits.find(h => h.ruleName === "availability")).toBeUndefined();
@@ -199,6 +224,7 @@ describe("runProbe", () => {
       providers, datasourceUid: "uid",
       signal: ac.signal,
       consecutiveState: state,
+      registryStore: fakeRegistryStore(),
     });
     expect(hits).toEqual([]);
     // execute should not have been called meaningfully (or at most returns NaN from aborted path)
@@ -210,7 +236,7 @@ describe("runProbe", () => {
 
     const state = new Map<string, number>();
     await runProbe({
-      services: ["payments-api"], probe: buildProbe(), providers, datasourceUid: "uid", consecutiveState: state,
+      services: ["payments-api"], probe: buildProbe(), providers, datasourceUid: "uid", consecutiveState: state, registryStore: fakeRegistryStore(),
     });
 
     // First call is for availability — expr should have "payments-api" substituted
@@ -240,6 +266,7 @@ describe("runProbe — per-service overrides", () => {
       providers, datasourceUid: "uid",
       consecutiveState: state,
       getOverride: (svc) => svc === "svc-a" ? { disabled: true } : null,
+      registryStore: fakeRegistryStore(),
     });
 
     // Only svc-b should have been probed. Check via expr substitution.
@@ -266,6 +293,7 @@ describe("runProbe — per-service overrides", () => {
       providers, datasourceUid: "uid",
       consecutiveState: state,
       getOverride: (svc) => svc === "svc-a" ? { rules: customRules } : null,
+      registryStore: fakeRegistryStore(),
     });
 
     const calls = execute.mock.calls.map((c) => (c[0] as { expr: string }).expr);
@@ -294,6 +322,7 @@ describe("runProbe — per-service overrides", () => {
       providers, datasourceUid: "uid",
       consecutiveState: state,
       getOverride: () => ({ rules: [] }),
+      registryStore: fakeRegistryStore(),
     });
 
     expect(execute).toHaveBeenCalled();
@@ -310,16 +339,303 @@ describe("runProbe — per-service overrides", () => {
       providers, datasourceUid: "uid",
       consecutiveState: state,
       // no getOverride
+      registryStore: fakeRegistryStore(),
     });
     // Availability threshold (<1, consecutiveTicks=1) trips on value=0
     expect(hits.find(h => h.service === "svc-a" && h.ruleName === "availability")).toBeDefined();
   });
 });
 
+describe("runProbe — four-track evaluator (Slice C)", () => {
+  beforeEach(() => {
+    mockTools = {};
+    mockLogsTools = {};
+  });
+
+  const metricsRule = (over: Partial<ProbeMetricRule> = {}): ProbeMetricRule => ({
+    name: "x",
+    query: 'up{app="{service}"}',
+    threshold: { op: "lt", value: 1 },
+    consecutiveTicks: 1,
+    source: "metrics",
+    ...over,
+  });
+  const logsRule = (over: Partial<ProbeMetricRule> = {}): ProbeMetricRule => ({
+    name: "log_errors",
+    query: 'sum(count_over_time({app="svc-a"} |= `error` [15m]))',
+    threshold: { op: "gt", value: 75 },
+    consecutiveTicks: 1,
+    source: "logs",
+    ...over,
+  });
+
+  it("Track 1: globalProbeRules REPLACE config.yaml defaults when non-empty", async () => {
+    // When the registry has any global rules, they replace track 4.
+    // Expectation: the probe fires the global rule's query, NOT the
+    // config.yaml `up{service="{service}"}` default.
+    const execute = vi.fn(async () => promResult(0));
+    mockTools = { query_prometheus: { execute } };
+
+    const state = new Map<string, number>();
+    const hits = await runProbe({
+      services: ["svc-a"],
+      probe: buildProbe(),
+      providers, datasourceUid: "uid",
+      consecutiveState: state,
+      registryStore: fakeRegistryStore({
+        globalProbeRules: [metricsRule({ name: "app_avail", query: 'up{app="{service}"}' })],
+      }),
+    });
+
+    const calls = execute.mock.calls.map((c) => (c[0] as { expr: string }).expr);
+    expect(calls.some((e) => e.includes('up{app="svc-a"}'))).toBe(true);
+    // The config.yaml default `up{service=...}` must not have fired.
+    expect(calls.some((e) => e.includes('up{service="svc-a"}'))).toBe(false);
+    const hit = hits.find((h) => h.ruleName === "app_avail");
+    expect(hit).toBeDefined();
+    expect(hit!.origin).toBe("global");
+  });
+
+  it("Track 4 regression: without any globals, probe still fires config.yaml defaults (byte-identical to pre-Slice-C behavior)", async () => {
+    const execute = vi.fn(async () => promResult(0));
+    mockTools = { query_prometheus: { execute } };
+
+    const state = new Map<string, number>();
+    const hits = await runProbe({
+      services: ["svc-a"],
+      probe: buildProbe(),
+      providers, datasourceUid: "uid",
+      consecutiveState: state,
+      registryStore: fakeRegistryStore({ globalProbeRules: [] }),
+    });
+
+    const calls = execute.mock.calls.map((c) => (c[0] as { expr: string }).expr);
+    // Config.yaml default `up{service="..."}` fires. This is the PR #115
+    // k8s-native fallback path. Regressing this breaks every deployment
+    // that hasn't run `npm run discover` yet.
+    expect(calls.some((e) => e.includes('up{service="svc-a"}'))).toBe(true);
+    const hit = hits.find((h) => h.ruleName === "availability");
+    expect(hit).toBeDefined();
+    expect(hit!.origin).toBe("default");
+  });
+
+  it("Track 2: per-service probeRules ADD to the base track (do not replace)", async () => {
+    const execute = vi.fn(async () => promResult(0));
+    mockTools = { query_prometheus: { execute } };
+
+    const state = new Map<string, number>();
+    const hits = await runProbe({
+      services: ["svc-a"],
+      probe: buildProbe(),
+      providers, datasourceUid: "uid",
+      consecutiveState: state,
+      registryStore: fakeRegistryStore({
+        services: [{
+          name: "svc-a", metrics: [], logLabels: {},
+          // Use a threshold that trips on the mock's promResult(0) so both
+          // rules produce visible hits in this additivity assertion.
+          probeRules: [metricsRule({ name: "pod_restarts", query: 'rate(restarts{ns="a"}[5m])', threshold: { op: "lt", value: 1 } })],
+        } as ServiceConfig],
+        globalProbeRules: [metricsRule({ name: "app_avail" })],
+      }),
+    });
+
+    // Both the global and the per-service rule fire — additive semantics.
+    expect(hits.some((h) => h.ruleName === "app_avail" && h.origin === "global")).toBe(true);
+    expect(hits.some((h) => h.ruleName === "pod_restarts" && h.origin === "service")).toBe(true);
+  });
+
+  it("Track 3: logs-source per-service rule calls the logs tool (not the metrics tool)", async () => {
+    const metricsExecute = vi.fn(async () => promResult(0));
+    const logsExecute = vi.fn(async () => promResult(120));  // trips > 75
+    mockTools = { query_prometheus: { execute: metricsExecute } };
+    mockLogsTools = { query_loki_logs: { execute: logsExecute } };
+
+    const state = new Map<string, number>();
+    const hits = await runProbe({
+      services: ["svc-a"],
+      probe: buildProbe(),
+      providers, datasourceUid: "uid",
+      lokiDatasourceUid: "loki-uid",
+      consecutiveState: state,
+      registryStore: fakeRegistryStore({
+        services: [{
+          name: "svc-a", metrics: [], logLabels: {},
+          probeRules: [logsRule()],
+        } as ServiceConfig],
+      }),
+    });
+
+    // The logs tool was called with queryType:"metric" and the Loki UID.
+    expect(logsExecute).toHaveBeenCalled();
+    const logsArgs = logsExecute.mock.calls[0]?.[0] as { queryType: string; datasourceUid: string };
+    expect(logsArgs.queryType).toBe("metric");
+    expect(logsArgs.datasourceUid).toBe("loki-uid");
+    // And the log-source rule tripped.
+    const hit = hits.find((h) => h.ruleName === "log_errors" && h.origin === "service");
+    expect(hit).toBeDefined();
+  });
+
+  it("Track 3: log-source rule scores NaN when no logs tool is wired", async () => {
+    const metricsExecute = vi.fn(async () => promResult(1));
+    mockTools = { query_prometheus: { execute: metricsExecute } };
+    mockLogsTools = {};  // no logs tool available
+
+    const state = new Map<string, number>();
+    const hits = await runProbe({
+      services: ["svc-a"],
+      probe: buildProbe(),
+      providers, datasourceUid: "uid",
+      lokiDatasourceUid: "loki-uid",
+      consecutiveState: state,
+      registryStore: fakeRegistryStore({
+        services: [{
+          name: "svc-a", metrics: [], logLabels: {},
+          probeRules: [logsRule()],
+        } as ServiceConfig],
+      }),
+    });
+
+    // No hit — log-source rule silently scored NaN. Metrics-source rules
+    // continue to fire (availability against value=1 doesn't trip).
+    expect(hits.find((h) => h.ruleName === "log_errors")).toBeUndefined();
+  });
+
+  it("probe.logs fallback fires on service with logLabels + no log-type rule", async () => {
+    const metricsExecute = vi.fn(async () => promResult(1));
+    const logsExecute = vi.fn(async () => promResult(500));  // high error count
+    mockTools = { query_prometheus: { execute: metricsExecute } };
+    mockLogsTools = { query_loki_logs: { execute: logsExecute } };
+
+    const state = new Map<string, number>();
+    const hits = await runProbe({
+      services: ["svc-a"],
+      probe: buildProbe({ logs: { enabled: true, window: "15m", errorRateThreshold: 10, consecutiveTicks: 1 } }),
+      providers, datasourceUid: "uid",
+      lokiDatasourceUid: "loki-uid",
+      consecutiveState: state,
+      registryStore: fakeRegistryStore({
+        services: [{
+          name: "svc-a", metrics: [],
+          logLabels: { namespace: "checkout", container: "api" },
+          probeRules: [],  // NO log-type rule — fallback should generate one
+        } as ServiceConfig],
+      }),
+    });
+
+    // The fallback query was synthesized from logLabels.
+    const logsCall = logsExecute.mock.calls[0]?.[0] as { expr: string };
+    expect(logsCall.expr).toContain('namespace="checkout"');
+    expect(logsCall.expr).toContain('container="api"');
+    const hit = hits.find((h) => h.origin === "logs-fallback");
+    expect(hit).toBeDefined();
+    expect(hit!.ruleName).toBe("log_errors_fallback");
+  });
+
+  it("probe.logs fallback does NOT fire when a per-service log-type rule exists", async () => {
+    const logsExecute = vi.fn(async () => promResult(0));
+    mockTools = { query_prometheus: { execute: vi.fn(async () => promResult(1)) } };
+    mockLogsTools = { query_loki_logs: { execute: logsExecute } };
+
+    const state = new Map<string, number>();
+    await runProbe({
+      services: ["svc-a"],
+      probe: buildProbe({ logs: { enabled: true, window: "15m", errorRateThreshold: 10, consecutiveTicks: 1 } }),
+      providers, datasourceUid: "uid",
+      lokiDatasourceUid: "loki-uid",
+      consecutiveState: state,
+      registryStore: fakeRegistryStore({
+        services: [{
+          name: "svc-a", metrics: [],
+          logLabels: { namespace: "checkout" },
+          probeRules: [logsRule({ name: "my_log_errors" })],
+        } as ServiceConfig],
+      }),
+    });
+
+    // Exactly one logs call — the per-service rule. No synthesized fallback.
+    expect(logsExecute).toHaveBeenCalledTimes(1);
+  });
+
+  it("Origin-namespaced state keys: same-named rules on different tracks track independently", async () => {
+    // A global rule named "availability" and a per-service rule also named
+    // "availability" used to share hysteresis state under the pre-Slice-C
+    // 2-part key. With origin-namespaced keys, they track independently.
+    const execute = vi.fn(async () => promResult(0));
+    mockTools = { query_prometheus: { execute } };
+
+    const state = new Map<string, number>();
+    await runProbe({
+      services: ["svc-a"],
+      probe: buildProbe(),
+      providers, datasourceUid: "uid",
+      consecutiveState: state,
+      registryStore: fakeRegistryStore({
+        services: [{
+          name: "svc-a", metrics: [], logLabels: {},
+          probeRules: [metricsRule({ name: "availability", query: 'custom{app="{service}"}' })],
+        } as ServiceConfig],
+        globalProbeRules: [metricsRule({ name: "availability" })],
+      }),
+    });
+
+    // Both hit → both increment independent counters. Key format:
+    // "svc-a:{origin}:availability".
+    expect(state.get(stateKey("svc-a", "global", "availability"))).toBe(1);
+    expect(state.get(stateKey("svc-a", "service", "availability"))).toBe(1);
+  });
+
+  it("Registry snapshot atomicity: loadAll() is called exactly once per tick", async () => {
+    const loadAll = vi.fn(() => ({ services: [], globalProbeRules: [] }));
+    const execute = vi.fn(async () => promResult(1));
+    mockTools = { query_prometheus: { execute } };
+
+    const state = new Map<string, number>();
+    await runProbe({
+      services: ["svc-a", "svc-b", "svc-c"],
+      probe: buildProbe(),
+      providers, datasourceUid: "uid",
+      consecutiveState: state,
+      registryStore: { loadAll } as unknown as ServiceRegistryStore,
+    });
+
+    // Even across three services + per-task loop, only one snapshot read.
+    expect(loadAll).toHaveBeenCalledTimes(1);
+  });
+
+  it("GCs orphaned consecutiveState entries at tick start (rule rename / removal)", async () => {
+    // Simulates what happens when discovery renames a global rule from
+    // "availability" to "app_avail" between ticks: old counters under
+    // `{svc}:global:availability` must not leak. Pre-load the state Map
+    // with an orphan key, run a tick with the new rule name, verify the
+    // orphan was cleaned up.
+    const execute = vi.fn(async () => promResult(1));  // nothing trips
+    mockTools = { query_prometheus: { execute } };
+
+    const state = new Map<string, number>();
+    state.set(stateKey("svc-a", "global", "OLD_RENAMED_RULE"), 7);  // orphan from prior tick
+    state.set(stateKey("svc-b", "service", "pod_restarts"), 3);     // orphan — svc-b not in this tick
+
+    await runProbe({
+      services: ["svc-a"],
+      probe: buildProbe(),
+      providers, datasourceUid: "uid",
+      consecutiveState: state,
+      registryStore: fakeRegistryStore({
+        globalProbeRules: [metricsRule({ name: "new_rule" })],
+      }),
+    });
+
+    // Both orphan keys GC'd. No new trips since value=1 doesn't breach.
+    expect(state.has(stateKey("svc-a", "global", "OLD_RENAMED_RULE"))).toBe(false);
+    expect(state.has(stateKey("svc-b", "service", "pod_restarts"))).toBe(false);
+  });
+});
+
 describe("prioritizeHits", () => {
-  const hitA: ProbeHit = { service: "a", ruleName: "error_rate", value: 0.5, query: "q", threshold: { op: "gt", value: 0.01 }, consecutiveTicks: 2, severity: 49 };
-  const hitB: ProbeHit = { service: "b", ruleName: "latency_p99", value: 5, query: "q", threshold: { op: "gt", value: 2 }, consecutiveTicks: 1, severity: 1.5 };
-  const hitC: ProbeHit = { service: "c", ruleName: "availability", value: 0, query: "q", threshold: { op: "lt", value: 1 }, consecutiveTicks: 1, severity: 1 };
+  const hitA: ProbeHit = { service: "a", ruleName: "error_rate", origin: "default", value: 0.5, query: "q", threshold: { op: "gt", value: 0.01 }, consecutiveTicks: 2, severity: 49 };
+  const hitB: ProbeHit = { service: "b", ruleName: "latency_p99", origin: "default", value: 5, query: "q", threshold: { op: "gt", value: 2 }, consecutiveTicks: 1, severity: 1.5 };
+  const hitC: ProbeHit = { service: "c", ruleName: "availability", origin: "default", value: 0, query: "q", threshold: { op: "lt", value: 1 }, consecutiveTicks: 1, severity: 1 };
 
   it("sorts by severity desc", () => {
     const out = prioritizeHits([hitC, hitA, hitB], () => null);
@@ -359,7 +675,7 @@ describe("prioritizeHits", () => {
 describe("buildInvestigationMessage", () => {
   it("includes service, rule, value, threshold, and query", () => {
     const hit: ProbeHit = {
-      service: "svc-a", ruleName: "error_rate", value: 0.5, query: "rate(errors)",
+      service: "svc-a", ruleName: "error_rate", origin: "default", value: 0.5, query: "rate(errors)",
       threshold: { op: "gt", value: 0.01 }, consecutiveTicks: 2, severity: 49,
     };
     const msg = buildInvestigationMessage(hit);

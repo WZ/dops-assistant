@@ -98,8 +98,14 @@ describe("getEffectiveScanConfig — probe.metrics override", () => {
   beforeEach(() => { db = new Database(":memory:"); });
   afterEach(() => { db.close(); });
 
-  const overrideRules = [
+  // `source` omitted on input — the validator defaults it to "metrics" so the
+  // round-tripped rules assertion below includes it. Keep an input-shape and
+  // an expected-shape variant so both paths are explicit.
+  const overrideRulesInput = [
     { name: "custom_availability", query: 'up{app="{service}"}', threshold: { op: "lt" as const, value: 1 }, consecutiveTicks: 1 },
+  ];
+  const overrideRules = [
+    { name: "custom_availability", query: 'up{app="{service}"}', threshold: { op: "lt" as const, value: 1 }, consecutiveTicks: 1, source: "metrics" as const },
   ];
 
   it("uses config.yaml rules when no DB override exists", () => {
@@ -109,7 +115,9 @@ describe("getEffectiveScanConfig — probe.metrics override", () => {
   });
 
   it("DB override REPLACES config.yaml rules entirely", () => {
-    db.setSetting(SCAN_SETTING_KEYS.probeMetrics, JSON.stringify(overrideRules));
+    // Write the input shape (no source field). Validator defaults source to
+    // "metrics"; effective config carries the defaulted shape.
+    db.setSetting(SCAN_SETTING_KEYS.probeMetrics, JSON.stringify(overrideRulesInput));
     const eff = getEffectiveScanConfig(db, makeConfig());
     expect(eff.probe.metrics).toEqual(overrideRules);
     // Other probe fields (concurrency, queryTimeoutMs, logs) stay from config
