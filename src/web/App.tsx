@@ -39,6 +39,7 @@ export type LeftPaneView =
   | { type: "investigation"; id: string }
   | { type: "services"; initialService?: string }
   | { type: "settings"; initialTab?: "providers" | "skills" | "stacks" | "scan" | "notifications" }
+  | { type: "scanrun"; runId: string }
   | { type: "notfound"; path: string };
 
 /**
@@ -50,7 +51,7 @@ export type LeftPaneView =
  * notfound) are left alone so a concurrent sidebar click isn't clobbered.
  */
 export function shouldResetOnStackSwitch(paneType: LeftPaneView["type"]): boolean {
-  return paneType === "services" || paneType === "investigation";
+  return paneType === "services" || paneType === "investigation" || paneType === "scanrun";
 }
 
 function useTheme() {
@@ -338,9 +339,11 @@ export function App() {
                   {leftPane.type === "dashboard" ? (
                     <Dashboard
                       wsMessages={ws.messages}
+                      wsSend={ws.send}
                       onInvestigationClick={(id) => setLeftPane({ type: "investigation", id })}
                       onViewService={(name) => setLeftPane({ type: "services", initialService: name })}
                       onViewAllServices={() => setLeftPane({ type: "services" })}
+                      onOpenScanRun={(runId) => setLeftPane({ type: "scanrun", runId })}
                       stackName={hasMultipleStacks ? activeStack?.name : undefined}
                       setupStage={setupStage}
                       setupDismissed={setupDismissed}
@@ -388,6 +391,25 @@ export function App() {
                       onRefetchStacks={refetchStacks}
                       onProviderSaved={refreshSetupStage}
                     />
+                  ) : leftPane.type === "scanrun" ? (
+                    // Placeholder — Task 23 replaces this with the real
+                    // ScanRunDetail page. Kept intentionally thin so the
+                    // /scan/runs/:id route exists the moment `RecentScansSection`
+                    // starts firing onOpenRun().
+                    <div className="h-full flex flex-col items-center justify-center gap-3 p-8 text-center">
+                      <h2 className="font-mono text-sm uppercase tracking-[0.12em] text-foreground/80">
+                        Scan run {leftPane.runId}
+                      </h2>
+                      <p className="font-mono text-[11px] text-muted-foreground/70 max-w-md">
+                        Detail page coming in the next task.
+                      </p>
+                      <button
+                        className="mt-2 font-mono text-[11px] uppercase tracking-[0.12em] text-primary hover:text-primary/80"
+                        onClick={() => setLeftPane({ type: "dashboard" })}
+                      >
+                        &larr; Back to dashboard
+                      </button>
+                    </div>
                   ) : leftPane.type === "notfound" ? (
                     <div className="h-full flex flex-col items-center justify-center gap-3 p-8 text-center">
                       <h2 className="font-mono text-sm uppercase tracking-[0.12em] text-foreground/80">
