@@ -721,7 +721,7 @@ function ExportMenu({
       {toast && (
         <div
           role="status"
-          className={`absolute right-0 top-full z-20 mt-10 rounded-lg border px-3 py-1.5 text-xs shadow-md ${
+          className={`absolute right-0 top-full z-20 mt-10 whitespace-nowrap rounded-lg border px-3 py-1.5 text-xs shadow-md ${
             toast.kind === "error"
               ? "border-destructive/60 bg-destructive/10 text-destructive"
               : "border-success/60 bg-success/10 text-success"
