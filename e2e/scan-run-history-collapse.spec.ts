@@ -26,6 +26,18 @@ test("history collapse: N consecutive clean cron ticks render as a single group"
   }
   const stackId = stackRow.id;
 
+  // Clear prior residue before seeding. Two sources of residue:
+  //  - e2e-* rows from earlier runs of this test that failed/timed out
+  //    before reaching the cleanup block below.
+  //  - real scan_runs for this stack from the server's cron scheduler that
+  //    could merge into our seeded group and make the "N clean cron ticks"
+  //    row contain a different N than we expected.
+  // Destructive but scoped: only scan_runs for the default stack, not
+  // investigations or other tables. The test owns this stack's scan
+  // history for the duration of the run.
+  db.prepare("DELETE FROM scan_run_investigations WHERE scan_run_id IN (SELECT id FROM scan_runs WHERE stack_id = ?)").run(stackId);
+  db.prepare("DELETE FROM scan_runs WHERE stack_id = ?").run(stackId);
+
   // Insert 5 clean cron runs (oldest -> newest consecutive).
   const insert = db.prepare(`
     INSERT INTO scan_runs (id, stack_id, trigger, status, started_at, finished_at, services_probed, hits_dispatched)
@@ -47,8 +59,11 @@ test("history collapse: N consecutive clean cron ticks render as a single group"
 
   await page.goto("/");
 
-  // The collapsed-group row shows "N clean cron ticks"
-  await expect(page.getByText(/clean cron ticks/i)).toBeVisible({ timeout: 10_000 });
+  // The collapsed-group row shows "5 clean cron ticks" — scoped to the
+  // exact count we seeded, not a generic /clean cron ticks/i which would
+  // strict-mode-fail if anything else on the page also collapsed. The
+  // pre-seed wipe above guarantees this is the only collapse group.
+  await expect(page.getByText(/5 clean cron ticks/)).toBeVisible({ timeout: 10_000 });
 
   // The hits row shows "3 hits"
   await expect(page.getByText(/3 hits/)).toBeVisible();
