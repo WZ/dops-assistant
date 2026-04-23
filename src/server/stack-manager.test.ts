@@ -3,6 +3,11 @@ import { Database } from "./db.js";
 import { StackManager } from "./stack-manager.js";
 import type { Config } from "../config/schema.js";
 import { DEFAULT_STACK_SLUG } from "../types/stack-types.js";
+import * as slackNotifier from "./slack-notifier.js";
+import * as emailNotifier from "./email-notifier.js";
+import { eventLog } from "./event-log.js";
+import type { ScanRunCompletedSummary } from "./scan-run-store.js";
+import type { EmailNotifierDeps } from "./email-notifier.js";
 
 // Mock ProviderRegistry — MCP connections are not available in tests.
 // The mock tracks the seed providers passed to the constructor so that
@@ -607,5 +612,147 @@ describe("stale-scan-run sweep", () => {
     expect(r1.finishedAt).toBeGreaterThan(0);
     expect(r2.status).toBe("complete");
     db.close();
+  });
+});
+
+/**
+ * Access helper: handleScanRunComplete is private. We call it via a typed cast
+ * so the test stays agnostic to whether implementation uses a callback or
+ * direct method invocation from the scheduler.
+ */
+function callHandleScanRunComplete(
+  sm: StackManager,
+  summary: ScanRunCompletedSummary,
+): void {
+  (sm as unknown as { handleScanRunComplete: (s: ScanRunCompletedSummary) => void })
+    .handleScanRunComplete(summary);
+}
+
+describe("StackManager — handleScanRunComplete", () => {
+  let db: Database;
+  let config: Config;
+  let manager: StackManager;
+  let slackSpy: ReturnType<typeof vi.spyOn>;
+  let emailSpy: ReturnType<typeof vi.spyOn>;
+
+  const baseSummary: ScanRunCompletedSummary = {
+    runId: "r1",
+    stackId: "s1",
+    trigger: "cron",
+    startedAt: Date.now(),
+    durationMs: 500,
+    servicesProbed: 100,
+    hitsDispatched: 0,
+    dispatchedServices: [],
+  };
+
+  beforeEach(async () => {
+    db = new Database(":memory:");
+    config = makeConfig();
+    manager = new StackManager(db, config);
+    await manager.initialize();
+    slackSpy = vi.spyOn(slackNotifier, "notifySlackOnScanComplete").mockResolvedValue(undefined);
+    emailSpy = vi.spyOn(emailNotifier, "notifyEmailScanRun").mockResolvedValue(undefined);
+    eventLog.reset();
+  });
+
+  afterEach(() => {
+    slackSpy.mockRestore();
+    emailSpy.mockRestore();
+    if (manager) {
+      manager.stopAllPollers();
+      manager.stopTtlReaper();
+      manager.destroyAllMemory();
+    }
+    db.close();
+    eventLog.reset();
+  });
+
+  it("appends a scan_run_complete eventLog entry with 'info' severity when hitsDispatched=0", () => {
+    callHandleScanRunComplete(manager, baseSummary);
+    const { events } = eventLog.recent(10, "s1");
+    const entry = events.find(e => e.kind === "scan_run_complete");
+    expect(entry).toBeDefined();
+    expect(entry!.severity).toBe("info");
+    expect(entry!.href).toBe("/scan/runs/r1");
+    expect(entry!.stackId).toBe("s1");
+  });
+
+  it("uses 'warn' severity when hitsDispatched>0", () => {
+    callHandleScanRunComplete(manager, { ...baseSummary, hitsDispatched: 3, dispatchedServices: ["a", "b", "c"] });
+    const { events } = eventLog.recent(10, "s1");
+    const entry = events.find(e => e.kind === "scan_run_complete");
+    expect(entry).toBeDefined();
+    expect(entry!.severity).toBe("warn");
+    expect(entry!.summary).toContain("3");
+  });
+
+  it("respects notifications.slack.onScanComplete='off' — does NOT call notifySlackOnScanComplete", () => {
+    db.setSetting("notifications.slack.webhookUrl", "https://hooks.slack.com/services/T/B/xxx");
+    db.setSetting("notifications.slack.onScanComplete", "off");
+    callHandleScanRunComplete(manager, { ...baseSummary, hitsDispatched: 5 });
+    expect(slackSpy).not.toHaveBeenCalled();
+  });
+
+  it("respects 'hits-only' (default) when hits=0: does not call slack", () => {
+    db.setSetting("notifications.slack.webhookUrl", "https://hooks.slack.com/services/T/B/xxx");
+    // default mode is hits-only — don't set the setting explicitly
+    callHandleScanRunComplete(manager, baseSummary); // hitsDispatched: 0
+    expect(slackSpy).not.toHaveBeenCalled();
+  });
+
+  it("fires slack when mode='always' even with hits=0", () => {
+    db.setSetting("notifications.slack.webhookUrl", "https://hooks.slack.com/services/T/B/xxx");
+    db.setSetting("notifications.slack.onScanComplete", "always");
+    callHandleScanRunComplete(manager, baseSummary); // hitsDispatched: 0
+    expect(slackSpy).toHaveBeenCalledTimes(1);
+    expect(slackSpy.mock.calls[0]![0]).toMatchObject({ slackWebhookUrl: "https://hooks.slack.com/services/T/B/xxx" });
+  });
+
+  it("fires slack when mode='hits-only' and hits>0", () => {
+    db.setSetting("notifications.slack.webhookUrl", "https://hooks.slack.com/services/T/B/xxx");
+    db.setSetting("notifications.slack.onScanComplete", "hits-only");
+    callHandleScanRunComplete(manager, { ...baseSummary, hitsDispatched: 2 });
+    expect(slackSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fire slack when notifications.slack.enabled='false' even if url set + mode=always", () => {
+    db.setSetting("notifications.slack.webhookUrl", "https://hooks.slack.com/services/T/B/xxx");
+    db.setSetting("notifications.slack.enabled", "false");
+    db.setSetting("notifications.slack.onScanComplete", "always");
+    callHandleScanRunComplete(manager, baseSummary);
+    expect(slackSpy).not.toHaveBeenCalled();
+  });
+
+  it("calls notifyEmailScanRun whenever emailNotifierDeps is set", () => {
+    const fakeDeps = {
+      isGloballyEnabled: () => true,
+      listEnabledRecipients: () => [],
+      transport: { sendMail: vi.fn() } as unknown as EmailNotifierDeps["transport"],
+      config: { from: "x@x", appBaseUrl: "https://dops.example", retry: { attempts: 1, backoffMs: [] } },
+    } satisfies EmailNotifierDeps;
+    manager.setEmailNotifierDeps(fakeDeps);
+    callHandleScanRunComplete(manager, baseSummary);
+    expect(emailSpy).toHaveBeenCalledTimes(1);
+    expect(emailSpy.mock.calls[0]![1]).toMatchObject({ runId: "r1" });
+  });
+
+  it("does not call notifyEmailScanRun when emailNotifierDeps is unset", () => {
+    callHandleScanRunComplete(manager, baseSummary);
+    expect(emailSpy).not.toHaveBeenCalled();
+  });
+
+  it("no-op on slack if webhookUrl is unset (no db setting and no config fallback)", () => {
+    // default config has no webhook.slackWebhookUrl, no db setting
+    db.setSetting("notifications.slack.onScanComplete", "always");
+    callHandleScanRunComplete(manager, baseSummary);
+    expect(slackSpy).not.toHaveBeenCalled();
+  });
+
+  it("event-log entry fires unconditionally even when all notifications are off", () => {
+    db.setSetting("notifications.slack.onScanComplete", "off");
+    callHandleScanRunComplete(manager, baseSummary);
+    const { events } = eventLog.recent(10, "s1");
+    expect(events.some(e => e.kind === "scan_run_complete")).toBe(true);
   });
 });

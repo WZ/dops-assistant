@@ -156,6 +156,36 @@ async function main() {
     return emailTransport;
   };
 
+  /**
+   * Build the EmailNotifierDeps envelope used by both per-investigation
+   * notifications (globalOnComplete) and run-level scan notifications
+   * (StackManager.handleScanRunComplete). `isGloballyEnabled` reads the
+   * DB toggle dynamically so GUI changes take effect without a restart.
+   */
+  const buildEmailNotifierDeps = (): import("./email-notifier.js").EmailNotifierDeps | null => {
+    const emailCfg = config.notifications?.email;
+    const transport = getEmailTransport();
+    if (!emailCfg || !transport) return null;
+    return {
+      isGloballyEnabled: () => {
+        const dbEnabled = db.getSetting("notifications.email.enabled");
+        return dbEnabled !== undefined ? dbEnabled === "true" : emailCfg.enabled;
+      },
+      listEnabledRecipients: () => db.listEmailRecipients({ enabledOnly: true }),
+      transport,
+      config: {
+        from: emailCfg.from,
+        appBaseUrl: emailCfg.appBaseUrl,
+        retry: { attempts: emailCfg.retry.attempts, backoffMs: emailCfg.retry.backoffMs },
+      },
+    };
+  };
+
+  // Register email deps on the StackManager so handleScanRunComplete can
+  // dispatch run-level scan summary emails. Null-safe — if SMTP is not
+  // configured, email notifications are silently skipped.
+  stackManager.setEmailNotifierDeps(buildEmailNotifierDeps());
+
   // Build a global onComplete handler for Slack + email notifications.
   // Reads URL/settings dynamically so GUI changes take effect without restart.
   const globalOnComplete = (
@@ -181,30 +211,11 @@ async function main() {
     }
 
     // ── Email (new) ─────────────────────────────────────────────────
-    const emailCfg = config.notifications?.email;
-    const transport = getEmailTransport();
-    if (emailCfg && transport) {
-      const dbEnabled = db.getSetting("notifications.email.enabled");
-      const enabled = dbEnabled !== undefined ? dbEnabled === "true" : emailCfg.enabled;
-      if (enabled) {
-        notifyEmail(
-          {
-            isGloballyEnabled: () => true,
-            listEnabledRecipients: () => db.listEmailRecipients({ enabledOnly: true }),
-            transport,
-            config: {
-              from: emailCfg.from,
-              appBaseUrl: emailCfg.appBaseUrl,
-              retry: { attempts: emailCfg.retry.attempts, backoffMs: emailCfg.retry.backoffMs },
-            },
-          },
-          investigationId,
-          report,
-          source,
-        ).catch((err) => {
-          logger.warn({ err, investigationId }, "notifyEmail rejected unexpectedly");
-        });
-      }
+    const emailDeps = buildEmailNotifierDeps();
+    if (emailDeps && emailDeps.isGloballyEnabled()) {
+      notifyEmail(emailDeps, investigationId, report, source).catch((err) => {
+        logger.warn({ err, investigationId }, "notifyEmail rejected unexpectedly");
+      });
     }
   };
 

@@ -35,6 +35,11 @@ import type { Database } from "./db.js";
 import type { StackRow, StackSummary, StackConfig } from "../types/stack-types.js";
 import { DEFAULT_STACK_SLUG } from "../types/stack-types.js";
 import { clearStackCaches } from "./ws-handler.js";
+import * as slackNotifier from "./slack-notifier.js";
+import * as emailNotifier from "./email-notifier.js";
+import type { EmailNotifierDeps } from "./email-notifier.js";
+import { eventLog } from "./event-log.js";
+import type { ScanRunCompletedSummary } from "./scan-run-store.js";
 
 const logger = createLogger();
 
@@ -64,6 +69,12 @@ export class StackManager {
   private skippedPollers: Set<string> = new Set();
   private allPollersStarted = false;
   private ttlReaperHandle: ReturnType<typeof setInterval> | undefined;
+  /**
+   * Email notification deps. Populated by index.ts after the SMTP transport
+   * is constructed — nullable because email is optional (no SMTP config → no
+   * deps → email notifications silently skipped).
+   */
+  private emailNotifierDeps: EmailNotifierDeps | null = null;
 
   constructor(db: Database, config: Config) {
     this.db = db;
@@ -615,12 +626,69 @@ export class StackManager {
   onScanAnomalies?: (evt: ScanAnomaliesEvent) => void;
 
   /**
-   * Fired when a scan run completes successfully. Phase 4 will wire this to
-   * notifications (Slack / email) and the event log. For now it's a no-op so
-   * the scheduler can emit the signal without a downstream consumer.
+   * Register email notification deps. Called from index.ts once the SMTP
+   * transport is constructed (or left null when SMTP is not configured).
+   * Safe to call multiple times — overwrites the previous value.
    */
-  private handleScanRunComplete(summary: import("./scan-run-store.js").ScanRunCompletedSummary): void {
-    // Intentionally empty — wired in Task 14 (Phase 4: Notifications).
-    void summary;
+  setEmailNotifierDeps(deps: EmailNotifierDeps | null): void {
+    this.emailNotifierDeps = deps;
+  }
+
+  /**
+   * Fired when a scan run completes successfully. Wires three local side
+   * effects, all fire-and-forget:
+   *
+   *   1. Event-log entry — unconditional, local audit trail. Feeds the
+   *      Ops Desk Event Stream rail regardless of notification settings.
+   *   2. Slack run-level summary — gated by
+   *      `notifications.slack.onScanComplete` (always | hits-only | off),
+   *      the global `notifications.slack.enabled` toggle, and a configured
+   *      webhook URL (DB setting or config.webhook.slackWebhookUrl).
+   *   3. Email run-level summary — dispatched whenever SMTP deps are
+   *      registered. Per-recipient filtering (scan-run source, enabled
+   *      flag) is delegated to `notifyEmailScanRun`.
+   *
+   * The Slack + email promises are intentionally NOT awaited — the scheduler
+   * continues to its next tick without waiting for network I/O. Failures are
+   * logged by the notifier modules.
+   */
+  private handleScanRunComplete(summary: ScanRunCompletedSummary): void {
+    // 1. Event log entry — unconditional. Local audit trail.
+    const hits = summary.hitsDispatched;
+    eventLog.append({
+      kind: "scan_run_complete",
+      severity: hits > 0 ? "warn" : "info",
+      summary: hits > 0
+        ? `Scan flagged ${hits} service${hits === 1 ? "" : "s"}`
+        : `Scan clean (${summary.servicesProbed} probed, ${summary.trigger})`,
+      stackId: summary.stackId,
+      href: `/scan/runs/${summary.runId}`,
+      meta: { runId: summary.runId, hitsDispatched: hits, trigger: summary.trigger },
+    });
+
+    // 2. Slack — gated by mode + enabled flag + webhook URL.
+    const slackMode = (this.db.getSetting("notifications.slack.onScanComplete") ?? "hits-only") as
+      | "always" | "hits-only" | "off";
+    const slackEnabled = this.db.getSetting("notifications.slack.enabled") !== "false";
+    const slackUrl = this.db.getSetting("notifications.slack.webhookUrl")
+      ?? this.config.webhook?.slackWebhookUrl;
+    const appBaseUrl = this.config.notifications?.email?.appBaseUrl ?? "http://localhost:3000";
+
+    const shouldFireSlack = slackEnabled && !!slackUrl && (
+      slackMode === "always"
+      || (slackMode === "hits-only" && hits > 0)
+    );
+    if (shouldFireSlack && slackUrl) {
+      void slackNotifier.notifySlackOnScanComplete(
+        { slackWebhookUrl: slackUrl, appBaseUrl },
+        summary,
+      );
+    }
+
+    // 3. Email — per-recipient filtering lives inside notifyEmailScanRun
+    // (enabled check + scan-run source filter). We just forward the summary.
+    if (this.emailNotifierDeps) {
+      void emailNotifier.notifyEmailScanRun(this.emailNotifierDeps, summary);
+    }
   }
 }
