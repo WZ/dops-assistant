@@ -191,6 +191,16 @@ function buildInvestigationsWhere(
     // Guard json_extract with json_valid: SQLite throws on malformed JSON, so
     // one bad historical row would 500 every q search. json_valid returns 0
     // for non-JSON / malformed, cleanly excluding those rows from the match.
+    //
+    // PERF CEILING: json_extract re-parses `report` per row per expression —
+    // 2 parses per row per search. At ~10k rows with 50KB reports that's
+    // roughly 1GB of JSON parsed per search, and every severity-counts fetch
+    // runs the same WHERE. q is now length-capped at 200 chars in
+    // parseInvestigationFilters, which caps the LIKE cost per row, but the
+    // JSON parse cost scales with table size. When this becomes a real
+    // bottleneck, promote `report.summary` and `report.rootCause` to
+    // first-class columns (populated at report write time) or back them with
+    // FTS5. Tracking in-place here until it matters.
     clauses.push(
       "(service LIKE ? ESCAPE '\\' " +
       "OR query LIKE ? ESCAPE '\\' " +
