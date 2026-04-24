@@ -21,6 +21,7 @@ import { ChatMessageSchema, DeepInvestigateMessageSchema } from "./sanitize.js";
 import { wrapUntrusted } from "../agents/shared/prompt-helpers.js";
 import { WsRateLimiter, classifyWsMessage } from "./rate-limit.js";
 import { isDemoMode } from "./demo-mode.js";
+import { TERMINAL_DISCOVERY_PHASES } from "../workflows/discovery.js";
 
 const logger = createLogger();
 
@@ -655,6 +656,14 @@ export async function handleClientMessage(
       const result = await agents.discoverAgent.discover(
         discoveryConfig ?? { autoRefresh: false, excludeServices: [], maxIterations: 40, discoveryRecipes: [] },
         (phase) => {
+          // AP2: runDiscovery emits terminal phases (TERMINAL_DISCOVERY_PHASES)
+          // via its finally block. Those signals are for in-process observers;
+          // the WS protocol already signals terminal state via its own emits
+          // at the end of this block (discover:phase+complete /
+          // discover:complete / discover:error). Forwarding the terminal
+          // phases here would produce a spurious `status: "running"` event
+          // the UI then has to overwrite — skip them cleanly instead.
+          if ((TERMINAL_DISCOVERY_PHASES as readonly string[]).includes(phase)) return;
           // Emit usage for the phase that just ended
           if (phaseTokens.inputTokens > 0 || phaseTokens.outputTokens > 0) {
             send({

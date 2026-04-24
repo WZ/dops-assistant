@@ -25,6 +25,25 @@ vi.mock("../mcp/provider.js", () => ({
   }),
 }));
 
+// ── logger mock ─────────────────────────────────────────────────────────────
+// Replace `createLogger()` with a shared stub so tests can assert against
+// log calls (AP4 NaN logging, AP6 query budget warning). Only the methods
+// used by anomaly-probe need to be present.
+const loggerCalls = {
+  info: [] as unknown[][],
+  warn: [] as unknown[][],
+  error: [] as unknown[][],
+  debug: [] as unknown[][],
+};
+vi.mock("../logger.js", () => ({
+  createLogger: () => ({
+    info: (...args: unknown[]) => { loggerCalls.info.push(args); },
+    warn: (...args: unknown[]) => { loggerCalls.warn.push(args); },
+    error: (...args: unknown[]) => { loggerCalls.error.push(args); },
+    debug: (...args: unknown[]) => { loggerCalls.debug.push(args); },
+  }),
+}));
+
 // ── Shared fixtures ─────────────────────────────────────────────────────────
 
 function buildProbe(overrides: Partial<ProbeConfig> = {}): ProbeConfig {
@@ -97,6 +116,15 @@ describe("severityScore", () => {
   it("returns 0 for NaN", () => {
     expect(severityScore(NaN, { op: "gt", value: 1 })).toBe(0);
   });
+});
+
+// Ensure every test starts with a clean logger capture so assertions on
+// `loggerCalls.info` / `loggerCalls.warn` only observe the current test.
+beforeEach(() => {
+  loggerCalls.info.length = 0;
+  loggerCalls.warn.length = 0;
+  loggerCalls.error.length = 0;
+  loggerCalls.debug.length = 0;
 });
 
 describe("runProbe", () => {
@@ -183,6 +211,108 @@ describe("runProbe", () => {
     await runProbe({ services: ["svc-a"], probe: buildProbe(), providers, datasourceUid: "uid", consecutiveState: state, registryStore: fakeRegistryStore() });
 
     expect(state.get(defaultKey("svc-a", "error_rate"))).toBeUndefined();
+  });
+
+  const findBudgetWarn = () =>
+    loggerCalls.warn.find((call) => {
+      const msg = call[call.length - 1];
+      return typeof msg === "string" && msg.includes("queries (threshold");
+    });
+
+  const findNaNLog = (expected: { service: string; ruleName: string; kind: "empty" | "error" }) =>
+    loggerCalls.info.find((call) => {
+      const payload = call[0] as Record<string, unknown> | undefined;
+      return payload?.["service"] === expected.service
+        && payload?.["ruleName"] === expected.ruleName
+        && payload?.["kind"] === expected.kind;
+    });
+
+  it("AP6: WARNs when a tick generates more than the query budget threshold", async () => {
+    mockTools = { query_prometheus: { execute: vi.fn(async () => promResult(1)) } };
+    // 101 services × 2 default rules = 202 tasks > 200 threshold.
+    const manyServices = Array.from({ length: 101 }, (_, i) => `svc-${i}`);
+    await runProbe({
+      services: manyServices,
+      probe: buildProbe(),
+      providers,
+      datasourceUid: "uid",
+      consecutiveState: new Map(),
+      registryStore: fakeRegistryStore(),
+    });
+    const budgetWarn = findBudgetWarn();
+    expect(budgetWarn).toBeDefined();
+    expect(budgetWarn![0]).toMatchObject({ taskCount: 202, threshold: 200, serviceCount: 101 });
+  });
+
+  it("AP6: does NOT WARN when tick task count stays under the query budget threshold", async () => {
+    mockTools = { query_prometheus: { execute: vi.fn(async () => promResult(1)) } };
+    // 10 services × 2 rules = 20 tasks, well under threshold.
+    await runProbe({
+      services: Array.from({ length: 10 }, (_, i) => `svc-${i}`),
+      probe: buildProbe(),
+      providers,
+      datasourceUid: "uid",
+      consecutiveState: new Map(),
+      registryStore: fakeRegistryStore(),
+    });
+    expect(findBudgetWarn()).toBeUndefined();
+  });
+
+  it("AP6: does NOT WARN at exactly the threshold (strict > boundary)", async () => {
+    mockTools = { query_prometheus: { execute: vi.fn(async () => promResult(1)) } };
+    // 100 services × 2 rules = exactly 200 tasks; strict `>` means no warn.
+    await runProbe({
+      services: Array.from({ length: 100 }, (_, i) => `svc-${i}`),
+      probe: buildProbe(),
+      providers,
+      datasourceUid: "uid",
+      consecutiveState: new Map(),
+      registryStore: fakeRegistryStore(),
+    });
+    expect(findBudgetWarn()).toBeUndefined();
+  });
+
+  it("AP4: logs an INFO line when a rule scores NaN (empty vector)", async () => {
+    mockTools = { query_prometheus: { execute: vi.fn(async () => emptyPromResult()) } };
+    await runProbe({
+      services: ["svc-a"],
+      probe: buildProbe({
+        metrics: [
+          { name: "availability", query: 'up{service="{service}"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 1, source: "metrics" },
+        ],
+      }),
+      providers,
+      datasourceUid: "uid",
+      consecutiveState: new Map(),
+      registryStore: fakeRegistryStore(),
+    });
+    const naNLog = findNaNLog({ service: "svc-a", ruleName: "availability", kind: "empty" });
+    expect(naNLog).toBeDefined();
+    const msg = naNLog![naNLog!.length - 1] as string;
+    expect(msg).toContain("rule scored");
+    expect(msg).toContain("(NaN)");
+  });
+
+  it("AP4: logs an INFO line with kind='error' when the MCP tool throws", async () => {
+    // Tool throws → executeInstant returns { kind: 'error', value: NaN }, so the
+    // per-rule log should still fire and name the error kind.
+    mockTools = { query_prometheus: { execute: vi.fn(async () => { throw new Error("MCP down"); }) } };
+    await runProbe({
+      services: ["svc-a"],
+      probe: buildProbe({
+        metrics: [
+          { name: "availability", query: 'up{service="{service}"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 1, source: "metrics" },
+        ],
+      }),
+      providers,
+      datasourceUid: "uid",
+      consecutiveState: new Map(),
+      registryStore: fakeRegistryStore(),
+    });
+    const naNLog = findNaNLog({ service: "svc-a", ruleName: "availability", kind: "error" });
+    expect(naNLog).toBeDefined();
+    const msg = naNLog![naNLog!.length - 1] as string;
+    expect(msg).toContain("error");
   });
 
   it("continues after a partial failure (one query throws)", async () => {
