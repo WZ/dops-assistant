@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.2.5] - 2026-04-24
+
+### Deployment
+- **Configure investigation-complete email notifications from Helm.** The chart now accepts `config.notifications.email` (rendered verbatim into `config.yaml` on the pod) and a new top-level `extraEnvFrom` for pulling env vars out of existing Kubernetes Secrets. Typical setup: create a Secret with `SMTP_USER` / `SMTP_PASS`, point `extraEnvFrom` at it, and reference `${SMTP_USER}` / `${SMTP_PASS}` from inside the notifications block. SMTP credentials stay out of values.yaml. See `deploy/helm/dops-assistant/README.md` for the full example. Chart bumped to 0.1.3.
+
 ## [0.2.2.4] - 2026-04-24
 
 ### Fixed
