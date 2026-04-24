@@ -221,6 +221,31 @@ describe("handleClientMessage — deep_investigate", () => {
   });
 });
 
+describe("handleClientMessage — rerun", () => {
+  it("emits investigation:started with parentInvestigationId so the client can navigate", async () => {
+    const deps = mockDeps();
+    const ctx = mockCtx();
+    const parentId = "inv_parent_123";
+    (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
+      id: parentId, service: "payments-api", query: "orig", status: "complete",
+    });
+    (deps.sharedDedup!.shouldInvestigate as ReturnType<typeof vi.fn>).mockReturnValue({ allowed: true });
+
+    const sent: ServerMessage[] = [];
+    const send = (m: ServerMessage) => sent.push(m);
+
+    await callHandler({ type: "rerun", investigationId: parentId, template: "quick" }, send, deps, ctx);
+
+    const started = sent.find((m) => m.type === "investigation:started");
+    expect(started).toBeDefined();
+    if (started && started.type === "investigation:started") {
+      expect(started.parentInvestigationId).toBe(parentId);
+      expect(started.id).not.toBe(parentId);
+      expect(started.service).toBe("payments-api");
+    }
+  });
+});
+
 describe("handleClientMessage — scan:trigger", () => {
   it("calls scheduler.triggerNow and forwards events to the connection", async () => {
     const deps = mockDeps();
