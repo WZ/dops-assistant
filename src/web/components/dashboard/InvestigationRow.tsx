@@ -39,12 +39,22 @@ export const InvestigationRow = memo(function InvestigationRow({
         ? "bg-destructive"
         : "bg-accent animate-status-pulse";
 
-  const statusBorder =
-    inv.status === "complete"
-      ? "border-l-success/60"
-      : inv.status === "failed"
-        ? "border-l-destructive/60"
-        : "border-l-accent/60";
+  // The thick left border encodes SEVERITY, not status. Earlier it was
+  // status-coded — which made every completed row glow green regardless of
+  // how bad the incident was, so a user scanning the list read "everything
+  // is fine" when really the stack was on fire. Status is already shown by
+  // the small dot next to the service name and by the "SCAN/ALERT" badge;
+  // the thick left stripe is the high-signal severity cue.
+  const severityBorder =
+    severity === "critical"
+      ? "border-l-destructive"
+      : severity === "high"
+        ? "border-l-accent"
+        : severity === "medium"
+          ? "border-l-warning"
+          : severity === "low"
+            ? "border-l-info"
+            : "border-l-border"; // no severity yet (e.g. still running) — neutral
 
   const severityTint =
     severity === "critical" ? "bg-destructive/4" :
@@ -68,7 +78,7 @@ export const InvestigationRow = memo(function InvestigationRow({
       className={cn(
         "group block cursor-pointer rounded-lg border border-border/40 border-l-[3px] hover:bg-card/70 hover:border-t-primary/25 hover:border-r-primary/25 hover:border-b-primary/25 px-4 py-3 transition-all card-lift no-underline",
         severityTint || "bg-card/40",
-        statusBorder,
+        severityBorder,
         className,
       )}
     >
