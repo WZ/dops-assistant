@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.2.4] - 2026-04-24
+
+### Fixed
+- **Live investigation events no longer cross-contaminate between panes.** When a scan kicked off a new investigation while you had a completed investigation open, phase / tool-call / iteration / progress events from the new run leaked into the pane you were reading, mutating its phases and timeline. The events now carry the investigation id on the wire, and the pane filters by it. Companion fix to v0.2.2.3 — the nav fix handled the user-visible rerun path; this closes the latent leak on the pane the rerun left behind.
+
 ## [0.2.2.3] - 2026-04-24
 
 ### Fixed
