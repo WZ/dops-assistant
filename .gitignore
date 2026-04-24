@@ -53,3 +53,6 @@ benchmark/
 playwright-report/
 test-results/
 playwright/.cache/
+
+# Git hooks are per-developer setup, not shared
+.githooks/
