@@ -4,7 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## [0.2.0.0] - 2026-04-22
+## [0.2.1.0] - 2026-04-23
+
+### Added
+- **Investigation severity is now a real column.** Every investigation row carries a canonical `severity` (critical/high/medium/low or null) that's populated from the RCA report at write time — no more JSON-parsing the report just to render a badge. Backfilled on server boot.
+- **Filter-aware investigation API.** `GET /api/investigations` now accepts `severity`, `status`, `service`, `since`, `until`, `q` (search across service name, query, and RCA summary/root-cause), and `sort` (`created_at` or `confidence`). All query-string params are validated with a clear 400 on bad input.
+- **Paginated response shape.** `GET /api/investigations` returns `{ rows, total, hasMore }` instead of a flat array, so the Ops Desk can show "3 of 47" and filter views can paginate without a second round-trip for the count.
+
+### Changed
+- Investigation rows in the dashboard, service detail, service history, and services page now read severity + confidence from dedicated columns, dropping the per-row JSON.parse on every render.
+- The internal list cap moved from 100 to 10,000 so eval harnesses and health probes can pull full stack history; the HTTP cap of 100 stays at the parse layer.
+
+### Foundation for /investigations page
+This ships the API that the upcoming dedicated `/investigations` page (PR 2-4) will consume. No new UI surface in this release — existing views benefit from the faster rendering path.
 
 ### Added
 - **Scan Run on the Operations Desk** — every proactive scan tick (manual or cron) now creates a durable `ScanRun` record. The Ops Desk gets a new "Recent Scans" section with a "Scan now" trigger button + collapsed history (consecutive clean cron ticks auto-fold into a single "N clean cron ticks" row so the view stays scannable).

@@ -308,8 +308,8 @@ async function main(): Promise<void> {
     const defaultStack = db.getStackBySlug(DEFAULT_STACK_SLUG);
     const stackId = defaultStack?.id ?? "";
     rows = db
-      .listInvestigations(stackId, 10_000, 0)
-      .filter((r) => r.status === "complete" && r.report !== null) as typeof rows;
+      .listInvestigations(stackId, { limit: 10_000, status: ["complete"] })
+      .filter((r) => r.report !== null) as typeof rows;
   } finally {
     db.close();
   }

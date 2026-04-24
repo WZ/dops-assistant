@@ -71,7 +71,10 @@ export function ServiceHistory({ serviceName, onViewInvestigation }: ServiceHist
         return res.json();
       })
       .then((data) => {
-        setInvestigations(Array.isArray(data) ? data : data.investigations ?? []);
+        // PR 1 standardized the API on {rows, total, hasMore}. The old
+        // compat shim (Array.isArray fallback) is gone — anyone reading stale
+        // pre-PR-1 cached bundles gets a clear error instead of silent drift.
+        setInvestigations(data.rows ?? []);
       })
       .catch((err) => {
         if (err.name !== "AbortError") setInvestigations([]);

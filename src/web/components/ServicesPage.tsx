@@ -154,7 +154,7 @@ export function ServicesPage({
         const sData = await staleRes.json() as string[];
         setStaleServices(new Set(sData));
       }
-      setInvestigations(invData);
+      setInvestigations(invData.rows);
       setServices(svcData);
       setFetchError(null);
     } catch (err) {

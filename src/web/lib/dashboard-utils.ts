@@ -1,6 +1,6 @@
 import { formatTimestamp } from "./formatTimestamp";
 
-/** Shape returned by GET /api/investigations */
+/** A single investigation row — returned as an element of InvestigationListResponse.rows */
 export interface InvestigationSummary {
   id: string;
   service: string;
@@ -12,6 +12,20 @@ export interface InvestigationSummary {
   total_output_tokens: number;
   total_duration_ms: number;
   confidence_score: number | null;
+  severity: "critical" | "high" | "medium" | "low" | null;
+}
+
+/**
+ * Shape returned by GET /api/investigations.
+ *
+ * `total` is the count of all rows matching the filter set (ignoring limit/offset)
+ * so the client can render "N of M match filters" and page controls. `hasMore`
+ * is a convenience derived from offset + rows.length < total.
+ */
+export interface InvestigationListResponse {
+  rows: InvestigationSummary[];
+  total: number;
+  hasMore: boolean;
 }
 
 /** Shape returned by GET /api/stats/kpi */
