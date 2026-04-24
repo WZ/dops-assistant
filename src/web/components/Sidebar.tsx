@@ -1,8 +1,8 @@
 // src/web/components/Sidebar.tsx
-import { LayoutGrid, Server, Settings, Sun, Moon } from "lucide-react";
+import { LayoutGrid, Server, Settings, Sun, Moon, FileSearch } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
-export type SidebarPage = "dashboard" | "services" | "settings";
+export type SidebarPage = "dashboard" | "investigations" | "services" | "settings";
 
 interface SidebarProps {
   activePage: SidebarPage;
@@ -13,6 +13,7 @@ interface SidebarProps {
 
 const NAV_ITEMS: { page: SidebarPage; label: string; icon: typeof LayoutGrid }[] = [
   { page: "dashboard", label: "Operations Desk", icon: LayoutGrid },
+  { page: "investigations", label: "Investigations", icon: FileSearch },
   { page: "services", label: "Services", icon: Server },
   { page: "settings", label: "Settings", icon: Settings },
 ];

@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { HealthStrip } from "./HealthStrip";
 import { StatCard } from "./dashboard/StatCard";
 import { InvestigationRow } from "./dashboard/InvestigationRow";
+import { OpsDeskSectionHeader } from "./dashboard/OpsDeskSectionHeader";
 import { ToastContainer } from "./dashboard/ToastContainer";
 import { EventStream } from "./dashboard/EventStream.js";
 import type { ToastItem } from "./dashboard/ToastContainer";
@@ -94,7 +95,7 @@ export function Dashboard({
     loading: recentEventsLoading,
     error: recentEventsError,
     truncated: recentEventsTruncated,
-  } = useRecentEvents({ limit: 50, pollMs: 5000 });
+  } = useRecentEvents({ limit: 25, pollMs: 5000 });
 
   // Source-of-truth for the "Scan now" button state. useScanActivity polls
   // /api/scan/activity which already returns `enabled` + live ticking state,
@@ -111,7 +112,13 @@ export function Dashboard({
     const seq = ++fetchSeqRef.current;
     try {
       const [invRes, svcRes, healthRes, hiddenRes, kpiRes] = await Promise.all([
-        stackFetch("/api/investigations?limit=100"),
+        // Ops Desk only shows a 5-row snippet — pull 25 as a safety-net
+        // buffer for the reconcile pass below, which clears completed/failed
+        // entries from activeInvestigations if the corresponding
+        // investigation:complete WS event was dropped. 25 covers the realistic
+        // worst case between two 60s polls; anything beyond that still gets
+        // TTL-cleaned in the staleness sweep below. Full list at /investigations.
+        stackFetch("/api/investigations?limit=25"),
         stackFetch("/api/services"),
         stackFetch("/api/services/health"),
         stackFetch("/api/services/hidden"),
@@ -649,23 +656,12 @@ export function Dashboard({
 
           {/* Section E: Investigation Log */}
           <section aria-label="Investigation Log" className="mb-4">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-0.5 h-4 rounded-full bg-primary" />
-              <h2 className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-foreground/50">
-                Investigation Log
-              </h2>
-              <span className="font-mono text-[9px] tabular-nums text-muted-foreground/40">
-                {investigations.length}
-              </span>
-              {investigationsTotal > investigations.length && (
-                <button
-                  onClick={onViewAllInvestigations}
-                  className="ml-auto font-mono text-[10px] uppercase tracking-[0.12em] text-primary/80 hover:text-primary transition-colors"
-                >
-                  View all {investigationsTotal.toLocaleString()} →
-                </button>
-              )}
-            </div>
+            <OpsDeskSectionHeader
+              title="Investigation Log"
+              count={Math.min(5, investigations.length)}
+              total={investigationsTotal}
+              onViewAll={onViewAllInvestigations}
+            />
             {loading ? (
               <div className="space-y-2">
                 {[0, 1, 2].map((i) => (
@@ -753,7 +749,7 @@ export function Dashboard({
               </div>
             ) : (
               <div className="space-y-1.5">
-                {investigations.slice(0, 15).map((inv, i) => (
+                {investigations.slice(0, 5).map((inv, i) => (
                   <div
                     key={inv.id}
                     className={`animate-fade-up delay-${Math.min(i + 1, 8)}`}

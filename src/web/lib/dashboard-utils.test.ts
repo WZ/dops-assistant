@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { severityVariant, formatDuration, normalizeConfidence, timeAgo } from "./dashboard-utils.js";
+import { severityVariant, formatDuration, normalizeConfidence, timeAgo, inferTriggerSource } from "./dashboard-utils.js";
 
 describe("severityVariant", () => {
   it("maps critical to destructive", () => {
@@ -136,3 +136,41 @@ describe("timeAgo", () => {
 
 // computeKpiData removed — KPIs are now computed server-side via GET /api/stats/kpi
 // Tests for the server-side computation are in src/server/db.test.ts
+
+describe("inferTriggerSource", () => {
+  it("classifies proactive-scan queries as 'scan'", () => {
+    // Must match the exact prefix produced by src/server/anomaly-probe.ts.
+    // If that prefix ever changes, this test fails on the old client build
+    // and we notice before users see stale badges.
+    expect(
+      inferTriggerSource("Proactive scan detected anomaly on payments-api."),
+    ).toBe("scan");
+    expect(
+      inferTriggerSource(
+        "Proactive scan detected anomaly on svc.\nRule: availability",
+      ),
+    ).toBe("scan");
+  });
+
+  it("classifies alertmanager webhook queries as 'alert'", () => {
+    // Prefix produced by src/server/webhook-handler.ts.
+    expect(
+      inferTriggerSource("Alert: HighErrorRate (severity: critical)"),
+    ).toBe("alert");
+  });
+
+  it("classifies everything else as 'user' (chat UI, CLI, etc.)", () => {
+    expect(inferTriggerSource("why is redis flapping")).toBe("user");
+    expect(inferTriggerSource("")).toBe("user");
+    expect(inferTriggerSource(null)).toBe("user");
+    expect(inferTriggerSource(undefined)).toBe("user");
+  });
+
+  it("does not match partial or mid-string occurrences", () => {
+    // "About the Alert:" shouldn't classify as alert — the prefix is load-bearing.
+    expect(inferTriggerSource("About the Alert: x")).toBe("user");
+    expect(
+      inferTriggerSource("referencing Proactive scan detected anomaly"),
+    ).toBe("user");
+  });
+});

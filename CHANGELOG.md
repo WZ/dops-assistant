@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.2.2] - 2026-04-23
+
+### Changed
+- **Service detail title size matches the other pages.** The big service name header now uses the same 24px extrabold treatment as Dashboard, Services, Investigations, and Providers, so drilling into a service no longer feels like a different app.
+- **Scan Run detail layout mirrors Investigation detail.** Same full-height shell, same `← back` ghost button in the top bar, same two-column dossier (300px left rail with Phases + Metadata, evidence cards on the right), and the same compact phase-rail styling. The two detail views now read as one family instead of two different screens.
+- **Investigation row severity stripe colors align with the badge and the rest of the app.** The thick left-edge stripe now reads `high→warning` (gold), `medium→info` (blue), `low→secondary` (gray) — the same palette the severity badge uses on the same row, and the only severity colors the design system defines. Previously the stripe used a brighter-by-one mapping that showed a different color than the badge next to it for the same severity.
+
+## [0.2.2.1] - 2026-04-23
+
+### Added
+- **Investigations entry in the sidebar.** The dedicated list is now one click away — no more digging for the "View all" link on the Ops Desk or pasting the URL. The icon stays highlighted when you drill into a single investigation's detail page, so you always know which section you're in.
+- **Trigger source badge on every investigation row.** Scans and alerts now show a small "SCAN" / "ALERT" tag next to the service name so you can tell at a glance whether the investigation came from the proactive scanner, an alertmanager webhook, or a human question. User-initiated investigations show no badge (they're the baseline — tagging them would just be noise).
+- **Smart back-nav from investigation detail.** Pressing Back on an investigation page now returns you to wherever you came from inside the app — including `/investigations` with your filters still applied. Direct-link arrivals (pasted URL, fresh tab) still fall back to the Operations Desk.
+
 ## [0.2.2.0] - 2026-04-23
 
 ### Added

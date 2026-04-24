@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ClientMessage, ServerMessage } from "../../types/ws-types.js";
 import { useStackContext } from "../contexts/StackContext.js";
+import { OpsDeskSectionHeader } from "./dashboard/OpsDeskSectionHeader";
 
 /**
  * RecentScansSection — Ops Desk card showing recent scan runs.
@@ -163,28 +164,30 @@ export function RecentScansSection({ scanEnabled, wsSend, wsMessages, onOpenRun 
     ? "A tick is already running"
     : "Fire one probe pass immediately";
 
+  // `total` here is the full list the server returned (capped at 25 by the
+  // fetch query). Displayed rows are capped at 5 below, so showing
+  // "5 of 12" in the header tells the operator there's more without
+  // promising a dedicated /scans list page that doesn't exist yet.
+  const displayed = Math.min(5, collapsed.length);
+  const total = collapsed.length;
   return (
-    <section
-      aria-label="Recent scans"
-      className="rounded-lg border border-border/40 bg-card/50 p-4"
-    >
-      <header className="mb-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="h-3.5 w-0.5 rounded-full bg-primary/60" />
-          <h3 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
-            Recent Scans
-          </h3>
-        </div>
-        <button
-          type="button"
-          disabled={!scanEnabled || ticking}
-          onClick={handleScanNow}
-          title={buttonTitle}
-          className="h-9 rounded-lg bg-primary px-3 font-mono text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {ticking ? "Starting\u2026" : "\u26A1 Scan now"}
-        </button>
-      </header>
+    <section aria-label="Recent scans" className="mb-4">
+      <OpsDeskSectionHeader
+        title="Recent Scans"
+        count={displayed}
+        total={total}
+        action={
+          <button
+            type="button"
+            disabled={!scanEnabled || ticking}
+            onClick={handleScanNow}
+            title={buttonTitle}
+            className="h-8 rounded-lg bg-primary px-3 font-mono text-[11px] font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {ticking ? "Starting\u2026" : "\u26A1 Scan now"}
+          </button>
+        }
+      />
 
       {error && (
         <div className="mb-2 font-mono text-[11px] text-destructive">
@@ -197,8 +200,12 @@ export function RecentScansSection({ scanEnabled, wsSend, wsMessages, onOpenRun 
           No scans yet &mdash; click &ldquo;Scan now&rdquo; to start your first one.
         </div>
       ) : (
+        // Ops Desk snippet: cap at 5 rows to match Investigation Log and keep
+        // the page scannable above the fold. Click-through to a scan-run
+        // detail is available on each row; a dedicated /scans list can come
+        // later when persistence warrants it.
         <ul className="divide-y divide-border/30 text-sm">
-          {collapsed.map((e, i) =>
+          {collapsed.slice(0, 5).map((e, i) =>
             e.kind === "collapsed" ? (
               <li
                 key={`c-${i}`}

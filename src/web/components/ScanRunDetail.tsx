@@ -21,6 +21,8 @@
  * silently swallows. Including it now keeps the Task 26 diff UI-free.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { ArrowLeft } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { useStackContext } from "../contexts/StackContext";
 import { ScanRunPhaseStepper, type ScanPhaseState } from "./ScanRunPhaseStepper";
 import { copyLink, copyMarkdown, downloadPng } from "../lib/exportScanRun";
@@ -346,104 +348,181 @@ export function ScanRunDetail({ runId, onBack, onOpenInvestigation, onSwitchStac
   if (error) {
     if (error.status === 404 && error.expectedStackId) {
       return (
-        <div className="mx-auto max-w-3xl p-6">
-          <h2 className="text-lg font-semibold">This scan belongs to a different stack.</h2>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Run belongs to stack{" "}
-            <code className="rounded bg-muted px-1 font-mono text-xs">{error.expectedStackId}</code>.
-          </p>
-          <div className="mt-4 flex gap-2">
-            {onSwitchStack && (
-              <button
-                type="button"
-                className="h-9 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-                onClick={() => onSwitchStack(error.expectedStackId!)}
-              >
-                Switch to that stack
-              </button>
-            )}
-            <button
-              type="button"
-              className="h-9 rounded-lg border border-border/60 px-3 text-sm hover:bg-secondary/40"
-              onClick={onBack}
-            >
-              Back
-            </button>
+        <ScanRunShell onBack={onBack}>
+          <div className="mx-auto max-w-3xl p-6">
+            <h2 className="text-lg font-semibold">This scan belongs to a different stack.</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Run belongs to stack{" "}
+              <code className="rounded bg-muted px-1 font-mono text-xs">{error.expectedStackId}</code>.
+            </p>
+            <div className="mt-4 flex gap-2">
+              {onSwitchStack && (
+                <button
+                  type="button"
+                  className="h-9 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                  onClick={() => onSwitchStack(error.expectedStackId!)}
+                >
+                  Switch to that stack
+                </button>
+              )}
+            </div>
           </div>
-        </div>
+        </ScanRunShell>
       );
     }
     if (error.status === 404) {
       return (
-        <div className="mx-auto max-w-3xl p-6">
-          <h2 className="text-lg font-semibold">Scan run not found</h2>
-          <p className="mt-2 text-sm text-muted-foreground">
-            The run <code className="rounded bg-muted px-1 font-mono text-xs">{runId}</code> doesn&apos;t exist.
-          </p>
-          <button
-            type="button"
-            className="mt-4 text-sm text-primary hover:text-primary/80"
-            onClick={onBack}
-          >
-            &larr; Back to dashboard
-          </button>
-        </div>
+        <ScanRunShell onBack={onBack}>
+          <div className="mx-auto max-w-3xl p-6">
+            <h2 className="text-lg font-semibold">Scan run not found</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              The run <code className="rounded bg-muted px-1 font-mono text-xs">{runId}</code> doesn&apos;t exist.
+            </p>
+          </div>
+        </ScanRunShell>
       );
     }
     return (
-      <div className="mx-auto max-w-3xl p-6 text-sm text-destructive">
-        Failed to load: {error.message}
-      </div>
+      <ScanRunShell onBack={onBack}>
+        <div className="mx-auto max-w-3xl p-6 text-sm text-destructive">
+          Failed to load: {error.message}
+        </div>
+      </ScanRunShell>
     );
   }
 
   if (!data) {
-    return <div className="p-6 text-sm text-muted-foreground">Loading&hellip;</div>;
+    return (
+      <ScanRunShell onBack={onBack}>
+        <div className="p-6 text-sm text-muted-foreground">Loading&hellip;</div>
+      </ScanRunShell>
+    );
   }
 
   const { run, investigations } = data;
+  const isRunning = run.status === "running";
 
   return (
-    <div ref={rootRef} className="mx-auto max-w-5xl p-6">
-      <header className="mb-4 flex items-start justify-between gap-3">
-        <div>
-          <button
-            type="button"
-            onClick={onBack}
-            className="text-sm text-primary hover:text-primary/80"
-          >
-            &larr; Back
-          </button>
-          <h1 className="mt-1 text-lg font-semibold">
-            Scan Run &middot; {new Date(run.startedAt).toLocaleString()}
-          </h1>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {run.trigger} &middot; {run.servicesProbed} services probed &middot;{" "}
-            <span className={statusTextClass(run.status)}>{run.status}</span>
-            {run.skipReason && ` \u00b7 ${run.skipReason}`}
-          </p>
+    <div ref={rootRef} className="h-full flex flex-col overflow-hidden">
+      {/* Header \u2014 mirrors InvestigationPane */}
+      <div className="px-5 py-3 border-b border-border/40 flex items-center justify-between shrink-0">
+        <Button
+          variant="ghost"
+          onClick={onBack}
+          className="h-auto px-0 py-0 text-xs font-mono text-muted-foreground/60 hover:text-primary hover:bg-transparent transition-colors group"
+        >
+          <ArrowLeft size={12} className="!size-auto group-hover:-translate-x-0.5 transition-transform" />
+          back
+        </Button>
+        <div className="flex items-center gap-3">
+          <div className={`w-2 h-2 rounded-full ${statusDotClass(run.status)}`} />
+          <span className="text-sm font-mono font-medium text-foreground/70">
+            Scan Run
+          </span>
+          <span className={`text-[10px] font-mono uppercase tracking-[0.12em] ${statusTextClass(run.status)}`}>
+            {isRunning ? "scanning..." : run.status}
+          </span>
+          <ExportMenu run={run} investigations={investigations} rootRef={rootRef} />
         </div>
-        <ExportMenu run={run} investigations={investigations} rootRef={rootRef} />
-      </header>
+      </div>
 
-      {run.errorMessage && (
-        <div className="mb-4 rounded-lg border border-destructive/40 bg-destructive/8 p-3 text-sm text-destructive">
-          {run.errorMessage}
+      {/* Progress bar while running */}
+      {isRunning && (
+        <div className="progress-bar-track shrink-0">
+          <div className="progress-bar-fill" />
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-[220px_1fr]">
-        <aside className="md:sticky md:top-6 md:self-start">
-          <ScanRunPhaseStepper states={phaseStates} />
-        </aside>
-        <div className="space-y-4">
-          <ProbeCard run={run} />
-          <TriageCard run={run} />
-          <InvestigateCard investigations={investigations} onOpenInvestigation={onOpenInvestigation} />
+      {/* Scrollable content \u2014 Two-Column Dossier layout */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="flex flex-col lg:flex-row gap-0 min-h-full">
+          {/* LEFT RAIL */}
+          <aside className="w-full lg:w-[300px] shrink-0 lg:border-r border-border/30 px-5 py-6 space-y-6">
+            <section>
+              <RailLabel>Phases</RailLabel>
+              <ScanRunPhaseStepper states={phaseStates} />
+            </section>
+
+            <section>
+              <RailLabel>Metadata</RailLabel>
+              <dl className="space-y-1.5 text-[10px] font-mono">
+                <MetaRow label="started" value={new Date(run.startedAt).toLocaleString()} />
+                <MetaRow label="trigger" value={run.trigger} />
+                <MetaRow label="services" value={String(run.servicesProbed)} />
+                {run.probeDurationMs != null && (
+                  <MetaRow label="probe duration" value={`${run.probeDurationMs}ms`} />
+                )}
+                {run.skipReason && <MetaRow label="skip reason" value={run.skipReason} />}
+              </dl>
+            </section>
+          </aside>
+
+          {/* RIGHT COLUMN */}
+          <div className="flex-1 min-w-0 px-6 py-6 space-y-4">
+            {run.errorMessage && (
+              <div className="rounded-lg border border-destructive/40 bg-destructive/8 p-3 text-sm text-destructive">
+                {run.errorMessage}
+              </div>
+            )}
+            <ProbeCard run={run} />
+            <TriageCard run={run} />
+            <InvestigateCard investigations={investigations} onOpenInvestigation={onOpenInvestigation} />
+          </div>
         </div>
       </div>
     </div>
   );
+}
+
+/** Shared shell so error/loading states get the same header + back button
+ *  as the full detail view. */
+function ScanRunShell({ onBack, children }: { onBack: () => void; children: React.ReactNode }) {
+  return (
+    <div className="h-full flex flex-col overflow-hidden">
+      <div className="px-5 py-3 border-b border-border/40 flex items-center justify-between shrink-0">
+        <Button
+          variant="ghost"
+          onClick={onBack}
+          className="h-auto px-0 py-0 text-xs font-mono text-muted-foreground/60 hover:text-primary hover:bg-transparent transition-colors group"
+        >
+          <ArrowLeft size={12} className="!size-auto group-hover:-translate-x-0.5 transition-transform" />
+          back
+        </Button>
+      </div>
+      <div className="flex-1 overflow-y-auto">{children}</div>
+    </div>
+  );
+}
+
+function RailLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="text-[9px] font-mono font-semibold uppercase tracking-[0.14em] text-muted-foreground/70 mb-2">
+      {children}
+    </p>
+  );
+}
+
+function MetaRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <dt className="text-muted-foreground/55">{label}</dt>
+      <dd className="text-foreground/80 tabular-nums truncate max-w-[60%] text-right">{value}</dd>
+    </div>
+  );
+}
+
+function statusDotClass(status: ScanRunApiRun["status"]): string {
+  switch (status) {
+    case "running":
+      return "bg-primary animate-status-pulse";
+    case "failed":
+      return "bg-destructive";
+    case "skipped":
+      return "bg-muted-foreground/40";
+    case "complete":
+    default:
+      return "bg-success";
+  }
 }
 
 // === Subcomponents ====================================================

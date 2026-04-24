@@ -19,7 +19,6 @@ interface InvestigationsPageProps {
   query: InvestigationsQuery;
   onUpdateQuery: (query: InvestigationsQuery) => void;
   onViewInvestigation: (id: string) => void;
-  onBack: () => void;
 }
 
 /**
@@ -36,7 +35,6 @@ export function InvestigationsPage({
   query,
   onUpdateQuery,
   onViewInvestigation,
-  onBack,
 }: InvestigationsPageProps) {
   const { stackFetch } = useStackContext();
   const [rows, setRows] = useState<InvestigationSummary[]>([]);
@@ -143,26 +141,30 @@ export function InvestigationsPage({
   );
 
   return (
-    <div className="h-full overflow-auto">
-      <div className="max-w-[1100px] mx-auto px-6 py-6">
-        <header className="mb-4 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3 min-w-0">
-            <button
-              onClick={onBack}
-              className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/60 hover:text-foreground/80 transition-colors"
-              aria-label="Back to dashboard"
-            >
-              ← Dashboard
-            </button>
-            <div className="w-px h-4 bg-border/40" />
-            <h1 className="font-display text-xl font-semibold text-foreground/90 truncate">
-              Investigations
-            </h1>
-            <span className="font-mono text-[11px] tabular-nums text-muted-foreground/50">
-              {loading && rows.length === 0 ? "…" : total.toLocaleString()}
-            </span>
-          </div>
-        </header>
+    // Match ServicesPage + SettingsPage exactly: full-width container with
+    // px-4 py-5. The previous max-w-[1100px] mx-auto centering made the
+    // title indent further right than Operations Desk's title did, so the
+    // three top-level pages looked like they belonged to different apps.
+    <div className="h-full overflow-y-auto px-4 py-5">
+      <div>
+        {/* Page title — matches ServicesPage / SettingsPage style. No back
+            link; the sidebar is the global nav. */}
+        <div className="mb-6 animate-fade-up">
+          <h1 className="font-display text-2xl font-extrabold tracking-tight text-foreground/90">
+            Investigations
+          </h1>
+          <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">
+            {loading && rows.length === 0
+              ? "…"
+              : `${total.toLocaleString()} total`}
+            {hasActiveFilters && (
+              <>
+                <span className="text-muted-foreground/40 mx-1.5">&middot;</span>
+                <span className="text-primary/70 uppercase">filtered</span>
+              </>
+            )}
+          </p>
+        </div>
 
         <SeverityBreakdown query={query} onToggleSeverity={toggleSeverity} />
         <InvestigationFilters query={query} onUpdateQuery={onUpdateQuery} />

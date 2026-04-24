@@ -2,7 +2,7 @@ import { memo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { formatTokens } from "@/lib/formatTokens";
-import { formatDuration, normalizeConfidence, severityVariant, timeAgo } from "@/lib/dashboard-utils";
+import { formatDuration, inferTriggerSource, normalizeConfidence, severityVariant, timeAgo } from "@/lib/dashboard-utils";
 import { withBase } from "@/lib/createStackFetch";
 import type { InvestigationSummary } from "@/lib/dashboard-utils";
 
@@ -39,12 +39,28 @@ export const InvestigationRow = memo(function InvestigationRow({
         ? "bg-destructive"
         : "bg-accent animate-status-pulse";
 
-  const statusBorder =
-    inv.status === "complete"
-      ? "border-l-success/60"
-      : inv.status === "failed"
-        ? "border-l-destructive/60"
-        : "border-l-accent/60";
+  // The thick left border encodes SEVERITY, not status. Earlier it was
+  // status-coded — which made every completed row glow green regardless of
+  // how bad the incident was, so a user scanning the list read "everything
+  // is fine" when really the stack was on fire. Status is already shown by
+  // the small dot next to the service name and by the "SCAN/ALERT" badge;
+  // the thick left stripe is the high-signal severity cue.
+  //
+  // Mapping matches `severityVariant()` (used by the badge on this same row)
+  // and DESIGN.md's severity palette: destructive=red, warning=gold, info=blue,
+  // secondary=muted gray. Accent (coral) is reserved for emphasis/hotspots in
+  // DESIGN.md, not severity — using it here would diverge from the badge color
+  // on the same row and break the system's color→severity contract.
+  const severityBorder =
+    severity === "critical"
+      ? "border-l-destructive"
+      : severity === "high"
+        ? "border-l-warning"
+        : severity === "medium"
+          ? "border-l-info"
+          : severity === "low"
+            ? "border-l-secondary"
+            : "border-l-border"; // no severity yet (e.g. still running) — neutral
 
   const severityTint =
     severity === "critical" ? "bg-destructive/4" :
@@ -68,7 +84,7 @@ export const InvestigationRow = memo(function InvestigationRow({
       className={cn(
         "group block cursor-pointer rounded-lg border border-border/40 border-l-[3px] hover:bg-card/70 hover:border-t-primary/25 hover:border-r-primary/25 hover:border-b-primary/25 px-4 py-3 transition-all card-lift no-underline",
         severityTint || "bg-card/40",
-        statusBorder,
+        severityBorder,
         className,
       )}
     >
@@ -89,6 +105,22 @@ export const InvestigationRow = memo(function InvestigationRow({
               {severity}
             </Badge>
           )}
+          {(() => {
+            // Trigger source badge — tells the operator at a glance whether
+            // this investigation came from the proactive scanner, an alert
+            // webhook, or a human asking a question. "user" is the common
+            // case, so we hide that label to avoid noise; scan/alert show.
+            const source = inferTriggerSource(inv.query);
+            if (source === "user") return null;
+            return (
+              <span
+                className="flex-shrink-0 font-mono text-[9px] uppercase tracking-[0.1em] text-muted-foreground/55 px-1.5 h-4 leading-4 rounded border border-border/35"
+                title={source === "scan" ? "Triggered by proactive scan" : "Triggered by alert webhook"}
+              >
+                {source}
+              </span>
+            );
+          })()}
         </div>
 
         {/* Right-aligned metrics. Progressive disclosure by viewport:
