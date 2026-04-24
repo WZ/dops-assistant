@@ -205,7 +205,9 @@ The default landing page is a live SOC-style console: health strip, service cata
 
 ## Try It
 
-Want to click around before cloning? The entire UI above runs as a read-only demo:
+Want to click around before cloning? The entire UI above runs as a read-only demo against seeded fixture data.
+
+**Locally (Node server):**
 
 ```bash
 npm install
@@ -213,7 +215,14 @@ npm run seed:demo           # writes fixture data to data-demo/
 npm run demo                # boots with DEMO_MODE=true on port 3000
 ```
 
-All mutating endpoints are disabled, no LLM calls are made, and no real infrastructure is touched — see [`demo/README.md`](demo/README.md) for how to deploy this to Fly.io as a public demo.
+**As a static site (GitHub Pages — zero infra, zero cost):**
+
+```bash
+npm run build:demo-static   # SPA + seed + static JSON snapshots
+npx serve dist/web --single # any static server works
+```
+
+The static build is what the `deploy-demo` GitHub Actions workflow ships to Pages — see [`demo/README.md`](demo/README.md) for the one-time setup (a single toggle: Settings → Pages → Source: GitHub Actions). All mutating endpoints are disabled, no LLM calls are made, and no real infrastructure is touched.
 
 ## Deployment
 

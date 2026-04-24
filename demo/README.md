@@ -1,151 +1,137 @@
 # Public demo — setup and deploy
 
-Everything needed to stand up a public read-only demo of dops-assistant. The
-demo shows off the full UI against seeded fixture data — no real MCP
-providers, no LLM calls, no way for visitors to burn your OpenAI bill.
+Everything needed to stand up a public read-only demo of dops-assistant on
+**GitHub Pages** for free. The demo shows off the full UI against seeded
+fixture data — no server, no LLM calls, no MCP providers, nothing a
+visitor can break.
 
-## What demo mode does
+## How the demo works
 
-Setting `DEMO_MODE=true` flips the following at server start:
+Two independent mechanisms cover two different scenarios:
+
+### 1. Live demo mode (local `npm run demo`)
+
+Setting `DEMO_MODE=true` on the Node server flips these at startup:
 
 | Area | Behavior |
 |---|---|
-| All non-GET `/api/*` requests | Rejected with 403 + `{error, demoMode: true, hint}` |
-| WebSocket `chat` / `deep_investigate` / `discover:*` | Short-circuited with a canned "demo mode" response |
+| All non-GET `/api/*` requests | 403 with `{error, demoMode: true, hint}` |
+| WebSocket `chat` / `deep_investigate` / `rerun` / `discover*` / `scan:trigger` | Canned "demo mode" refusal, no LLM call |
 | `InvestigationRunner.run()` | Throws before any DB write or LLM call |
 | Scan scheduler + health poller + TTL reaper | Not started |
-| Alert webhook | Returns 503 regardless of `webhook.secret` |
-| Background MCP/DB health probe | Skipped (the `/api/health` endpoint still returns cached state) |
+| Alert webhook | 503 regardless of `webhook.secret` |
+| `GET /api/services/:name/brief` (LLM) + `/metrics` (live PromQL) | Empty response + `demoMode: true` |
 
-The whitelist for writes is small and intentional:
-- `POST /api/health` (liveness probes)
-- `POST /api/investigations/:id/feedback` (thumbs up on seed investigations)
+Whitelisted writes (intentionally small):
+- `POST /api/health`
+- `POST /api/investigations/:id/feedback` (thumbs-up on seed investigations)
 
-Everything else is blocked at the middleware layer before the request reaches
-any handler. See `src/server/demo-mode.ts` for the exact allowlist.
+See `src/server/demo-mode.ts` for the exact allowlist.
+
+### 2. Static demo mode (GitHub Pages)
+
+`VITE_DEMO_STATIC=true` at build time flips the SPA into a fully server-less
+mode:
+
+- Every `/api/*` call is intercepted by `src/web/lib/staticFetch.ts` and
+  served from pre-baked JSON snapshots at `dist/web/api/*.json`
+- All non-GET requests synthesize a 403 response with the same shape the
+  live server would return
+- `window.__APP_BASE__` is seeded from `import.meta.env.BASE_URL` in
+  `main.tsx` so lazy chunks resolve correctly on repo-scoped Pages URLs
+- `404.html` is a copy of `index.html` so SPA routes (`/investigations/:id`,
+  `/services/:name`, etc.) work on Pages' file-not-found fallback
+
+`scripts/export-static.ts` boots the seeded server briefly, walks every GET
+endpoint the SPA calls, and writes the responses as `.json` files under
+`dist/web/api/`.
 
 ## Local test
 
 ```bash
 npm install
-npm run seed:demo     # writes fixtures to data-demo/
-npm run demo          # boots with DEMO_MODE=true on port 3000
+
+# Option A: live demo server on :3000
+npm run seed:demo        # writes fixtures to data-demo/
+npm run demo             # DEMO_MODE=true npm run web
+
+# Option B: static bundle (simulates GitHub Pages)
+npm run build:demo-static   # build:web with VITE_DEMO_STATIC=true + seed + export
+npx serve dist/web --single # any static server works; --single for SPA fallback
 ```
 
-The seed is deterministic and idempotent — `npm run seed:demo` wipes the
-demo database and recreates it from scratch. Re-run quarterly (or whenever
-you want to refresh "most recent investigation = 2h ago" timestamps) to
-keep the demo feeling alive.
+Both modes render the same UI. Option B is what actually ships to Pages.
 
-## Deploy to Fly.io
+## Deploy to GitHub Pages
 
-One-time setup:
+**One-time setup:** Settings → Pages → Source: **GitHub Actions**
 
-```bash
-# Install flyctl if you haven't
-curl -L https://fly.io/install.sh | sh
+That's it. No tokens, no volumes, no secrets.
 
-# Authenticate
-flyctl auth login
+The workflow at `.github/workflows/deploy-demo.yml` handles the rest:
 
-# Create the app (reads fly.toml for config, doesn't deploy yet)
-flyctl launch --dockerfile Dockerfile.demo --no-deploy --name dops-assistant-demo --copy-config
+1. On push to `main` touching demo-relevant files (or manual
+   **Actions → deploy-demo → Run workflow**), GitHub Actions runs:
+   ```
+   npm ci
+   VITE_DEMO_STATIC=true VITE_BASE_PATH=/<repo>/ npm run build:web
+   npm run seed:demo
+   npm run export-static     # boots server briefly, writes api/*.json
+   ```
+2. `dist/web/` uploads as a Pages artifact
+3. `actions/deploy-pages@v4` publishes it at
+   `https://<user>.github.io/<repo>/`
 
-# Create the volume for the SQLite seed DB
-flyctl volumes create dops_demo_data --size 1 --region ord
-```
-
-Then deploy:
-
-```bash
-flyctl deploy --dockerfile Dockerfile.demo
-```
-
-Visit `https://dops-assistant-demo.fly.dev` (or your chosen app name).
-
-## Automated deploys from GitHub Actions
-
-`.github/workflows/deploy-demo.yml` redeploys on every push to `main` that
-touches demo-relevant files. Add the secret once:
-
-```bash
-# Create a deploy token (no expiration is fine for an internal demo)
-flyctl tokens create deploy -x 8760h
-```
-
-Paste the printed token into GitHub → Settings → Secrets and variables →
-Actions → `FLY_API_TOKEN`.
-
-Manual redeploys (e.g. quarterly reseed) are available via
-**Actions → deploy-demo → Run workflow**.
-
-## Refresh cadence
-
-The seed bakes relative timestamps at seed time — "most recent investigation
-= 2 hours ago" is computed from `Date.now()` at the moment the seed runs.
-So the demo looks progressively older until you redeploy.
-
-Recommended cadence: quarterly. Either:
-- push a no-op commit to `Dockerfile.demo` to trigger the workflow, or
-- trigger **Actions → deploy-demo → Run workflow** manually
-
-Either way, the Docker image is rebuilt, which reruns the seed in the new
-container and bumps all timestamps back to "now".
+First deploy takes ~3 minutes. Later deploys that hit the cached `node_modules/`
+take ~90 seconds.
 
 ## Custom domain
 
-```bash
-flyctl certs create demo.your-domain.com
-# then point a CNAME at dops-assistant-demo.fly.dev
-flyctl certs check demo.your-domain.com
-```
+Settings → Pages → Custom domain. Once DNS propagates, update the
+`VITE_BASE_PATH` env in `deploy-demo.yml` to `/` (custom-domain Pages serve at
+the root, not a sub-path).
 
-Update the `DemoBanner` "Run it yourself" link in
-`src/web/components/DemoBanner.tsx` if you move the repo URL. The banner
-defaults to the public GitHub repo.
+## Refresh cadence
+
+The seed bakes relative timestamps — "most recent investigation = 2h ago"
+is computed from `Date.now()` at the moment the seed runs in the workflow.
+The demo gets staler until the next push to `main`.
+
+Recommended: trigger **Actions → deploy-demo → Run workflow** once a quarter
+to refresh the timestamps. Or push any demo-relevant commit — the workflow
+re-runs automatically.
 
 ## Cost
 
-Fly.io discontinued its free tier in late 2024 — everyone pays now. The
-good news: this demo is designed for minimal spend.
+**.** GitHub Pages is free for public repos, up to 100 GB/month bandwidth
+and a 1 GB site size. This demo is ~2-3 MB total (SPA bundle + JSON
+snapshots). You'd need hundreds of thousands of visitors a month to bump
+against the bandwidth cap.
 
-`shared-cpu-1x` with 1 GB memory + scale-to-zero (`auto_stop_machines =
-"stop"` in `fly.toml`) means you only pay for request-handling seconds,
-not 24/7 uptime. Costs:
-
-- Compute: ~$0.0000022/sec while awake (~$5.70/mo at 24/7, which this
-  never hits — expect well under $1/mo for an OSS demo)
-- Volume: ~$0.15/mo flat for 1 GB
-- Bandwidth: negligible at demo traffic levels
-
-Realistic bill for a demo that gets a handful of visits per day:
-**$1-3/month**. If it gets HN-hugged, probably still under $10. First
-request after idle pays a ~2-3s cold start.
-
-Alternatives if $1-3/month is still too much:
-- **Render** — free web service tier still exists (750h/month, sleeps
-  after 15 min idle). Slightly worse cold starts than Fly but genuinely free.
-- **Railway** — $5/mo credit, usage-based after.
-- **Koyeb** — free "nano" tier (256 MB — tight for this but maybe workable).
-- **Self-host on a $4 Hetzner VPS** — cheapest with scale if you already
-  run your own infra.
-
-Swapping to Render would mean writing a Dockerfile entrypoint that also
-handles the volume mount differently — manageable but not zero work.
+GitHub Actions free tier includes 2000 minutes/month of runner time for
+public repos; this workflow takes ~3 min per run.
 
 ## Troubleshooting
 
-**"Cannot connect to MCP server stub-grafana.invalid"** — Expected. The seed
-writes stub providers whose URLs don't resolve. The server tolerates the
-failure; nothing calls those providers in demo mode anyway.
+**Blank page on Pages after deploy** — check the browser console. The most
+common cause is a lazy chunk 404 because `window.__APP_BASE__` wasn't seeded
+at startup. Verify `VITE_BASE_PATH` in the workflow matches `/<repo>/`
+(with leading and trailing slashes), and that `main.tsx` still has the
+`VITE_DEMO_STATIC` check that plants `window.__APP_BASE__`.
 
-**`0/N services health`** — The seed writes service health into
-`service_health_checks`; the ServiceHealthPoller now warms its cache from
-that table at construction (see `src/server/service-health-poller.ts`). If
-you see `0/N`, either the seed didn't run or `DATA_DIR`/`DB_PATH` don't
-match between seed and server.
+**"Could not load investigations" on /investigations** — the SPA tried to
+fetch a `/api/investigations?<query>` snapshot that the exporter didn't
+write. Check the terminal output of `npm run export-static` for any `404`
+paths, and add the query variant to `DISTINGUISHING_PARAM` in
+`scripts/export-static.ts` (and its twin in `src/web/lib/staticFetch.ts`).
 
-**429 rate limit on demo** — The existing global rate limiters (300 rpm per
-IP on `/api`, 10 rpm on strict endpoints) still apply. If the demo gets
-meaningful traffic, consider bumping `globalLimiter` in
-`src/server/rate-limit.ts`.
+**Banner doesn't show** — verify `VITE_DEMO_STATIC=true` was set at build
+time (`grep 'VITE_DEMO_STATIC' dist/web/assets/*.js` should match the
+bundled value). `DemoBanner` renders on either build-time or runtime flag;
+the build-time flag is what lights it up on Pages.
+
+**SPA route 404s** — Pages only serves `404.html` for unmatched paths if
+the file exists. The exporter copies `index.html` → `404.html` as its
+last step; if that step was skipped (e.g. index.html was missing during
+export), routes like `/investigations/:id` will show a default Pages 404
+page.
