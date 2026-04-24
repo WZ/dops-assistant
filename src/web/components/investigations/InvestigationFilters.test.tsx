@@ -85,38 +85,54 @@ describe("InvestigationFilters", () => {
     expect(onUpdate).toHaveBeenCalledWith({ status: ["complete"] });
   });
 
-  it("date presets set since to an absolute ISO timestamp, reset pagination, and clear until", () => {
+  it("date presets set range to the preset key, reset pagination, and clear since/until", () => {
     const onUpdate = vi.fn();
     render(
       <InvestigationFilters
-        query={{ offset: 50, until: "2020-01-01T00:00:00Z" }}
+        query={{ offset: 50, since: "2020-01-01T00:00:00Z", until: "2020-06-01T00:00:00Z" }}
         onUpdateQuery={onUpdate}
       />,
     );
 
     fireEvent.click(screen.getByText("7d"));
-    const call = onUpdate.mock.calls[0]![0];
-    // since is an ISO timestamp roughly 7d before now
-    expect(typeof call.since).toBe("string");
-    expect(call.since).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
-    const since = Date.parse(call.since);
-    const expected = Date.now() - 7 * 24 * 60 * 60 * 1000;
-    expect(Math.abs(since - expected)).toBeLessThan(5_000);
-    expect(call.offset).toBeUndefined();
-    expect(call.until).toBeUndefined();
+    expect(onUpdate).toHaveBeenCalledWith({ range: "7d" });
   });
 
-  it("'All' preset clears since entirely", () => {
+  it("'All' preset clears range and since/until entirely", () => {
     const onUpdate = vi.fn();
     render(
       <InvestigationFilters
-        query={{ since: "2026-04-01T00:00:00Z" }}
+        query={{ range: "7d", since: "2026-04-01T00:00:00Z" }}
         onUpdateQuery={onUpdate}
       />,
     );
 
     fireEvent.click(screen.getByText("All"));
     expect(onUpdate).toHaveBeenCalledWith({});
+  });
+
+  it("active preset reads from range directly (no time drift)", () => {
+    const { container } = render(
+      <InvestigationFilters query={{ range: "7d" }} onUpdateQuery={vi.fn()} />,
+    );
+    const pressed = container.querySelectorAll('[aria-pressed="true"]');
+    // Only the "7d" pill should be pressed, not "All"
+    expect(Array.from(pressed).map((el) => el.textContent)).toEqual(["7d"]);
+  });
+
+  it("custom since with no range shows no preset as active (neither 'All' nor any preset)", () => {
+    // User arrives via a hand-edited URL with a custom since timestamp. We
+    // don't have a "custom" pill, but we must NOT light up "All" — that was
+    // the UI-gaslighting bug where "All" said pressed while since was still
+    // filtering the list.
+    const { container } = render(
+      <InvestigationFilters
+        query={{ since: "2026-04-01T00:00:00Z" }}
+        onUpdateQuery={vi.fn()}
+      />,
+    );
+    const pressed = container.querySelectorAll('[aria-pressed="true"]');
+    expect(pressed.length).toBe(0);
   });
 
   it("sort dropdown emits the selected value; default 'created_at' drops the key", () => {

@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import { useStackContext } from "../contexts/StackContext";
 import { InvestigationRow } from "./dashboard/InvestigationRow";
 import { SeverityBreakdown } from "./investigations/SeverityBreakdown";
@@ -8,7 +8,10 @@ import type {
   InvestigationListResponse,
 } from "../lib/dashboard-utils";
 import type { InvestigationsQuery, Severity } from "../lib/investigations-query";
-import { stringifyInvestigationsQuery } from "../lib/investigations-query";
+import {
+  resolveRangeToSince,
+  stringifyInvestigationsQuery,
+} from "../lib/investigations-query";
 
 const DEFAULT_LIMIT = 25;
 
@@ -50,20 +53,24 @@ export function InvestigationsPage({
   const limit = query.limit ?? DEFAULT_LIMIT;
   const offset = query.offset ?? 0;
 
+  // Resolve `range` → absolute `since` at fetch time and serialize to a stable
+  // string so the effect below depends on content, not object identity. Parent
+  // re-renders that produce a new `query` reference with identical content no
+  // longer retrigger the fetch (was wasting one request per WS-driven App
+  // re-render before this memo).
+  const fetchUrl = useMemo(() => {
+    const resolved = resolveRangeToSince({ ...query, limit, offset });
+    const qs = stringifyInvestigationsQuery(resolved);
+    return qs ? `/api/investigations?${qs}` : "/api/investigations";
+  }, [query, limit, offset]);
+
   useEffect(() => {
     const seq = ++fetchSeqRef.current;
     setLoading(true);
     setError(null);
     const controller = new AbortController();
 
-    const qs = stringifyInvestigationsQuery({
-      ...query,
-      limit,
-      offset,
-    });
-    const url = qs ? `/api/investigations?${qs}` : "/api/investigations";
-
-    stackFetch(url, { signal: controller.signal })
+    stackFetch(fetchUrl, { signal: controller.signal })
       .then(async (res) => {
         if (!res.ok) {
           const body = await res.text().catch(() => "");
@@ -76,6 +83,16 @@ export function InvestigationsPage({
         setRows(data.rows);
         setTotal(data.total);
         setHasMore(data.hasMore);
+        // Auto-correct when a bookmarked / narrowed filter set lands the user
+        // past the last page (e.g. bookmarked `?offset=50` but the filter now
+        // returns 18 rows). Drop offset so the refetched page shows row 1.
+        // Guarded on `rows.length === 0 && total > 0 && offset > 0` so we
+        // don't loop when there are genuinely no results at all.
+        if (data.rows.length === 0 && data.total > 0 && offset > 0) {
+          const next: InvestigationsQuery = { ...query };
+          delete next.offset;
+          onUpdateQuery(next);
+        }
       })
       .catch((err) => {
         if (err.name === "AbortError" || seq !== fetchSeqRef.current) return;
@@ -89,7 +106,7 @@ export function InvestigationsPage({
       });
 
     return () => controller.abort();
-  }, [stackFetch, query, limit, offset]);
+  }, [stackFetch, fetchUrl]);
 
   const goPrev = useCallback(() => {
     const nextOffset = Math.max(0, offset - limit);

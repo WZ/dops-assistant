@@ -1,8 +1,9 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState } from "react";
 import type {
   InvestigationsQuery,
   Status,
   Sort,
+  DateRange,
 } from "../../lib/investigations-query";
 
 interface InvestigationFiltersProps {
@@ -21,15 +22,11 @@ const SORT_OPTIONS: ReadonlyArray<{ key: Sort; label: string }> = [
   { key: "confidence", label: "Highest confidence" },
 ];
 
-type DatePreset = "24h" | "7d" | "30d" | "all";
+// Preset pill keys — `range` values plus a synthetic "all" for the "clear
+// any date filter" button.
+type PresetKey = DateRange | "all";
 
-const PRESET_MS: Record<Exclude<DatePreset, "all">, number> = {
-  "24h": 24 * 60 * 60 * 1000,
-  "7d": 7 * 24 * 60 * 60 * 1000,
-  "30d": 30 * 24 * 60 * 60 * 1000,
-};
-
-const DATE_PRESETS: ReadonlyArray<{ key: DatePreset; label: string }> = [
+const DATE_PRESETS: ReadonlyArray<{ key: PresetKey; label: string }> = [
   { key: "24h", label: "24h" },
   { key: "7d", label: "7d" },
   { key: "30d", label: "30d" },
@@ -37,38 +34,34 @@ const DATE_PRESETS: ReadonlyArray<{ key: DatePreset; label: string }> = [
 ];
 
 /**
- * Figure out which preset, if any, matches the current `since` value. We
- * consider it a match if `since` is within 60s of what the preset would emit
- * right now — the user may have loaded the URL a minute ago, and the presets
- * should still round-trip to "7d" instead of falling back to "custom". For
- * anything truly custom (hand-edited URL with an arbitrary timestamp), we
- * show no preset active and don't hide the fact in the UI.
+ * Which pill (if any) is visually active. Reads `range` directly — no more
+ * time-drift comparisons against `since`. A custom `since` with no `range`
+ * returns null so all four pills render inactive; the user keeps whatever
+ * custom window they arrived with but isn't misled into thinking "All" is
+ * selected.
  */
-function detectPreset(since: string | undefined): DatePreset {
-  if (!since) return "all";
-  const parsed = Date.parse(since);
-  if (!Number.isFinite(parsed)) return "all";
-  const delta = Date.now() - parsed;
-  for (const key of ["24h", "7d", "30d"] as const) {
-    if (Math.abs(delta - PRESET_MS[key]) < 60_000) return key;
-  }
+function activePreset(query: InvestigationsQuery): PresetKey | null {
+  if (query.range) return query.range;
+  if (query.since || query.until) return null; // custom window
   return "all";
 }
 
 /**
- * Return a new query with the preset applied. "all" clears `since`; presets
- * emit an absolute ISO timestamp so the URL is shareable and snapshot-stable.
- * We deliberately don't preserve `until` — the presets mean "the last N",
- * which is always open-ended on the right edge.
+ * Return a new query with the preset applied. "all" clears `range`, `since`,
+ * and `until`; presets store the preset key itself in `range` and drop any
+ * explicit `since`/`until`. Range resolves to an absolute timestamp at fetch
+ * time (see resolveRangeToSince), so the URL stays shareable and the pill
+ * stays highlighted on reload without clock drift.
  */
-function applyPreset(query: InvestigationsQuery, preset: DatePreset): InvestigationsQuery {
+function applyPreset(query: InvestigationsQuery, preset: PresetKey): InvestigationsQuery {
   const next: InvestigationsQuery = { ...query };
   delete next.offset; // resetting the date window should reset pagination
+  delete next.since;
   delete next.until;
   if (preset === "all") {
-    delete next.since;
+    delete next.range;
   } else {
-    next.since = new Date(Date.now() - PRESET_MS[preset]).toISOString();
+    next.range = preset;
   }
   return next;
 }
@@ -89,6 +82,7 @@ function hasAnyFilter(query: InvestigationsQuery): boolean {
     (query.severity && query.severity.length > 0) ||
       (query.status && query.status.length > 0) ||
       query.service ||
+      query.range ||
       query.since ||
       query.until ||
       query.q ||
@@ -121,7 +115,7 @@ export function InvestigationFilters({ query, onUpdateQuery }: InvestigationFilt
     return () => clearTimeout(t);
   }, [localQ, query, onUpdateQuery]);
 
-  const activePreset = useMemo(() => detectPreset(query.since), [query.since]);
+  const currentPreset = activePreset(query);
   const activeStatus = new Set<Status>(query.status ?? []);
   const activeSort = query.sort ?? "created_at";
   const showClear = hasAnyFilter(query);
@@ -173,7 +167,7 @@ export function InvestigationFilters({ query, onUpdateQuery }: InvestigationFilt
         className="flex items-center rounded-md border border-border/40 overflow-hidden"
       >
         {DATE_PRESETS.map(({ key, label }, i) => {
-          const isActive = activePreset === key;
+          const isActive = currentPreset === key;
           return (
             <button
               key={key}
