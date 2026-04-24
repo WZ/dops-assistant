@@ -82,6 +82,17 @@ export interface WebhookHandlerDeps {
   getHiddenServices?: () => Set<string>;
 }
 
+/**
+ * AP9: Shared 503 body for the "webhook.secret is unset" path. Exported so
+ * `src/server/index.ts`'s fallback stub (the route registered when no secret
+ * is configured at all) emits the same operator-facing hint as this
+ * handler. Two sources of truth for operator-facing text always drift.
+ */
+export const WEBHOOK_NOT_CONFIGURED_BODY = {
+  error: "Webhook not configured",
+  hint: "Set webhook.secret in config.yaml under the webhook section and restart the server",
+} as const;
+
 export function createWebhookHandler(deps: WebhookHandlerDeps) {
   const { runner, config } = deps;
   const stackId = deps.stackId ?? "";
@@ -103,10 +114,7 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
     // ("Cannot POST /api/webhook/alert") in the QA logs, which looks like the
     // route is missing rather than misconfigured.
     if (!config.secret) {
-      res.status(503).json({
-        error: "Webhook not configured",
-        hint: "Set webhook.secret in config.yaml under the webhook section and restart the server",
-      });
+      res.status(503).json(WEBHOOK_NOT_CONFIGURED_BODY);
       return;
     }
     const authHeader = req.headers.authorization;
