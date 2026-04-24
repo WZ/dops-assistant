@@ -10,6 +10,7 @@ import { ChatPane } from "./components/ChatPane";
 import { Dashboard } from "./components/Dashboard";
 import { InvestigationPane } from "./components/InvestigationPane";
 import { ScanRunDetail } from "./components/ScanRunDetail";
+import { InvestigationsPage } from "./components/InvestigationsPage";
 import { Sidebar } from "./components/Sidebar";
 import type { SidebarPage } from "./components/Sidebar";
 import { ServicesPage } from "./components/ServicesPage";
@@ -17,6 +18,7 @@ import { SettingsPage } from "./components/SettingsPage";
 import { ScanActivityBadge } from "./components/ScanActivityBadge";
 import { SetupStepper } from "./components/SetupStepper";
 import { useRoute, viewToUrl } from "./hooks/useRoute";
+import type { InvestigationsQuery } from "./lib/investigations-query";
 import { StackSwitcher } from "./components/StackSwitcher";
 import { StackProvider } from "./contexts/StackContext";
 import { useWebSocket } from "./hooks/useWebSocket";
@@ -38,6 +40,7 @@ function formatUptime(seconds: number): string {
 export type LeftPaneView =
   | { type: "dashboard" }
   | { type: "investigation"; id: string }
+  | { type: "investigations"; query: InvestigationsQuery }
   | { type: "services"; initialService?: string }
   | { type: "settings"; initialTab?: "providers" | "skills" | "stacks" | "scan" | "notifications" }
   | { type: "scanrun"; runId: string }
@@ -52,7 +55,12 @@ export type LeftPaneView =
  * notfound) are left alone so a concurrent sidebar click isn't clobbered.
  */
 export function shouldResetOnStackSwitch(paneType: LeftPaneView["type"]): boolean {
-  return paneType === "services" || paneType === "investigation" || paneType === "scanrun";
+  return (
+    paneType === "services" ||
+    paneType === "investigation" ||
+    paneType === "scanrun" ||
+    paneType === "investigations"
+  );
 }
 
 function useTheme() {
@@ -344,6 +352,7 @@ export function App() {
                       onInvestigationClick={(id) => setLeftPane({ type: "investigation", id })}
                       onViewService={(name) => setLeftPane({ type: "services", initialService: name })}
                       onViewAllServices={() => setLeftPane({ type: "services" })}
+                      onViewAllInvestigations={() => setLeftPane({ type: "investigations", query: {} })}
                       onOpenScanRun={(runId) => setLeftPane({ type: "scanrun", runId })}
                       stackName={hasMultipleStacks ? activeStack?.name : undefined}
                       setupStage={setupStage}
@@ -399,6 +408,13 @@ export function App() {
                       onOpenInvestigation={(invId) => setLeftPane({ type: "investigation", id: invId })}
                       onSwitchStack={switchStack}
                       wsMessages={ws.messages}
+                    />
+                  ) : leftPane.type === "investigations" ? (
+                    <InvestigationsPage
+                      query={leftPane.query}
+                      onUpdateQuery={(query) => setLeftPane({ type: "investigations", query })}
+                      onViewInvestigation={(id) => setLeftPane({ type: "investigation", id })}
+                      onBack={() => setLeftPane({ type: "dashboard" })}
                     />
                   ) : leftPane.type === "notfound" ? (
                     <div className="h-full flex flex-col items-center justify-center gap-3 p-8 text-center">

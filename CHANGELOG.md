@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.1.1] - 2026-04-23
+
+### Added
+- **Dedicated /investigations list page.** New route renders a paginated view of every investigation in the active stack. Reachable from a "View all N →" link that now appears in the Operations Desk's Investigation Log header whenever there are more investigations than fit in the snippet.
+- **URL is the filter state.** Search params on /investigations parse into the fetch query (`?severity=critical,high`, `?status=running`, `?since=2026-04-01`, `?q=redis`, `?offset=50`, etc.). Bookmarks and copy/paste links work. Browser back/forward walks through prior filter states. Filter UI ships in the next release.
+
+### Foundation for /investigations page
+Scaffolding-only release. The page loads data and paginates, but exposes no filter controls yet — users can only set filters via the URL. Filter inputs and the severity breakdown strip are the next PR.
+
 ## [0.2.1.0] - 2026-04-23
 
 ### Added
