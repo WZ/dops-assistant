@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   parseInvestigationsQuery,
+  resolveRangeToSince,
   stringifyInvestigationsQuery,
+  type InvestigationsQuery,
 } from "./investigations-query";
 
 describe("parseInvestigationsQuery", () => {
@@ -139,5 +141,46 @@ describe("round-trip parse/stringify", () => {
   it("preserves URL-unsafe characters in q", () => {
     const q = { q: "name with spaces & %=+" };
     expect(parseInvestigationsQuery(stringifyInvestigationsQuery(q))).toEqual(q);
+  });
+
+  it("parses + serializes range preset key", () => {
+    expect(parseInvestigationsQuery("?range=7d")).toEqual({ range: "7d" });
+    expect(stringifyInvestigationsQuery({ range: "24h" })).toBe("range=24h");
+    for (const r of ["24h", "7d", "30d"] as const) {
+      expect(parseInvestigationsQuery(stringifyInvestigationsQuery({ range: r }))).toEqual({ range: r });
+    }
+  });
+
+  it("drops invalid range values silently (soft URL input)", () => {
+    expect(parseInvestigationsQuery("?range=bogus")).toEqual({});
+    expect(parseInvestigationsQuery("?range=90d")).toEqual({});
+  });
+
+  it("range overrides since/until when all three are present in URL", () => {
+    // The UI never emits both, but a hand-edited URL might. Range wins so
+    // the preset pill stays consistent with what's actually being filtered.
+    expect(parseInvestigationsQuery("?range=7d&since=1999-01-01&until=2000-01-01")).toEqual({ range: "7d" });
+  });
+});
+
+describe("resolveRangeToSince", () => {
+  it("no-ops when range is unset", () => {
+    const q: InvestigationsQuery = { severity: ["critical"], q: "redis" };
+    expect(resolveRangeToSince(q)).toEqual(q);
+  });
+
+  it("replaces range with an absolute since timestamp anchored at `now`", () => {
+    const now = Date.parse("2026-04-23T12:00:00Z");
+    const resolved = resolveRangeToSince({ range: "7d", severity: ["critical"] }, now);
+    expect(resolved.range).toBeUndefined();
+    expect(resolved.since).toBe(new Date(now - 7 * 24 * 3600 * 1000).toISOString());
+    expect(resolved.severity).toEqual(["critical"]);
+  });
+
+  it("does not mutate the input query", () => {
+    const q: InvestigationsQuery = { range: "24h", q: "redis" };
+    const before = JSON.stringify(q);
+    resolveRangeToSince(q, Date.parse("2026-04-23T12:00:00Z"));
+    expect(JSON.stringify(q)).toBe(before);
   });
 });

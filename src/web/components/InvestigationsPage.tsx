@@ -1,12 +1,17 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import { useStackContext } from "../contexts/StackContext";
 import { InvestigationRow } from "./dashboard/InvestigationRow";
+import { SeverityBreakdown } from "./investigations/SeverityBreakdown";
+import { InvestigationFilters } from "./investigations/InvestigationFilters";
 import type {
   InvestigationSummary,
   InvestigationListResponse,
 } from "../lib/dashboard-utils";
-import type { InvestigationsQuery } from "../lib/investigations-query";
-import { stringifyInvestigationsQuery } from "../lib/investigations-query";
+import type { InvestigationsQuery, Severity } from "../lib/investigations-query";
+import {
+  resolveRangeToSince,
+  stringifyInvestigationsQuery,
+} from "../lib/investigations-query";
 
 const DEFAULT_LIMIT = 25;
 
@@ -14,7 +19,6 @@ interface InvestigationsPageProps {
   query: InvestigationsQuery;
   onUpdateQuery: (query: InvestigationsQuery) => void;
   onViewInvestigation: (id: string) => void;
-  onBack: () => void;
 }
 
 /**
@@ -31,7 +35,6 @@ export function InvestigationsPage({
   query,
   onUpdateQuery,
   onViewInvestigation,
-  onBack,
 }: InvestigationsPageProps) {
   const { stackFetch } = useStackContext();
   const [rows, setRows] = useState<InvestigationSummary[]>([]);
@@ -48,20 +51,24 @@ export function InvestigationsPage({
   const limit = query.limit ?? DEFAULT_LIMIT;
   const offset = query.offset ?? 0;
 
+  // Resolve `range` → absolute `since` at fetch time and serialize to a stable
+  // string so the effect below depends on content, not object identity. Parent
+  // re-renders that produce a new `query` reference with identical content no
+  // longer retrigger the fetch (was wasting one request per WS-driven App
+  // re-render before this memo).
+  const fetchUrl = useMemo(() => {
+    const resolved = resolveRangeToSince({ ...query, limit, offset });
+    const qs = stringifyInvestigationsQuery(resolved);
+    return qs ? `/api/investigations?${qs}` : "/api/investigations";
+  }, [query, limit, offset]);
+
   useEffect(() => {
     const seq = ++fetchSeqRef.current;
     setLoading(true);
     setError(null);
     const controller = new AbortController();
 
-    const qs = stringifyInvestigationsQuery({
-      ...query,
-      limit,
-      offset,
-    });
-    const url = qs ? `/api/investigations?${qs}` : "/api/investigations";
-
-    stackFetch(url, { signal: controller.signal })
+    stackFetch(fetchUrl, { signal: controller.signal })
       .then(async (res) => {
         if (!res.ok) {
           const body = await res.text().catch(() => "");
@@ -74,6 +81,16 @@ export function InvestigationsPage({
         setRows(data.rows);
         setTotal(data.total);
         setHasMore(data.hasMore);
+        // Auto-correct when a bookmarked / narrowed filter set lands the user
+        // past the last page (e.g. bookmarked `?offset=50` but the filter now
+        // returns 18 rows). Drop offset so the refetched page shows row 1.
+        // Guarded on `rows.length === 0 && total > 0 && offset > 0` so we
+        // don't loop when there are genuinely no results at all.
+        if (data.rows.length === 0 && data.total > 0 && offset > 0) {
+          const next: InvestigationsQuery = { ...query };
+          delete next.offset;
+          onUpdateQuery(next);
+        }
       })
       .catch((err) => {
         if (err.name === "AbortError" || seq !== fetchSeqRef.current) return;
@@ -87,7 +104,7 @@ export function InvestigationsPage({
       });
 
     return () => controller.abort();
-  }, [stackFetch, query, limit, offset]);
+  }, [stackFetch, fetchUrl]);
 
   const goPrev = useCallback(() => {
     const nextOffset = Math.max(0, offset - limit);
@@ -98,30 +115,59 @@ export function InvestigationsPage({
     onUpdateQuery({ ...query, offset: offset + limit });
   }, [offset, limit, query, onUpdateQuery]);
 
+  const toggleSeverity = useCallback(
+    (sev: Severity) => {
+      const current = new Set(query.severity ?? []);
+      if (current.has(sev)) current.delete(sev);
+      else current.add(sev);
+      const next: InvestigationsQuery = { ...query };
+      delete next.offset; // severity change resets pagination
+      if (current.size === 0) delete next.severity;
+      else next.severity = Array.from(current);
+      onUpdateQuery(next);
+    },
+    [query, onUpdateQuery],
+  );
+
   const pageStart = total === 0 ? 0 : offset + 1;
   const pageEnd = Math.min(offset + rows.length, total);
+  const hasActiveFilters = Boolean(
+    (query.severity && query.severity.length > 0) ||
+      (query.status && query.status.length > 0) ||
+      query.service ||
+      query.since ||
+      query.until ||
+      query.q,
+  );
 
   return (
-    <div className="h-full overflow-auto">
-      <div className="max-w-[1100px] mx-auto px-6 py-6">
-        <header className="mb-4 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3 min-w-0">
-            <button
-              onClick={onBack}
-              className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/60 hover:text-foreground/80 transition-colors"
-              aria-label="Back to dashboard"
-            >
-              ← Dashboard
-            </button>
-            <div className="w-px h-4 bg-border/40" />
-            <h1 className="font-display text-xl font-semibold text-foreground/90 truncate">
-              Investigations
-            </h1>
-            <span className="font-mono text-[11px] tabular-nums text-muted-foreground/50">
-              {loading && rows.length === 0 ? "…" : total.toLocaleString()}
-            </span>
-          </div>
-        </header>
+    // Match ServicesPage + SettingsPage exactly: full-width container with
+    // px-4 py-5. The previous max-w-[1100px] mx-auto centering made the
+    // title indent further right than Operations Desk's title did, so the
+    // three top-level pages looked like they belonged to different apps.
+    <div className="h-full overflow-y-auto px-4 py-5">
+      <div>
+        {/* Page title — matches ServicesPage / SettingsPage style. No back
+            link; the sidebar is the global nav. */}
+        <div className="mb-6 animate-fade-up">
+          <h1 className="font-display text-2xl font-extrabold tracking-tight text-foreground/90">
+            Investigations
+          </h1>
+          <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">
+            {loading && rows.length === 0
+              ? "…"
+              : `${total.toLocaleString()} total`}
+            {hasActiveFilters && (
+              <>
+                <span className="text-muted-foreground/40 mx-1.5">&middot;</span>
+                <span className="text-primary/70 uppercase">filtered</span>
+              </>
+            )}
+          </p>
+        </div>
+
+        <SeverityBreakdown query={query} onToggleSeverity={toggleSeverity} />
+        <InvestigationFilters query={query} onUpdateQuery={onUpdateQuery} />
 
         {error && (
           <div
@@ -144,13 +190,24 @@ export function InvestigationsPage({
             ))}
           </div>
         ) : rows.length === 0 && !error ? (
-          <div className="py-16 flex flex-col items-center gap-2 text-center">
+          <div className="py-16 flex flex-col items-center gap-3 text-center">
             <p className="font-display text-sm font-semibold text-muted-foreground/60">
-              No investigations match
+              {hasActiveFilters ? "No investigations match" : "No investigations yet"}
             </p>
             <p className="font-mono text-[10px] text-muted-foreground/40">
-              Try clearing filters or broadening the date range
+              {hasActiveFilters
+                ? "Try broadening the filters or date range"
+                : "Investigations will appear here as they run"}
             </p>
+            {hasActiveFilters && (
+              <button
+                type="button"
+                onClick={() => onUpdateQuery({})}
+                className="mt-1 font-mono text-[10px] uppercase tracking-[0.12em] text-primary hover:text-primary/80"
+              >
+                Clear all filters
+              </button>
+            )}
           </div>
         ) : (
           <div className="space-y-1.5">

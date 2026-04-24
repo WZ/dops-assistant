@@ -77,4 +77,37 @@ describe("parseInvestigationFilters", () => {
     // to avoid silently using only the first value. Shape stays strict.
     expect(ok(parseInvestigationFilters({ severity: ["critical", "high"] as unknown as string })).severity).toBeUndefined();
   });
+
+  it("caps q length to prevent CPU DoS via huge LIKE patterns", () => {
+    // Inside the cap passes through verbatim.
+    expect(ok(parseInvestigationFilters({ q: "a".repeat(200) })).q).toBe("a".repeat(200));
+    // One over the cap is rejected with a clear 400-message.
+    const over = parseInvestigationFilters({ q: "a".repeat(201) });
+    expect("error" in over).toBe(true);
+    if ("error" in over) expect(over.error).toMatch(/200 characters/);
+  });
+
+  it("caps service length to match k8s object name ceilings + headroom", () => {
+    expect(ok(parseInvestigationFilters({ service: "a".repeat(128) })).service).toBe("a".repeat(128));
+    const over = parseInvestigationFilters({ service: "a".repeat(129) });
+    expect("error" in over).toBe(true);
+    if ("error" in over) expect(over.error).toMatch(/128 characters/);
+  });
+
+  it("rejects since > until as a contradictory window (typo / hand-edited URL)", () => {
+    const result = parseInvestigationFilters({
+      since: "2026-04-23T00:00:00Z",
+      until: "2026-04-22T00:00:00Z",
+    });
+    expect("error" in result).toBe(true);
+    if ("error" in result) expect(result.error).toMatch(/since.*earlier.*until/);
+  });
+
+  it("accepts since == until (same instant is a valid point-in-time query)", () => {
+    const t = "2026-04-23T12:00:00Z";
+    expect(ok(parseInvestigationFilters({ since: t, until: t }))).toMatchObject({
+      since: t,
+      until: t,
+    });
+  });
 });

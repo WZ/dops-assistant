@@ -2,7 +2,7 @@ import { memo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { formatTokens } from "@/lib/formatTokens";
-import { formatDuration, normalizeConfidence, severityVariant, timeAgo } from "@/lib/dashboard-utils";
+import { formatDuration, inferTriggerSource, normalizeConfidence, severityVariant, timeAgo } from "@/lib/dashboard-utils";
 import { withBase } from "@/lib/createStackFetch";
 import type { InvestigationSummary } from "@/lib/dashboard-utils";
 
@@ -39,12 +39,28 @@ export const InvestigationRow = memo(function InvestigationRow({
         ? "bg-destructive"
         : "bg-accent animate-status-pulse";
 
-  const statusBorder =
-    inv.status === "complete"
-      ? "border-l-success/60"
-      : inv.status === "failed"
-        ? "border-l-destructive/60"
-        : "border-l-accent/60";
+  // The thick left border encodes SEVERITY, not status. Earlier it was
+  // status-coded — which made every completed row glow green regardless of
+  // how bad the incident was, so a user scanning the list read "everything
+  // is fine" when really the stack was on fire. Status is already shown by
+  // the small dot next to the service name and by the "SCAN/ALERT" badge;
+  // the thick left stripe is the high-signal severity cue.
+  //
+  // Mapping matches `severityVariant()` (used by the badge on this same row)
+  // and DESIGN.md's severity palette: destructive=red, warning=gold, info=blue,
+  // secondary=muted gray. Accent (coral) is reserved for emphasis/hotspots in
+  // DESIGN.md, not severity — using it here would diverge from the badge color
+  // on the same row and break the system's color→severity contract.
+  const severityBorder =
+    severity === "critical"
+      ? "border-l-destructive"
+      : severity === "high"
+        ? "border-l-warning"
+        : severity === "medium"
+          ? "border-l-info"
+          : severity === "low"
+            ? "border-l-secondary"
+            : "border-l-border"; // no severity yet (e.g. still running) — neutral
 
   const severityTint =
     severity === "critical" ? "bg-destructive/4" :
@@ -68,12 +84,14 @@ export const InvestigationRow = memo(function InvestigationRow({
       className={cn(
         "group block cursor-pointer rounded-lg border border-border/40 border-l-[3px] hover:bg-card/70 hover:border-t-primary/25 hover:border-r-primary/25 hover:border-b-primary/25 px-4 py-3 transition-all card-lift no-underline",
         severityTint || "bg-card/40",
-        statusBorder,
+        severityBorder,
         className,
       )}
     >
-      {/* Line 1: dot + service + severity + (right-aligned) confidence + tokens + duration */}
-      <div className="flex items-center justify-between gap-2">
+      {/* Line 1: dot + service + severity + (right-aligned) confidence + tokens + duration.
+          `flex-wrap` so the metrics drop below the service name on very narrow
+          viewports (<~360px) rather than overflow. */}
+      <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2 min-w-0">
           <div className={`flex-shrink-0 w-2 h-2 rounded-full ${statusColor} ${inv.status !== "running" ? "ring-2 ring-current/15" : ""}`} />
           <span className="font-body text-sm font-medium text-foreground/90 group-hover:text-foreground transition-colors truncate">
@@ -87,10 +105,31 @@ export const InvestigationRow = memo(function InvestigationRow({
               {severity}
             </Badge>
           )}
+          {(() => {
+            // Trigger source badge — tells the operator at a glance whether
+            // this investigation came from the proactive scanner, an alert
+            // webhook, or a human asking a question. "user" is the common
+            // case, so we hide that label to avoid noise; scan/alert show.
+            const source = inferTriggerSource(inv.query);
+            if (source === "user") return null;
+            return (
+              <span
+                className="flex-shrink-0 font-mono text-[9px] uppercase tracking-[0.1em] text-muted-foreground/55 px-1.5 h-4 leading-4 rounded border border-border/35"
+                title={source === "scan" ? "Triggered by proactive scan" : "Triggered by alert webhook"}
+              >
+                {source}
+              </span>
+            );
+          })()}
         </div>
 
-        {/* Right-aligned metrics */}
-        <div className="flex items-center gap-2 flex-shrink-0">
+        {/* Right-aligned metrics. Progressive disclosure by viewport:
+            - <lg (1024px): hide tokens only. Confidence is the most
+              operator-useful metric and fits in the space. Duration + age
+              stay so the row always tells you "when + how long + how sure".
+            - The metrics block itself is flex-wrap so at very narrow widths
+              it breaks below the service name instead of overflowing. */}
+        <div className="flex items-center gap-2 flex-shrink-0 flex-wrap justify-end">
           {confidenceDisplay && (
             <span className={cn(
               "font-mono text-[10px]",
@@ -107,7 +146,7 @@ export const InvestigationRow = memo(function InvestigationRow({
             </span>
           )}
           {totalTokens > 0 && (
-            <span className="font-mono text-[10px] text-muted-foreground/50">
+            <span className="font-mono text-[10px] text-muted-foreground/50 hidden lg:inline">
               {formatTokens(totalTokens)}
             </span>
           )}

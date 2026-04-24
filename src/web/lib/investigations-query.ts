@@ -10,11 +10,20 @@
 export type Severity = "critical" | "high" | "medium" | "low";
 export type Status = "running" | "complete" | "failed";
 export type Sort = "created_at" | "confidence";
+export type DateRange = "24h" | "7d" | "30d";
 
 export interface InvestigationsQuery {
   severity?: Severity[];
   status?: Status[];
   service?: string;
+  /**
+   * Rolling window preset. Client-only URL key: resolved to an absolute `since`
+   * timestamp at fetch time via `resolveRangeToSince`. Keeping the preset key
+   * in the URL (instead of a computed timestamp) makes presets round-trip: a
+   * bookmarked `?range=7d` still means "last 7 days" an hour later, and the
+   * corresponding pill stays highlighted without drift.
+   */
+  range?: DateRange;
   since?: string;
   until?: string;
   q?: string;
@@ -26,6 +35,29 @@ export interface InvestigationsQuery {
 const VALID_SEVERITY: ReadonlySet<Severity> = new Set(["critical", "high", "medium", "low"]);
 const VALID_STATUS: ReadonlySet<Status> = new Set(["running", "complete", "failed"]);
 const VALID_SORT: ReadonlySet<Sort> = new Set(["created_at", "confidence"]);
+const VALID_RANGE: ReadonlySet<DateRange> = new Set(["24h", "7d", "30d"]);
+
+const RANGE_MS: Record<DateRange, number> = {
+  "24h": 24 * 60 * 60 * 1000,
+  "7d": 7 * 24 * 60 * 60 * 1000,
+  "30d": 30 * 24 * 60 * 60 * 1000,
+};
+
+/**
+ * Resolve `range` to an absolute ISO `since` timestamp at fetch time. `range`
+ * takes precedence over an explicit `since` so the preset wins if both were
+ * somehow set at once (never happens via the UI, but a hand-edited URL might).
+ * The returned object is safe to pass to `stringifyInvestigationsQuery` for
+ * the server — `range` is stripped, `since` is set.
+ */
+export function resolveRangeToSince(
+  query: InvestigationsQuery,
+  now: number = Date.now(),
+): InvestigationsQuery {
+  if (!query.range) return query;
+  const { range, ...rest } = query;
+  return { ...rest, since: new Date(now - RANGE_MS[range]).toISOString() };
+}
 
 /**
  * Matches the server's HTTP cap in src/server/investigation-filters.ts.
@@ -83,11 +115,19 @@ export function parseInvestigationsQuery(search: string): InvestigationsQuery {
   const service = params.get("service");
   if (service) q.service = service;
 
-  const since = params.get("since");
-  if (since && isValidTimestamp(since)) q.since = since;
+  const range = params.get("range");
+  if (range && VALID_RANGE.has(range as DateRange)) q.range = range as DateRange;
 
-  const until = params.get("until");
-  if (until && isValidTimestamp(until)) q.until = until;
+  // If range is set it wins, since/until are ignored to avoid contradictory
+  // URLs like `?range=7d&since=1999-01-01`. A plain `?since=…` without range
+  // still loads — that's the "custom window" path.
+  if (!q.range) {
+    const since = params.get("since");
+    if (since && isValidTimestamp(since)) q.since = since;
+
+    const until = params.get("until");
+    if (until && isValidTimestamp(until)) q.until = until;
+  }
 
   const text = params.get("q");
   if (text) q.q = text;
@@ -115,6 +155,7 @@ export function stringifyInvestigationsQuery(query: InvestigationsQuery): string
   if (query.severity && query.severity.length > 0) params.set("severity", query.severity.join(","));
   if (query.status && query.status.length > 0) params.set("status", query.status.join(","));
   if (query.service) params.set("service", query.service);
+  if (query.range) params.set("range", query.range);
   if (query.since) params.set("since", query.since);
   if (query.until) params.set("until", query.until);
   if (query.q) params.set("q", query.q);

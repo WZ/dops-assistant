@@ -25,7 +25,7 @@ describe("ScanRunPhaseStepper", () => {
     const { container } = render(<ScanRunPhaseStepper states={states} />);
     const dot = container.querySelector("li span[aria-hidden='true']");
     expect(dot?.className).toContain("animate-status-pulse");
-    expect(dot?.className).toContain("bg-primary");
+    expect(dot?.className).toContain("border-primary");
   });
 
   it("renders empty list gracefully", () => {

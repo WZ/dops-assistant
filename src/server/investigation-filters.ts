@@ -10,6 +10,15 @@ const VALID_SEVERITY: ReadonlySet<Severity> = new Set(["critical", "high", "medi
 const VALID_STATUS: ReadonlySet<string> = new Set(["running", "complete", "failed"]);
 const VALID_SORT: ReadonlySet<NonNullable<InvestigationFilters["sort"]>> = new Set(["created_at", "confidence"]);
 
+// Length ceilings for free-text inputs. Without these a 10KB `q` forces the DB
+// into a 4-column LIKE scan (service, query, json_extract(report,'$.summary'),
+// json_extract(report,'$.rootCause')) on every row — a trivial CPU DoS from
+// one misbehaving client on the VPN. The caps are well above any real typed
+// search (UUID = 36, email ~60) and any real service name (k8s object names
+// cap at 253), so legitimate inputs are never rejected.
+const MAX_Q_LENGTH = 200;
+const MAX_SERVICE_LENGTH = 128;
+
 type Parsed =
   | { filters: InvestigationFilters }
   | { error: string };
@@ -70,7 +79,12 @@ export function parseInvestigationFilters(query: Record<string, unknown>): Parse
   }
 
   const service = getString(query["service"]);
-  if (service) filters.service = service;
+  if (service) {
+    if (service.length > MAX_SERVICE_LENGTH) {
+      return { error: `service must be ${MAX_SERVICE_LENGTH} characters or fewer` };
+    }
+    filters.service = service;
+  }
 
   const sev = parseMulti(getString(query["severity"]), VALID_SEVERITY);
   if ("error" in sev) return { error: `severity: ${sev.error}` };
@@ -92,8 +106,21 @@ export function parseInvestigationFilters(query: Record<string, unknown>): Parse
     filters.until = until;
   }
 
+  // Reject contradictory windows at the boundary rather than silently returning
+  // zero rows. A hand-edited URL with since=2026-04-23&until=2026-04-22 is a
+  // typo, not a query — 400 surfaces the mistake where 200 with empty results
+  // would hide it.
+  if (filters.since && filters.until && Date.parse(filters.since) > Date.parse(filters.until)) {
+    return { error: "since must be earlier than or equal to until" };
+  }
+
   const q = getString(query["q"]);
-  if (q) filters.q = q;
+  if (q) {
+    if (q.length > MAX_Q_LENGTH) {
+      return { error: `q must be ${MAX_Q_LENGTH} characters or fewer` };
+    }
+    filters.q = q;
+  }
 
   const sort = getString(query["sort"]);
   if (sort !== undefined) {
