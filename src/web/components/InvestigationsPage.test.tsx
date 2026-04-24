@@ -5,9 +5,11 @@ import { InvestigationsPage } from "./InvestigationsPage";
 import { StackProvider } from "../contexts/StackContext";
 import type { ReactNode } from "react";
 
+
 function Wrapper({ children }: { children: ReactNode }) {
   return <StackProvider activeStackId="test-stack">{children}</StackProvider>;
 }
+
 
 function makeRow(id: string, overrides: Record<string, unknown> = {}) {
   return {
@@ -26,6 +28,7 @@ function makeRow(id: string, overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
 
 /**
  * Build a fetch mock that routes by URL. The page fires two parallel fetches
@@ -70,54 +73,67 @@ function mockFetch(opts: {
   });
 }
 
+
 describe("InvestigationsPage", () => {
   beforeEach(() => {
     cleanup();
     globalThis.fetch = vi.fn();
   });
 
+
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
   });
 
+
   it("renders rows and shows total count in the header", async () => {
     const rows = [makeRow("inv_1"), makeRow("inv_2"), makeRow("inv_3")];
     globalThis.fetch = mockFetch({ rows, total: 47, hasMore: true });
+
 
     render(
       <InvestigationsPage
         query={{}}
         onUpdateQuery={vi.fn()}
         onViewInvestigation={vi.fn()}
-        onBack={vi.fn()}
+
+
       />,
       { wrapper: Wrapper },
     );
 
+
     await waitFor(() => {
-      expect(screen.getByText("47")).toBeTruthy();
+      // Header subtitle reads "N total" (matches ServicesPage pattern).
+      expect(screen.getByText(/47 total/)).toBeTruthy();
+      // Pagination footer still shows the in-view range out of the total.
       expect(screen.getByText(/1–3 of 47/)).toBeTruthy();
     });
   });
 
+
   it("shows empty state when no investigations match AND offers clear-all when filters are active", async () => {
     globalThis.fetch = mockFetch({ rows: [], total: 0, hasMore: false });
     const onUpdateQuery = vi.fn();
+
 
     render(
       <InvestigationsPage
         query={{ severity: ["critical"] }}
         onUpdateQuery={onUpdateQuery}
         onViewInvestigation={vi.fn()}
-        onBack={vi.fn()}
+
+
       />,
       { wrapper: Wrapper },
     );
 
+
     await waitFor(() => {
       expect(screen.getByText(/No investigations match/)).toBeTruthy();
     });
+
 
     // Clear-all link only appears when filters are active — confirms the
     // empty state distinguishes "nothing here yet" from "your filter is too tight".
@@ -125,18 +141,22 @@ describe("InvestigationsPage", () => {
     expect(onUpdateQuery).toHaveBeenCalledWith({});
   });
 
+
   it("empty state without active filters shows the friendly copy, no clear link", async () => {
     globalThis.fetch = mockFetch({ rows: [], total: 0, hasMore: false });
+
 
     render(
       <InvestigationsPage
         query={{}}
         onUpdateQuery={vi.fn()}
         onViewInvestigation={vi.fn()}
-        onBack={vi.fn()}
+
+
       />,
       { wrapper: Wrapper },
     );
+
 
     await waitFor(() => {
       expect(screen.getByText(/No investigations yet/)).toBeTruthy();
@@ -144,9 +164,11 @@ describe("InvestigationsPage", () => {
     expect(screen.queryByText(/Clear all filters/)).toBeNull();
   });
 
+
   it("Next pagination bumps offset by limit via onUpdateQuery", async () => {
     const rows = Array.from({ length: 25 }, (_, i) => makeRow(`inv_${i}`));
     globalThis.fetch = mockFetch({ rows, total: 100, hasMore: true });
+
 
     const onUpdateQuery = vi.fn();
     render(
@@ -154,14 +176,17 @@ describe("InvestigationsPage", () => {
         query={{ severity: ["high"] }}
         onUpdateQuery={onUpdateQuery}
         onViewInvestigation={vi.fn()}
-        onBack={vi.fn()}
+
+
       />,
       { wrapper: Wrapper },
     );
 
+
     await waitFor(() => {
       expect(screen.getByText("Next →")).toBeTruthy();
     });
+
 
     fireEvent.click(screen.getByText("Next →"));
     expect(onUpdateQuery).toHaveBeenCalledWith({
@@ -170,6 +195,7 @@ describe("InvestigationsPage", () => {
     });
   });
 
+
   it("Prev strips offset when it would reach 0", async () => {
     // UI choice: when we go back to the first page, drop `offset` from the
     // query entirely instead of emitting `offset=0`. Keeps the URL clean for
@@ -177,38 +203,46 @@ describe("InvestigationsPage", () => {
     const rows = Array.from({ length: 25 }, (_, i) => makeRow(`inv_${i}`));
     globalThis.fetch = mockFetch({ rows, total: 100, hasMore: true });
 
+
     const onUpdateQuery = vi.fn();
     render(
       <InvestigationsPage
         query={{ offset: 25 }}
         onUpdateQuery={onUpdateQuery}
         onViewInvestigation={vi.fn()}
-        onBack={vi.fn()}
+
+
       />,
       { wrapper: Wrapper },
     );
+
 
     await waitFor(() => {
       expect(screen.getByText("← Prev")).toBeTruthy();
     });
 
+
     fireEvent.click(screen.getByText("← Prev"));
     expect(onUpdateQuery).toHaveBeenCalledWith({ offset: undefined });
   });
 
+
   it("Prev is disabled on the first page", async () => {
     const rows = [makeRow("inv_1")];
     globalThis.fetch = mockFetch({ rows, total: 1, hasMore: false });
+
 
     render(
       <InvestigationsPage
         query={{}}
         onUpdateQuery={vi.fn()}
         onViewInvestigation={vi.fn()}
-        onBack={vi.fn()}
+
+
       />,
       { wrapper: Wrapper },
     );
+
 
     await waitFor(() => {
       const prev = screen.getByText("← Prev") as HTMLButtonElement;
@@ -216,19 +250,23 @@ describe("InvestigationsPage", () => {
     });
   });
 
+
   it("builds the list fetch URL from the query", async () => {
     const fetchMock = mockFetch({});
     globalThis.fetch = fetchMock;
+
 
     render(
       <InvestigationsPage
         query={{ severity: ["critical", "high"], status: ["running"], offset: 50 }}
         onUpdateQuery={vi.fn()}
         onViewInvestigation={vi.fn()}
-        onBack={vi.fn()}
+
+
       />,
       { wrapper: Wrapper },
     );
+
 
     await waitFor(() => {
       const listCall = fetchMock.mock.calls.find((c) =>
@@ -245,20 +283,24 @@ describe("InvestigationsPage", () => {
     });
   });
 
+
   it("shows an error banner when the list fetch fails", async () => {
     globalThis.fetch = mockFetch({
       listError: { status: 400, body: "invalid value 'bogus'" },
     });
+
 
     render(
       <InvestigationsPage
         query={{}}
         onUpdateQuery={vi.fn()}
         onViewInvestigation={vi.fn()}
-        onBack={vi.fn()}
+
+
       />,
       { wrapper: Wrapper },
     );
+
 
     await waitFor(() => {
       expect(screen.getByText("Could not load investigations")).toBeTruthy();
@@ -266,21 +308,27 @@ describe("InvestigationsPage", () => {
     });
   });
 
-  it("Back button invokes onBack", async () => {
-    globalThis.fetch = mockFetch({});
 
-    const onBack = vi.fn();
+  it("title matches the sibling-page style (no back link, sidebar is the nav)", async () => {
+    globalThis.fetch = mockFetch({ rows: [], total: 0, hasMore: false });
+
+
     render(
       <InvestigationsPage
         query={{}}
         onUpdateQuery={vi.fn()}
         onViewInvestigation={vi.fn()}
-        onBack={onBack}
       />,
       { wrapper: Wrapper },
     );
 
-    fireEvent.click(screen.getByLabelText("Back to dashboard"));
-    expect(onBack).toHaveBeenCalled();
+
+    // The previous design prefixed the title with a "← Dashboard" button,
+    // which was noise — the sidebar already provides global nav. Removing
+    // it matches ServicesPage and SettingsPage.
+    expect(screen.queryByLabelText("Back to dashboard")).toBeNull();
+    expect(screen.queryByText(/← Dashboard/)).toBeNull();
+    // Heading still renders.
+    expect(screen.getByRole("heading", { name: "Investigations" })).toBeTruthy();
   });
 });

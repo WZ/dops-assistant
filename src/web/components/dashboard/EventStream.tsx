@@ -1,5 +1,6 @@
 // src/web/components/dashboard/EventStream.tsx
 import type { RecentEvent } from "../../../types/events.js";
+import { OpsDeskSectionHeader } from "./OpsDeskSectionHeader";
 
 interface Props {
   events: RecentEvent[];
@@ -23,16 +24,23 @@ function relTime(ts: number): string {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
+const SNIPPET = 5;
+
 export function EventStream({ events, loading, error, truncated }: Props) {
+  // `total` is unknown in absolute terms (events live in a ring buffer so the
+  // server doesn't keep older ones), but `truncated` tells us "the buffer hit
+  // its cap". Passing total=events.length keeps the header honest: it reads
+  // "5 of 25" when the buffer is full and just "5" when it isn't.
+  const displayed = Math.min(SNIPPET, events.length);
+  const total = events.length;
   return (
-    <aside aria-label="Recent events" className="rounded-lg border border-border bg-card">
-      <header className="flex items-center gap-2 px-3 py-2 border-b border-border">
-        <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
-        <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">
-          Recent events
-        </h2>
-      </header>
-      <ul role="list" className="max-h-[520px] overflow-y-auto divide-y divide-border/60">
+    <aside aria-label="Recent events" className="mb-4">
+      <OpsDeskSectionHeader
+        title="Recent Events"
+        count={displayed}
+        total={total}
+      />
+      <ul role="list" className="divide-y divide-border/30">
         {loading && events.length === 0 ? (
           <li className="px-3 py-4 text-xs text-muted-foreground">Loading…</li>
         ) : error ? (
@@ -40,24 +48,22 @@ export function EventStream({ events, loading, error, truncated }: Props) {
         ) : events.length === 0 ? (
           <li className="px-3 py-4 text-xs text-muted-foreground">No recent events.</li>
         ) : (
-          // Ops Desk snippet: cap at 5 rows so this section sits consistent
-          // with Investigation Log and Recent Scans above. The scroll
-          // container's max-height is now decorative — with 5 items it never
-          // overflows — but kept so a future "Expand" control or direct-
-          // linked /events page can reuse the same component.
-          events.slice(0, 5).map((e) => (
-            <li key={e.id} role="listitem" className="flex items-start gap-2 px-3 py-2">
+          // Ops Desk snippet: 5 rows, matching Investigation Log and Recent
+          // Scans. The ring buffer's `truncated` flag still surfaces below
+          // when the server dropped older entries.
+          events.slice(0, SNIPPET).map((e) => (
+            <li key={e.id} role="listitem" className="flex items-start gap-2 py-1.5">
               <span className={`mt-1.5 inline-block w-1.5 h-1.5 rounded-full shrink-0 ${severityDot[e.severity]}`} aria-hidden />
               <div className="min-w-0 flex-1">
-                <div className="text-xs font-medium text-foreground truncate">{e.summary}</div>
-                <div className="font-mono text-[10px] tabular-nums text-muted-foreground/70 mt-0.5">{relTime(e.ts)}</div>
+                <div className="text-sm text-foreground/90 truncate">{e.summary}</div>
+                <div className="font-mono text-[10px] tabular-nums text-muted-foreground/60 mt-0.5">{relTime(e.ts)}</div>
               </div>
             </li>
           ))
         )}
       </ul>
       {truncated && (
-        <div className="px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground/60 border-t border-border">
+        <div className="mt-2 text-[10px] font-mono uppercase tracking-wider text-muted-foreground/60">
           older events dropped
         </div>
       )}

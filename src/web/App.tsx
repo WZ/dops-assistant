@@ -452,7 +452,6 @@ export function App() {
                         setLeftPane({ type: "investigations", query }, { replace: true })
                       }
                       onViewInvestigation={(id) => setLeftPane({ type: "investigation", id })}
-                      onBack={() => setLeftPane({ type: "dashboard" })}
                     />
                   ) : leftPane.type === "notfound" ? (
                     <div className="h-full flex flex-col items-center justify-center gap-3 p-8 text-center">
