@@ -222,6 +222,31 @@ export function App() {
     }
   }, [ws.messages]);
 
+  // Keep a ref of the current pane so effects can read the latest value
+  // without re-running every time the pane changes.
+  const leftPaneRef = useRef(leftPane);
+  leftPaneRef.current = leftPane;
+
+  // Auto-navigate to the new investigation when a Re-investigate fires.
+  // Rerun creates a NEW id server-side; without this the user would sit
+  // on the old pane watching events for an id it doesn't know about.
+  const lastRerunNavIdx = useRef(0);
+  useEffect(() => {
+    const start = lastRerunNavIdx.current;
+    const msgs = ws.messages;
+    if (msgs.length <= start) return;
+    lastRerunNavIdx.current = msgs.length;
+
+    for (let i = start; i < msgs.length; i++) {
+      const msg = msgs[i];
+      if (msg.type !== "investigation:started" || !msg.parentInvestigationId) continue;
+      const pane = leftPaneRef.current;
+      if (pane.type === "investigation" && pane.id === msg.parentInvestigationId) {
+        setLeftPane({ type: "investigation", id: msg.id });
+      }
+    }
+  }, [ws.messages, setLeftPane]);
+
   // Reset view + discovery state on stack switch.
   //
   // The reset-to-dashboard is only needed for panes that render
@@ -231,10 +256,6 @@ export function App() {
   // briefly land on `/`, then snap to the clicked target, producing the
   // QA-reported "double redirect" flash.
   const prevStackRef = useRef(activeStackId);
-  // Keep a ref of the current pane so the stack-change effect can read the
-  // latest value without re-running every time the pane changes.
-  const leftPaneRef = useRef(leftPane);
-  leftPaneRef.current = leftPane;
   useEffect(() => {
     if (prevStackRef.current !== activeStackId && prevStackRef.current) {
       if (shouldResetOnStackSwitch(leftPaneRef.current.type)) {

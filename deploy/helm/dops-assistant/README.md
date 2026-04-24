@@ -84,6 +84,40 @@ config:
         url: http://grafana-mcp.observability.svc.cluster.local:8000/mcp
 ```
 
+## Email notifications (SMTP from an existing Secret)
+
+Investigation-complete emails are configured under `config.notifications.email`.
+To keep SMTP credentials out of values.yaml, create a Kubernetes Secret with
+`SMTP_USER` and `SMTP_PASS` keys and reference it via `extraEnvFrom`:
+
+```sh
+kubectl create secret generic dops-smtp-credentials \
+  --from-literal=SMTP_USER='alerts@example.com' \
+  --from-literal=SMTP_PASS='app-password'
+```
+
+```yaml
+extraEnvFrom:
+  - secretRef:
+      name: dops-smtp-credentials
+
+config:
+  notifications:
+    email:
+      enabled: true
+      smtp:
+        host: smtp.gmail.com
+        port: 587
+        secure: false               # true only for port 465 (implicit TLS)
+        user: ${SMTP_USER}
+        pass: ${SMTP_PASS}
+      from: "Ops Assistant <${SMTP_USER}>"   # Gmail requires From == user
+      appBaseUrl: https://assistant.example.com
+```
+
+`${SMTP_USER}` / `${SMTP_PASS}` are resolved at pod startup by the config
+loader, which reads them from env vars injected via `envFrom`.
+
 ## Using an existing Secret (GitOps-friendly)
 
 ```yaml

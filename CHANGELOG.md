@@ -14,6 +14,21 @@ All notable changes to this project will be documented in this file.
 - `POST /api/investigations/:id/feedback` now upserts on `(investigation_id, stack_id)` instead of appending a new row per click. Before: five thumbs-ups created five pattern rows. After: one pattern, first click wins, re-clicks confirm the same rating without side effects. A one-shot migration dedups any duplicate rows left by the old behavior before installing the unique index.
 - `db.getFeedback()` now filters by `stack_id`, closing a cross-stack leak where a rating on one stack's investigation could bleed into another stack's view.
 
+## [0.2.2.5] - 2026-04-24
+
+### Deployment
+- **Configure investigation-complete email notifications from Helm.** The chart now accepts `config.notifications.email` (rendered verbatim into `config.yaml` on the pod) and a new top-level `extraEnvFrom` for pulling env vars out of existing Kubernetes Secrets. Typical setup: create a Secret with `SMTP_USER` / `SMTP_PASS`, point `extraEnvFrom` at it, and reference `${SMTP_USER}` / `${SMTP_PASS}` from inside the notifications block. SMTP credentials stay out of values.yaml. See `deploy/helm/dops-assistant/README.md` for the full example. Chart bumped to 0.1.3.
+
+## [0.2.2.4] - 2026-04-24
+
+### Fixed
+- **Live investigation events no longer cross-contaminate between panes.** When a scan kicked off a new investigation while you had a completed investigation open, phase / tool-call / iteration / progress events from the new run leaked into the pane you were reading, mutating its phases and timeline. The events now carry the investigation id on the wire, and the pane filters by it. Companion fix to v0.2.2.3 — the nav fix handled the user-visible rerun path; this closes the latent leak on the pane the rerun left behind.
+
+## [0.2.2.3] - 2026-04-24
+
+### Fixed
+- **Re-investigate now actually takes you to the new run.** Clicking any option in the Re-investigate dropdown (Re-run current config / Quick / Standard / Full) used to look like it did nothing: the server kicked off a fresh investigation with a new id, but the page kept showing the old report because it was still bound to the old id. Now the page auto-navigates to the new investigation as soon as it starts, so the progress bar, phase rail, and tool calls all reflect the re-run you just triggered.
+
 ## [0.2.2.2] - 2026-04-23
 
 ### Changed

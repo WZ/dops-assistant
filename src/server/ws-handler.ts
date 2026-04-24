@@ -501,17 +501,17 @@ async function handleRerun(
   const invId = `inv_${ulid()}`;
   const query = `Re-run of investigation ${msg.investigationId} for ${serviceName}`;
 
-  send({ type: "investigation:started", id: invId, service: serviceName, query });
+  send({ type: "investigation:started", id: invId, service: serviceName, query, parentInvestigationId: msg.investigationId });
 
   const wsCallbacks: InvestigationCallbacks = {
     onPhase: (phase, status, stats) => {
       send({ type: "investigation:phase", id: invId, phase, status, stats });
     },
     onToolCall: (phase, tool, args, status, result, durationMs) => {
-      send({ type: "investigation:tool_call", phase, tool, args, status: status as "error" | "success" | "calling", result, durationMs });
+      send({ type: "investigation:tool_call", id: invId, phase, tool, args, status: status as "error" | "success" | "calling", result, durationMs });
     },
     onIteration: (phase, iteration, maxIterations, description) => {
-      send({ type: "investigation:iteration", phase, iteration, maxIterations, description });
+      send({ type: "investigation:iteration", id: invId, phase, iteration, maxIterations, description });
     },
     onPhaseUsage: (investigationId, phase, inputTokens, outputTokens, durationMs) => {
       send({ type: "investigation:phase_usage", investigationId, phase, inputTokens, outputTokens, durationMs });
@@ -791,10 +791,10 @@ export async function handleClientMessage(
         send({ type: "investigation:phase", id: invId, phase, status, stats });
       },
       onToolCall: (phase, tool, args, status, result, durationMs) => {
-        send({ type: "investigation:tool_call", phase, tool, args, status: status as "error" | "success" | "calling", result, durationMs });
+        send({ type: "investigation:tool_call", id: invId, phase, tool, args, status: status as "error" | "success" | "calling", result, durationMs });
       },
       onIteration: (phase, iteration, maxIterations, description) => {
-        send({ type: "investigation:iteration", phase, iteration, maxIterations, description });
+        send({ type: "investigation:iteration", id: invId, phase, iteration, maxIterations, description });
       },
       onPhaseUsage: (investigationId, phase, inputTokens, outputTokens, durationMs) => {
         send({ type: "investigation:phase_usage", investigationId, phase, inputTokens, outputTokens, durationMs });

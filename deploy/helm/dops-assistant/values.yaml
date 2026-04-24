@@ -138,6 +138,22 @@ env: []
 # - name: TRUST_PROXY_HOPS
 #   value: "1"
 
+# Additional envFrom sources (array of {secretRef|configMapRef}) appended to
+# the container's envFrom. Use this to pull env vars from Kubernetes Secrets
+# or ConfigMaps that already exist in the cluster, without adding them to the
+# chart-managed Secret. Keys become env vars inside the container, available
+# for ${VAR} substitution in config.yaml the same way as `secrets.data` entries.
+#
+# Typical use: SMTP credentials for email notifications stored in an existing
+# Secret (e.g. managed by Vault / External Secrets Operator). The secret must
+# define SMTP_USER and SMTP_PASS keys to match the ${SMTP_USER} / ${SMTP_PASS}
+# references in `config.notifications.email.smtp`.
+#
+# extraEnvFrom:
+#   - secretRef:
+#       name: dops-smtp-credentials
+extraEnvFrom: []
+
 # ---------------------------------------------------------------------------
 # Secrets
 # ---------------------------------------------------------------------------
@@ -192,6 +208,22 @@ config:
   observability:
     port: 9090
     logLevel: info
+
+  # Email notifications (optional). Enable to send investigation-complete
+  # emails via SMTP. Reference secret env vars with ${VAR}; supply them via
+  # `secrets.data` or `extraEnvFrom` (an existing k8s Secret).
+  #
+  # notifications:
+  #   email:
+  #     enabled: true
+  #     smtp:
+  #       host: smtp.gmail.com
+  #       port: 587
+  #       secure: false                # true only for port 465 (implicit TLS)
+  #       user: ${SMTP_USER}
+  #       pass: ${SMTP_PASS}
+  #     from: "Ops Assistant <${SMTP_USER}>"   # Gmail requires From == user
+  #     appBaseUrl: https://assistant.example.com
 
 # ---------------------------------------------------------------------------
 # providers.yaml (rendered into the same ConfigMap as config.yaml)
