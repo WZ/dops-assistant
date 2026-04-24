@@ -76,7 +76,10 @@ export function App() {
   const [leftPane, setLeftPaneRaw] = useState<LeftPaneView>({ type: "dashboard" });
   const { initialView, navigate } = useRoute(setLeftPaneRaw);
   // Use navigate() for all pane changes — it syncs URL + state
-  const setLeftPane = useCallback((view: LeftPaneView) => navigate(view), [navigate]);
+  const setLeftPane = useCallback(
+    (view: LeftPaneView, opts?: { replace?: boolean }) => navigate(view, opts),
+    [navigate],
+  );
 
   // Set initial view from URL on first render
   const initialViewApplied = useRef(false);
@@ -133,9 +136,16 @@ export function App() {
     }
   }, [setupStage]);
 
+  // Map the richer LeftPaneView union down to the 4 sidebar buckets. Both
+  // the list page (investigations) and a single-investigation detail page
+  // (investigation) highlight "Investigations" so the operator's mental
+  // model of "I'm in the investigations section" stays stable while
+  // drilling in and out.
   const activePage: SidebarPage =
     leftPane.type === "services" ? "services"
     : leftPane.type === "settings" ? "settings"
+    : leftPane.type === "investigations" ? "investigations"
+    : leftPane.type === "investigation" ? "investigations"
     : "dashboard";
 
   const stackFetchForBranding = useMemo(() => createStackFetch(activeStackId), [activeStackId]);
@@ -262,7 +272,13 @@ export function App() {
       {/* Sidebar */}
       <Sidebar
         activePage={activePage}
-        onNavigate={(page) => setLeftPane({ type: page })}
+        onNavigate={(page) => {
+          // "investigations" is a LeftPaneView that carries a query; clicking
+          // the sidebar icon always means "take me to the unfiltered list",
+          // so pass an empty query. The other three sidebar pages map 1:1.
+          if (page === "investigations") setLeftPane({ type: "investigations", query: {} });
+          else setLeftPane({ type: page });
+        }}
         dark={theme.dark}
         onToggleTheme={theme.toggle}
       />
@@ -334,7 +350,14 @@ export function App() {
         {showStepper && (
           <SetupStepper
             stage={setupStage}
-            onNavigate={(page) => setLeftPane({ type: page })}
+            onNavigate={(page) => {
+              // SetupStepper only ever emits settings / services / dashboard
+              // today (see SetupStepper STEPS). The "investigations" branch
+              // exists for type soundness — if a future step ever points at
+              // the list, an empty query is the right default.
+              if (page === "investigations") setLeftPane({ type: "investigations", query: {} });
+              else setLeftPane({ type: page });
+            }}
             onSkip={handleSkipSetup}
           />
         )}
@@ -363,7 +386,20 @@ export function App() {
                     <InvestigationPane
                       investigationId={leftPane.id}
                       wsMessages={ws.messages}
-                      onBack={() => setLeftPane({ type: "dashboard" })}
+                      onBack={() => {
+                        // Smart back-nav. If the current history entry was
+                        // pushed by the app (user clicked a row rather than
+                        // pasted a direct link), `history.back()` returns them
+                        // to where they came from — typically /investigations
+                        // with their filters preserved, but also services,
+                        // dashboard, etc. If they direct-linked, fall back to
+                        // the dashboard instead of popping off the site.
+                        if (window.history.state?.fromApp) {
+                          window.history.back();
+                        } else {
+                          setLeftPane({ type: "dashboard" });
+                        }
+                      }}
                       onNavigateSkills={() => setLeftPane({ type: "settings", initialTab: "skills" })}
                       onRerun={(invId, template) => {
                         ws.send({ type: "rerun", investigationId: invId, template: template as any });
@@ -412,9 +448,10 @@ export function App() {
                   ) : leftPane.type === "investigations" ? (
                     <InvestigationsPage
                       query={leftPane.query}
-                      onUpdateQuery={(query) => setLeftPane({ type: "investigations", query })}
+                      onUpdateQuery={(query) =>
+                        setLeftPane({ type: "investigations", query }, { replace: true })
+                      }
                       onViewInvestigation={(id) => setLeftPane({ type: "investigation", id })}
-                      onBack={() => setLeftPane({ type: "dashboard" })}
                     />
                   ) : leftPane.type === "notfound" ? (
                     <div className="h-full flex flex-col items-center justify-center gap-3 p-8 text-center">

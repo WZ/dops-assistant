@@ -5,9 +5,11 @@ import { InvestigationsPage } from "./InvestigationsPage";
 import { StackProvider } from "../contexts/StackContext";
 import type { ReactNode } from "react";
 
+
 function Wrapper({ children }: { children: ReactNode }) {
   return <StackProvider activeStackId="test-stack">{children}</StackProvider>;
 }
+
 
 function makeRow(id: string, overrides: Record<string, unknown> = {}) {
   return {
@@ -27,67 +29,146 @@ function makeRow(id: string, overrides: Record<string, unknown> = {}) {
   };
 }
 
+
+/**
+ * Build a fetch mock that routes by URL. The page fires two parallel fetches
+ * after PR 3: the main /api/investigations list AND a severity-counts fetch
+ * driven by the SeverityBreakdown child. Tests that care about the list
+ * response shape pass rows/total/hasMore here; tests that care about the
+ * histogram pass a counts object. Everything else gets sensible defaults.
+ */
+function mockFetch(opts: {
+  rows?: unknown[];
+  total?: number;
+  hasMore?: boolean;
+  counts?: { critical: number; high: number; medium: number; low: number };
+  listError?: { status: number; body: string };
+}) {
+  return vi.fn((url: string | URL) => {
+    const u = String(url);
+    if (u.includes("/api/investigations/severity-counts")) {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(opts.counts ?? { critical: 0, high: 0, medium: 0, low: 0 }),
+      });
+    }
+    if (u.includes("/api/investigations")) {
+      if (opts.listError) {
+        return Promise.resolve({
+          ok: false,
+          status: opts.listError.status,
+          text: () => Promise.resolve(opts.listError!.body),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          rows: opts.rows ?? [],
+          total: opts.total ?? 0,
+          hasMore: opts.hasMore ?? false,
+        }),
+      });
+    }
+    throw new Error(`Unexpected fetch: ${u}`);
+  });
+}
+
+
 describe("InvestigationsPage", () => {
   beforeEach(() => {
     cleanup();
     globalThis.fetch = vi.fn();
   });
 
+
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
   });
 
+
   it("renders rows and shows total count in the header", async () => {
     const rows = [makeRow("inv_1"), makeRow("inv_2"), makeRow("inv_3")];
-    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ rows, total: 47, hasMore: true }),
-    });
+    globalThis.fetch = mockFetch({ rows, total: 47, hasMore: true });
+
 
     render(
       <InvestigationsPage
         query={{}}
         onUpdateQuery={vi.fn()}
         onViewInvestigation={vi.fn()}
-        onBack={vi.fn()}
+
+
       />,
       { wrapper: Wrapper },
     );
 
+
     await waitFor(() => {
-      expect(screen.getByText("47")).toBeTruthy();
+      // Header subtitle reads "N total" (matches ServicesPage pattern).
+      expect(screen.getByText(/47 total/)).toBeTruthy();
+      // Pagination footer still shows the in-view range out of the total.
       expect(screen.getByText(/1–3 of 47/)).toBeTruthy();
     });
   });
 
-  it("shows empty state when no investigations match", async () => {
-    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ rows: [], total: 0, hasMore: false }),
-    });
+
+  it("shows empty state when no investigations match AND offers clear-all when filters are active", async () => {
+    globalThis.fetch = mockFetch({ rows: [], total: 0, hasMore: false });
+    const onUpdateQuery = vi.fn();
+
 
     render(
       <InvestigationsPage
         query={{ severity: ["critical"] }}
-        onUpdateQuery={vi.fn()}
+        onUpdateQuery={onUpdateQuery}
         onViewInvestigation={vi.fn()}
-        onBack={vi.fn()}
+
+
       />,
       { wrapper: Wrapper },
     );
 
+
     await waitFor(() => {
       expect(screen.getByText(/No investigations match/)).toBeTruthy();
     });
+
+
+    // Clear-all link only appears when filters are active — confirms the
+    // empty state distinguishes "nothing here yet" from "your filter is too tight".
+    fireEvent.click(screen.getByText(/Clear all filters/));
+    expect(onUpdateQuery).toHaveBeenCalledWith({});
   });
+
+
+  it("empty state without active filters shows the friendly copy, no clear link", async () => {
+    globalThis.fetch = mockFetch({ rows: [], total: 0, hasMore: false });
+
+
+    render(
+      <InvestigationsPage
+        query={{}}
+        onUpdateQuery={vi.fn()}
+        onViewInvestigation={vi.fn()}
+
+
+      />,
+      { wrapper: Wrapper },
+    );
+
+
+    await waitFor(() => {
+      expect(screen.getByText(/No investigations yet/)).toBeTruthy();
+    });
+    expect(screen.queryByText(/Clear all filters/)).toBeNull();
+  });
+
 
   it("Next pagination bumps offset by limit via onUpdateQuery", async () => {
     const rows = Array.from({ length: 25 }, (_, i) => makeRow(`inv_${i}`));
-    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ rows, total: 100, hasMore: true }),
-    });
+    globalThis.fetch = mockFetch({ rows, total: 100, hasMore: true });
+
 
     const onUpdateQuery = vi.fn();
     render(
@@ -95,14 +176,17 @@ describe("InvestigationsPage", () => {
         query={{ severity: ["high"] }}
         onUpdateQuery={onUpdateQuery}
         onViewInvestigation={vi.fn()}
-        onBack={vi.fn()}
+
+
       />,
       { wrapper: Wrapper },
     );
 
+
     await waitFor(() => {
       expect(screen.getByText("Next →")).toBeTruthy();
     });
+
 
     fireEvent.click(screen.getByText("Next →"));
     expect(onUpdateQuery).toHaveBeenCalledWith({
@@ -111,15 +195,14 @@ describe("InvestigationsPage", () => {
     });
   });
 
+
   it("Prev strips offset when it would reach 0", async () => {
     // UI choice: when we go back to the first page, drop `offset` from the
     // query entirely instead of emitting `offset=0`. Keeps the URL clean for
     // the default view.
     const rows = Array.from({ length: 25 }, (_, i) => makeRow(`inv_${i}`));
-    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ rows, total: 100, hasMore: true }),
-    });
+    globalThis.fetch = mockFetch({ rows, total: 100, hasMore: true });
+
 
     const onUpdateQuery = vi.fn();
     render(
@@ -127,35 +210,39 @@ describe("InvestigationsPage", () => {
         query={{ offset: 25 }}
         onUpdateQuery={onUpdateQuery}
         onViewInvestigation={vi.fn()}
-        onBack={vi.fn()}
+
+
       />,
       { wrapper: Wrapper },
     );
+
 
     await waitFor(() => {
       expect(screen.getByText("← Prev")).toBeTruthy();
     });
 
+
     fireEvent.click(screen.getByText("← Prev"));
     expect(onUpdateQuery).toHaveBeenCalledWith({ offset: undefined });
   });
 
+
   it("Prev is disabled on the first page", async () => {
     const rows = [makeRow("inv_1")];
-    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ rows, total: 1, hasMore: false }),
-    });
+    globalThis.fetch = mockFetch({ rows, total: 1, hasMore: false });
+
 
     render(
       <InvestigationsPage
         query={{}}
         onUpdateQuery={vi.fn()}
         onViewInvestigation={vi.fn()}
-        onBack={vi.fn()}
+
+
       />,
       { wrapper: Wrapper },
     );
+
 
     await waitFor(() => {
       const prev = screen.getByText("← Prev") as HTMLButtonElement;
@@ -163,28 +250,30 @@ describe("InvestigationsPage", () => {
     });
   });
 
-  it("builds the fetch URL from the query", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ rows: [], total: 0, hasMore: false }),
-    });
+
+  it("builds the list fetch URL from the query", async () => {
+    const fetchMock = mockFetch({});
     globalThis.fetch = fetchMock;
+
 
     render(
       <InvestigationsPage
         query={{ severity: ["critical", "high"], status: ["running"], offset: 50 }}
         onUpdateQuery={vi.fn()}
         onViewInvestigation={vi.fn()}
-        onBack={vi.fn()}
+
+
       />,
       { wrapper: Wrapper },
     );
 
+
     await waitFor(() => {
-      const call = fetchMock.mock.calls[0];
-      expect(call).toBeDefined();
-      const url = String(call![0]);
-      expect(url).toContain("/api/investigations?");
+      const listCall = fetchMock.mock.calls.find((c) =>
+        String(c[0]).includes("/api/investigations?"),
+      );
+      expect(listCall).toBeDefined();
+      const url = String(listCall![0]);
       expect(url).toContain("severity=critical%2Chigh");
       expect(url).toContain("status=running");
       expect(url).toContain("offset=50");
@@ -194,22 +283,24 @@ describe("InvestigationsPage", () => {
     });
   });
 
-  it("shows an error banner when the fetch fails", async () => {
-    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ok: false,
-      status: 400,
-      text: () => Promise.resolve("invalid value 'bogus'"),
+
+  it("shows an error banner when the list fetch fails", async () => {
+    globalThis.fetch = mockFetch({
+      listError: { status: 400, body: "invalid value 'bogus'" },
     });
+
 
     render(
       <InvestigationsPage
         query={{}}
         onUpdateQuery={vi.fn()}
         onViewInvestigation={vi.fn()}
-        onBack={vi.fn()}
+
+
       />,
       { wrapper: Wrapper },
     );
+
 
     await waitFor(() => {
       expect(screen.getByText("Could not load investigations")).toBeTruthy();
@@ -217,24 +308,27 @@ describe("InvestigationsPage", () => {
     });
   });
 
-  it("Back button invokes onBack", async () => {
-    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ rows: [], total: 0, hasMore: false }),
-    });
 
-    const onBack = vi.fn();
+  it("title matches the sibling-page style (no back link, sidebar is the nav)", async () => {
+    globalThis.fetch = mockFetch({ rows: [], total: 0, hasMore: false });
+
+
     render(
       <InvestigationsPage
         query={{}}
         onUpdateQuery={vi.fn()}
         onViewInvestigation={vi.fn()}
-        onBack={onBack}
       />,
       { wrapper: Wrapper },
     );
 
-    fireEvent.click(screen.getByLabelText("Back to dashboard"));
-    expect(onBack).toHaveBeenCalled();
+
+    // The previous design prefixed the title with a "← Dashboard" button,
+    // which was noise — the sidebar already provides global nav. Removing
+    // it matches ServicesPage and SettingsPage.
+    expect(screen.queryByLabelText("Back to dashboard")).toBeNull();
+    expect(screen.queryByText(/← Dashboard/)).toBeNull();
+    // Heading still renders.
+    expect(screen.getByRole("heading", { name: "Investigations" })).toBeTruthy();
   });
 });

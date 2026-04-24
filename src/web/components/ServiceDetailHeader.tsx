@@ -114,7 +114,7 @@ export function ServiceDetailHeader({
             <ArrowLeft size={16} />
           </Button>
           <div className={healthDotClass(healthStatus)} />
-          <h1 className="font-display text-[28px] font-bold text-foreground/90 leading-tight text-pretty truncate">
+          <h1 className="font-display text-2xl font-extrabold tracking-tight text-foreground/90 leading-tight text-pretty truncate">
             {displayName}
           </h1>
           {alias && (

@@ -9,7 +9,7 @@
 // renders instead of the service detail page. A direct URL visit to the same
 // path works correctly.
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { act, renderHook, render, screen, fireEvent } from "@testing-library/react";
+import { act, renderHook, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { useCallback, useRef, useState } from "react";
 import { useRoute, parseUrl } from "./useRoute";
 import type { LeftPaneView } from "../App";
@@ -188,5 +188,91 @@ describe("Issue #13 — SPA click from Home renders service detail", () => {
     // Bug: heading said "Services". Fix: heading must be the service name.
     expect(screen.getByTestId("heading").textContent).toBe("admin-daphne");
     expect(window.location.pathname).toBe("/services/admin-daphne");
+  });
+
+  it("navigate() tags pushed history entries so 'Back' knows they're in-app", () => {
+    // Smart back-nav (PR 4) checks window.history.state?.fromApp to decide
+    // whether pressing Back on a detail page should return to the previous
+    // in-app view or fall back to the dashboard. Direct-link arrivals have
+    // no such tag; only entries pushed by navigate() do.
+    render(<Harness />);
+
+    // Before any in-app navigation, the current entry has no fromApp tag.
+    expect(window.history.state?.fromApp).toBeFalsy();
+
+    fireEvent.click(screen.getByTestId("home-tile-admin-daphne"));
+
+    // After an in-app click, the current entry is tagged.
+    expect(window.history.state).toEqual({ fromApp: true });
+  });
+
+  it("popstate from user Back button reliably updates state (regression: swallowed click)", async () => {
+    // Regression for "I had to click Back twice and then it went to a random page":
+    //
+    // The earlier implementation kept a `suppressPopstate` ref that it set to true
+    // around pushState and reset inside the popstate handler. pushState does NOT
+    // fire popstate (browser spec), so the flag got stuck at true after the first
+    // navigate. Then when the user clicked Back:
+    //   1st click → browser popped, popstate fired, handler saw the stuck flag
+    //              and returned early → UI never re-rendered → looked dead
+    //   2nd click → back() again, popstate fired again, flag now false so state
+    //              updated — but the URL was already two entries past where the
+    //              user wanted to be, landing them on an unrelated page.
+    //
+    // This test reproduces the symptom: navigate in, simulate user Back, assert
+    // the app state matches the popped URL. Without the fix the state would not
+    // update on the first popstate.
+    render(<Harness />);
+
+    fireEvent.click(screen.getByTestId("home-tile-admin-daphne"));
+    expect(window.location.pathname).toBe("/services/admin-daphne");
+    expect(screen.getByTestId("heading").textContent).toBe("admin-daphne");
+
+    // Simulate a user clicking the browser Back button. jsdom fires popstate
+    // with a short delay, so we wrap with act() and wait for the state to
+    // reconcile before asserting. The key assertion is that this happens on
+    // the FIRST back() — before the fix, the first popstate was swallowed
+    // and the UI didn't update until the second back().
+    await act(async () => {
+      window.history.back();
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/");
+    });
+    expect(screen.getByTestId("home-tile-admin-daphne")).toBeTruthy();
+    expect(screen.queryByTestId("heading")).toBeNull();
+  });
+});
+
+describe("useRoute — {replace: true}", () => {
+  beforeEach(() => {
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("pushState by default, replaceState when opts.replace is set", () => {
+    const push = vi.spyOn(window.history, "pushState");
+    const replace = vi.spyOn(window.history, "replaceState");
+    const { result } = renderHook(() => useAppRouterHarness());
+
+    act(() => {
+      result.current.navigate({ type: "investigations", query: {} });
+    });
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(replace).not.toHaveBeenCalled();
+
+    act(() => {
+      result.current.navigate(
+        { type: "investigations", query: { q: "redis" } },
+        { replace: true },
+      );
+    });
+    // One push total (from the first call), one replace (from this call).
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(replace).toHaveBeenCalledTimes(1);
+
+    push.mockRestore();
+    replace.mockRestore();
   });
 });
