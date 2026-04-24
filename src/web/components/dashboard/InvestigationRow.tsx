@@ -92,14 +92,15 @@ export const InvestigationRow = memo(function InvestigationRow({
         </div>
 
         {/* Right-aligned metrics. Progressive disclosure by viewport:
-            - <lg (1024px): hide confidence + tokens. Duration + age remain
-              so the row still tells you "when + how long" at a glance.
+            - <lg (1024px): hide tokens only. Confidence is the most
+              operator-useful metric and fits in the space. Duration + age
+              stay so the row always tells you "when + how long + how sure".
             - The metrics block itself is flex-wrap so at very narrow widths
               it breaks below the service name instead of overflowing. */}
         <div className="flex items-center gap-2 flex-shrink-0 flex-wrap justify-end">
           {confidenceDisplay && (
             <span className={cn(
-              "font-mono text-[10px] hidden lg:inline",
+              "font-mono text-[10px]",
               (() => {
                 let num = parseFloat(confidenceDisplay);
                 if (isNaN(num)) return "text-foreground/75";
