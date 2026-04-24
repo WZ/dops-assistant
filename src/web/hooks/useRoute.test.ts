@@ -14,6 +14,27 @@ describe("parseUrl", () => {
     expect(parseUrl("/investigations/inv_01KNR")).toEqual({ type: "investigation", id: "inv_01KNR" });
   });
 
+  it("parses /investigations (no id) as the list page with empty query", () => {
+    // Must match BEFORE /investigations/:id so the bare path doesn't resolve
+    // to an empty id.
+    expect(parseUrl("/investigations")).toEqual({ type: "investigations", query: {} });
+  });
+
+  it("parses /investigations with search params into the query object", () => {
+    const view = parseUrl("/investigations", "?severity=critical,high&status=running&offset=25");
+    expect(view).toEqual({
+      type: "investigations",
+      query: { severity: ["critical", "high"], status: ["running"], offset: 25 },
+    });
+  });
+
+  it("list page ignores unknown search keys and invalid values", () => {
+    // URL state is soft input (bookmarks, pasted links). Drop junk and keep
+    // going so the user isn't blocked by a typo.
+    const view = parseUrl("/investigations", "?severity=bogus&unknown=x");
+    expect(view).toEqual({ type: "investigations", query: {} });
+  });
+
   it("parses /services", () => {
     expect(parseUrl("/services")).toEqual({ type: "services", initialService: undefined });
   });
@@ -94,6 +115,19 @@ describe("viewToUrl", () => {
   it("maps scanrun to /scan/runs/:id", () => {
     expect(viewToUrl({ type: "scanrun", runId: "run_01J" })).toBe("/scan/runs/run_01J");
   });
+
+  it("maps investigations list with empty query to /investigations (no ?)", () => {
+    expect(viewToUrl({ type: "investigations", query: {} })).toBe("/investigations");
+  });
+
+  it("maps investigations list with filters to /investigations?...", () => {
+    expect(
+      viewToUrl({
+        type: "investigations",
+        query: { severity: ["critical"], status: ["complete", "failed"], offset: 25 },
+      }),
+    ).toBe("/investigations?severity=critical&status=complete%2Cfailed&offset=25");
+  });
 });
 
 describe("roundtrip", () => {
@@ -113,6 +147,28 @@ describe("roundtrip", () => {
     for (const view of views) {
       expect(parseUrl(viewToUrl(view))).toEqual(view);
     }
+  });
+
+  it("parseUrl(viewToUrl(view)) preserves the investigations query", () => {
+    // viewToUrl returns `/investigations?...` — parseUrl needs the search
+    // half separately. Mirrors how useRoute feeds window.location.pathname
+    // and window.location.search at runtime.
+    const view = {
+      type: "investigations" as const,
+      query: {
+        severity: ["critical" as const, "high" as const],
+        status: ["running" as const],
+        service: "payments-api",
+        q: "redis",
+        since: "2026-04-01T00:00:00Z",
+        sort: "confidence" as const,
+        limit: 50,
+        offset: 100,
+      },
+    };
+    const url = viewToUrl(view);
+    const [pathname, search] = url.split("?");
+    expect(parseUrl(pathname!, search ? `?${search}` : "")).toEqual(view);
   });
 });
 
