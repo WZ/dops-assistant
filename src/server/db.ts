@@ -1092,6 +1092,29 @@ export class Database {
     ).all(stackId, service, cutoff) as Array<{ status: string; checked_at: string }>;
   }
 
+  /**
+   * Return the most recent health check per service for a stack, as a
+   * `Map<service, status>`. Used by ServiceHealthPoller to warm its in-memory
+   * cache at startup so `getHealth()` returns the last-known state immediately
+   * instead of an empty map (especially relevant in demo mode, where the live
+   * poller never runs, or after a server restart where the first poll hasn't
+   * landed yet).
+   */
+  getLatestHealthPerService(stackId: string): Map<string, string> {
+    const rows = this.db.prepare(
+      `SELECT service, status
+         FROM service_health_checks
+        WHERE stack_id = ?
+          AND checked_at = (
+            SELECT MAX(checked_at)
+              FROM service_health_checks sub
+             WHERE sub.stack_id = service_health_checks.stack_id
+               AND sub.service  = service_health_checks.service
+          )`
+    ).all(stackId) as Array<{ service: string; status: string }>;
+    return new Map(rows.map((r) => [r.service, r.status]));
+  }
+
   // ── Hidden services ──────────────────────────────────────────────────────
 
   migrateHiddenServices(): void {

@@ -53,3 +53,9 @@ benchmark/
 playwright-report/
 test-results/
 playwright/.cache/
+.playwright-mcp/
+
+# Local demo seed output (DB + generated services.yaml/providers.yaml).
+# Never commit — the seed script is the source of truth; `npm run seed:demo`
+# regenerates this. Keep out of history to avoid massive diffs on every reseed.
+data-demo/

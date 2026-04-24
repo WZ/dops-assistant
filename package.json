@@ -1,6 +1,6 @@
 {
   "name": "dops-assistant",
-  "version": "0.2.2.5",
+  "version": "0.3.0.0",
   "description": "Agentic infrastructure monitoring assistant — Grafana MCP + CLI",
   "type": "module",
   "main": "dist/index.js",
@@ -23,7 +23,11 @@
     "investigate": "NODE_TLS_REJECT_UNAUTHORIZED=0 npx tsx dev/run-investigation.ts",
     "dev:web": "concurrently \"NODE_TLS_REJECT_UNAUTHORIZED=0 tsx watch src/server/index.ts\" \"vite --config vite.config.ts\"",
     "build:web": "vite build --config vite.config.ts",
-    "web": "NODE_TLS_REJECT_UNAUTHORIZED=0 NODE_NO_WARNINGS=1 tsx src/server/index.ts"
+    "web": "NODE_TLS_REJECT_UNAUTHORIZED=0 NODE_NO_WARNINGS=1 tsx src/server/index.ts",
+    "seed:demo": "DATA_DIR=data-demo DB_PATH=data-demo/dops.sqlite tsx scripts/seed-demo.ts",
+    "demo": "DEMO_MODE=true CONFIG_PATH=demo/config.yaml DATA_DIR=data-demo DB_PATH=data-demo/dops.sqlite npm run web",
+    "export-static": "tsx scripts/export-static.ts",
+    "build:demo-static": "rm -rf dist/web && VITE_DEMO_STATIC=true npm run build:web && npm run seed:demo && npm run export-static"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^2.0.35",

@@ -4,7 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## [0.2.2.5] - 2026-04-24
+## [0.3.0.0] - 2026-04-24
+
+### Added
+- **Public read-only demo mode.** Set `DEMO_MODE=true` and dops-assistant boots as a public-safe showcase: every mutating HTTP request returns a structured 403, every WebSocket message that would reach an LLM or MCP backend gets a friendly refusal, and the LLM-backed REST endpoints (`/api/services/:name/brief`, `/api/services/:name/metrics`) short-circuit to demo responses instead of burning tokens or hitting Prometheus. Background jobs — health monitor, service health pollers, scan schedulers, TTL reaper, webhook handler — are all skipped at boot. A persistent amber strip at the top of the UI tells visitors what they're looking at and links to the repo.
+- **One-shot deterministic seed (`scripts/seed-demo.ts`).** Writes 15 services across web/worker/datastore/infra tiers, 3 stub MCP providers (URLs that fail closed), 5 completed investigations covering all four trigger sources plus 1 frozen "running" investigation so the streaming UI shows motion, 2 scan runs, and a couple of learned incident patterns. Relative timestamps are computed at seed time, so freshness looks right on the day the seed runs.
+- **Fly.io deploy pipeline for the demo.** `Dockerfile.demo`, `fly.toml`, and `.github/workflows/deploy-demo.yml` ship a public demo on push to main with auto-stop machines, scale-to-zero, and a 1GB shared-cpu VM. The seed runs on every container start; storage is ephemeral.
+- **Screenshots inline in the README.** Operations Desk, investigation detail, investigations list, scan run detail, and notifications panel — captured from the demo via `scripts/capture-screenshots.ts`.
+- **`npm run demo` and `npm run seed:demo`.** Local demo iteration: seed → boot. Both write to `data-demo/` (gitignored) so they never touch your real dev data.
+
+### Changed
+- **Service health poller warms its cache from the database at construction.** Without this, `getHealth()` returned an empty map until the first poll lands ~60s later, painting the Ops Desk with "0/N services" on every restart. Now the last-known status per service shows immediately. (New `Database.getLatestHealthPerService(stackId)` helper.)
+- **`DATA_DIR` environment variable now controls the per-stack data root** (was hardcoded to `data/`). Default is unchanged. Lets the demo write to `/data` on a Fly volume, and the local demo write to `data-demo/`, without code changes.
+
+
 
 ### Deployment
 - **Configure investigation-complete email notifications from Helm.** The chart now accepts `config.notifications.email` (rendered verbatim into `config.yaml` on the pod) and a new top-level `extraEnvFrom` for pulling env vars out of existing Kubernetes Secrets. Typical setup: create a Secret with `SMTP_USER` / `SMTP_PASS`, point `extraEnvFrom` at it, and reference `${SMTP_USER}` / `${SMTP_PASS}` from inside the notifications block. SMTP credentials stay out of values.yaml. See `deploy/helm/dops-assistant/README.md` for the full example. Chart bumped to 0.1.3.
