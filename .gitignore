@@ -30,6 +30,9 @@ TODOS.md
 # Claude Code
 .claude/
 
+# Superpowers brainstorm sessions (local UI artifacts)
+.superpowers/
+
 # Docker dev compose files (contain env/secrets)
 docker-compose.dev*.yml
 

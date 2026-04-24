@@ -106,7 +106,7 @@ describe("runProbe", () => {
 
   it("returns empty when services list is empty", async () => {
     const state = new Map<string, number>();
-    const hits = await runProbe({
+    const { hits } = await runProbe({
       services: [], probe: buildProbe(), providers, datasourceUid: "uid", consecutiveState: state, registryStore: fakeRegistryStore(),
     });
     expect(hits).toEqual([]);
@@ -115,7 +115,7 @@ describe("runProbe", () => {
   it("returns empty when no metric query tool is available", async () => {
     mockTools = {}; // no tools → findMetricQueryTool returns null
     const state = new Map<string, number>();
-    const hits = await runProbe({
+    const { hits } = await runProbe({
       services: ["svc-a"], probe: buildProbe(), providers, datasourceUid: "uid", consecutiveState: state, registryStore: fakeRegistryStore(),
     });
     expect(hits).toEqual([]);
@@ -126,7 +126,7 @@ describe("runProbe", () => {
     mockTools = { query_prometheus: { execute } };
 
     const state = new Map<string, number>();
-    const hits = await runProbe({
+    const { hits } = await runProbe({
       services: ["svc-a"], probe: buildProbe(), providers, datasourceUid: "uid", consecutiveState: state, registryStore: fakeRegistryStore(),
     });
 
@@ -147,7 +147,7 @@ describe("runProbe", () => {
     mockTools = { query_prometheus: { execute } };
 
     const state = new Map<string, number>();
-    const hits = await runProbe({
+    const { hits } = await runProbe({
       services: ["svc-a"], probe: buildProbe(), providers, datasourceUid: "uid", consecutiveState: state, registryStore: fakeRegistryStore(),
     });
 
@@ -168,7 +168,7 @@ describe("runProbe", () => {
     expect(state.get(defaultKey("svc-a", "error_rate"))).toBe(1);
 
     // Tick 2: should fire
-    const hits = await runProbe({ services: ["svc-a"], probe: buildProbe(), providers, datasourceUid: "uid", consecutiveState: state, registryStore: fakeRegistryStore() });
+    const { hits } = await runProbe({ services: ["svc-a"], probe: buildProbe(), providers, datasourceUid: "uid", consecutiveState: state, registryStore: fakeRegistryStore() });
     const err = hits.find(h => h.ruleName === "error_rate");
     expect(err).toBeDefined();
     expect(err!.consecutiveTicks).toBe(2);
@@ -203,7 +203,7 @@ describe("runProbe", () => {
       ],
     });
 
-    const hits = await runProbe({ services: ["svc-a"], probe, providers, datasourceUid: "uid", consecutiveState: state, registryStore: fakeRegistryStore() });
+    const { hits } = await runProbe({ services: ["svc-a"], probe, providers, datasourceUid: "uid", consecutiveState: state, registryStore: fakeRegistryStore() });
     // first query (availability) threw → no hit
     // second query (error_rate) tripped → hit
     expect(hits.find(h => h.ruleName === "availability")).toBeUndefined();
@@ -218,7 +218,7 @@ describe("runProbe", () => {
     mockTools = { query_prometheus: { execute } };
 
     const state = new Map<string, number>();
-    const hits = await runProbe({
+    const { hits } = await runProbe({
       services: ["svc-a", "svc-b"],
       probe: buildProbe(),
       providers, datasourceUid: "uid",
@@ -333,7 +333,7 @@ describe("runProbe — per-service overrides", () => {
     mockTools = { query_prometheus: { execute } };
 
     const state = new Map<string, number>();
-    const hits = await runProbe({
+    const { hits } = await runProbe({
       services: ["svc-a"],
       probe: buildProbe(),
       providers, datasourceUid: "uid",
@@ -377,7 +377,7 @@ describe("runProbe — four-track evaluator (Slice C)", () => {
     mockTools = { query_prometheus: { execute } };
 
     const state = new Map<string, number>();
-    const hits = await runProbe({
+    const { hits } = await runProbe({
       services: ["svc-a"],
       probe: buildProbe(),
       providers, datasourceUid: "uid",
@@ -401,7 +401,7 @@ describe("runProbe — four-track evaluator (Slice C)", () => {
     mockTools = { query_prometheus: { execute } };
 
     const state = new Map<string, number>();
-    const hits = await runProbe({
+    const { hits } = await runProbe({
       services: ["svc-a"],
       probe: buildProbe(),
       providers, datasourceUid: "uid",
@@ -419,12 +419,86 @@ describe("runProbe — four-track evaluator (Slice C)", () => {
     expect(hit!.origin).toBe("default");
   });
 
+  it("suppresses base-track availability rules when service has its own service_availability", async () => {
+    // Regression: with 72 services and 3 hardcoded workload-type default
+    // globals (deployment/statefulset/daemonset availability), the base
+    // track would fire ~216 empty-vector queries per tick on any stack
+    // where the discovery agent wrote a per-service service_availability
+    // rule. The per-service rule IS the availability signal for that
+    // service; the workload-type globals are definitionally redundant
+    // (each service is only one workload kind, so 2 of 3 always miss).
+    // Suppression drops the noise without losing coverage.
+    const execute = vi.fn(async () => promResult(1));
+    mockTools = { query_prometheus: { execute } };
+
+    const state = new Map<string, number>();
+    await runProbe({
+      services: ["svc-a"],
+      probe: buildProbe({
+        // Three workload-type defaults on the base track — simulates the
+        // config.yaml defaults that fire when globalProbeRules is empty.
+        metrics: [
+          { name: "deployment_availability", query: 'kube_deployment_status_replicas_available{deployment="{service}"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 3 },
+          { name: "statefulset_availability", query: 'kube_statefulset_status_replicas_ready{statefulset="{service}"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 3 },
+          { name: "daemonset_availability", query: 'kube_daemonset_status_number_ready{daemonset="{service}"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 3 },
+        ],
+      }),
+      providers, datasourceUid: "uid",
+      consecutiveState: state,
+      registryStore: fakeRegistryStore({
+        services: [{
+          name: "svc-a", metrics: [], logLabels: {},
+          probeRules: [metricsRule({ name: "service_availability", query: 'up{app="svc-a"}', threshold: { op: "lt", value: 1 } })],
+        } as ServiceConfig],
+        globalProbeRules: [],
+      }),
+    });
+
+    const calls = execute.mock.calls.map((c) => (c[0] as { expr: string }).expr);
+    // Per-service availability fires.
+    expect(calls.some((e) => e.includes('up{app="svc-a"}'))).toBe(true);
+    // None of the three base-track workload-type defaults fire.
+    expect(calls.some((e) => e.includes("kube_deployment_status_replicas_available"))).toBe(false);
+    expect(calls.some((e) => e.includes("kube_statefulset_status_replicas_ready"))).toBe(false);
+    expect(calls.some((e) => e.includes("kube_daemonset_status_number_ready"))).toBe(false);
+  });
+
+  it("still fires base-track defaults for services WITHOUT service_availability", async () => {
+    // Suppression is conditional — a service that has no per-service
+    // availability rule must still get the workload-type fallback.
+    const execute = vi.fn(async () => promResult(1));
+    mockTools = { query_prometheus: { execute } };
+
+    const state = new Map<string, number>();
+    await runProbe({
+      services: ["svc-a"],
+      probe: buildProbe({
+        metrics: [
+          { name: "deployment_availability", query: 'kube_deployment_status_replicas_available{deployment="{service}"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 3 },
+        ],
+      }),
+      providers, datasourceUid: "uid",
+      consecutiveState: state,
+      registryStore: fakeRegistryStore({
+        services: [{
+          name: "svc-a", metrics: [], logLabels: {},
+          // No service_availability rule here — just pod_restarts.
+          probeRules: [metricsRule({ name: "pod_restarts", query: 'rate(restarts[5m])', threshold: { op: "gt", value: 0.033 } })],
+        } as ServiceConfig],
+        globalProbeRules: [],
+      }),
+    });
+
+    const calls = execute.mock.calls.map((c) => (c[0] as { expr: string }).expr);
+    expect(calls.some((e) => e.includes("kube_deployment_status_replicas_available"))).toBe(true);
+  });
+
   it("Track 2: per-service probeRules ADD to the base track (do not replace)", async () => {
     const execute = vi.fn(async () => promResult(0));
     mockTools = { query_prometheus: { execute } };
 
     const state = new Map<string, number>();
-    const hits = await runProbe({
+    const { hits } = await runProbe({
       services: ["svc-a"],
       probe: buildProbe(),
       providers, datasourceUid: "uid",
@@ -452,7 +526,7 @@ describe("runProbe — four-track evaluator (Slice C)", () => {
     mockLogsTools = { query_loki_logs: { execute: logsExecute } };
 
     const state = new Map<string, number>();
-    const hits = await runProbe({
+    const { hits } = await runProbe({
       services: ["svc-a"],
       probe: buildProbe(),
       providers, datasourceUid: "uid",
@@ -482,7 +556,7 @@ describe("runProbe — four-track evaluator (Slice C)", () => {
     mockLogsTools = {};  // no logs tool available
 
     const state = new Map<string, number>();
-    const hits = await runProbe({
+    const { hits } = await runProbe({
       services: ["svc-a"],
       probe: buildProbe(),
       providers, datasourceUid: "uid",
@@ -508,7 +582,7 @@ describe("runProbe — four-track evaluator (Slice C)", () => {
     mockLogsTools = { query_loki_logs: { execute: logsExecute } };
 
     const state = new Map<string, number>();
-    const hits = await runProbe({
+    const { hits } = await runProbe({
       services: ["svc-a"],
       probe: buildProbe({ logs: { enabled: true, window: "15m", errorRateThreshold: 10, consecutiveTicks: 1 } }),
       providers, datasourceUid: "uid",
@@ -685,5 +759,89 @@ describe("buildInvestigationMessage", () => {
     expect(msg).toContain("0.01");
     expect(msg).toContain("rate(errors)");
     expect(msg).toContain("2 consecutive");
+  });
+});
+
+describe("runProbe — stats return value", () => {
+  beforeEach(() => {
+    mockTools = {};
+  });
+
+  it("returns { hits, queriesExecuted, probeErrors }", async () => {
+    // 2 services × 1 rule each = 2 queries, all succeed → probeErrors=0
+    const execute = vi.fn(async () => promResult(1));
+    mockTools = { query_prometheus: { execute } };
+
+    const state = new Map<string, number>();
+    const result = await runProbe({
+      services: ["svc-a", "svc-b"],
+      probe: buildProbe({
+        metrics: [
+          { name: "availability", query: 'up{service="{service}"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 1 },
+        ],
+      }),
+      providers, datasourceUid: "uid",
+      consecutiveState: state,
+      registryStore: fakeRegistryStore(),
+    });
+
+    expect(result.queriesExecuted).toBe(2);
+    expect(result.probeErrors).toBe(0);
+    expect(Array.isArray(result.hits)).toBe(true);
+  });
+
+  it("counts query errors (NaN results) as probeErrors", async () => {
+    // 1 service × 1 rule; tool throws → executeInstant returns NaN → probeErrors=1
+    const execute = vi.fn().mockRejectedValue(new Error("boom"));
+    mockTools = { query_prometheus: { execute } };
+
+    const state = new Map<string, number>();
+    const result = await runProbe({
+      services: ["svc-a"],
+      probe: buildProbe({
+        metrics: [
+          { name: "availability", query: 'up{service="{service}"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 1 },
+        ],
+      }),
+      providers, datasourceUid: "uid",
+      consecutiveState: state,
+      registryStore: fakeRegistryStore(),
+    });
+
+    expect(result.queriesExecuted).toBe(1);
+    expect(result.probeErrors).toBe(1);
+    expect(result.queriesEmpty).toBe(0);
+    expect(result.hits).toEqual([]);
+  });
+
+  it("separates empty-vector results from real errors (regression)", async () => {
+    // A rule that returns a valid but empty Prometheus vector is NOT an error —
+    // it's the healthy "no data matches these labels for this service" case.
+    // Before the split, both outcomes collapsed to `probeErrors` and the UI
+    // alarmed in amber on a healthy cluster. This test pins the split.
+    const execute = vi.fn()
+      .mockResolvedValueOnce(promResult(1))        // svc-a → ok (up=1, not tripped)
+      .mockResolvedValueOnce(emptyPromResult())    // svc-b → empty vector
+      .mockRejectedValueOnce(new Error("MCP dead")); // svc-c → real error
+
+    mockTools = { query_prometheus: { execute } };
+
+    const state = new Map<string, number>();
+    const result = await runProbe({
+      services: ["svc-a", "svc-b", "svc-c"],
+      probe: buildProbe({
+        metrics: [
+          { name: "availability", query: 'up{service="{service}"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 1 },
+        ],
+      }),
+      providers, datasourceUid: "uid",
+      consecutiveState: state,
+      registryStore: fakeRegistryStore(),
+    });
+
+    expect(result.queriesExecuted).toBe(3);
+    expect(result.probeErrors).toBe(1);   // only the real throw
+    expect(result.queriesEmpty).toBe(1);  // the empty-vector response
+    expect(result.hits).toEqual([]);      // nothing tripped (1 < 1 is false, NaN doesn't trip)
   });
 });

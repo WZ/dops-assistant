@@ -18,14 +18,18 @@ import type {
 } from "@/lib/dashboard-utils";
 import { useStackContext } from "../contexts/StackContext";
 import { useRecentEvents } from "../hooks/useRecentEvents.js";
+import { useScanActivity } from "../hooks/useScanActivity.js";
+import { RecentScansSection } from "./RecentScansSection.js";
 import type { ServiceConfig } from "../../config/schema.js";
-import type { ServerMessage } from "../../types/ws-types.js";
+import type { ClientMessage, ServerMessage } from "../../types/ws-types.js";
 
 interface DashboardProps {
   wsMessages: ServerMessage[];
+  wsSend: (msg: ClientMessage) => void;
   onInvestigationClick: (id: string) => void;
   onViewService: (serviceName: string) => void;
   onViewAllServices: () => void;
+  onOpenScanRun: (runId: string) => void;
   stackName?: string;
   setupStage?: import("../hooks/useSetupStage").SetupStage | null;
   setupDismissed?: boolean;
@@ -45,9 +49,11 @@ type HealthStatus = "healthy" | "degraded" | "down" | "unknown";
 
 export function Dashboard({
   wsMessages,
+  wsSend,
   onInvestigationClick,
   onViewService,
   onViewAllServices,
+  onOpenScanRun,
   stackName,
   setupStage,
   setupDismissed,
@@ -86,6 +92,13 @@ export function Dashboard({
     error: recentEventsError,
     truncated: recentEventsTruncated,
   } = useRecentEvents({ limit: 50, pollMs: 5000 });
+
+  // Source-of-truth for the "Scan now" button state. useScanActivity polls
+  // /api/scan/activity which already returns `enabled` + live ticking state,
+  // so the Ops Desk card mirrors the Settings-tab toggle without an extra
+  // fetch of its own.
+  const { activity: scanActivity } = useScanActivity({ pollMs: 30_000 });
+  const scanEnabled = scanActivity?.enabled ?? false;
 
   const processedRef = useRef(0);
   const fetchSeqRef = useRef(0);
@@ -743,6 +756,19 @@ export function Dashboard({
               </div>
             )}
           </section>
+
+          {/* Section E2: Recent Scans — proactive scan runs. Sits between
+              Investigation Log (reactive work) and Learned Patterns
+              (historical context) so operators scanning top-to-bottom see
+              reactive → proactive → pattern-level signal. */}
+          <div className="mb-4">
+            <RecentScansSection
+              scanEnabled={scanEnabled}
+              wsSend={wsSend}
+              wsMessages={wsMessages}
+              onOpenRun={onOpenScanRun}
+            />
+          </div>
 
           {/* Section F: Learned Patterns */}
           {patterns.length > 0 && (

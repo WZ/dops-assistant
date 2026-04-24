@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { ALL_SOURCES, type NotificationSource, type SeverityLevel } from "../../types/notifications.js";
 
-type Severity = "low" | "medium" | "high" | "critical";
-type Source = "webhook" | "scan" | "poller" | "manual";
+type Severity = SeverityLevel;
+type Source = NotificationSource;
 
 interface Recipient {
   id: number;
@@ -20,10 +21,10 @@ interface Props {
   onSaved: () => void;
 }
 
-const ALL_SOURCES: Source[] = ["webhook", "scan", "poller", "manual"];
 const SOURCE_HELP: Record<Source, string> = {
   webhook: "Alertmanager webhook",
-  scan: "Proactive scan",
+  scan: "Proactive scan (per-service)",
+  "scan-run": "Scan run summary (per tick)",
   poller: "Health poller",
   manual: "Manual investigation",
 };

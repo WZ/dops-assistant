@@ -16,6 +16,11 @@ services:
       namespace: "checkout"
       container: "api"
     probeRules:
+      - name: service_availability
+        query: 'up{app="checkout-api"}'
+        threshold: { op: lt, value: 1 }
+        consecutiveTicks: 3
+        source: metrics
       - name: pod_restarts
         query: 'rate(kube_pod_container_status_restarts_total{namespace="checkout"}[5m])'
         threshold: { op: gt, value: 0.033 }
@@ -35,6 +40,11 @@ services:
       namespace: "payments"
       container: "worker"
     probeRules:
+      - name: service_availability
+        query: 'up{app="payments-worker"}'
+        threshold: { op: lt, value: 1 }
+        consecutiveTicks: 3
+        source: metrics
       - name: pod_restarts
         query: 'rate(kube_pod_container_status_restarts_total{namespace="payments"}[5m])'
         threshold: { op: gt, value: 0.033 }
@@ -53,7 +63,12 @@ services:
     logLabels:
       namespace: "notifications"
       container: "dispatcher"
-    probeRules: []
+    probeRules:
+      - name: service_availability
+        query: 'up{app="notify-dispatcher"}'
+        threshold: { op: lt, value: 1 }
+        consecutiveTicks: 3
+        source: metrics
 
 globalProbeRules:
   - name: app_availability

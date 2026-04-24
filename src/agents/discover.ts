@@ -124,17 +124,50 @@ Each service in "services" must have:
 - "probeRules" (REQUIRED when minimum context exists — you almost always have it):
   array of per-service anomaly detection rules for the proactive scan probe.
   These are the rules that CANNOT be written as globalProbeRules because they
-  need the SERVICE'S specific labels (its namespace, its log container). A
-  service.yaml with empty probeRules on every service means the probe cannot
-  detect pod-restart storms or log-error bursts — the two most common k8s
-  failure modes. Discovery writing these rules is the whole point of slicing
-  per-service context out of your tool calls.
+  need the SERVICE'S specific labels (its namespace, its log container, or the
+  specific health-check query you wrote for this service). A services.yaml
+  with empty probeRules on every service means the probe cannot detect
+  outages, pod-restart storms, or log-error bursts. Discovery writing these
+  rules is the whole point of slicing per-service context out of your tool
+  calls.
 
-  EMIT BOTH OF THESE RULES FOR EACH SERVICE unless the explicit omission
+  EMIT ALL THREE OF THESE RULES FOR EACH SERVICE unless the explicit omission
   clause below applies. Do not ship \`probeRules: []\` as a default — that is
   an escape hatch for the rare service with zero context, NOT a safe default.
 
-  (1) pod_restarts (source: "metrics") — EMIT whenever you know the service's
+  (1) service_availability (source: "metrics") — EMIT whenever the service has
+      a non-empty \`metrics\` array. This is the most important rule for
+      coverage: globalProbeRules assume a single majority-wins label key that
+      matches the service name (e.g. \`up{app="{service}"}\`). Many stacks mix
+      discovery sources — some services register via kube-state-metrics, some
+      via Consul, some via a service mesh — and for any service whose backing
+      workload name differs from its registered service name (headless
+      Services, webhook Services, service-mesh proxies, operator-managed
+      workloads) the globalProbeRule silently misses. The per-service
+      availability rule fixes that because YOU already wrote a health-check
+      query that IS known to return data for this specific service —
+      \`metrics[0].query\`. Promote it to a rule.
+
+        {
+          "name": "service_availability",
+          "query": "<the exact metrics[0].query string you wrote for this service>",
+          "threshold": { "op": "lt", "value": 1 },
+          "consecutiveTicks": 3,
+          "source": "metrics"
+        }
+
+      The health-check queries you're writing in \`metrics\` are 0-or-higher
+      gauge indicators — \`up{...}\`, \`kube_deployment_status_replicas{...}\`,
+      \`consul_catalog_service_node_healthy{...}\`, etc. \`lt 1\` trips when the
+      indicator drops to 0 (full unavailability). consecutiveTicks: 3 matches
+      the globalProbeRule hysteresis so the signal isn't noisier than the
+      global-track equivalent.
+
+      Only omit this rule if \`metrics\` is empty — i.e. you couldn't find
+      ANY query that identifies this service. That is rare and indicates the
+      service probably shouldn't have made it into the registry.
+
+  (2) pod_restarts (source: "metrics") — EMIT whenever you know the service's
       namespace OR a workload selector (deployment/statefulset/daemonset name).
       You almost always know at least one of these from your discovery queries
       — \`kube_pod_info\`, \`kube_deployment_status_replicas\`, pod lists, etc.
@@ -158,7 +191,7 @@ Each service in "services" must have:
       in a \`"description"\` field on the service if you hit this case, so an
       operator can see why the rule is missing.
 
-  (2) log_errors (source: "logs") — EMIT whenever \`logLabels\` is non-empty.
+  (3) log_errors (source: "logs") — EMIT whenever \`logLabels\` is non-empty.
       You already wrote logLabels one field above; reuse them verbatim.
 
         {
@@ -181,12 +214,12 @@ Each service in "services" must have:
       could be discovered). If you wrote logLabels, write log_errors.
 
   When to write \`probeRules: []\`:
-    ONLY when BOTH (namespace AND workload selector) are unknown AND logLabels
-    is empty. That combination means you truly have no per-service context —
-    which is unusual for a service that made it into the registry at all.
-    Every service with \`logLabels\` non-empty gets at least log_errors.
-    Every service discovered via a namespace-bearing metric gets at least
-    pod_restarts. Most get both.
+    ONLY when \`metrics\` is empty AND \`logLabels\` is empty AND you truly
+    could not identify a namespace or workload selector. That combination
+    means you have zero per-service context — unusual for a service that
+    made it into the registry at all. Every service with a non-empty
+    \`metrics\` array gets at least service_availability. Every service with
+    non-empty \`logLabels\` gets at least log_errors. Most get all three.
 
 - "gitlabProject" (optional): GitLab project path if you know it.
 - "corootAppId" (optional): Coroot application ID if you know it.

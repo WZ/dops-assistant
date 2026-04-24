@@ -220,3 +220,47 @@ describe("handleClientMessage — deep_investigate", () => {
     expect((responses[0] as any).content).toContain("not found");
   });
 });
+
+describe("handleClientMessage — scan:trigger", () => {
+  it("calls scheduler.triggerNow and forwards events to the connection", async () => {
+    const deps = mockDeps();
+    const ctx = mockCtx();
+
+    let listener: ((evt: unknown) => void) | null = null;
+    const setEventListener = vi.fn((fn: ((evt: unknown) => void) | null) => { listener = fn; });
+    const triggerNow = vi.fn(async (_trigger: string) => {
+      // Simulate scheduler emitting a scan event while the listener is bound
+      listener?.({ type: "scan:started", runId: "r1", stackId: S, trigger: "manual", startedAt: Date.now() });
+    });
+    (ctx as any).scanScheduler = { setEventListener, triggerNow };
+
+    const sent: ServerMessage[] = [];
+    const send = (m: ServerMessage) => sent.push(m);
+
+    await callHandler({ type: "scan:trigger" }, send, deps, ctx);
+
+    expect(triggerNow).toHaveBeenCalledWith("manual");
+    // Listener bound during the call, cleared in finally
+    expect(setEventListener).toHaveBeenCalledTimes(2);
+    expect(setEventListener.mock.calls[1]![0]).toBeNull();
+    // The emitted scan event was forwarded through send()
+    expect(sent.some((m) => m.type === "scan:started")).toBe(true);
+  });
+
+  it("sends an error when scheduler is unavailable", async () => {
+    const deps = mockDeps();
+    const ctx = mockCtx();
+    (ctx as any).scanScheduler = null;
+
+    const sent: ServerMessage[] = [];
+    const send = (m: ServerMessage) => sent.push(m);
+
+    await callHandler({ type: "scan:trigger" }, send, deps, ctx);
+
+    const err = sent.find((m) => m.type === "error");
+    expect(err).toBeDefined();
+    if (err && err.type === "error") {
+      expect(err.message).toMatch(/scan scheduler/i);
+    }
+  });
+});

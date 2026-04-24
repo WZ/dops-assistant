@@ -11,7 +11,33 @@ vi.mock("./anomaly-probe.js", async () => {
   const actual = await vi.importActual<typeof import("./anomaly-probe.js")>("./anomaly-probe.js");
   return {
     ...actual,
-    runProbe: vi.fn(async () => mockProbeHits),
+    runProbe: vi.fn(async () => ({
+      hits: mockProbeHits,
+      queriesExecuted: mockProbeHits.length,
+      probeErrors: 0,
+    })),
+  };
+});
+
+// Mock scan-run-store so scheduler tests don't need real DB writes.
+// The mockTracker captures calls so individual tests can assert on them.
+const mockTracker = {
+  id: "test-run",
+  stackId: "s1",
+  recordProbeComplete: vi.fn(),
+  recordTriageComplete: vi.fn(),
+  linkInvestigation: vi.fn(),
+  finalize: vi.fn(),
+  skip: vi.fn(),
+  fail: vi.fn(),
+};
+const mockBegin = vi.fn((_args: { stackId: string; trigger: "manual" | "cron" }) => mockTracker);
+
+vi.mock("./scan-run-store.js", async () => {
+  const actual = await vi.importActual<typeof import("./scan-run-store.js")>("./scan-run-store.js");
+  return {
+    ...actual,
+    createScanRunStore: vi.fn(() => ({ begin: mockBegin })),
   };
 });
 
@@ -634,5 +660,71 @@ describe("ScanScheduler.resetHysteresisForService", () => {
     expect(state.has("svc:availability")).toBe(false);
     expect(state.get("svc-a:availability")).toBe(3);
     scheduler.stop();
+  });
+});
+
+describe("ScanScheduler — ScanRunTracker integration", () => {
+  beforeEach(() => {
+    mockBegin.mockClear();
+    mockTracker.recordProbeComplete.mockClear();
+    mockTracker.recordTriageComplete.mockClear();
+    mockTracker.finalize.mockClear();
+    mockTracker.skip.mockClear();
+    mockTracker.fail.mockClear();
+    mockTracker.linkInvestigation.mockClear();
+    mockProbeHits = [];
+  });
+
+  it("tick() creates run + finalizes complete", async () => {
+    mockProbeHits = [];
+    const db = makeDb();
+    const scheduler = new ScanScheduler({
+      providers: () => [], registryStore: makeRegistry(["svc-a"]), db,
+      stackId: "s1", scan: makeScanConfig(),
+      getPrometheusDatasourceUid: () => "uid",
+      onAnomaliesDetected: vi.fn(),
+    });
+    await scheduler.triggerNow("manual");
+    expect(mockBegin).toHaveBeenCalledWith({ stackId: "s1", trigger: "manual" });
+    expect(mockTracker.recordProbeComplete).toHaveBeenCalled();
+    expect(mockTracker.recordTriageComplete).toHaveBeenCalled();
+    expect(mockTracker.finalize).toHaveBeenCalledWith("complete");
+  });
+
+  it("skips with 'no_provider' when datasource unavailable", async () => {
+    const scheduler = new ScanScheduler({
+      providers: () => [], registryStore: makeRegistry(["svc-a"]), db: makeDb(),
+      stackId: "s1", scan: makeScanConfig(),
+      getPrometheusDatasourceUid: () => undefined,
+      onAnomaliesDetected: vi.fn(),
+    });
+    await scheduler.triggerNow("manual");
+    expect(mockTracker.skip).toHaveBeenCalledWith("no_provider");
+  });
+
+  it("skips with 'empty_registry' on no services", async () => {
+    const scheduler = new ScanScheduler({
+      providers: () => [], registryStore: makeRegistry([]), db: makeDb(),
+      stackId: "s1", scan: makeScanConfig(),
+      getPrometheusDatasourceUid: () => "uid",
+      onAnomaliesDetected: vi.fn(),
+    });
+    await scheduler.triggerNow("manual");
+    expect(mockTracker.skip).toHaveBeenCalledWith("empty_registry");
+  });
+
+  it("passes runId in onAnomaliesDetected payload when hits dispatched", async () => {
+    mockProbeHits = [makeHit("svc-a", 1)];
+    const onAnomaliesDetected = vi.fn();
+    const scheduler = new ScanScheduler({
+      providers: () => [], registryStore: makeRegistry(["svc-a"]), db: makeDb(),
+      stackId: "s1", scan: makeScanConfig(),
+      getPrometheusDatasourceUid: () => "uid",
+      onAnomaliesDetected,
+    });
+    await scheduler.triggerNow("manual");
+    expect(onAnomaliesDetected).toHaveBeenCalledWith(expect.objectContaining({
+      stackId: "s1", runId: "test-run", hits: expect.any(Array),
+    }));
   });
 });

@@ -29,6 +29,8 @@ import nodemailer from "nodemailer";
 import type { RcaReport } from "../types/rca-types.js";
 import { notifyEmail } from "./email-notifier.js";
 import { parseInvestigationFilters } from "./investigation-filters.js";
+import { sendSlackScanRunPost } from "./slack-notifier.js";
+import { ALL_SOURCES } from "../types/notifications.js";
 
 /**
  * Zod schema for PUT /api/scan/settings body.
@@ -76,6 +78,21 @@ export interface RouteDeps {
   skillStore?: SkillStore;
   sharedDedup: InvestigationDedup;
   llmModel?: LanguageModel;
+}
+
+/**
+ * Extract a one-line summary from an investigation.report JSON blob. Returns
+ * null if the column is non-JSON or has no string `.summary` field. Used by
+ * GET /api/scan/runs/:id to decorate linked investigations without forcing
+ * the caller to parse RCA reports on the client.
+ */
+function extractReportSummary(reportJson: string): string | null {
+  try {
+    const parsed = JSON.parse(reportJson) as { summary?: string };
+    return typeof parsed.summary === "string" ? parsed.summary : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Get all services for a stack by merging config + registry */
@@ -347,11 +364,87 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     });
     // Fire-and-forget — don't await. The tick runs asynchronously and the
     // UI polls /api/scan/status to observe state transitions.
-    void scheduler.triggerNow();
+    //
+    // `scheduler.triggerNow()` is async but executes synchronously through
+    // `scanRunStore.begin(...)` before its first `await runProbe(...)`, so
+    // `getLastRunId()` on the next line reliably returns the new run's id.
+    // Clients use this to navigate to /scan/runs/:runId for live progress.
+    void scheduler.triggerNow("manual");
     res.status(202).json({
       message: "Probe pass dispatched",
       status: scheduler.getStatus(),
+      runId: scheduler.getLastRunId(),
     });
+  });
+
+  /**
+   * GET /api/scan/runs — list scan runs for the resolved stack, newest first.
+   *
+   * Query params:
+   *  - `limit` — max rows to return. Defaults to 50. Hard-capped at 200 so
+   *    one unbounded fetch can't pull the entire history into memory. NaN /
+   *    non-positive values fall back to the default.
+   *  - `before` — optional epoch-ms cursor. Only rows with started_at
+   *    strictly less than `before` are returned. Used for pagination by the
+   *    Recent Scans UI. Non-integer values are ignored (no-op), matching
+   *    db.listScanRuns({ before: undefined }).
+   *
+   * Stack isolation is enforced by the /api middleware populating
+   * req.stackId; db.listScanRuns filters by stack_id server-side.
+   */
+  app.get("/api/scan/runs", (req: Request, res: Response) => {
+    const rawLimit = parseInt((req.query["limit"] as string) || "50", 10);
+    const limit = Math.min(Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 50, 200);
+    const beforeRaw = req.query["before"] as string | undefined;
+    const beforeParsed = beforeRaw !== undefined ? parseInt(beforeRaw, 10) : undefined;
+    const before = Number.isFinite(beforeParsed as number) ? beforeParsed : undefined;
+    const runs = db.listScanRuns({
+      stackId: req.stackId,
+      limit,
+      before,
+    });
+    res.json({ runs });
+  });
+
+  /**
+   * GET /api/scan/runs/:id — detail view for a single scan_run.
+   *
+   * Returns the run plus all linked investigations, each enriched with the
+   * investigation's current `status` and a one-line `reportSummary`
+   * (extracted from `report.summary` when the JSON is parseable). The
+   * snapshot metadata stored on `scan_run_investigations` (service,
+   * ruleName, value, severity, dispatchedAt) is preserved alongside the
+   * live fields so the UI can show "what fired" even if the investigation
+   * row has been GC'd or is still running.
+   *
+   * Cross-stack hint: if the run ID exists but belongs to another stack,
+   * returns 404 with `{ expectedStackId }` so the web UI can offer a
+   * "switch to that stack" banner instead of a dead end. A truly missing
+   * ID returns plain 404 (no hint).
+   */
+  app.get("/api/scan/runs/:id", (req: Request, res: Response) => {
+    const id = req.params["id"] as string;
+    const run = db.getScanRun(req.stackId, id);
+    if (!run) {
+      const anyStack = db.getScanRunAnyStack(id);
+      if (anyStack) {
+        res.status(404).json({ error: "Wrong stack", expectedStackId: anyStack.stackId });
+        return;
+      }
+      res.status(404).json({ error: "Scan run not found" });
+      return;
+    }
+    const links = db.getScanRunInvestigations(id);
+    const investigations = links.map(link => {
+      const inv = db.getInvestigation(req.stackId, link.investigationId);
+      return {
+        ...link,
+        status: inv?.status ?? "unknown",
+        reportSummary: inv?.report ? extractReportSummary(inv.report) : null,
+        completedAt: inv?.completed_at ?? null,
+      };
+    });
+    res.json({ run, investigations });
   });
 
   /**
@@ -1582,26 +1675,42 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
   // ── Notifications REST API ──────────────────────────────────────────
 
+  const SLACK_ON_SCAN_COMPLETE_VALUES = new Set(["always", "hits-only", "off"]);
+
   app.get("/api/notifications", (_req: Request, res: Response) => {
     const slackUrl = db.getSetting("notifications.slack.webhookUrl");
     const slackEnabled = db.getSetting("notifications.slack.enabled");
     // Fall back to config.yaml if no GUI override
     const effectiveUrl = slackUrl ?? config.webhook.slackWebhookUrl ?? null;
     const effectiveEnabled = slackEnabled !== undefined ? slackEnabled === "true" : !!effectiveUrl;
+    const onScanComplete = db.getSetting("notifications.slack.onScanComplete") ?? "hits-only";
     res.json({
       slack: {
         webhookUrl: effectiveUrl,
         enabled: effectiveEnabled,
         source: slackUrl ? "gui" : (config.webhook.slackWebhookUrl ? "config" : "none"),
+        onScanComplete,
       },
     });
   });
 
   app.put("/api/notifications", (req: Request, res: Response) => {
-    const { slack } = req.body as { slack?: { webhookUrl?: string | null; enabled?: boolean } };
+    const { slack } = req.body as {
+      slack?: {
+        webhookUrl?: string | null;
+        enabled?: boolean;
+        onScanComplete?: "always" | "hits-only" | "off";
+      };
+    };
     if (!slack) {
       res.status(400).json({ error: "Missing slack configuration" });
       return;
+    }
+    if (slack.onScanComplete !== undefined) {
+      if (!SLACK_ON_SCAN_COMPLETE_VALUES.has(slack.onScanComplete)) {
+        res.status(400).json({ error: "onScanComplete must be one of: always, hits-only, off" });
+        return;
+      }
     }
     if (slack.webhookUrl !== undefined) {
       if (slack.webhookUrl === null || slack.webhookUrl === "") {
@@ -1623,6 +1732,9 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     }
     if (slack.enabled !== undefined) {
       db.setSetting("notifications.slack.enabled", String(slack.enabled));
+    }
+    if (slack.onScanComplete !== undefined) {
+      db.setSetting("notifications.slack.onScanComplete", slack.onScanComplete);
     }
     res.json({ ok: true });
   });
@@ -1663,9 +1775,62 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     }
   });
 
+  /**
+   * POST /api/notifications/scan-run/send — user-initiated "Send to Slack"
+   * for a specific scan run (from the ScanRunDetail Export menu). Builds
+   * the same Block Kit payload as the automatic scan-complete notifier,
+   * but surfaces errors instead of swallowing them so the UI can show
+   * "webhook not configured" or "Slack post failed" to the operator.
+   *
+   * Response contract:
+   *  - 200 { ok: true } — Slack POST succeeded.
+   *  - 400 — runId missing or Slack webhook not configured.
+   *  - 404 — scan run not found in this stack.
+   *  - 502 — Slack endpoint rejected the payload or network error.
+   */
+  app.post("/api/notifications/scan-run/send", async (req: Request, res: Response) => {
+    const body = req.body as { runId?: string };
+    if (!body.runId || typeof body.runId !== "string") {
+      res.status(400).json({ error: "runId required" });
+      return;
+    }
+    const run = db.getScanRun(req.stackId, body.runId);
+    if (!run) {
+      res.status(404).json({ error: "Scan run not found" });
+      return;
+    }
+    const url = db.getSetting("notifications.slack.webhookUrl") ?? config.webhook?.slackWebhookUrl;
+    if (!url) {
+      res.status(400).json({ error: "Slack webhook not configured" });
+      return;
+    }
+    const investigations = db.getScanRunInvestigations(body.runId);
+    const appBaseUrl = config.notifications?.email?.appBaseUrl ?? "http://localhost:3000";
+    try {
+      await sendSlackScanRunPost(
+        { slackWebhookUrl: url, appBaseUrl },
+        {
+          runId: run.id,
+          stackId: run.stackId,
+          trigger: run.trigger,
+          startedAt: run.startedAt,
+          // Wall-clock duration of the full run, matching what the auto-notifier
+          // posts on `scan:complete`. Falls back to 0 for unfinished runs.
+          durationMs: (run.finishedAt ?? run.startedAt) - run.startedAt,
+          servicesProbed: run.servicesProbed,
+          hitsDispatched: run.hitsDispatched,
+          dispatchedServices: investigations.map(i => i.service),
+        },
+      );
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   // ── Email notifications ─────────────────────────────────────────────────
 
-  const ALL_SOURCES_SET = new Set(["webhook", "scan", "poller", "manual"]);
+  const ALL_SOURCES_SET = new Set<string>(ALL_SOURCES);
   const ALL_SEVERITIES_SET = new Set(["low", "medium", "high", "critical"]);
   const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 

@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.0.0] - 2026-04-22
+
+### Added
+- **Scan Run on the Operations Desk** — every proactive scan tick (manual or cron) now creates a durable `ScanRun` record. The Ops Desk gets a new "Recent Scans" section with a "Scan now" trigger button + collapsed history (consecutive clean cron ticks auto-fold into a single "N clean cron ticks" row so the view stays scannable).
+- **Shareable scan-run detail page** at `/scan/runs/:id` with a 3-phase live view: **Probe** (services probed, queries executed, errors, duration), **Triage** (hits → dedup → dispatched, with expandable breakdown of deduped + capped-out services), and **Investigate** (mini-cards for each dispatched child investigation with live status + one-line RCA summary, click-through to the full InvestigationPane). Live updates stream via WebSocket when connected, with a 1.5s polling fallback while the run is active.
+- **Export menu on scan-run detail** — copy link, copy as Markdown, download PNG snapshot, and "Send to Slack" (fires the run summary to the configured webhook with a deep link back to the run).
+- **Run-level Slack + email notifications.** New `notifications.slack.onScanComplete` mode (`always | hits-only | off`, default `hits-only`) gates a run-level Slack post at `scan:complete`. Email recipients can opt into a new `scan-run` source in the NotificationsTab to receive per-tick summaries (distinct from the per-investigation emails they already get).
+- **Cross-stack isolation.** `GET /api/scan/runs/:id` returns a 404 with `expectedStackId` hint when a run belongs to a different stack, so the UI can offer "switch to that stack" navigation instead of a dead end. Every scan_runs query filters by `stack_id`; `deleteStack` sweeps scan runs + investigation links in the same transaction as other child tables.
+- **Retention.** TTL reaper keeps the last 200 scan runs per stack OR last 30 days, whichever is larger. Runs that dispatched investigations are pinned past the row cap so operators can always go back to "the scan from three weeks ago that flagged payments."
+- **Crash recovery.** On server startup, any `scan_runs` row stuck at `status='running'` is flipped to `failed` with a clear error message, so a mid-tick crash doesn't leave perpetually-in-flight rows in the UI.
+- **New tables.** `scan_runs` (one row per tick with probe + triage stats + JSON detail blobs) and `scan_run_investigations` (join table linking a run to the investigations it dispatched).
+- **New WebSocket events** (`scan:started` / `:probe_complete` / `:triage_complete` / `:investigation_dispatched` / `:complete` / `:failed` / `:skipped`) emitted to the triggering connection.
+- **New REST endpoints.** `GET /api/scan/runs` (paginated history), `GET /api/scan/runs/:id` (run + joined investigations), `POST /api/notifications/scan-run/send` (manual re-send to Slack).
+- **Playwright E2E specs** covering the happy path, history collapse, and cross-stack isolation.
+
+### Changed
+- **`POST /api/scan/trigger` response now includes `runId`** so clients can navigate directly to the run detail page after kicking off a manual scan.
+- **`runProbe` return shape** extended from `ProbeHit[]` to `{ hits, queriesExecuted, probeErrors }` so the scheduler can record accurate probe stats per tick.
+
 ## [0.1.3.0] - 2026-04-23
 
 ### Changed

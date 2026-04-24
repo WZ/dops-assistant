@@ -572,4 +572,66 @@ describe("/api/notifications/email", () => {
       } finally { spy.mockRestore(); }
     } finally { withSmtp.cleanup(); }
   });
+
+  it("accepts scan-run in allowedSources for email recipients", async () => {
+    const res = await request(ctx.app).post("/api/notifications/email/recipients").send({
+      address: "ops@example.com",
+      minSeverity: "low",
+      allowedSources: ["scan-run"],
+      enabled: true,
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.allowedSources).toEqual(["scan-run"]);
+  });
+});
+
+describe("/api/notifications slack onScanComplete", () => {
+  let ctx: ReturnType<typeof makeEmailApp>;
+  beforeEach(() => { ctx = makeEmailApp(); });
+  afterEach(() => { ctx.cleanup(); });
+
+  it("defaults onScanComplete to 'hits-only' in GET response when unset", async () => {
+    const res = await request(ctx.app).get("/api/notifications");
+    expect(res.status).toBe(200);
+    expect(res.body.slack.onScanComplete).toBe("hits-only");
+  });
+
+  it("saves notifications.slack.onScanComplete via PUT /api/notifications", async () => {
+    const put = await request(ctx.app).put("/api/notifications").send({
+      slack: { onScanComplete: "always" },
+    });
+    expect(put.status).toBe(200);
+    const get = await request(ctx.app).get("/api/notifications");
+    expect(get.body.slack.onScanComplete).toBe("always");
+  });
+
+  it("accepts 'off' for onScanComplete", async () => {
+    const put = await request(ctx.app).put("/api/notifications").send({
+      slack: { onScanComplete: "off" },
+    });
+    expect(put.status).toBe(200);
+    const get = await request(ctx.app).get("/api/notifications");
+    expect(get.body.slack.onScanComplete).toBe("off");
+  });
+
+  it("rejects invalid onScanComplete values", async () => {
+    const put = await request(ctx.app).put("/api/notifications").send({
+      slack: { onScanComplete: "maybe" },
+    });
+    expect(put.status).toBe(400);
+  });
+
+  it("does not overwrite existing onScanComplete when PUT omits the field", async () => {
+    // Seed the setting
+    await request(ctx.app).put("/api/notifications").send({
+      slack: { onScanComplete: "always" },
+    });
+    // PUT with only webhookUrl — onScanComplete should remain "always"
+    const put = await request(ctx.app).put("/api/notifications").send({
+      slack: { enabled: true },
+    });
+    expect(put.status).toBe(200);
+    const get = await request(ctx.app).get("/api/notifications");
+    expect(get.body.slack.onScanComplete).toBe("always");
+  });
 });

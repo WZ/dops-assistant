@@ -240,6 +240,99 @@ export interface MessageRow {
   created_at: string;
 }
 
+export interface ScanRunRow {
+  id: string;
+  stackId: string;
+  trigger: "manual" | "cron";
+  status: "running" | "complete" | "failed" | "skipped";
+  skipReason: string | null;
+  startedAt: number;
+  finishedAt: number | null;
+  servicesProbed: number;
+  rulesApplied: number;
+  queriesExecuted: number;
+  probeErrors: number;
+  queriesEmpty: number;
+  probeDurationMs: number | null;
+  probeDetailJson: string | null;
+  hitsRaw: number;
+  hitsAfterDedup: number;
+  hitsDispatched: number;
+  droppedByCap: number;
+  triageDetailJson: string | null;
+  errorMessage: string | null;
+  createdAt: number;
+}
+
+export interface ScanRunInvestigationRow {
+  scanRunId: string;
+  investigationId: string;
+  service: string;
+  ruleName: string;
+  value: number;
+  severity: number;
+  dispatchedAt: number;
+}
+
+export interface InsertScanRunInput {
+  id: string;
+  stackId: string;
+  trigger: "manual" | "cron";
+  startedAt: number;
+}
+
+export interface UpdateScanRunInput {
+  status?: "complete" | "failed" | "skipped";
+  skipReason?: string | null;
+  finishedAt?: number;
+  servicesProbed?: number;
+  rulesApplied?: number;
+  queriesExecuted?: number;
+  probeErrors?: number;
+  queriesEmpty?: number;
+  probeDurationMs?: number;
+  probeDetailJson?: string;
+  hitsRaw?: number;
+  hitsAfterDedup?: number;
+  hitsDispatched?: number;
+  droppedByCap?: number;
+  triageDetailJson?: string;
+  errorMessage?: string | null;
+}
+
+/**
+ * Converts a raw snake_case row from `scan_runs` into the camelCase
+ * `ScanRunRow` used by callers. Timestamps stay as epoch-millisecond numbers
+ * (scan_runs stores INTEGERs, not SQLite datetime strings) so no
+ * normalizeTimestamp() conversion is needed here.
+ */
+function scanRunFromDbRow(r: Record<string, unknown>): ScanRunRow {
+  return {
+    id: r["id"] as string,
+    stackId: r["stack_id"] as string,
+    trigger: r["trigger"] as "manual" | "cron",
+    status: r["status"] as ScanRunRow["status"],
+    skipReason: (r["skip_reason"] as string | null) ?? null,
+    startedAt: r["started_at"] as number,
+    finishedAt: (r["finished_at"] as number | null) ?? null,
+    servicesProbed: r["services_probed"] as number,
+    rulesApplied: r["rules_applied"] as number,
+    queriesExecuted: r["queries_executed"] as number,
+    probeErrors: r["probe_errors"] as number,
+    // Column added in a later migration; pre-existing rows default to 0.
+    queriesEmpty: (r["queries_empty"] as number | null) ?? 0,
+    probeDurationMs: (r["probe_duration_ms"] as number | null) ?? null,
+    probeDetailJson: (r["probe_detail_json"] as string | null) ?? null,
+    hitsRaw: r["hits_raw"] as number,
+    hitsAfterDedup: r["hits_after_dedup"] as number,
+    hitsDispatched: r["hits_dispatched"] as number,
+    droppedByCap: r["dropped_by_cap"] as number,
+    triageDetailJson: (r["triage_detail_json"] as string | null) ?? null,
+    errorMessage: (r["error_message"] as string | null) ?? null,
+    createdAt: r["created_at"] as number,
+  };
+}
+
 export class Database {
   private db: BetterSqlite3.Database;
 
@@ -319,6 +412,7 @@ export class Database {
     this.migrateServiceHealthChecks();
     this.migrateHiddenServices();
     this.migrateSettings();
+    this.migrateScanRuns();
     this.migrateInvestigationSeverity();
   }
 
@@ -355,6 +449,63 @@ export class Database {
         updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
       );
     `);
+  }
+
+  // ── Scan runs migration ────────────────────────────────────────────────
+
+  private migrateScanRuns(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS scan_runs (
+        id                  TEXT    PRIMARY KEY,
+        stack_id            TEXT    NOT NULL,
+        trigger             TEXT    NOT NULL,
+        status              TEXT    NOT NULL,
+        skip_reason         TEXT,
+        -- Timestamps on scan_runs are epoch milliseconds (not SQLite datetime strings).
+        -- All *_at columns on this table follow the same convention.
+        started_at          INTEGER NOT NULL,
+        finished_at         INTEGER,
+        services_probed     INTEGER NOT NULL DEFAULT 0,
+        rules_applied       INTEGER NOT NULL DEFAULT 0,
+        queries_executed    INTEGER NOT NULL DEFAULT 0,
+        probe_errors        INTEGER NOT NULL DEFAULT 0,
+        queries_empty       INTEGER NOT NULL DEFAULT 0,
+        probe_duration_ms   INTEGER,
+        probe_detail_json   TEXT,
+        hits_raw            INTEGER NOT NULL DEFAULT 0,
+        hits_after_dedup    INTEGER NOT NULL DEFAULT 0,
+        hits_dispatched     INTEGER NOT NULL DEFAULT 0,
+        dropped_by_cap      INTEGER NOT NULL DEFAULT 0,
+        triage_detail_json  TEXT,
+        error_message       TEXT,
+        created_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
+      );
+
+      CREATE INDEX IF NOT EXISTS scan_runs_stack_started ON scan_runs(stack_id, started_at DESC);
+      CREATE INDEX IF NOT EXISTS scan_runs_status        ON scan_runs(status);
+
+      CREATE TABLE IF NOT EXISTS scan_run_investigations (
+        scan_run_id      TEXT NOT NULL,
+        investigation_id TEXT NOT NULL,
+        service          TEXT NOT NULL,
+        rule_name        TEXT NOT NULL,
+        value            REAL NOT NULL,
+        severity         REAL NOT NULL,
+        dispatched_at    INTEGER NOT NULL,
+        PRIMARY KEY (scan_run_id, investigation_id),
+        -- ON DELETE CASCADE is declarative only (PRAGMA foreign_keys is OFF in this project).
+        -- Actual cascade is performed by deleteStack() sweeping this table explicitly.
+        FOREIGN KEY (scan_run_id) REFERENCES scan_runs(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS scan_run_inv_by_inv ON scan_run_investigations(investigation_id);
+    `);
+
+    // Additive migration: split the old `probe_errors` counter into real
+    // failures vs empty vectors. Existing rows default to 0 and will look
+    // the same in the UI until the next scan tick writes real numbers.
+    const addEmptyCol = "ALTER TABLE scan_runs ADD COLUMN queries_empty INTEGER NOT NULL DEFAULT 0";
+    try { this.db.exec(addEmptyCol); } catch { /* column already exists */ }
   }
 
   // ── Email recipients migration ─────────────────────────────────────────
@@ -611,6 +762,9 @@ export class Database {
 
   deleteStack(id: string): void {
     const tx = this.db.transaction(() => {
+      // Scan runs (and cascade to scan_run_investigations — FK cascade is declarative-only)
+      this.db.prepare("DELETE FROM scan_run_investigations WHERE scan_run_id IN (SELECT id FROM scan_runs WHERE stack_id = ?)").run(id);
+      this.db.prepare("DELETE FROM scan_runs WHERE stack_id = ?").run(id);
       this.db.prepare("DELETE FROM service_metadata WHERE stack_id = ?").run(id);
       this.db.prepare("DELETE FROM hidden_services WHERE stack_id = ?").run(id);
       this.db.prepare("DELETE FROM disabled_skills WHERE stack_id = ?").run(id);
@@ -1304,6 +1458,190 @@ export class Database {
 
   deleteEmailRecipient(id: number): void {
     this.db.prepare("DELETE FROM email_recipients WHERE id = ?").run(id);
+  }
+
+  // ── Scan runs ────────────────────────────────────────────────────────────
+
+  /**
+   * Insert a new scan_run row in the "running" state. Probe/triage stats,
+   * finishedAt, and terminal status are applied later via updateScanRun().
+   */
+  insertScanRun(input: InsertScanRunInput): void {
+    this.db.prepare(`
+      INSERT INTO scan_runs (id, stack_id, trigger, status, started_at)
+      VALUES (?, ?, ?, 'running', ?)
+    `).run(input.id, input.stackId, input.trigger, input.startedAt);
+  }
+
+  /**
+   * Partial update for a scan_run. Builds a dynamic SET clause from the
+   * defined keys in `patch`; undefined keys are skipped so callers can apply
+   * only the fields they care about (e.g., just probe stats, or just final
+   * triage counts). No-ops when the patch is empty.
+   */
+  updateScanRun(id: string, patch: UpdateScanRunInput): void {
+    const cols: string[] = [];
+    const vals: unknown[] = [];
+    const map: Record<keyof UpdateScanRunInput, string> = {
+      status: "status",
+      skipReason: "skip_reason",
+      finishedAt: "finished_at",
+      servicesProbed: "services_probed",
+      rulesApplied: "rules_applied",
+      queriesExecuted: "queries_executed",
+      probeErrors: "probe_errors",
+      queriesEmpty: "queries_empty",
+      probeDurationMs: "probe_duration_ms",
+      probeDetailJson: "probe_detail_json",
+      hitsRaw: "hits_raw",
+      hitsAfterDedup: "hits_after_dedup",
+      hitsDispatched: "hits_dispatched",
+      droppedByCap: "dropped_by_cap",
+      triageDetailJson: "triage_detail_json",
+      errorMessage: "error_message",
+    };
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === undefined) continue;
+      cols.push(`${map[k as keyof UpdateScanRunInput]} = ?`);
+      vals.push(v);
+    }
+    if (cols.length === 0) return;
+    vals.push(id);
+    this.db.prepare(`UPDATE scan_runs SET ${cols.join(", ")} WHERE id = ?`).run(...vals);
+  }
+
+  /**
+   * Fetch a single scan_run scoped to its stack. Returning null on a
+   * stack_id mismatch (rather than the row from the wrong stack) enforces
+   * cross-stack isolation — callers must not see another tenant's runs even
+   * if they guess the ID.
+   */
+  getScanRun(stackId: string, id: string): ScanRunRow | null {
+    const row = this.db.prepare(`
+      SELECT * FROM scan_runs WHERE stack_id = ? AND id = ?
+    `).get(stackId, id) as Record<string, unknown> | undefined;
+    return row ? scanRunFromDbRow(row) : null;
+  }
+
+  /**
+   * Look up a scan_run row WITHOUT stack filtering. Used solely by the
+   * GET /api/scan/runs/:id handler to produce a "wrong stack" 404 hint —
+   * do NOT expose this to cross-stack callers elsewhere.
+   */
+  getScanRunAnyStack(id: string): ScanRunRow | null {
+    const row = this.db.prepare(`SELECT * FROM scan_runs WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
+    return row ? scanRunFromDbRow(row) : null;
+  }
+
+  /**
+   * List scan_runs for a stack, newest first. `before` is an epoch-ms
+   * cursor: only rows with started_at strictly less than it are returned.
+   */
+  listScanRuns(opts: { stackId: string; limit: number; before?: number }): ScanRunRow[] {
+    const where = opts.before !== undefined
+      ? "stack_id = ? AND started_at < ?"
+      : "stack_id = ?";
+    const args = opts.before !== undefined ? [opts.stackId, opts.before] : [opts.stackId];
+    const rows = this.db.prepare(`
+      SELECT * FROM scan_runs WHERE ${where}
+      ORDER BY started_at DESC LIMIT ?
+    `).all(...args, opts.limit) as Record<string, unknown>[];
+    return rows.map(scanRunFromDbRow);
+  }
+
+  /**
+   * Record the investigation dispatched from a scan_run hit. Idempotent:
+   * the composite PK (scan_run_id, investigation_id) + INSERT OR IGNORE
+   * means repeated calls for the same pair are a no-op. Stored metadata
+   * (service, ruleName, value, severity) is the snapshot at dispatch time.
+   */
+  linkScanRunInvestigation(
+    scanRunId: string,
+    investigationId: string,
+    hit: { service: string; ruleName: string; value: number; severity: number; dispatchedAt: number },
+  ): void {
+    this.db.prepare(`
+      INSERT OR IGNORE INTO scan_run_investigations
+        (scan_run_id, investigation_id, service, rule_name, value, severity, dispatched_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(scanRunId, investigationId, hit.service, hit.ruleName, hit.value, hit.severity, hit.dispatchedAt);
+  }
+
+  /**
+   * Mark any `scan_runs` row stuck in 'running' as 'failed'. Called at server
+   * startup — if the previous process died mid-tick, its row stays 'running'
+   * forever. Idempotent; safe to call on every boot.
+   */
+  sweepStaleScanRuns(): void {
+    this.db.prepare(`
+      UPDATE scan_runs
+         SET status = 'failed',
+             error_message = 'Server restarted during tick',
+             finished_at = CAST(strftime('%s','now') AS INTEGER) * 1000
+       WHERE status = 'running'
+    `).run();
+  }
+
+  /**
+   * Delete old scan_runs rows. Per-stack retention:
+   *   - keep at least `keepLast` most-recent rows per stack
+   *   - pin rows with hits_dispatched > 0 (never reaped — they fired at
+   *     least one investigation so they're audit-worthy regardless of age)
+   *   - otherwise drop rows older than `maxAgeMs`
+   * scan_run_investigations rows are deleted explicitly (FK cascade is declarative-only).
+   */
+  reapScanRuns(opts: { keepLast: number; maxAgeMs: number }): number {
+    const cutoff = Date.now() - opts.maxAgeMs;
+    // Select the ids to delete first (window function + age predicate + pin predicate).
+    // `hits_dispatched > 0` pins the row regardless of age — operators need to
+    // keep the audit trail of what fired, even long after the tick itself.
+    const toDelete = this.db.prepare(`
+      SELECT id FROM (
+        SELECT
+          id,
+          hits_dispatched,
+          started_at,
+          ROW_NUMBER() OVER (PARTITION BY stack_id ORDER BY started_at DESC) AS rn
+        FROM scan_runs
+      )
+      WHERE rn > ?
+        AND started_at < ?
+        AND (hits_dispatched IS NULL OR hits_dispatched = 0)
+    `).all(opts.keepLast, cutoff) as Array<{ id: string }>;
+
+    if (toDelete.length === 0) return 0;
+
+    // Delete children first (FK cascade is declarative-only), then parents, in a transaction.
+    const deleteChildren = this.db.prepare(`DELETE FROM scan_run_investigations WHERE scan_run_id = ?`);
+    const deleteParent = this.db.prepare(`DELETE FROM scan_runs WHERE id = ?`);
+    const txn = this.db.transaction((ids: string[]) => {
+      for (const id of ids) {
+        deleteChildren.run(id);
+        deleteParent.run(id);
+      }
+    });
+    txn(toDelete.map(r => r.id));
+    return toDelete.length;
+  }
+
+  /**
+   * All investigations linked to a scan_run, ordered by dispatch time
+   * ascending — useful for rendering a chronological timeline on the
+   * ScanRunDetail page.
+   */
+  getScanRunInvestigations(scanRunId: string): ScanRunInvestigationRow[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM scan_run_investigations WHERE scan_run_id = ? ORDER BY dispatched_at ASC
+    `).all(scanRunId) as Record<string, unknown>[];
+    return rows.map(r => ({
+      scanRunId: r["scan_run_id"] as string,
+      investigationId: r["investigation_id"] as string,
+      service: r["service"] as string,
+      ruleName: r["rule_name"] as string,
+      value: r["value"] as number,
+      severity: r["severity"] as number,
+      dispatchedAt: r["dispatched_at"] as number,
+    }));
   }
 
   close(): void {

@@ -24,6 +24,11 @@ export function parseUrl(pathname: string): LeftPaneView {
   const invMatch = p.match(/^\/investigations\/(.+)$/);
   if (invMatch) return { type: "investigation", id: invMatch[1]! };
 
+  // /scan/runs/:id — scan run detail page. Navigated to from the Ops Desk
+  // "Recent Scans" rows and the optimistic nav after a manual Scan now.
+  const scanRunMatch = p.match(/^\/scan\/runs\/([^/]+)$/);
+  if (scanRunMatch) return { type: "scanrun", runId: decodeURIComponent(scanRunMatch[1]!) };
+
   // /services/:name or /services
   const svcMatch = p.match(/^\/services(?:\/(.+))?$/);
   if (svcMatch) return { type: "services", initialService: svcMatch[1] };
@@ -58,6 +63,8 @@ export function viewToUrl(view: LeftPaneView): string {
       return view.initialService ? `${base}/services/${view.initialService}` : `${base}/services`;
     case "settings":
       return view.initialTab ? `${base}/settings/${view.initialTab}` : `${base}/settings`;
+    case "scanrun":
+      return `${base}/scan/runs/${encodeURIComponent(view.runId)}`;
     case "notfound":
       // Preserve the user-typed path so reload stays on the 404 page instead
       // of bouncing to dashboard. `path` was captured verbatim at parse time
