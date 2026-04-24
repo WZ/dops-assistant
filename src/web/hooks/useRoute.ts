@@ -108,18 +108,23 @@ export function viewToUrl(view: LeftPaneView): string {
  */
 export function useRoute(
   setLeftPane: (view: LeftPaneView) => void,
-): { initialView: LeftPaneView; navigate: (view: LeftPaneView) => void } {
+): { initialView: LeftPaneView; navigate: (view: LeftPaneView, opts?: { replace?: boolean }) => void } {
   const suppressPopstate = useRef(false);
 
-  const navigate = useCallback((view: LeftPaneView) => {
+  // `replace: true` swaps the current history entry via replaceState instead of
+  // pushing a new one. Used for same-route state updates (filter bar changes on
+  // /investigations) so the Back button still exits the page in one press
+  // rather than unwinding every keystroke and pill click.
+  const navigate = useCallback((view: LeftPaneView, opts?: { replace?: boolean }) => {
     const url = viewToUrl(view);
-    // Compare against pathname + search: the list page's query is part of the
-    // URL, so a change of filters must still push a new history entry even if
-    // the pathname is unchanged.
     const current = window.location.pathname + window.location.search;
     if (url !== current) {
       suppressPopstate.current = true;
-      window.history.pushState(null, "", url);
+      if (opts?.replace) {
+        window.history.replaceState(null, "", url);
+      } else {
+        window.history.pushState(null, "", url);
+      }
     }
     setLeftPane(view);
   }, [setLeftPane]);

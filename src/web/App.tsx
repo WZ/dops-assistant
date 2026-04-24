@@ -76,7 +76,10 @@ export function App() {
   const [leftPane, setLeftPaneRaw] = useState<LeftPaneView>({ type: "dashboard" });
   const { initialView, navigate } = useRoute(setLeftPaneRaw);
   // Use navigate() for all pane changes — it syncs URL + state
-  const setLeftPane = useCallback((view: LeftPaneView) => navigate(view), [navigate]);
+  const setLeftPane = useCallback(
+    (view: LeftPaneView, opts?: { replace?: boolean }) => navigate(view, opts),
+    [navigate],
+  );
 
   // Set initial view from URL on first render
   const initialViewApplied = useRef(false);
@@ -412,7 +415,9 @@ export function App() {
                   ) : leftPane.type === "investigations" ? (
                     <InvestigationsPage
                       query={leftPane.query}
-                      onUpdateQuery={(query) => setLeftPane({ type: "investigations", query })}
+                      onUpdateQuery={(query) =>
+                        setLeftPane({ type: "investigations", query }, { replace: true })
+                      }
                       onViewInvestigation={(id) => setLeftPane({ type: "investigation", id })}
                       onBack={() => setLeftPane({ type: "dashboard" })}
                     />

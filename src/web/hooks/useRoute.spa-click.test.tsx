@@ -190,3 +190,34 @@ describe("Issue #13 — SPA click from Home renders service detail", () => {
     expect(window.location.pathname).toBe("/services/admin-daphne");
   });
 });
+
+describe("useRoute — {replace: true}", () => {
+  beforeEach(() => {
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("pushState by default, replaceState when opts.replace is set", () => {
+    const push = vi.spyOn(window.history, "pushState");
+    const replace = vi.spyOn(window.history, "replaceState");
+    const { result } = renderHook(() => useAppRouterHarness());
+
+    act(() => {
+      result.current.navigate({ type: "investigations", query: {} });
+    });
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(replace).not.toHaveBeenCalled();
+
+    act(() => {
+      result.current.navigate(
+        { type: "investigations", query: { q: "redis" } },
+        { replace: true },
+      );
+    });
+    // One push total (from the first call), one replace (from this call).
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(replace).toHaveBeenCalledTimes(1);
+
+    push.mockRestore();
+    replace.mockRestore();
+  });
+});
