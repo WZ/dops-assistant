@@ -12,6 +12,7 @@ import { ArrowLeft, FilePlus, RotateCw, ChevronDown, Download, Link2, FileText, 
 import { PhaseStepper, type PhaseState } from "./PhaseStepper";
 import { EvidenceTimeline } from "./EvidenceTimeline";
 import { RcaReport } from "./RcaReport";
+import { InvestigationFeedback } from "./InvestigationFeedback";
 import { useStackContext } from "../contexts/StackContext";
 import type { TimelineEvent } from "./ActivityTimeline";
 import type { TimeSeriesData } from "./MetricChart";
@@ -610,6 +611,11 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
             {report ? (
               <section ref={reportRef} className="animate-fade-up">
                 <RcaReport report={report as any} hideOldDashboardLinks={providers.length > 0} />
+                {/* Feedback prompt — only visible once the report has rendered.
+                    Before that there's nothing to rate. Closes the Learned
+                    Patterns loop: every first-time "useful" vote upserts a
+                    pattern row that surfaces on the Ops Desk. */}
+                <InvestigationFeedback investigationId={investigationId} />
               </section>
             ) : !isRunning ? (
               <div className="space-y-3">

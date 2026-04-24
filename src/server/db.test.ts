@@ -703,7 +703,7 @@ describe("Database", () => {
       db.hideService(stackId, "kafka");
       db.upsertServiceMetadata(stackId, "svc", { alias: "Service" });
       db.insertServiceHealthCheck(stackId, "svc", "healthy", new Date().toISOString());
-      db.createFeedback(stackId, { id: "fb_1", investigationId: "inv_1", rating: "useful" });
+      db.upsertFeedback(stackId, { id: "fb_1", investigationId: "inv_1", rating: "useful" });
       db.createPattern(stackId, { id: "pat_1", service: "svc", symptom: "high cpu", rootCause: "leak", severity: "high" });
 
       db.deleteStack(stackId);
@@ -1152,6 +1152,87 @@ describe("Database", () => {
       expect(db.countInvestigationsBySeverity("nonexistent", {})).toEqual({
         critical: 0, high: 0, medium: 0, low: 0,
       });
+    });
+  });
+
+  describe("feedback upsert", () => {
+    beforeEach(() => {
+      db.createInvestigation(S, { id: "inv_1", service: "svc", query: "q", status: "complete" });
+    });
+
+    it("first-time upsert returns previousRating: null and persists the row", () => {
+      const { previousRating } = db.upsertFeedback(S, {
+        id: "fb_1", investigationId: "inv_1", rating: "useful",
+      });
+      expect(previousRating).toBeNull();
+      expect(db.getFeedback(S, "inv_1")).toMatchObject({ rating: "useful" });
+    });
+
+    it("second upsert replaces the rating (no duplicate rows)", () => {
+      db.upsertFeedback(S, { id: "fb_1", investigationId: "inv_1", rating: "useful" });
+      const second = db.upsertFeedback(S, {
+        id: "fb_2", investigationId: "inv_1", rating: "not_useful",
+      });
+      expect(second.previousRating).toBe("useful");
+      expect(db.getFeedback(S, "inv_1")).toMatchObject({ rating: "not_useful" });
+      // Verify only one row exists for this investigation in this stack.
+      const raw = (db as unknown as { db: { prepare: (s: string) => { all: (...args: unknown[]) => unknown[] } } }).db;
+      const rows = raw.prepare(
+        "SELECT id FROM investigation_feedback WHERE investigation_id = ? AND stack_id = ?",
+      ).all("inv_1", S);
+      expect(rows).toHaveLength(1);
+    });
+
+    it("idempotent re-click with same rating keeps one row and returns previous rating", () => {
+      // Regression for the thumbs-up mash bug: two "useful" clicks must not
+      // spam incident_patterns. The route skips pattern extraction when
+      // previousRating === "useful", which this return value drives.
+      db.upsertFeedback(S, { id: "fb_1", investigationId: "inv_1", rating: "useful" });
+      const second = db.upsertFeedback(S, {
+        id: "fb_2", investigationId: "inv_1", rating: "useful",
+      });
+      expect(second.previousRating).toBe("useful");
+    });
+
+    it("getFeedback is stack-scoped — one stack's rating is invisible to another", () => {
+      // investigations.id is globally unique (not per-stack), so use different
+      // IDs for the two stacks and rate only the one in S. The other stack
+      // should see null even though its investigation id *did not* have
+      // feedback recorded against it.
+      db.createInvestigation("other", { id: "inv_2", service: "svc", query: "q", status: "complete" });
+      db.upsertFeedback(S, { id: "fb_1", investigationId: "inv_1", rating: "useful" });
+      expect(db.getFeedback(S, "inv_1")?.rating).toBe("useful");
+      expect(db.getFeedback("other", "inv_1")).toBeUndefined();
+      expect(db.getFeedback("other", "inv_2")).toBeUndefined();
+    });
+
+    it("getFeedback returns undefined for never-rated investigations", () => {
+      expect(db.getFeedback(S, "inv_1")).toBeUndefined();
+    });
+  });
+
+  describe("hasPatternForInvestigation", () => {
+    it("returns false when no pattern ever extracted", () => {
+      db.createInvestigation(S, { id: "inv_1", service: "svc", query: "q", status: "complete" });
+      expect(db.hasPatternForInvestigation(S, "inv_1")).toBe(false);
+    });
+
+    it("returns true once a pattern exists for that investigation in that stack", () => {
+      db.createInvestigation(S, { id: "inv_1", service: "svc", query: "q", status: "complete" });
+      db.createPattern(S, {
+        id: "pat_1", service: "svc", symptom: "s", rootCause: "r", severity: "high",
+        sourceInvestigationId: "inv_1",
+      });
+      expect(db.hasPatternForInvestigation(S, "inv_1")).toBe(true);
+    });
+
+    it("is stack-scoped — a pattern in one stack is invisible to another", () => {
+      db.createInvestigation(S, { id: "inv_1", service: "svc", query: "q", status: "complete" });
+      db.createPattern(S, {
+        id: "pat_1", service: "svc", symptom: "s", rootCause: "r", severity: "high",
+        sourceInvestigationId: "inv_1",
+      });
+      expect(db.hasPatternForInvestigation("other", "inv_1")).toBe(false);
     });
   });
 });

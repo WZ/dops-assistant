@@ -115,7 +115,7 @@ describe("Feedback creates pattern on 'useful' rating", () => {
       expect(investigation).toBeDefined();
 
       const rating = "useful";
-      db.createFeedback(STACK, { id: "fb_1", investigationId: "inv_1", rating });
+      db.upsertFeedback(STACK, { id: "fb_1", investigationId: "inv_1", rating });
 
       if (rating === "useful" && investigation!.report) {
         const report = JSON.parse(investigation!.report);
@@ -153,7 +153,7 @@ describe("Feedback creates pattern on 'useful' rating", () => {
       });
 
       // "not_useful" feedback — should NOT create a pattern
-      db.createFeedback(STACK, { id: "fb_2", investigationId: "inv_2", rating: "not_useful" });
+      db.upsertFeedback(STACK, { id: "fb_2", investigationId: "inv_2", rating: "not_useful" });
 
       // Pattern extraction only happens for "useful" — verify no pattern exists
       const patterns = db.findSimilarPatterns(STACK, "api");
@@ -186,7 +186,7 @@ describe("Feedback rejects invalid rating", () => {
 
       // This should throw due to the CHECK constraint in the DB
       expect(() => {
-        db.createFeedback(STACK, { id: "fb_3", investigationId: "inv_3", rating: "invalid" as any });
+        db.upsertFeedback(STACK, { id: "fb_3", investigationId: "inv_3", rating: "invalid" as any });
       }).toThrow();
     } finally {
       cleanup();
