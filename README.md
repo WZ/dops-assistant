@@ -4,25 +4,44 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"/></a>
+  <img src="https://img.shields.io/badge/node-%E2%89%A520-339933" alt="Node >= 20"/>
+  <img src="https://img.shields.io/badge/typescript-ESM-3178c6" alt="TypeScript ESM"/>
 </p>
 
-AI-powered root cause analysis for DevOps teams. Connects to your monitoring stack via [MCP](https://modelcontextprotocol.io/) to investigate incidents, analyze metrics and logs, and deliver structured RCA reports — automatically.
+AI-powered incident response for DevOps teams. Connects to your monitoring stack via [MCP](https://modelcontextprotocol.io/) to investigate incidents, scan for problems before they alert, and deliver structured RCA reports with evidence — automatically.
 
 ## Features
 
-- **Automated RCA pipeline** — 6-phase investigation: prefetch → anomaly detection → planning → parallel evidence gathering (metrics + logs + infra) → synthesis → report
-- **MCP-agnostic** — pluggable provider architecture. Connect any MCP-compatible monitoring backend (Prometheus, Loki, Datadog, etc.) via config
-- **Conversational assistant** — ask questions, get metric values, log excerpts, and dashboard links with inline charts
-- **Intent routing** — regex fast-paths classify most messages without an LLM call. Only ambiguous messages hit the model
-- **Web UI + CLI** — real-time investigation progress via WebSocket, or a terminal REPL with tool call visibility
+- **Automated RCA pipeline** — 6-phase investigation: prefetch → anomaly detection → planning → parallel evidence gathering (metrics + logs + infra + changes) → synthesis → report
+- **Proactive scanning** — cron-driven probe evaluates PromQL and LogQL rules across every configured service and kicks off headless investigations when thresholds trip. Four-track evaluator covers availability, pod-restart storms, log-error bursts, and custom rules
+- **AI service discovery** — `npm run discover` walks your Prometheus and Loki stack once, writes a `services.yaml` with canonical metrics and log labels per service, plus per-service and stack-wide probe rules you'd otherwise have to hand-craft
+- **MCP-agnostic providers** — pluggable architecture. Wire in Grafana, Kubernetes, GitLab, Coroot, or any MCP-compatible backend and assign roles (metrics, logs, infrastructure, changes, dependencies) in config
+- **Four trigger sources** — operator messages in chat, Alertmanager webhooks, health-poller transitions, and scheduled scans
+- **Notifications** — deliver every completed investigation to Slack and/or email. Per-recipient severity threshold and source allowlist (webhook / scan / poller / manual). Teams-safe HTML email
+- **Operations Desk** — live catalog of services with health chips, investigation stream, recent scan runs, and an event rail in one view
+- **Investigation explorer** — dedicated `/investigations` page with filter bar, severity breakdown, URL-driven filter state, and shareable per-investigation links
+- **Multi-stack** — run prod, staging, and dev side-by-side in one deployment. Each stack has its own providers, services, probe rules, and investigation history
+- **Web UI + CLI** — real-time progress over WebSocket, or a terminal REPL (Ink) with tool call visibility
+- **Deploy anywhere** — single Docker image, Helm chart for Kubernetes, or run `npm run web` behind your own process manager
 
 ## Quick Start
 
 ```bash
 npm install
+cp config.yaml.example config.yaml   # then edit
+export OPENAI_API_KEY=sk-...
+npm run web                           # port 3000
 ```
 
-Create `config.yaml` (or copy from `config.yaml.example`):
+Open `http://localhost:3000`, then run discovery to populate the service registry:
+
+```bash
+npm run discover
+```
+
+Discovery walks your configured providers, finds services via Prometheus labels, and writes `services.yaml` with per-service metrics, log selectors, and probe rules. Review the result in the UI and hit **Accept**.
+
+A minimal `config.yaml`:
 
 ```yaml
 llm:
@@ -31,31 +50,50 @@ llm:
 
 providers:
   - name: grafana
-    roles: [metrics, logs]
+    roles: [metrics, logs, dashboards]
     mcpServer:
-      transport: stdio
-      command: "npx"
-      args: ["-y", "@grafana/mcp-grafana"]
-      env:
-        GRAFANA_URL: "${GRAFANA_URL}"
-        GRAFANA_API_KEY: "${GRAFANA_API_KEY}"
+      transport: http
+      url: "${GRAFANA_MCP_URL}"
 
-services:
-  - name: payments-api
-    metrics:
-      - query: 'rate(http_requests_total{service="payments"}[5m])'
-        description: "Request rate"
-    logLabels:
-      app: payments-api
+  # Optional — K8s API for infra evidence
+  # - name: kubernetes
+  #   roles: [infrastructure]
+  #   mcpServer: { transport: http, url: "${K8S_MCP_URL}" }
+
+  # Optional — deployment / MR context for root causes
+  # - name: gitlab
+  #   roles: [changes]
+  #   mcpServer: { transport: http, url: "${GITLAB_MCP_URL}" }
+
+# Optional — proactive scans
+scan:
+  enabled: true
+  cron: "0 */4 * * *"            # every 4 hours
+  timezone: "America/Los_Angeles"
+  investigationTemplate: standard
+
+# Optional — alert webhook for Alertmanager
+webhook:
+  defaultTemplate: standard      # quick | standard | full
+  severityTemplateMap:
+    critical: full
+    warning: standard
+
+# Optional — email notifications (SMTP infrastructure).
+# Slack webhook + scan-run notifications are configured at Settings → Notifications in the UI.
+notifications:
+  email:
+    enabled: true
+    from: "dops@example.com"
+    appBaseUrl: "https://dops.example.com"
+    smtp:
+      host: smtp.example.com
+      port: 587
+      user: "${SMTP_USER}"
+      pass: "${SMTP_PASS}"
 ```
 
-```bash
-# Web UI (port 3000)
-npm run web
-
-# Or terminal CLI
-npm run cli
-```
+See [`config.yaml.example`](config.yaml.example) for the full schema.
 
 ## How It Works
 
@@ -67,71 +105,99 @@ User messages are classified by an intent router. Questions go to a chat agent; 
 
 ### Investigation Pipeline
 
-The investigation workflow runs 6 phases. Evidence gathering (metrics, logs, infra) runs in parallel for speed. Each agent gets only the MCP tools relevant to its role.
+Six phases. Evidence gathering (metrics, logs, infra, changes) runs in parallel for speed. Each agent gets only the MCP tools relevant to its role, so the metrics agent never sees log query tools and vice versa.
 
 <p align="center">
   <img src="docs/img/investigation-flow.svg" alt="Investigation Flow" width="800"/>
 </p>
 
-## Investigation Triggers
+## Triggers
 
-Investigations can be triggered three ways:
+Investigations can start four ways.
 
-### 1. User-Initiated (Web UI / CLI)
+### 1. Operator (Web UI or CLI)
 
-Type a message like "admin-task is returning 500 errors since 4pm" in the UI or CLI. The intent router detects an incident report and launches the full investigation pipeline with your message as context.
+Type a message like `admin-task is returning 500 errors since 4pm`. The intent router detects an incident report and launches the full investigation pipeline with your message as context. Results stream back in real time.
 
 ### 2. Alert Webhook (Alertmanager)
 
-Configure [Alertmanager](https://prometheus.io/docs/alerting/latest/alertmanager/) to POST to `/api/webhook/alert`. Incoming alerts automatically trigger headless investigations.
+Point [Alertmanager](https://prometheus.io/docs/alerting/latest/alertmanager/) at `POST /api/webhook/alert`. The handler validates the bearer token, dedups recent alerts, extracts service/severity/labels, merges with the service's known metrics and log selectors from `services.yaml`, and runs a headless investigation.
 
 ```yaml
-# config.yaml
-webhook:
-  enabled: true
-  bearerToken: "${WEBHOOK_BEARER_TOKEN}"
-  defaultTemplate: standard     # quick | standard | full
-  dedupWindowMinutes: 30
-  maxConcurrent: 3
-```
-
-```yaml
-# alertmanager.yml receiver config
+# alertmanager.yml
 receivers:
   - name: dops
     webhook_configs:
-      - url: http://your-server:3000/api/webhook/alert
+      - url: http://dops-assistant:3000/api/webhook/alert
         http_config:
           bearer_token: "<your-token>"
 ```
 
-When an alert fires, the webhook handler extracts severity, summary, labels, and the service's known metrics/log selectors from `services.yaml`, then passes everything to the investigation runner. Investigation depth (quick/standard/full) can be set per-severity in config.
+Investigation depth (quick / standard / full) can be mapped per severity in config.
 
-### 3. Health Poller (Automatic)
+### 3. Health Poller
 
-A background poller queries Prometheus every 60 seconds for deployment replica counts and `up` metrics. When a service transitions from healthy to down, it automatically triggers a quick investigation.
+A background poller queries Prometheus every 60 seconds for deployment replica counts and `up` metrics. When a service transitions from healthy to down it auto-fires a quick investigation. No extra config — the poller uses the service registry and each service's known selectors.
 
-No configuration needed beyond having a Prometheus MCP provider. The poller uses the service registry (`services.yaml`) to know which services to monitor, and includes each service's known metrics and log selectors in the investigation context.
+### 4. Proactive Scan
 
-| Trigger | Context richness | Investigation depth | Requires |
-|---------|-----------------|-------------------|----------|
-| User message | High (natural language + time refs) | Configurable | Nothing extra |
+A cron-scheduled probe walks every service on the cadence you set and evaluates four tracks of rules:
+
+1. **Global rules** — stack-wide availability written by the discovery agent, aware of whichever label key your stack actually uses (`app`, `service`, `job`, `deployment`)
+2. **Per-service metric rules** — discovery-written thresholds like pod-restart storms, using each service's real Kubernetes namespace
+3. **Per-service log rules** — LogQL `count_over_time(... |= error)` scoped to the service's real Loki labels
+4. **Config-file defaults** — hardcoded fallback rules from `config.yaml` when discovery hasn't run
+
+Each rule has hysteresis (consecutive-tick counters) so a single flap doesn't fire a scan. When a rule trips, the probe spawns a headless investigation and the scan run lands on the Operations Desk with status, phase breakdown, and links to each child investigation.
+
+Every tick creates a durable `ScanRun` record at `/scan/runs/:id` — copy the link, download as PNG or Markdown, or fire it to Slack with one click.
+
+| Trigger | Context | Depth | Requires |
+|---|---|---|---|
+| Operator | High (natural language + time refs) | Configurable | Nothing extra |
 | Alert webhook | Medium (alert labels + service config) | Per-severity template | Alertmanager config |
-| Health poller | Medium (transition info + service config) | Quick (metrics only) | Prometheus provider |
+| Health poller | Medium (transition info + service config) | Quick | Prometheus provider |
+| Proactive scan | Medium (rule trigger + service config) | Configurable per rule | `scan.enabled: true` |
+
+## Notifications
+
+Every completed investigation can be delivered to Slack and email. Recipients are filtered independently on two axes — minimum severity and allowed trigger source — so each inbox only sees what it wants.
+
+**Slack** (via incoming webhook): per-investigation summary posts, plus optional run-level scan summaries (`always` / `hits-only` / `off`).
+
+**Email** (via SMTP): Teams-safe HTML body that renders the full RCA report — severity banner, summary, root cause with confidence, contributing factors, timeline, evidence (metrics + logs + infra + changes), recommended actions, and a deep link back to the investigation. Plain-text fallback included. Works with Microsoft Teams channel email addresses.
+
+Manage recipients at **Settings → Notifications** in the UI — add, edit, toggle, and send a fixture RCA through the real pipeline with the per-row **Test** button.
+
+## Operations Desk
+
+The default landing page is a live SOC-style console: health strip, service catalog with status chips, investigation log, recent scan runs with a one-click **Scan now** button, and an event stream rail. Drilling into a service opens a tabbed detail view (metrics, history, dependencies, AI brief).
+
+## Deployment
+
+- **Docker** — single image, mount `config.yaml` and `services.yaml`, pass `OPENAI_API_KEY`
+- **Helm** — chart at [`deploy/helm/dops-assistant`](deploy/helm/dops-assistant). Supports sub-path ingress via `APP_BASE_PATH`, SMTP creds via `extraEnvFrom` on an existing Secret, and ingress WebSocket timeout annotations for the ~60s LLM silent-thinking phase
+- **Process manager** — `npm run build:web && npm run web` behind systemd, pm2, or your stack of choice
 
 ## Documentation
 
 - **[Architecture Overview](docs/architecture-overview.md)** — system design, component details, data flow, design decisions
 - **[Ops Runbook](docs/runbook.md)** — MCP setup, full config reference, tuning, troubleshooting
+- **[Email Notifications Setup](docs/email-notifications-setup.md)** — SMTP, Teams tenant rules, GUI walkthrough
+- **[Provider YAML Spec](docs/provider-yaml-spec.md)** — writing custom MCP providers
+- **[Changelog](CHANGELOG.md)** — release history
 
 ## Development
 
 ```bash
-npm run web          # web server (loads dev/.env, port 3000)
-npm run cli          # terminal REPL
-npm run build:web    # build frontend (Vite → dist/web/)
-npx vitest run       # run tests
-npx tsc --noEmit     # type check
+npm run web                 # web server (loads dev/.env, port 3000)
+npm run cli                 # terminal REPL
+npm run build:web           # build frontend (Vite → dist/web/)
+npm run discover            # run AI service discovery
+npm run test:discover-eval  # score discovery output quality (CI gates at 75/100)
+npx tsx src/eval/rca-eval.ts   # score RCA report quality
+npx vitest run              # run tests (100+ files)
+npx tsc --noEmit            # type check
 ```
 
 ## Contributing
