@@ -1040,6 +1040,19 @@ describe("Database", () => {
       expect(list.map((r) => r.id)).toEqual(["inv_pct"]);
     });
 
+    it("q search survives rows with malformed JSON reports (json_valid guard)", () => {
+      // Historical rows can hold garbage in the report column. Without the
+      // json_valid guard, SQLite's json_extract throws and takes down the
+      // whole query with a 500. The filter should skip bad rows, not crash.
+      db.createInvestigation(S, { id: "inv_bad", service: "svc-bad", query: "q", status: "complete" });
+      const raw = (db as unknown as { db: { prepare: (s: string) => { run: (...args: unknown[]) => void } } }).db;
+      raw.prepare("UPDATE investigations SET report = ? WHERE id = ?").run("{not-json", "inv_bad");
+      // Must not throw. The bad row is skipped for JSON fields but still
+      // searchable by its service/query columns.
+      expect(() => db.listInvestigations(S, { q: "anything" })).not.toThrow();
+      expect(db.listInvestigations(S, { q: "svc-bad" }).map((r) => r.id)).toContain("inv_bad");
+    });
+
     it("since/until use datetime() wrapping so ISO strings compare correctly", () => {
       // Control time by setting created_at via raw SQL
       const raw = (db as unknown as { db: { prepare: (s: string) => { run: (...args: unknown[]) => void } } }).db;

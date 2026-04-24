@@ -188,11 +188,14 @@ function buildInvestigationsWhere(
   }
   if (filters.q) {
     const pattern = `%${escapeLike(filters.q)}%`;
+    // Guard json_extract with json_valid: SQLite throws on malformed JSON, so
+    // one bad historical row would 500 every q search. json_valid returns 0
+    // for non-JSON / malformed, cleanly excluding those rows from the match.
     clauses.push(
       "(service LIKE ? ESCAPE '\\' " +
       "OR query LIKE ? ESCAPE '\\' " +
-      "OR COALESCE(json_extract(report, '$.summary'), '') LIKE ? ESCAPE '\\' " +
-      "OR COALESCE(json_extract(report, '$.rootCause'), '') LIKE ? ESCAPE '\\')",
+      "OR (report IS NOT NULL AND json_valid(report) AND COALESCE(json_extract(report, '$.summary'), '') LIKE ? ESCAPE '\\') " +
+      "OR (report IS NOT NULL AND json_valid(report) AND COALESCE(json_extract(report, '$.rootCause'), '') LIKE ? ESCAPE '\\'))",
     );
     binds.push(pattern, pattern, pattern, pattern);
   }

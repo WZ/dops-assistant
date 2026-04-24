@@ -35,12 +35,21 @@ function parseMulti<T extends string>(raw: string | undefined, allowed: Readonly
   return parts as T[];
 }
 
+// Accept only formats SQLite's datetime() function can actually parse:
+//   - strict ISO with T:  2026-04-23T00:00:00Z  /  2026-04-23T00:00:00
+//   - SQLite-style space: 2026-04-23 00:00:00
+//   - date-only:          2026-04-23
+// Using Date.parse() here would greenlight US-style "04/23/2026" or RFC
+// "Thu Apr 23 2026 ...", both of which SQLite turns into NULL at query
+// time — filtering out every row silently instead of erroring. The
+// stricter regex + Date.parse sanity check rejects those upfront so a
+// bad input surfaces as a 400 at the parse layer.
+const SQLITE_DATETIME_RE =
+  /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+
 function isValidIso(s: string): boolean {
-  // Accept either strict ISO (with T) or SQLite-style datetime with a space.
-  // Both parse correctly when wrapped in SQLite's datetime() function at
-  // query time; rejecting known-garbage shapes here prevents surprises.
-  const t = Date.parse(s);
-  return Number.isFinite(t);
+  if (!SQLITE_DATETIME_RE.test(s)) return false;
+  return Number.isFinite(Date.parse(s));
 }
 
 export function parseInvestigationFilters(query: Record<string, unknown>): Parsed {

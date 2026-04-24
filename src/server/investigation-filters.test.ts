@@ -48,8 +48,14 @@ describe("parseInvestigationFilters", () => {
   it("accepts ISO timestamps and strict SQLite datetime strings, rejects garbage", () => {
     expect(ok(parseInvestigationFilters({ since: "2026-04-23T00:00:00Z" })).since).toBe("2026-04-23T00:00:00Z");
     expect(ok(parseInvestigationFilters({ until: "2026-04-23 00:00:00" })).until).toBe("2026-04-23 00:00:00");
+    expect(ok(parseInvestigationFilters({ since: "2026-04-23" })).since).toBe("2026-04-23"); // date-only
     expect("error" in parseInvestigationFilters({ since: "yesterday" })).toBe(true);
     expect("error" in parseInvestigationFilters({ until: "" })).toBe(false); // empty = absent
+    // Date.parse() accepts these but SQLite datetime() returns NULL — silently
+    // filters out every row. Must reject at the parse layer or users get
+    // mystery empty results instead of a clear 400.
+    expect("error" in parseInvestigationFilters({ since: "04/23/2026" })).toBe(true);
+    expect("error" in parseInvestigationFilters({ until: "Thu Apr 23 2026" })).toBe(true);
   });
 
   it("passes q (search string) through verbatim; LIKE escaping happens in SQL layer", () => {

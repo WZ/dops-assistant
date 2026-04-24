@@ -11,6 +11,7 @@ import {
   severityVariant,
   normalizeConfidence,
 } from "@/lib/dashboard-utils";
+import type { InvestigationListResponse } from "@/lib/dashboard-utils";
 import type {
   InvestigationSummary,
   Pattern,
@@ -121,7 +122,7 @@ export function Dashboard({
       }
       if (seq !== fetchSeqRef.current) return; // stale response — newer fetch in flight
       const [invData, svcData] = await Promise.all([
-        invRes.json(),
+        invRes.json() as Promise<InvestigationListResponse>,
         svcRes.json(),
       ]);
       if (healthRes.ok) {
@@ -157,7 +158,7 @@ export function Dashboard({
         let changed = false;
         const next = new Map(prev);
         const completedOrFailed = new Set(
-          (invData as InvestigationSummary[])
+          invData.rows
             .filter(
               (inv) => inv.status === "complete" || inv.status === "failed",
             )
