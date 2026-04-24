@@ -52,11 +52,15 @@ export function EventStream({ events, loading, error, truncated }: Props) {
           // Scans. The ring buffer's `truncated` flag still surfaces below
           // when the server dropped older entries.
           events.slice(0, SNIPPET).map((e) => (
-            <li key={e.id} role="listitem" className="flex items-start gap-2 py-1.5">
+            // Row typography mirrors RecentScansSection: font-mono text-[11px],
+            // so Recent Scans and Recent Events sit visually adjacent without
+            // the eye catching on a size change at the section boundary.
+            // Previously this row was text-sm body, which read as an outlier.
+            <li key={e.id} role="listitem" className="flex items-start gap-2 py-1.5 font-mono text-[11px]">
               <span className={`mt-1.5 inline-block w-1.5 h-1.5 rounded-full shrink-0 ${severityDot[e.severity]}`} aria-hidden />
               <div className="min-w-0 flex-1">
-                <div className="text-sm text-foreground/90 truncate">{e.summary}</div>
-                <div className="font-mono text-[10px] tabular-nums text-muted-foreground/60 mt-0.5">{relTime(e.ts)}</div>
+                <div className="text-foreground/85 truncate">{e.summary}</div>
+                <div className="tabular-nums text-muted-foreground/55 mt-0.5 text-[10px]">{relTime(e.ts)}</div>
               </div>
             </li>
           ))
