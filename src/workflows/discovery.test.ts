@@ -9,6 +9,22 @@ vi.mock("../mcp/provider.js", () => ({
   listProviderTools: vi.fn().mockResolvedValue({}),
 }));
 
+// AP2: controllable validate-step throw so we can exercise the terminal-emit
+// fallback. When `mockValidateThrows` is true, the wrapper throws before
+// delegating; otherwise the real runValidateStep runs so existing tests see
+// its actual behavior (unverified services under zero-provider conditions).
+let mockValidateThrows = false;
+vi.mock("./steps/validate.js", async () => {
+  const actual = await vi.importActual<typeof import("./steps/validate.js")>("./steps/validate.js");
+  return {
+    ...actual,
+    runValidateStep: vi.fn(async (config: Parameters<typeof actual.runValidateStep>[0]) => {
+      if (mockValidateThrows) throw new Error("validation stalled mid-flow");
+      return actual.runValidateStep(config);
+    }),
+  };
+});
+
 // Switches used by individual tests to force the discover agent's output.
 let mockDiscoverReturnsEmpty = false;
 let mockDiscoverReturnsObjectForm = false;
@@ -64,7 +80,7 @@ describe("runDiscovery", () => {
     expect(result.globalProbeRules).toEqual([]);
   });
 
-  it("calls onPhase callbacks", async () => {
+  it("calls onPhase callbacks and emits a terminal 'complete' phase on success", async () => {
     const phases: string[] = [];
     const config: DiscoveryWorkflowConfig = {
       model: fakeModel,
@@ -75,6 +91,8 @@ describe("runDiscovery", () => {
     await runDiscovery(config);
     expect(phases).toContain("discovery");
     expect(phases).toContain("validation");
+    // AP2: terminal phase always emitted last so the caller gets a clear "done" signal.
+    expect(phases[phases.length - 1]).toBe("complete");
   });
 
   it("emits 'complete-empty' phase and skips validation when discovery returns zero services", async () => {
@@ -95,6 +113,50 @@ describe("runDiscovery", () => {
     } finally {
       mockDiscoverReturnsEmpty = false;
     }
+  });
+
+  it("AP2: falls back to unverified discovered services and emits terminal phase when validation throws", async () => {
+    mockValidateThrows = true;
+    try {
+      const phases: string[] = [];
+      const config: DiscoveryWorkflowConfig = {
+        model: fakeModel,
+        providers: [],
+        discoveryConfig: { autoRefresh: false, excludeServices: [], maxIterations: 5, discoveryRecipes: [] },
+        onPhase: (phase) => phases.push(phase),
+      };
+      const result = await runDiscovery(config);
+      // Discovered services surface as unverified so services.yaml is still writable.
+      expect(result.services).toHaveLength(1);
+      expect(result.services[0]!.name).toBe("svc1");
+      // Load-bearing tagging — operators reading services.yaml must be able
+      // to distinguish fallback output from real validation output.
+      expect(result.services[0]!.confidence).toBe("unverified");
+      expect(result.services[0]!.validationNotes).toMatch(/validation did not complete/);
+      // Terminal phase emitted so the caller knows validation failed but discovery produced data.
+      expect(phases).toContain("discovery");
+      expect(phases).toContain("validation");
+      expect(phases[phases.length - 1]).toBe("complete-validation-failed");
+    } finally {
+      mockValidateThrows = false;
+    }
+  });
+
+  it("AP2: emits terminal 'complete-failed' phase when the discover step itself throws", async () => {
+    // Force runDiscoverStep to throw by returning an empty tool map. The
+    // workflow should still emit a terminal phase via the finally block.
+    const { getToolsByRole } = await import("../mcp/provider.js");
+    const mocked = vi.mocked(getToolsByRole);
+    mocked.mockResolvedValueOnce({}).mockResolvedValueOnce({});
+    const phases: string[] = [];
+    const config: DiscoveryWorkflowConfig = {
+      model: fakeModel,
+      providers: [],
+      discoveryConfig: { autoRefresh: false, excludeServices: [], maxIterations: 5, discoveryRecipes: [] },
+      onPhase: (phase) => phases.push(phase),
+    };
+    await expect(runDiscovery(config)).rejects.toThrow();
+    expect(phases[phases.length - 1]).toBe("complete-failed");
   });
 
   it("carries through globalProbeRules when the agent returns the object form", async () => {

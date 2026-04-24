@@ -164,7 +164,9 @@ describe("webhook handler", () => {
     expect(res.status).toHaveBeenCalledWith(503);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
       error: "Webhook not configured",
-      hint: expect.stringContaining("webhook.secret"),
+      // AP9: hint should name the config key, file, section, AND instruct the
+      // operator to restart — terse hints caused support loops.
+      hint: expect.stringMatching(/webhook\.secret.*config\.yaml.*webhook section.*restart the server/),
     }));
     // Should NOT kick off an investigation.
     expect(runner.run).not.toHaveBeenCalled();
