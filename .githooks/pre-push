@@ -1,0 +1,53 @@
+#!/bin/sh
+# Post-push rebuild + relaunch.
+#
+# Git has no post-push hook, so we piggyback on pre-push and detach a
+# background subshell. The push proceeds normally; the subshell sleeps briefly
+# so `git push` exits before our rebuild starts (keeps the terminal responsive),
+# then rebuilds the web bundle and relaunches the dev server on :3000. Output
+# streams to /tmp/dops-server.log so the developer can tail it.
+#
+# Enable: git config core.hooksPath .githooks
+# Disable: git config --unset core.hooksPath
+#
+# Honors DOPS_PUSH_REBUILD=0 to skip the rebuild for one push (useful when
+# pushing a WIP branch you don't want to run locally).
+
+set -e
+repo_root="$(git rev-parse --show-toplevel)"
+
+if [ "${DOPS_PUSH_REBUILD:-1}" = "0" ]; then
+  printf '⏭  pre-push: DOPS_PUSH_REBUILD=0 — skipping rebuild.\n' >&2
+  exit 0
+fi
+
+printf '🔨 pre-push: rebuild + relaunch queued (tail /tmp/dops-server.log).\n' >&2
+
+# Detach the subshell so `git push` can finish cleanly without blocking on
+# the build. `nohup` keeps it alive if the terminal closes.
+(
+  # Wait for `git push` to finish. Empirically 1.5s is plenty; if the push is
+  # slower than that we just overlap, which is fine.
+  sleep 2
+  cd "$repo_root"
+
+  # Kill any existing dev server on :3000 so the relaunch binds cleanly.
+  existing="$(lsof -i :3000 -t 2>/dev/null || true)"
+  if [ -n "$existing" ]; then
+    kill $existing 2>/dev/null || true
+    sleep 1
+  fi
+
+  # Rebuild the web bundle. If the build fails, leave the old server dead and
+  # log the failure — we don't want to pretend success.
+  if ! npm run build:web >> /tmp/dops-server.log 2>&1; then
+    printf '❌ pre-push: build failed — see /tmp/dops-server.log\n' >> /tmp/dops-server.log
+    exit 1
+  fi
+
+  # Relaunch. Default CONFIG_PATH matches the one used in CLAUDE.md so
+  # `dev/.env` + `dev/config.yaml` are picked up.
+  CONFIG_PATH=dev/config.yaml nohup npm run web >> /tmp/dops-server.log 2>&1 &
+) >/dev/null 2>&1 &
+
+exit 0

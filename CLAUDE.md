@@ -89,6 +89,7 @@ npx tsc --noEmit         # Type check
 - **Env vars**: `dev/.env` — contains `OPENAI_API_KEY` and other secrets. Auto-loaded by server and CLI via dotenv.
 - **Docker**: `docker-compose.dev.yml` — grafana-mcp with `-tls-skip-verify` for self-signed certs.
 - **Specs/plans**: Save to `docs/plans/` (gitignored). Never commit.
+- **Auto-rebuild on push** (opt-in): `git config core.hooksPath .githooks` enables `.githooks/pre-push`, which kills :3000, rebuilds the web bundle, and relaunches `npm run web` with output to `/tmp/dops-server.log` every time you push. Skip for one push with `DOPS_PUSH_REBUILD=0 git push`. Disable entirely with `git config --unset core.hooksPath`.
 
 ## LLM Quirks (gpt-oss-120b)
 
