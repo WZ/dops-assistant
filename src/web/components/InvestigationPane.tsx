@@ -320,7 +320,7 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
         setReport(null);
         setTimelineEvents([]);
       }
-      if (msg.type === "investigation:phase") {
+      if (msg.type === "investigation:phase" && msg.id === investigationId) {
         setPhases((prev) => prev.map((p) =>
           p.name === msg.phase ? { ...p, status: msg.status as PhaseState["status"], substatus: undefined, stats: msg.stats } : p,
         ));
@@ -335,7 +335,7 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
           timestamp: Date.now(),
         }]);
       }
-      if (msg.type === "investigation:tool_call") {
+      if (msg.type === "investigation:tool_call" && msg.id === investigationId) {
         setTimelineEvents((prev) => [...prev, {
           type: "tool_call",
           phase: msg.phase,
@@ -347,7 +347,7 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
           timestamp: Date.now(),
         }]);
       }
-      if (msg.type === "investigation:iteration") {
+      if (msg.type === "investigation:iteration" && msg.id === investigationId) {
         setTimelineEvents((prev) => [...prev, {
           type: "iteration",
           phase: msg.phase,
@@ -357,7 +357,7 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
           timestamp: Date.now(),
         }]);
       }
-      if (msg.type === "investigation:progress") {
+      if (msg.type === "investigation:progress" && msg.id === investigationId) {
         setPhases((prev) => prev.map((p) =>
           p.name === msg.phase ? { ...p, substatus: msg.step } : p,
         ));

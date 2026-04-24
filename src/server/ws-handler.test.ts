@@ -246,6 +246,66 @@ describe("handleClientMessage — rerun", () => {
   });
 });
 
+describe("handleClientMessage — investigation event id filter", () => {
+  it("tool_call and iteration events carry the investigation id so the client can filter", async () => {
+    const deps = mockDeps();
+    const ctx = mockCtx();
+
+    // Wire investigate() to invoke the onToolCall and onIteration callbacks the
+    // runner passes in. Arg positions match IInvestigationAgent.investigate:
+    // (service, initialAnomaly, correlationId, onTokenUsage, userMessage, onToolCall, onPhase, onIteration, ...)
+    const adaptersMod = await import("./agents.js");
+    (adaptersMod.createMastraAdapters as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      chatAgent: { chat: vi.fn() },
+      investigationAgent: {
+        investigate: vi.fn().mockImplementation(async (
+          _service: unknown,
+          _initialAnomaly: unknown,
+          _correlationId: unknown,
+          _onTokenUsage: unknown,
+          _userMessage: unknown,
+          onToolCall?: (name: string, args: Record<string, unknown>, result?: string, durationMs?: number, error?: string, phase?: string) => void,
+          _onPhase?: unknown,
+          onIteration?: (phase: string, iteration: number, maxIterations: number, description: string) => void,
+        ) => {
+          onToolCall?.("query_prometheus", { q: "up" }, "ok", 12, undefined, "metrics");
+          onIteration?.("metrics", 0, 10, "starting");
+          return {
+            service: "payments-api", severity: "low", summary: "ok",
+            rootCause: "n/a", confidence: "low", trigger: "",
+            impact: { duration: "", description: "" },
+            contributingFactors: [], timeline: [],
+            evidence: { metrics: [], logs: [], infra: [] },
+            dashboardLinks: [],
+            recommendedActions: [], investigatedAt: new Date().toISOString(),
+          };
+        }),
+      },
+      discoverAgent: undefined,
+    });
+
+    (deps.router.route as ReturnType<typeof vi.fn>).mockResolvedValue({ intent: "investigation", service: "payments-api" });
+    (deps.validateLlmServiceMatch as ReturnType<typeof vi.fn>).mockReturnValue({ name: "payments-api", metrics: [], logLabels: {} });
+    (deps.matchServiceFromText as ReturnType<typeof vi.fn>).mockReturnValue({ name: "payments-api", metrics: [], logLabels: {} });
+
+    const sent: ServerMessage[] = [];
+    const send = (m: ServerMessage) => sent.push(m);
+
+    await callHandler({ type: "chat", message: "investigate payments-api" }, send, deps, ctx);
+
+    const started = sent.find((m) => m.type === "investigation:started");
+    const toolCall = sent.find((m) => m.type === "investigation:tool_call");
+    const iteration = sent.find((m) => m.type === "investigation:iteration");
+    expect(started?.type === "investigation:started" ? started.id : undefined).toBeDefined();
+    if (started?.type === "investigation:started" && toolCall?.type === "investigation:tool_call") {
+      expect(toolCall.id).toBe(started.id);
+    }
+    if (started?.type === "investigation:started" && iteration?.type === "investigation:iteration") {
+      expect(iteration.id).toBe(started.id);
+    }
+  });
+});
+
 describe("handleClientMessage — scan:trigger", () => {
   it("calls scheduler.triggerNow and forwards events to the connection", async () => {
     const deps = mockDeps();
