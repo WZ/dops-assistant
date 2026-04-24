@@ -105,7 +105,7 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
     if (!config.secret) {
       res.status(503).json({
         error: "Webhook not configured",
-        hint: "Set webhook.secret in config.yaml and restart",
+        hint: "Set webhook.secret in config.yaml under the webhook section and restart the server",
       });
       return;
     }
