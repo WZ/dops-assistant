@@ -13,6 +13,7 @@ import { debug } from "../tool-utils.js";
 import { safeJsonParse } from "../../agents/shared/processors.js";
 import { createPlannerAgent } from "../../agents/planner.js";
 import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
+import { formatPatterns } from "../../agents/shared/patterns.js";
 
 /**
  * Build a planning step that fetches recent incidents and creates an investigation plan.
@@ -52,6 +53,22 @@ export function buildPlanningStep(config: WorkflowConfig) {
         ? `Log labels: ${JSON.stringify(service.logLabels)}`
         : "";
 
+      // Learned patterns from past thumbs-up'd investigations on this service.
+      // Wrapped as untrusted because the symptom/root_cause text was originally
+      // synthesized by an LLM from prior MCP results — same trust boundary as
+      // any other agent-derived string going back into a prompt.
+      let patternBlock = "";
+      if (config.getSimilarPatterns && inputData.serviceName) {
+        try {
+          const patterns = config.getSimilarPatterns(inputData.serviceName, 5);
+          const formatted = formatPatterns(inputData.serviceName, patterns);
+          if (formatted) {
+            patternBlock = wrapUntrusted("learned_patterns", formatted)
+              + "\nUse these as priors. If the current anomaly looks like one of them, prioritize the same metrics/logs that confirmed the prior root cause.";
+          }
+        } catch { /* no patterns available — graceful degradation */ }
+      }
+
       const prompt = [
         `Anomaly: ${wrapUntrusted("anomaly_summary", inputData.summary)}`,
         `Severity: ${inputData.severity ?? "unknown"}`,
@@ -62,6 +79,7 @@ export function buildPlanningStep(config: WorkflowConfig) {
           ? `${inputData.skillContext}\nUse these runbooks to inform your hypothesis planning. Prioritize investigation steps mentioned in matched skills.`
           : "",
         historyContext ? `\nRecent incidents:\n${historyContext}` : "",
+        patternBlock ? `\n${patternBlock}` : "",
       ].filter(Boolean).join("\n");
 
       let agentResult: { text: string; usage?: any } = { text: "" };
