@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.2.3] - 2026-04-24
+
+### Fixed
+- **Re-investigate now actually takes you to the new run.** Clicking any option in the Re-investigate dropdown (Re-run current config / Quick / Standard / Full) used to look like it did nothing: the server kicked off a fresh investigation with a new id, but the page kept showing the old report because it was still bound to the old id. Now the page auto-navigates to the new investigation as soon as it starts, so the progress bar, phase rail, and tool calls all reflect the re-run you just triggered.
+
 ## [0.2.2.2] - 2026-04-23
 
 ### Changed
