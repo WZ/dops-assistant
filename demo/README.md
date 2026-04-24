@@ -106,10 +106,32 @@ defaults to the public GitHub repo.
 
 ## Cost
 
-`shared-cpu-1x` with 1 GB memory, scale-to-zero (`auto_stop_machines = "stop"`
-in `fly.toml`). Cost is dominated by the 1 GB volume and occasional wake-ups.
-In practice: ~$3-5/month for a demo that gets occasional traffic. Fly's free
-tier may cover it entirely for low-traffic demos.
+Fly.io discontinued its free tier in late 2024 — everyone pays now. The
+good news: this demo is designed for minimal spend.
+
+`shared-cpu-1x` with 1 GB memory + scale-to-zero (`auto_stop_machines =
+"stop"` in `fly.toml`) means you only pay for request-handling seconds,
+not 24/7 uptime. Costs:
+
+- Compute: ~$0.0000022/sec while awake (~$5.70/mo at 24/7, which this
+  never hits — expect well under $1/mo for an OSS demo)
+- Volume: ~$0.15/mo flat for 1 GB
+- Bandwidth: negligible at demo traffic levels
+
+Realistic bill for a demo that gets a handful of visits per day:
+**$1-3/month**. If it gets HN-hugged, probably still under $10. First
+request after idle pays a ~2-3s cold start.
+
+Alternatives if $1-3/month is still too much:
+- **Render** — free web service tier still exists (750h/month, sleeps
+  after 15 min idle). Slightly worse cold starts than Fly but genuinely free.
+- **Railway** — $5/mo credit, usage-based after.
+- **Koyeb** — free "nano" tier (256 MB — tight for this but maybe workable).
+- **Self-host on a $4 Hetzner VPS** — cheapest with scale if you already
+  run your own infra.
+
+Swapping to Render would mean writing a Dockerfile entrypoint that also
+handles the volume mount differently — manageable but not zero work.
 
 ## Troubleshooting
 

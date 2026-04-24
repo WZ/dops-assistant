@@ -247,14 +247,19 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
           const blockedTypes = new Set([
             "chat",
             "deep_investigate",
-            "discover:start",
+            "rerun",
+            "discover",
             "discover:accept",
             "discover:reject",
+            "scan:trigger",
           ]);
           if (parsed && typeof parsed === "object" && "type" in parsed && blockedTypes.has(parsed.type as string)) {
-            const friendly = parsed.type === "chat" || parsed.type === "deep_investigate"
-              ? "Chat is disabled on the demo site — LLM calls cost money and we can't let random visitors spend it. Click into a pre-recorded investigation to see a real RCA report, or clone the repo to try it yourself."
-              : "Discovery is disabled on the demo site — it would run against stub MCP providers and produce nothing useful. Clone the repo and point it at your own stack.";
+            const t = parsed.type as string;
+            const friendly = (t === "chat" || t === "deep_investigate" || t === "rerun")
+              ? "Investigations are disabled on the demo site — LLM calls cost money and we can't let random visitors spend it. Click into a pre-recorded investigation to see a real RCA report, or clone the repo to try it yourself."
+              : t === "scan:trigger"
+                ? "Scans are disabled on the demo site — they would query stub MCP providers and dispatch real investigations. Clone the repo and point it at your own stack."
+                : "Discovery is disabled on the demo site — it would call the LLM and run against stub MCP providers. Clone the repo and point it at your own stack.";
             send({ type: "chat:stream_end", content: friendly });
             return;
           }

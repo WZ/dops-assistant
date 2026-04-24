@@ -15,6 +15,7 @@ import { queryServiceMetrics } from "./prometheus-query.js";
 import type { MetricSeries } from "./prometheus-query.js";
 import { inferDependencyGraph } from "./dependency-graph.js";
 import { buildServiceBrief } from "./service-brief.js";
+import { isDemoMode } from "./demo-mode.js";
 import type { LanguageModel } from "ai";
 import { eventLog } from "./event-log.js";
 import { SkillInputSchema } from "./sanitize.js";
@@ -1001,6 +1002,13 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   app.get("/api/services/:name/metrics", async (req: Request, res: Response) => {
     const name = req.params["name"] as string;
     if (!NAME_PATTERN.test(name)) { res.status(400).json({ error: "Invalid service name" }); return; }
+    // Demo mode: never run live PromQL — providers are stubs and the call
+    // would fail noisily anyway. Return an empty metrics list with a flag the
+    // UI can use to show "metrics unavailable in demo".
+    if (isDemoMode()) {
+      res.json({ metrics: [], cached: false, fetchedAt: Date.now(), demoMode: true });
+      return;
+    }
     const rawRange = (req.query["range"] as string) || "24h";
     const range = VALID_RANGES.has(rawRange) ? rawRange : "24h";
     const cacheKey = `${req.stackId}:${name}:${range}`;
@@ -1042,6 +1050,13 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   app.get("/api/services/:name/brief", async (req: Request, res: Response) => {
     const name = req.params["name"] as string;
     if (!NAME_PATTERN.test(name)) { res.status(400).json({ error: "Invalid service name" }); return; }
+    // Demo mode: brief is LLM-generated. Refuse instead of burning tokens
+    // (or 401-ing against the placeholder API key). UI handles `demoMode:true`
+    // by hiding the brief panel.
+    if (isDemoMode()) {
+      res.json({ text: null, demoMode: true });
+      return;
+    }
     try {
       const allServices = getAllServices(config, req);
       const brief = await buildServiceBrief(name, {
