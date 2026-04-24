@@ -129,6 +129,9 @@ spec:
             - secretRef:
                 name: {{ include "dops-assistant.secretName" . }}
                 optional: {{ not (or .Values.secrets.create .Values.secrets.existingSecret) }}
+            {{- with .Values.extraEnvFrom }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           volumeMounts:
             - name: data
               mountPath: {{ .Values.persistence.mountPath }}
