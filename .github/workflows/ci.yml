@@ -18,6 +18,14 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npm test
+      # AP1: rca-eval rubric gate. Scores a committed fixture of synthetic
+      # RCA reports against the current rubric and fails the build if the
+      # average drops below the threshold. Catches rubric regressions and
+      # report-shape changes without needing live DB state in CI. No
+      # untrusted input is interpolated; the fixture path is a hardcoded
+      # string committed to the repo.
+      - name: rca-eval rubric gate
+        run: npx tsx src/eval/rca-eval.ts --reports src/eval/fixtures/sample-rca-reports.json --min-score 75
 
   e2e:
     runs-on: ubuntu-latest

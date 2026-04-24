@@ -511,3 +511,42 @@ describe("scan-triggered reports meet design-doc ≥60 criterion", () => {
     expect(result.total).toBeLessThan(60);
   });
 });
+
+// ── AP1 CI rubric gate fixture ─────────────────────────────────────────────
+
+describe("sample-rca-reports.json fixture meets the CI rubric gate (≥75)", () => {
+  /**
+   * The committed fixture (src/eval/fixtures/sample-rca-reports.json) is the
+   * input to the CI rubric-gate step in .github/workflows/ci.yml:
+   *
+   *   npx tsx src/eval/rca-eval.ts --reports … --min-score 75
+   *
+   * If the fixture's average ever drops below 75 — because the rubric was
+   * tightened, a fixture entry was edited carelessly, or the RcaReport type
+   * shape changed — the CI gate fails. This unit test mirrors that gate so
+   * the regression also surfaces in `npm test` locally instead of only on
+   * the CI runner.
+   */
+  it("scores at or above the CI threshold of 75", async () => {
+    const { readFileSync } = await import("fs");
+    const { resolve } = await import("path");
+    const { fileURLToPath } = await import("url");
+    const here = fileURLToPath(import.meta.url);
+    const dir = resolve(here, "..");
+    const path = resolve(dir, "fixtures", "sample-rca-reports.json");
+    const raw = JSON.parse(readFileSync(path, "utf8"));
+    expect(Array.isArray(raw)).toBe(true);
+    expect(raw.length).toBeGreaterThan(0);
+
+    const totals: number[] = [];
+    for (const item of raw as Array<{ report: RcaReport } | RcaReport>) {
+      const report: RcaReport = "report" in item && (item as { report?: RcaReport }).report
+        ? (item as { report: RcaReport }).report
+        : (item as RcaReport);
+      const { total } = scoreReport(report);
+      totals.push(total);
+    }
+    const avg = Math.round(totals.reduce((a, b) => a + b, 0) / totals.length);
+    expect(avg).toBeGreaterThanOrEqual(75);
+  });
+});

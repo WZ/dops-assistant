@@ -7,9 +7,13 @@
  *   npx tsx src/eval/rca-eval.ts --compare src/eval/baselines/2026-03-01.json
  *   npx tsx src/eval/rca-eval.ts --source scan    # filter by trigger source
  *   npx tsx src/eval/rca-eval.ts --min-score 75   # fail (exit 1) if avg < threshold
+ *   npx tsx src/eval/rca-eval.ts --reports src/eval/fixtures/sample-rca-reports.json --min-score 70
  *
  * --source values: all (default) | scan | webhook | user
  * --min-score: integer 0-100. Exits non-zero if the average total falls below it.
+ * --reports: JSON file containing an array of RcaReport objects. When set,
+ *   the eval reads from the file instead of the local DB. Pair with --min-score
+ *   in CI: catches rubric drift without needing a populated dops.sqlite.
  *
  * Source classification is heuristic, based on the `query` column's prefix:
  *   - "Proactive scan detected anomaly"  → scan-triggered (see anomaly-probe.ts)
@@ -284,6 +288,8 @@ async function main(): Promise<void> {
   const minScoreIdx = args.indexOf("--min-score");
   const minScoreRaw = minScoreIdx !== -1 ? args[minScoreIdx + 1] : undefined;
   const minScore = minScoreRaw !== undefined ? Number(minScoreRaw) : undefined;
+  const reportsIdx = args.indexOf("--reports");
+  const reportsFile = reportsIdx !== -1 ? args[reportsIdx + 1] : undefined;
   if (minScoreRaw !== undefined && (!Number.isFinite(minScore) || minScore! < 0 || minScore! > 100)) {
     console.error(`Invalid --min-score value: ${minScoreRaw}. Expected a number between 0 and 100.`);
     process.exit(1);
@@ -295,46 +301,85 @@ async function main(): Promise<void> {
   }
   const sourceFilter = sourceArg === "all" ? null : (sourceArg as TriggerSource);
 
-  // Dynamic import to keep scoring functions importable without better-sqlite3
-  const { Database } = await import("../server/db.js");
-
-  const dbPath = process.env.DB_PATH ?? "dops.sqlite";
-  const db = new Database(dbPath);
-
-  let rows: Array<{ id: string; service: string; query: string; report: string | null; created_at: string }>;
-  try {
-    // Find the default stack to read its investigations
-    const { DEFAULT_STACK_SLUG } = await import("../types/stack-types.js");
-    const defaultStack = db.getStackBySlug(DEFAULT_STACK_SLUG);
-    const stackId = defaultStack?.id ?? "";
-    rows = db
-      .listInvestigations(stackId, { limit: 10_000, status: ["complete"] })
-      .filter((r) => r.report !== null) as typeof rows;
-  } finally {
-    db.close();
-  }
-
   const entries: BaselineEntry[] = [];
 
-  for (const row of rows) {
-    let report: RcaReport;
+  if (reportsFile) {
+    // CI / fixture mode: score reports loaded from a JSON file. The fixture
+    // is a stable artifact in src/eval/fixtures/, so this path doesn't need
+    // a populated dops.sqlite and can run on a fresh runner. Catches rubric
+    // regressions and shape changes without depending on live DB state.
+    let parsed: unknown;
     try {
-      report = JSON.parse(row.report!) as RcaReport;
-    } catch {
-      console.warn(`Skipping investigation ${row.id}: failed to parse report JSON`);
-      continue;
+      parsed = JSON.parse(readFileSync(resolve(reportsFile), "utf8"));
+    } catch (err) {
+      console.error(`Failed to load reports file "${reportsFile}": ${(err as Error).message}`);
+      process.exit(1);
+    }
+    if (!Array.isArray(parsed)) {
+      console.error(`Reports file "${reportsFile}" must contain a JSON array of RcaReport objects.`);
+      process.exit(1);
+    }
+    const items = parsed as Array<{ id?: string; source?: TriggerSource; report?: RcaReport } | RcaReport>;
+    for (let i = 0; i < items.length; i++) {
+      const raw = items[i]!;
+      // Accept two shapes: a bare RcaReport, or { id?, source?, report }.
+      const report: RcaReport = "report" in raw && (raw as { report?: RcaReport }).report
+        ? (raw as { report: RcaReport }).report
+        : (raw as RcaReport);
+      const id = (raw as { id?: string }).id ?? `fixture-${i + 1}`;
+      const explicitSource = (raw as { source?: TriggerSource }).source;
+      const source: TriggerSource = explicitSource ?? "scan";
+      if (sourceFilter && source !== sourceFilter) continue;
+      entries.push({
+        id,
+        service: report.service ?? "unknown",
+        createdAt: report.investigatedAt ?? null,
+        source,
+        scores: scoreReport(report),
+      });
+    }
+  } else {
+    // Live-DB mode: read completed investigations from the local sqlite. The
+    // default mode used during dev / pre-ship.
+    // Dynamic import to keep scoring functions importable without better-sqlite3
+    const { Database } = await import("../server/db.js");
+
+    const dbPath = process.env.DB_PATH ?? "dops.sqlite";
+    const db = new Database(dbPath);
+
+    let rows: Array<{ id: string; service: string; query: string; report: string | null; created_at: string }>;
+    try {
+      // Find the default stack to read its investigations
+      const { DEFAULT_STACK_SLUG } = await import("../types/stack-types.js");
+      const defaultStack = db.getStackBySlug(DEFAULT_STACK_SLUG);
+      const stackId = defaultStack?.id ?? "";
+      rows = db
+        .listInvestigations(stackId, { limit: 10_000, status: ["complete"] })
+        .filter((r) => r.report !== null) as typeof rows;
+    } finally {
+      db.close();
     }
 
-    const source = classifyTriggerSource(row.query ?? "");
-    if (sourceFilter && source !== sourceFilter) continue;
+    for (const row of rows) {
+      let report: RcaReport;
+      try {
+        report = JSON.parse(row.report!) as RcaReport;
+      } catch {
+        console.warn(`Skipping investigation ${row.id}: failed to parse report JSON`);
+        continue;
+      }
 
-    entries.push({
-      id: row.id,
-      service: row.service,
-      createdAt: row.created_at ?? null,
-      source,
-      scores: scoreReport(report),
-    });
+      const source = classifyTriggerSource(row.query ?? "");
+      if (sourceFilter && source !== sourceFilter) continue;
+
+      entries.push({
+        id: row.id,
+        service: row.service,
+        createdAt: row.created_at ?? null,
+        source,
+        scores: scoreReport(report),
+      });
+    }
   }
 
   if (entries.length === 0) {
