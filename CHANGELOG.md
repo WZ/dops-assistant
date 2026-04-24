@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.2.2] - 2026-04-23
+
+### Changed
+- **Service detail title size matches the other pages.** The big service name header now uses the same 24px extrabold treatment as Dashboard, Services, Investigations, and Providers, so drilling into a service no longer feels like a different app.
+- **Scan Run detail layout mirrors Investigation detail.** Same full-height shell, same `← back` ghost button in the top bar, same two-column dossier (300px left rail with Phases + Metadata, evidence cards on the right), and the same compact phase-rail styling. The two detail views now read as one family instead of two different screens.
+
 ## [0.2.2.1] - 2026-04-23
 
 ### Added
