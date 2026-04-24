@@ -30,6 +30,7 @@ interface DashboardProps {
   onInvestigationClick: (id: string) => void;
   onViewService: (serviceName: string) => void;
   onViewAllServices: () => void;
+  onViewAllInvestigations: () => void;
   onOpenScanRun: (runId: string) => void;
   stackName?: string;
   setupStage?: import("../hooks/useSetupStage").SetupStage | null;
@@ -54,6 +55,7 @@ export function Dashboard({
   onInvestigationClick,
   onViewService,
   onViewAllServices,
+  onViewAllInvestigations,
   onOpenScanRun,
   stackName,
   setupStage,
@@ -655,6 +657,14 @@ export function Dashboard({
               <span className="font-mono text-[9px] tabular-nums text-muted-foreground/40">
                 {investigations.length}
               </span>
+              {investigationsTotal > investigations.length && (
+                <button
+                  onClick={onViewAllInvestigations}
+                  className="ml-auto font-mono text-[10px] uppercase tracking-[0.12em] text-primary/80 hover:text-primary transition-colors"
+                >
+                  View all {investigationsTotal.toLocaleString()} →
+                </button>
+              )}
             </div>
             {loading ? (
               <div className="space-y-2">
