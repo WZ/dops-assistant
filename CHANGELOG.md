@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.4.0] - 2026-04-24
+
+### Changed
+- **Past useful patterns now feed back into every investigation.** When you 👍 an RCA the server already saved a row into `incident_patterns`, but no agent ever read those rows — voting was a write-only loop. Now the planner gets up to 5 patterns for the target service as priors ("if the symptom matches one of these, prioritize the same metrics/logs that confirmed last time") and synthesis gets the same set with a calibration rule ("if the current symptom + root cause match, name the pattern id and bump confidence one tier"). Each pattern: id, severity, date, symptom, root cause, recommended actions, capped at 500 chars per field. Patterns are wrapped in `<untrusted_learned_patterns>` tags — they were originally LLM-synthesized text so they cross the same trust boundary as any other agent-derived input.
+
 ## [0.2.3.0] - 2026-04-24
 
 ### Added

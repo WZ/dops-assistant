@@ -453,6 +453,14 @@ export interface MastraAdapterDeps {
   noHistory?: boolean;
   registryStore?: ServiceRegistryStore;
   datasourceUidMap?: Map<string, string>;
+  /**
+   * Pair `db` + `stackId` to enable learned-pattern injection into planner
+   * and synthesis prompts. The adapter binds them into a stack-scoped
+   * `getSimilarPatterns(service)` closure on workflowConfig. Optional —
+   * omit on CLI / test paths that don't have a database.
+   */
+  db?: import("./db.js").Database;
+  stackId?: string;
 }
 
 /**
@@ -518,6 +526,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
     },
   );
 
+  const { db, stackId } = deps;
   const workflowConfig: WorkflowConfig = {
     model,
     providers,
@@ -526,6 +535,9 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
     useQuirkHandling: true,
     maxCharsPerSkill: config.skills?.maxCharsPerSkill,
     datasourceUidMap: deps.datasourceUidMap,
+    getSimilarPatterns: db && stackId
+      ? (service, limit = 5) => db.findSimilarPatterns(stackId, service, limit)
+      : undefined,
   };
 
   const investigationAgent = new MastraInvestigationAdapter(workflowConfig);

@@ -14,6 +14,7 @@ import { debug } from "../tool-utils.js";
 import { safeJsonParse } from "../../agents/shared/processors.js";
 import { createSynthesisAgent } from "../../agents/synthesis.js";
 import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
+import { formatPatterns } from "../../agents/shared/patterns.js";
 
 /**
  * Build a synthesis step that combines evidence and runs quality validation.
@@ -110,6 +111,23 @@ export function buildSynthesisStep(config: WorkflowConfig) {
       }
       if (qualityWarnings.length > 0) {
         promptParts.push(`\n⚠️ EVIDENCE QUALITY WARNINGS:\n${qualityWarnings.join("\n")}\nDo NOT leave evidence arrays empty when observations exist above. Extract and cite every piece of evidence available.`);
+      }
+
+      // Learned patterns: synthesis sees them so it can recognize recurrences
+      // and calibrate confidence. The target service is always at services[0]
+      // by adapter contract (see MastraInvestigationAdapter.investigate).
+      const targetService = config.services[0]?.name;
+      if (config.getSimilarPatterns && targetService) {
+        try {
+          const patterns = config.getSimilarPatterns(targetService, 5);
+          const formatted = formatPatterns(targetService, patterns);
+          if (formatted) {
+            promptParts.push(
+              `\n${wrapUntrusted("learned_patterns", formatted)}`,
+              "If the current symptom + root cause overlap with one of the patterns above, name the pattern id explicitly in `summary` and bump confidence by one tier (low→medium, medium→high). If they do NOT match, ignore the patterns — do not force a fit.",
+            );
+          }
+        } catch { /* no patterns available — graceful degradation */ }
       }
 
       const prompt = promptParts.filter(Boolean).join("\n");
