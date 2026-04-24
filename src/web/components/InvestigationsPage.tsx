@@ -141,8 +141,12 @@ export function InvestigationsPage({
   );
 
   return (
-    <div className="h-full overflow-auto">
-      <div className="max-w-[1100px] mx-auto px-6 py-6">
+    // Match ServicesPage + SettingsPage exactly: full-width container with
+    // px-4 py-5. The previous max-w-[1100px] mx-auto centering made the
+    // title indent further right than Operations Desk's title did, so the
+    // three top-level pages looked like they belonged to different apps.
+    <div className="h-full overflow-y-auto px-4 py-5">
+      <div>
         {/* Page title — matches ServicesPage / SettingsPage style. No back
             link; the sidebar is the global nav. */}
         <div className="mb-6 animate-fade-up">
