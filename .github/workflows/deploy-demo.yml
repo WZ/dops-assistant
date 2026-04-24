@@ -1,0 +1,52 @@
+# Deploy the public read-only demo site to Fly.io.
+#
+# Triggers:
+#   - push to main when demo-relevant files change (Dockerfile.demo, seed
+#     script, fly.toml, src/) so the demo stays in sync with what shipped
+#   - manual workflow_dispatch (reseed, banner copy change, force redeploy)
+#
+# Requires the FLY_API_TOKEN secret. Create via:
+#   flyctl tokens create deploy -x 8760h
+# and paste into Settings -> Secrets and variables -> Actions.
+#
+# NOTE: user-supplied inputs (inputs.reason) are intentionally NOT interpolated
+# into any `run:` command. They exist only for the GitHub UI history and are
+# read by humans looking at past runs. No shell injection surface.
+
+name: deploy-demo
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Dockerfile.demo"
+      - "fly.toml"
+      - "scripts/seed-demo.ts"
+      - "demo/**"
+      - "src/**"
+      - "package.json"
+      - "package-lock.json"
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Why are you redeploying? (recorded in run history only, not used in any command)"
+        required: false
+        default: "manual"
+
+concurrency:
+  group: deploy-demo
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Fly.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy to Fly.io
+        run: flyctl deploy --dockerfile Dockerfile.demo --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
