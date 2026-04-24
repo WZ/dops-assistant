@@ -21,6 +21,7 @@ import type { SkillStore } from "../skills/store.js";
 import type { PhaseStats, ServerMessage } from "../types/ws-types.js";
 import { eventLog } from "./event-log.js";
 import type { NotificationSource } from "../types/notifications.js";
+import { isDemoMode } from "./demo-mode.js";
 
 
 const logger = createLogger();
@@ -143,6 +144,17 @@ export class InvestigationRunner {
   async run(opts: RunOptions): Promise<RcaReport> {
     const { service, message, callbacks, template, stackId, readOnlyTools, disabledSkillIds, source } = opts;
     const invId = opts.investigationId ?? `inv_${ulid()}`;
+
+    // Demo mode: belt-and-suspenders guard. Every path that reaches this
+    // method (WS, webhook, scan-scheduler fan-out, health-poller fan-out) is
+    // ALSO blocked at its own entry point when DEMO_MODE=true. This last
+    // gate exists so a future caller can't accidentally burn LLM tokens if
+    // someone forgets to add their own check upstream. Reject synchronously
+    // without touching the DB — nothing to roll back that way.
+    if (isDemoMode()) {
+      logger.warn({ service: service.name, source }, "demo mode: rejecting investigation run");
+      throw new Error("Demo mode — live investigations are disabled. Clone the repo to run real investigations.");
+    }
 
     // 1. Create DB record
     this.db.createInvestigation(stackId ?? "", { id: invId, service: service.name, query: message, status: "running" });

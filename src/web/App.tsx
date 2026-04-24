@@ -17,6 +17,7 @@ import { ServicesPage } from "./components/ServicesPage";
 import { SettingsPage } from "./components/SettingsPage";
 import { ScanActivityBadge } from "./components/ScanActivityBadge";
 import { SetupStepper } from "./components/SetupStepper";
+import { DemoBanner } from "./components/DemoBanner";
 import { useRoute, viewToUrl } from "./hooks/useRoute";
 import type { InvestigationsQuery } from "./lib/investigations-query";
 import { StackSwitcher } from "./components/StackSwitcher";
@@ -289,7 +290,9 @@ export function App() {
   return (
     <StackProvider activeStackId={activeStackId}>
     <TooltipProvider delayDuration={200}>
-    <div className="h-screen flex bg-background text-foreground noise relative overflow-hidden">
+    <div className="h-screen flex flex-col bg-background text-foreground noise relative overflow-hidden">
+    <DemoBanner />
+    <div className="flex-1 flex min-h-0">
       {/* Sidebar */}
       <Sidebar
         activePage={activePage}
@@ -505,6 +508,7 @@ export function App() {
           </ResizablePanelGroup>
         </div>
       </div>
+    </div>
     </div>
     </TooltipProvider>
     </StackProvider>

@@ -35,6 +35,7 @@ import { InvestigationDedup } from "./investigation-dedup.js";
 import { createApiKeyMiddleware } from "./auth-middleware.js";
 import { globalLimiter, strictLimiter, moderateLimiter } from "./rate-limit.js";
 import { startHealthMonitor, stopHealthMonitor, healthHandler } from "./health-monitor.js";
+import { createDemoModeMiddleware, isDemoMode } from "./demo-mode.js";
 import { StackManager } from "./stack-manager.js";
 import { createMastraAdapters } from "./agents.js";
 import { notifySlack } from "./slack-notifier.js";
@@ -121,6 +122,12 @@ async function main() {
   app.use("/api/services/:name/brief", strictLimiter);
   // Moderate: 30 req/min per IP for remaining POST/PUT/DELETE (skips GET)
   app.use("/api", moderateLimiter);
+
+  // Demo mode (read-only public showcase) — rejects non-GET requests with a
+  // structured 403. No-op when DEMO_MODE env var is unset. Installed before
+  // the API-key middleware so demo denials surface with a clear reason rather
+  // than being masked by an auth challenge.
+  app.use("/api", createDemoModeMiddleware());
 
   // API key auth on mutating routes (POST/PUT/DELETE/PATCH).
   // Webhook endpoints are exempt — they have their own bearer token auth.
@@ -360,8 +367,16 @@ async function main() {
 
   registerRoutes(app, { db, stackManager, config, skillStore, sharedDedup, llmModel: model });
 
-  // Health check endpoint with background monitoring
-  startHealthMonitor({ stackManager, db });
+  // Health check endpoint with background monitoring.
+  // In demo mode the endpoint still works (for liveness probes / banner freshness
+  // checks), but the background probe loop that touches MCP/DB every 30s is
+  // skipped — demo providers are stubs, so the probe would produce spurious
+  // "degraded" status on every tick.
+  if (!isDemoMode()) {
+    startHealthMonitor({ stackManager, db });
+  } else {
+    logger.info("demo mode: skipping background health monitor");
+  }
   app.get("/api/health", healthHandler);
 
   // Alert webhook endpoint.
@@ -370,7 +385,12 @@ async function main() {
   // to this URL see a meaningful error instead of Express's default HTML 404
   // ("Cannot POST /api/webhook/alert"). When the secret IS set, we eagerly
   // build the runner/adapters so the first webhook call doesn't pay that cost.
-  if (config.webhook.secret) {
+  //
+  // Demo mode: never wire the real webhook handler even if a secret is set —
+  // demo-mode middleware would reject it anyway, but treating it as unconfigured
+  // keeps the startup path free of adapter construction (which would try to
+  // connect to stub MCP providers).
+  if (config.webhook.secret && !isDemoMode()) {
     const defaultStackId = stackManager.getDefaultStackId();
     const defaultCtx = stackManager.getDefaultContext();
     const providers = defaultCtx.providerRegistry.getProviders();
@@ -488,29 +508,37 @@ async function main() {
   // past the allowlist above would otherwise create stored-XSS. Defence in
   // depth — with validation above, this is theoretically unreachable.
   const basePathForScript = JSON.stringify(appBasePath).replace(/</g, "\\u003c");
+  const demoModeActive = isDemoMode();
 
   function buildIndexHtml(): string {
     const raw = readFileSync(path.resolve(staticDir, "index.html"), "utf-8");
-    if (appBasePath === "/") return raw;
+    if (appBasePath === "/" && !demoModeActive) return raw;
 
-    // Rewrite any absolute /assets/... reference to ${base}assets/...
-    const afterAssets = raw.replace(
-      /(src|href)="\/assets\//g,
-      `$1="${appBasePath}assets/`,
-    );
+    // Rewrite any absolute /assets/... reference to ${base}assets/... when a
+    // sub-path is configured.
+    const afterAssets = appBasePath === "/"
+      ? raw
+      : raw.replace(/(src|href)="\/assets\//g, `$1="${appBasePath}assets/`);
 
-    // Inject window.__APP_BASE__ into <head>. Track whether the injection
-    // actually fired — if the HTML template ever changes to a self-closing or
-    // missing <head>, the bundle would silently fall back to "/" and every
-    // API call would go to the wrong path. Fail fast at boot instead.
+    // Build the inline globals script — APP_BASE and DEMO_MODE — so the web
+    // bundle's API/WS calls + banner rendering agree with the server. Only
+    // emits an assignment line when the value is non-default; empty script
+    // when neither is set. Fail fast at boot if we can't find <head>, so a
+    // silent HTML template regression doesn't ship broken demo UX.
+    const globals: string[] = [];
+    if (appBasePath !== "/") globals.push(`window.__APP_BASE__=${basePathForScript}`);
+    if (demoModeActive) globals.push(`window.__DEMO_MODE__=true`);
+    if (globals.length === 0) return afterAssets;
+
+    const inlineScript = `<script>${globals.join(";")};</script>`;
     let injected = false;
     const finalHtml = afterAssets.replace(/<head(\s[^>]*)?>/i, (m) => {
       injected = true;
-      return `${m}<script>window.__APP_BASE__=${basePathForScript};</script>`;
+      return `${m}${inlineScript}`;
     });
     if (!injected) {
       throw new Error(
-        "APP_BASE_PATH is set but <head> tag not found in index.html; web bundle would load with wrong base path",
+        "<head> tag not found in index.html; can't inject runtime globals (APP_BASE_PATH / DEMO_MODE)",
       );
     }
     return finalHtml;
@@ -551,12 +579,19 @@ async function main() {
 
   logger.info({ appBasePath }, "static file serving configured");
 
-  // Start all per-stack health pollers (staggered)
-  stackManager.startAllPollers();
-
-  // Kick off the TTL reaper — marks idle stacks inactive (30d) and
-  // soft-deletes long-dormant ones (60d). Runs once immediately, then hourly.
-  stackManager.startTtlReaper();
+  // Start all per-stack health pollers (staggered) + scan schedulers.
+  // Both are skipped in demo mode — pollers would query stub MCP providers
+  // and produce garbage health transitions; the scan scheduler would run
+  // the probe on a cron and (if a rule tripped) try to launch an LLM
+  // investigation, which demo mode forbids anyway.
+  if (!isDemoMode()) {
+    stackManager.startAllPollers();
+    // Kick off the TTL reaper — marks idle stacks inactive (30d) and
+    // soft-deletes long-dormant ones (60d). Runs once immediately, then hourly.
+    stackManager.startTtlReaper();
+  } else {
+    logger.info("demo mode: skipping health pollers, scan schedulers, and TTL reaper");
+  }
 
   server.listen(port, () => {
     const pkg = JSON.parse(readFileSync(path.join(__dirname, "../../package.json"), "utf-8"));

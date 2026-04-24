@@ -20,6 +20,7 @@ import { getToolsByRole } from "../mcp/provider.js";
 import { ChatMessageSchema, DeepInvestigateMessageSchema } from "./sanitize.js";
 import { wrapUntrusted } from "../agents/shared/prompt-helpers.js";
 import { WsRateLimiter, classifyWsMessage } from "./rate-limit.js";
+import { isDemoMode } from "./demo-mode.js";
 
 const logger = createLogger();
 
@@ -236,6 +237,28 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
         }
 
         let msg: ClientMessage;
+
+        // Demo mode: reject every message type that would reach the LLM or
+        // mutate state. Done here (not at handleClientMessage) so callers see
+        // the refusal before we run shape validation or open a DB transaction.
+        // The banner in the UI makes this state obvious; this is belt-and-
+        // suspenders for anyone who reaches the WS directly.
+        if (isDemoMode()) {
+          const blockedTypes = new Set([
+            "chat",
+            "deep_investigate",
+            "discover:start",
+            "discover:accept",
+            "discover:reject",
+          ]);
+          if (parsed && typeof parsed === "object" && "type" in parsed && blockedTypes.has(parsed.type as string)) {
+            const friendly = parsed.type === "chat" || parsed.type === "deep_investigate"
+              ? "Chat is disabled on the demo site — LLM calls cost money and we can't let random visitors spend it. Click into a pre-recorded investigation to see a real RCA report, or clone the repo to try it yourself."
+              : "Discovery is disabled on the demo site — it would run against stub MCP providers and produce nothing useful. Clone the repo and point it at your own stack.";
+            send({ type: "chat:stream_end", content: friendly });
+            return;
+          }
+        }
 
         // Validate and sanitize external input for message-carrying types
         if (parsed?.type === "chat") {

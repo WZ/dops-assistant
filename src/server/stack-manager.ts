@@ -135,9 +135,13 @@ export class StackManager {
     const stackConfig = JSON.parse(row.config) as StackConfig;
     const isDefault = row.id === this.defaultStackId;
 
-    // All stacks (including default) use data/{slug}/ for providers.yaml and services.yaml.
+    // All stacks (including default) use {DATA_DIR}/{slug}/ for providers.yaml
+    // and services.yaml. DATA_DIR defaults to `data/` for backwards compat;
+    // override at the orchestrator level (Docker/Fly volume, k8s PVC, local
+    // demo test harness) without code changes.
     // Default stack also merges config.yaml providers (read-only) with GUI providers.
-    const stackDir = join("data", row.slug);
+    const dataRoot = process.env["DATA_DIR"] ?? "data";
+    const stackDir = join(dataRoot, row.slug);
     mkdirSync(stackDir, { recursive: true });
 
     const providersFilePath = join(stackDir, "providers.yaml");
