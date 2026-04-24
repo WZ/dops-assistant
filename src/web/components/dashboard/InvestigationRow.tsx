@@ -45,15 +45,21 @@ export const InvestigationRow = memo(function InvestigationRow({
   // is fine" when really the stack was on fire. Status is already shown by
   // the small dot next to the service name and by the "SCAN/ALERT" badge;
   // the thick left stripe is the high-signal severity cue.
+  //
+  // Mapping matches `severityVariant()` (used by the badge on this same row)
+  // and DESIGN.md's severity palette: destructive=red, warning=gold, info=blue,
+  // secondary=muted gray. Accent (coral) is reserved for emphasis/hotspots in
+  // DESIGN.md, not severity — using it here would diverge from the badge color
+  // on the same row and break the system's color→severity contract.
   const severityBorder =
     severity === "critical"
       ? "border-l-destructive"
       : severity === "high"
-        ? "border-l-accent"
+        ? "border-l-warning"
         : severity === "medium"
-          ? "border-l-warning"
+          ? "border-l-info"
           : severity === "low"
-            ? "border-l-info"
+            ? "border-l-secondary"
             : "border-l-border"; // no severity yet (e.g. still running) — neutral
 
   const severityTint =

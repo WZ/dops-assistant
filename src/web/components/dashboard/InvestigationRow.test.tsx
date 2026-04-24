@@ -42,9 +42,9 @@ function borderClass(el: HTMLElement): string {
 describe("InvestigationRow — left border encodes severity, not status", () => {
   it.each([
     ["critical", "border-l-destructive"],
-    ["high", "border-l-accent"],
-    ["medium", "border-l-warning"],
-    ["low", "border-l-info"],
+    ["high", "border-l-warning"],
+    ["medium", "border-l-info"],
+    ["low", "border-l-secondary"],
   ] as const)("severity=%s → stripe=%s", (sev, expected) => {
     // Status is 'complete' in every case — the regression we're guarding
     // against is "green stripe just because it's complete", regardless of
@@ -62,11 +62,11 @@ describe("InvestigationRow — left border encodes severity, not status", () => 
     expect(borderClass(container)).toBe("border-l-border");
   });
 
-  it("status does NOT change the stripe — high-severity complete row stays accent, not success", () => {
+  it("status does NOT change the stripe — high-severity complete row stays warning, not success", () => {
     const { container } = render(
       <InvestigationRow investigation={make("high", "complete")} onClick={() => {}} />,
     );
-    expect(borderClass(container)).toBe("border-l-accent");
+    expect(borderClass(container)).toBe("border-l-warning");
     // And critical-failed keeps destructive rather than switching for failure.
     const { container: c2 } = render(
       <InvestigationRow investigation={make("critical", "failed")} onClick={() => {}} />,
