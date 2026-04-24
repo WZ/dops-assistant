@@ -112,9 +112,12 @@ export function Dashboard({
     const seq = ++fetchSeqRef.current;
     try {
       const [invRes, svcRes, healthRes, hiddenRes, kpiRes] = await Promise.all([
-        // Ops Desk shows a 5-row snippet; pull 25 so the reconcile pass below
-        // has enough recency buffer to mark completed investigations as done
-        // even when several run in parallel. Full list at /investigations.
+        // Ops Desk only shows a 5-row snippet — pull 25 as a safety-net
+        // buffer for the reconcile pass below, which clears completed/failed
+        // entries from activeInvestigations if the corresponding
+        // investigation:complete WS event was dropped. 25 covers the realistic
+        // worst case between two 60s polls; anything beyond that still gets
+        // TTL-cleaned in the staleness sweep below. Full list at /investigations.
         stackFetch("/api/investigations?limit=25"),
         stackFetch("/api/services"),
         stackFetch("/api/services/health"),
