@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useRef } from "react";
+import { useEffect, useCallback } from "react";
 import type { LeftPaneView } from "../App";
 import { APP_BASE_PATH } from "../lib/createStackFetch";
 import {
@@ -109,17 +109,21 @@ export function viewToUrl(view: LeftPaneView): string {
 export function useRoute(
   setLeftPane: (view: LeftPaneView) => void,
 ): { initialView: LeftPaneView; navigate: (view: LeftPaneView, opts?: { replace?: boolean }) => void } {
-  const suppressPopstate = useRef(false);
-
   // `replace: true` swaps the current history entry via replaceState instead of
   // pushing a new one. Used for same-route state updates (filter bar changes on
   // /investigations) so the Back button still exits the page in one press
   // rather than unwinding every keystroke and pill click.
+  //
+  // There is no popstate guard here: pushState / replaceState do NOT fire
+  // popstate (browser spec guarantee), so only genuine user-initiated
+  // back/forward runs the listener below. An earlier version kept a
+  // `suppressPopstate` ref that swallowed the next genuine back-button click
+  // — the UI stayed on the detail page while the URL quietly rolled back one
+  // entry, so the next Back landed two entries away on an unrelated page.
   const navigate = useCallback((view: LeftPaneView, opts?: { replace?: boolean }) => {
     const url = viewToUrl(view);
     const current = window.location.pathname + window.location.search;
     if (url !== current) {
-      suppressPopstate.current = true;
       // Tag each entry with `{ fromApp: true }` so detail pages can distinguish
       // in-app history from direct-link arrivals when rendering "Back". Detail
       // pages (/investigations/:id) use the tag to return to /investigations
@@ -138,10 +142,6 @@ export function useRoute(
 
   useEffect(() => {
     const onPopstate = () => {
-      if (suppressPopstate.current) {
-        suppressPopstate.current = false;
-        return;
-      }
       setLeftPane(parseUrl(window.location.pathname, window.location.search));
     };
     window.addEventListener("popstate", onPopstate);
