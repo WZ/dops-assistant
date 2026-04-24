@@ -39,9 +39,9 @@ export type ServerMessage =
   | { type: "chat:tool_call"; tool: string; status: "calling" | "complete" }
   | { type: "investigation:started"; id: string; service: string; query: string; parentInvestigationId?: string }
   | { type: "investigation:phase"; id: string; phase: string; status: "running" | "complete" | "failed"; data?: unknown; stats?: PhaseStats }
-  | { type: "investigation:progress"; phase: string; step: string }
-  | { type: "investigation:tool_call"; phase: string; tool: string; args: Record<string, unknown>; status: "calling" | "success" | "error"; result?: string; durationMs?: number }
-  | { type: "investigation:iteration"; phase: string; iteration: number; maxIterations: number; description: string }
+  | { type: "investigation:progress"; id: string; phase: string; step: string }
+  | { type: "investigation:tool_call"; id: string; phase: string; tool: string; args: Record<string, unknown>; status: "calling" | "success" | "error"; result?: string; durationMs?: number }
+  | { type: "investigation:iteration"; id: string; phase: string; iteration: number; maxIterations: number; description: string }
   | { type: "investigation:complete"; id: string; report: unknown }
   | { type: "investigation:failed"; id: string; error: string }
   | { type: "deep_investigate:tool_call"; investigationId: string; tool: string; args: Record<string, unknown>; status: "calling" | "success" | "error" }
