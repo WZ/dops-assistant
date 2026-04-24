@@ -501,7 +501,7 @@ async function handleRerun(
   const invId = `inv_${ulid()}`;
   const query = `Re-run of investigation ${msg.investigationId} for ${serviceName}`;
 
-  send({ type: "investigation:started", id: invId, service: serviceName, query });
+  send({ type: "investigation:started", id: invId, service: serviceName, query, parentInvestigationId: msg.investigationId });
 
   const wsCallbacks: InvestigationCallbacks = {
     onPhase: (phase, status, stats) => {
