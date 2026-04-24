@@ -10,6 +10,12 @@
 
 AI-powered incident response for DevOps teams. Connects to your monitoring stack via [MCP](https://modelcontextprotocol.io/) to investigate incidents, scan for problems before they alert, and deliver structured RCA reports with evidence — automatically.
 
+<p align="center">
+  <img src="docs/img/screenshots/01-ops-desk.png" alt="Operations Desk — live service catalog, investigation log, scan runs" width="900"/>
+</p>
+
+<p align="center"><em>The Operations Desk — live service catalog, investigation log, recent scan runs, and event rail in one view.</em></p>
+
 ## Features
 
 - **Automated RCA pipeline** — 6-phase investigation: prefetch → anomaly detection → planning → parallel evidence gathering (metrics + logs + infra + changes) → synthesis → report
@@ -152,12 +158,32 @@ Each rule has hysteresis (consecutive-tick counters) so a single flap doesn't fi
 
 Every tick creates a durable `ScanRun` record at `/scan/runs/:id` — copy the link, download as PNG or Markdown, or fire it to Slack with one click.
 
+<p align="center">
+  <img src="docs/img/screenshots/05-scan-run-detail.png" alt="Scan run detail — Probe → Triage → Investigate breakdown, with dispatched investigations" width="900"/>
+</p>
+
+<p align="center"><em>A scan run that dispatched two investigations — the 3-phase probe/triage/investigate breakdown is preserved forever.</em></p>
+
 | Trigger | Context | Depth | Requires |
 |---|---|---|---|
 | Operator | High (natural language + time refs) | Configurable | Nothing extra |
 | Alert webhook | Medium (alert labels + service config) | Per-severity template | Alertmanager config |
 | Health poller | Medium (transition info + service config) | Quick | Prometheus provider |
 | Proactive scan | Medium (rule trigger + service config) | Configurable per rule | `scan.enabled: true` |
+
+## Investigations
+
+Every investigation gets a shareable URL, a phase rail that streams live, and a structured RCA report with root cause, contributing factors, timeline, evidence (metrics + logs + infra + changes), and recommended actions.
+
+<p align="center">
+  <img src="docs/img/screenshots/02-investigation-detail.png" alt="Investigation detail — RCA report with timeline + evidence" width="900"/>
+</p>
+
+The dedicated `/investigations` page has filter pills for severity, status toggles, a search across service/query/root-cause, date-window shortcuts, and URL-driven filter state so bookmarks and browser history Just Work.
+
+<p align="center">
+  <img src="docs/img/screenshots/03-investigations-list.png" alt="Investigations list — filter bar, severity pills, severity-striped rows" width="900"/>
+</p>
 
 ## Notifications
 
@@ -169,9 +195,25 @@ Every completed investigation can be delivered to Slack and email. Recipients ar
 
 Manage recipients at **Settings → Notifications** in the UI — add, edit, toggle, and send a fixture RCA through the real pipeline with the per-row **Test** button.
 
+<p align="center">
+  <img src="docs/img/screenshots/06-notifications.png" alt="Settings — Notifications tab with Slack + email" width="900"/>
+</p>
+
 ## Operations Desk
 
 The default landing page is a live SOC-style console: health strip, service catalog with status chips, investigation log, recent scan runs with a one-click **Scan now** button, and an event stream rail. Drilling into a service opens a tabbed detail view (metrics, history, dependencies, AI brief).
+
+## Try It
+
+Want to click around before cloning? The entire UI above runs as a read-only demo:
+
+```bash
+npm install
+npm run seed:demo           # writes fixture data to data-demo/
+npm run demo                # boots with DEMO_MODE=true on port 3000
+```
+
+All mutating endpoints are disabled, no LLM calls are made, and no real infrastructure is touched — see [`demo/README.md`](demo/README.md) for how to deploy this to Fly.io as a public demo.
 
 ## Deployment
 
