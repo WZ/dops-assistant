@@ -884,7 +884,6 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     }
     const rows = db.listInvestigations(req.stackId, parsed.filters);
     const total = db.countInvestigations(req.stackId, parsed.filters);
-    const limit = parsed.filters.limit ?? 25;
     const offset = parsed.filters.offset ?? 0;
     res.json({ rows, total, hasMore: offset + rows.length < total });
   });
