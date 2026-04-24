@@ -47,15 +47,35 @@ async function main() {
     try { localStorage.setItem("theme", "dark"); } catch { /* ignore */ }
   });
 
-  // Resolve investigation + scan-run IDs dynamically so the script keeps
-  // working when the seed is re-run (IDs are ULIDs, fresh on every seed).
-  const invs = (await (await page.request.get(`${DEMO_URL}/api/investigations?limit=50`)).json()) as { rows: Array<{ id: string; service: string; status: string }> };
+  // Resolve investigation + scan-run IDs. Try the live API first (live demo
+  // server); fall back to reading the static .json snapshots produced by
+  // export-static.ts (GitHub Pages / static-bundle test).
+  async function getJson<T>(liveUrl: string, staticUrl: string): Promise<T> {
+    for (const url of [liveUrl, staticUrl]) {
+      try {
+        const r = await page.request.get(url);
+        if (!r.ok()) continue;
+        const body = await r.text();
+        if (body.startsWith("<")) continue;   // Pages 404 → HTML fallback
+        return JSON.parse(body) as T;
+      } catch { /* try next */ }
+    }
+    throw new Error(`could not fetch JSON from ${liveUrl} or ${staticUrl}`);
+  }
+
+  const invs = await getJson<{ rows: Array<{ id: string; service: string; status: string }> }>(
+    `${DEMO_URL}/api/investigations?limit=50`,
+    `${DEMO_URL}/api/investigations.json`,
+  );
   const paymentsInv = invs.rows.find((i) => i.service === "payments-worker" && i.status === "complete");
   const runningInv = invs.rows.find((i) => i.status === "running");
   if (!paymentsInv) throw new Error("payments-worker investigation not seeded — run `npm run seed:demo` first");
   if (!runningInv) throw new Error("running investigation not seeded");
 
-  const scanRuns = (await (await page.request.get(`${DEMO_URL}/api/scan/runs?limit=10`)).json()) as { runs: Array<{ id: string; hitsDispatched: number }> };
+  const scanRuns = await getJson<{ runs: Array<{ id: string; hitsDispatched: number }> }>(
+    `${DEMO_URL}/api/scan/runs?limit=10`,
+    `${DEMO_URL}/api/scan/runs.json`,
+  );
   const hitRun = scanRuns.runs.find((r) => r.hitsDispatched > 0);
   if (!hitRun) throw new Error("scan run with dispatched hits not seeded");
 

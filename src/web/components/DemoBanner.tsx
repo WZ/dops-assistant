@@ -9,10 +9,18 @@
  */
 
 /**
- * Read the demo-mode flag injected into the document at serve time. Kept as
- * a function (not a module constant) so SSR / tests can stub `window`.
+ * Read the demo-mode flag. Two sources, either one trips the banner:
+ *   1. `window.__DEMO_MODE__` — injected by the live server at serve time
+ *      when `DEMO_MODE=true` is in the environment. This covers the local
+ *      `npm run demo` case.
+ *   2. `import.meta.env.VITE_DEMO_STATIC === "true"` — baked into the
+ *      bundle at build time by the GitHub Pages workflow. Plain Vite
+ *      static output has no server-side injection, so the build-time
+ *      flag is the only signal when running off Pages.
+ * Kept as a function (not a module constant) so SSR / tests can stub.
  */
 export function isDemoActive(): boolean {
+  if (import.meta.env.VITE_DEMO_STATIC === "true") return true;
   if (typeof window === "undefined") return false;
   return (window as unknown as { __DEMO_MODE__?: boolean }).__DEMO_MODE__ === true;
 }
