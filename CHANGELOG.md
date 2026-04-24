@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 ## [0.2.2.1] - 2026-04-23
 
 ### Added
+- **Investigations entry in the sidebar.** The dedicated list is now one click away — no more digging for the "View all" link on the Ops Desk or pasting the URL. The icon stays highlighted when you drill into a single investigation's detail page, so you always know which section you're in.
 - **Trigger source badge on every investigation row.** Scans and alerts now show a small "SCAN" / "ALERT" tag next to the service name so you can tell at a glance whether the investigation came from the proactive scanner, an alertmanager webhook, or a human question. User-initiated investigations show no badge (they're the baseline — tagging them would just be noise).
 - **Smart back-nav from investigation detail.** Pressing Back on an investigation page now returns you to wherever you came from inside the app — including `/investigations` with your filters still applied. Direct-link arrivals (pasted URL, fresh tab) still fall back to the Operations Desk.
 

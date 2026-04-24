@@ -136,9 +136,16 @@ export function App() {
     }
   }, [setupStage]);
 
+  // Map the richer LeftPaneView union down to the 4 sidebar buckets. Both
+  // the list page (investigations) and a single-investigation detail page
+  // (investigation) highlight "Investigations" so the operator's mental
+  // model of "I'm in the investigations section" stays stable while
+  // drilling in and out.
   const activePage: SidebarPage =
     leftPane.type === "services" ? "services"
     : leftPane.type === "settings" ? "settings"
+    : leftPane.type === "investigations" ? "investigations"
+    : leftPane.type === "investigation" ? "investigations"
     : "dashboard";
 
   const stackFetchForBranding = useMemo(() => createStackFetch(activeStackId), [activeStackId]);
@@ -265,7 +272,13 @@ export function App() {
       {/* Sidebar */}
       <Sidebar
         activePage={activePage}
-        onNavigate={(page) => setLeftPane({ type: page })}
+        onNavigate={(page) => {
+          // "investigations" is a LeftPaneView that carries a query; clicking
+          // the sidebar icon always means "take me to the unfiltered list",
+          // so pass an empty query. The other three sidebar pages map 1:1.
+          if (page === "investigations") setLeftPane({ type: "investigations", query: {} });
+          else setLeftPane({ type: page });
+        }}
         dark={theme.dark}
         onToggleTheme={theme.toggle}
       />
@@ -337,7 +350,14 @@ export function App() {
         {showStepper && (
           <SetupStepper
             stage={setupStage}
-            onNavigate={(page) => setLeftPane({ type: page })}
+            onNavigate={(page) => {
+              // SetupStepper only ever emits settings / services / dashboard
+              // today (see SetupStepper STEPS). The "investigations" branch
+              // exists for type soundness — if a future step ever points at
+              // the list, an empty query is the right default.
+              if (page === "investigations") setLeftPane({ type: "investigations", query: {} });
+              else setLeftPane({ type: page });
+            }}
             onSkip={handleSkipSetup}
           />
         )}
