@@ -111,7 +111,10 @@ export function Dashboard({
     const seq = ++fetchSeqRef.current;
     try {
       const [invRes, svcRes, healthRes, hiddenRes, kpiRes] = await Promise.all([
-        stackFetch("/api/investigations?limit=100"),
+        // Ops Desk shows a 5-row snippet; pull 25 so the reconcile pass below
+        // has enough recency buffer to mark completed investigations as done
+        // even when several run in parallel. Full list at /investigations.
+        stackFetch("/api/investigations?limit=25"),
         stackFetch("/api/services"),
         stackFetch("/api/services/health"),
         stackFetch("/api/services/hidden"),
@@ -655,9 +658,9 @@ export function Dashboard({
                 Investigation Log
               </h2>
               <span className="font-mono text-[9px] tabular-nums text-muted-foreground/40">
-                {investigations.length}
+                {Math.min(5, investigations.length)}
               </span>
-              {investigationsTotal > investigations.length && (
+              {investigationsTotal > 5 && (
                 <button
                   onClick={onViewAllInvestigations}
                   className="ml-auto font-mono text-[10px] uppercase tracking-[0.12em] text-primary/80 hover:text-primary transition-colors"
@@ -753,7 +756,7 @@ export function Dashboard({
               </div>
             ) : (
               <div className="space-y-1.5">
-                {investigations.slice(0, 15).map((inv, i) => (
+                {investigations.slice(0, 5).map((inv, i) => (
                   <div
                     key={inv.id}
                     className={`animate-fade-up delay-${Math.min(i + 1, 8)}`}
