@@ -17,16 +17,16 @@ export const InvestigationRow = memo(function InvestigationRow({
   onClick,
   className,
 }: InvestigationRowProps) {
+  // Severity and confidence both come from DB columns now (severity from the
+  // real column, confidence_score computed via json_extract in the SELECT).
+  // We only JSON.parse the report for rootCause, which isn't promoted yet.
+  const severity = inv.severity ?? "";
+  const confidenceDisplay = normalizeConfidence(inv.confidence_score ?? undefined);
   let rootCause = "";
-  let confidenceDisplay = "";
-  let severity = "";
-
   if (inv.report) {
     try {
       const r = JSON.parse(inv.report);
       rootCause = r.rootCause ?? "";
-      confidenceDisplay = normalizeConfidence(r.confidenceScore ?? r.confidence);
-      severity = r.severity ?? "";
     } catch {
       // ignore malformed JSON
     }

@@ -83,7 +83,9 @@ export function ServiceDetail({
       // Investigation count — API returns flat InvestigationRow[] array
       if (invRes?.ok) {
         const invData = await invRes.json();
-        setInvestigationCount(Array.isArray(invData) ? invData.length : 0);
+        // API returns {rows, total, hasMore}. Use total (count matching filters
+        // ignoring limit) so the badge stays accurate even if we cap the fetch.
+        setInvestigationCount(typeof invData.total === "number" ? invData.total : 0);
       }
     }
 

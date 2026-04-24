@@ -38,7 +38,14 @@ function mockFetchResponses(overrides?: {
       return Promise.resolve({ ok: true, json: () => Promise.resolve(health) });
     }
     if (urlStr.includes("/api/investigations")) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve(investigations) });
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          rows: investigations,
+          total: investigations.length,
+          hasMore: false,
+        }),
+      });
     }
     // Metrics endpoint for ServiceMetrics tab
     if (urlStr.includes("/metrics")) {

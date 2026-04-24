@@ -74,7 +74,7 @@ function probeDb(db: Database): ProbeResult {
   const start = Date.now();
   try {
     // Run a trivial query to prove DB is accessible — pass empty stackId for health probe
-    db.listInvestigations("", 1, 0);
+    db.listInvestigations("", { limit: 1 });
     return { status: "ok", latencyMs: Date.now() - start };
   } catch (err) {
     return { status: "error", latencyMs: Date.now() - start, error: err instanceof Error ? err.message : String(err) };

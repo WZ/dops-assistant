@@ -28,6 +28,7 @@ import { parsePrometheusResult } from "./service-health-poller.js";
 import nodemailer from "nodemailer";
 import type { RcaReport } from "../types/rca-types.js";
 import { notifyEmail } from "./email-notifier.js";
+import { parseInvestigationFilters } from "./investigation-filters.js";
 
 /**
  * Zod schema for PUT /api/scan/settings body.
@@ -783,10 +784,16 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   });
 
   app.get("/api/investigations", (req: Request, res: Response) => {
-    const limit = Math.min(Number(req.query["limit"]) || 20, 100);
-    const offset = Number(req.query["offset"]) || 0;
-    const service = req.query["service"] as string | undefined;
-    res.json(db.listInvestigations(req.stackId, limit, offset, service));
+    const parsed = parseInvestigationFilters(req.query);
+    if ("error" in parsed) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+    const rows = db.listInvestigations(req.stackId, parsed.filters);
+    const total = db.countInvestigations(req.stackId, parsed.filters);
+    const limit = parsed.filters.limit ?? 25;
+    const offset = parsed.filters.offset ?? 0;
+    res.json({ rows, total, hasMore: offset + rows.length < total });
   });
 
   app.get("/api/investigations/:id", (req: Request, res: Response) => {

@@ -63,7 +63,7 @@ function mockFetchResponses(services: Array<{ name: string }>) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve(services) });
     }
     if (urlStr.includes("/api/investigations")) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ rows: [], total: 0, hasMore: false }) });
     }
     return Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}) });
   });
