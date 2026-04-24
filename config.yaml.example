@@ -140,4 +140,45 @@ webhook:
     critical: full
     warning: standard
     info: quick
-  # slackWebhookUrl: "${SLACK_WEBHOOK_URL}"  # Posts investigation summaries when set
+  # slackWebhookUrl: "${SLACK_WEBHOOK_URL}"  # Legacy fallback — prefer Settings → Notifications in the UI
+
+# Proactive system scans — disabled by default.
+# When enabled, a cron-scheduled probe walks every registered service and evaluates
+# probe rules (written by `npm run discover` or declared under services/probe below).
+# Rules that trip for `consecutiveTicks` ticks in a row spawn a headless investigation.
+# Every tick creates a durable ScanRun visible on the Operations Desk.
+scan:
+  enabled: false
+  cron: "0 */4 * * *"                    # every 4 hours — standard cron syntax
+  timezone: "UTC"                        # IANA zone, e.g. "America/Los_Angeles"
+  maxInvestigationsPerTick: 5            # cap on child investigations per tick
+  investigationTemplate: standard        # quick | standard | full
+  runOnEnable: true                      # kick off an immediate scan the first time this block enables
+  dedupWindowMinutes: 30                 # skip firing on a rule that tripped recently
+
+  # Probe engine tuning. Most operators leave these at defaults.
+  probe:
+    concurrency: 8                       # parallel service evaluations
+    queryTimeoutMs: 3000                 # per-PromQL-query timeout
+    logsQueryTimeoutMs: 10000            # per-LogQL-query timeout (Loki 15m windows are slow)
+    # metrics: []                        # Custom stack-wide rules. Discovery writes these into
+                                         # services.yaml:globalProbeRules — override here only if
+                                         # you know what you're doing.
+
+# Email notifications — deliver completed RCA reports to any inbox.
+# Slack webhook + scan-run notifications are configured at Settings → Notifications in the UI
+# (recipients, severity thresholds, and source allowlists are runtime settings, not config).
+# notifications:
+#   email:
+#     enabled: true
+#     from: "dops@example.com"
+#     appBaseUrl: "https://dops.example.com"  # used to build deep links in the email body
+#     smtp:
+#       host: smtp.example.com
+#       port: 587
+#       secure: false                    # true for implicit TLS on port 465
+#       user: "${SMTP_USER}"
+#       pass: "${SMTP_PASS}"
+#     retry:
+#       attempts: 4
+#       backoffMs: [1000, 5000, 30000]   # length must equal attempts - 1
