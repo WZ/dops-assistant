@@ -45,6 +45,12 @@ import type { ServiceRegistryStore } from "../services/registry.js";
 
 const logger = createLogger();
 
+// AP6: Per-tick query budget. When the probe generates more than this many
+// queries in a single tick, we emit a WARN log so operators notice
+// cardinality growth before it floods the metrics backend. Tuned so typical
+// stacks stay quiet; trips when services × rules grows unexpectedly.
+const QUERY_BUDGET_WARN_THRESHOLD = 200;
+
 // ── Types ───────────────────────────────────────────────────────────────────
 
 /** Which track a hit came from. Included in the state key so same-named rules on different tracks keep independent hysteresis. */
@@ -575,6 +581,24 @@ export async function runProbe(opts: ProbeOptions): Promise<ProbeResult> {
     }
   }
 
+  // AP6: Probe query budget warning. Warn when a tick generates more than
+  // 200 queries — stacks with many services and many per-service rules
+  // silently cross this threshold and can flood the metrics backend. Not a
+  // hard block; observability only so operators can notice cardinality
+  // explosion early. Fires once per tick when tripped (no suppression) —
+  // the scan scheduler runs on a bounded cadence, so WARN-per-tick is fine.
+  if (tasks.length > QUERY_BUDGET_WARN_THRESHOLD) {
+    logger.warn(
+      {
+        taskCount: tasks.length,
+        threshold: QUERY_BUDGET_WARN_THRESHOLD,
+        serviceCount: services.length,
+        defaultMetricsCount: probe.metrics.length,
+      },
+      `anomaly-probe: probe tick generated ${tasks.length} queries (threshold ${QUERY_BUDGET_WARN_THRESHOLD}) — cardinality may be growing; check services × per-service rule counts`,
+    );
+  }
+
   // ── Garbage-collect orphaned consecutiveState entries ───────────────────
   // Discovery-driven rule changes (rename, remove, threshold rewrite) don't
   // currently fire `scan-scheduler.resetHysteresisForChangedRules` — that
@@ -615,8 +639,19 @@ export async function runProbe(opts: ProbeOptions): Promise<ProbeResult> {
   const hits: ProbeHit[] = [];
   for (let i = 0; i < tasks.length; i++) {
     const task = tasks[i]!;
-    const value = results[i]!.value;
+    const result = results[i]!;
+    const value = result.value;
     const key = stateKey(task.service, task.origin, task.rule.name);
+    // AP4: Log at INFO when a rule scores NaN — empty vector, broken
+    // labels, unwired Loki datasource, MCP error, or timeout. The tick
+    // aggregate counters (probeErrors / queriesEmpty) don't name the
+    // specific rule; this line does.
+    if (!Number.isFinite(value)) {
+      logger.info(
+        { service: task.service, ruleName: task.rule.name, origin: task.origin, kind: result.kind, query: task.query },
+        `anomaly-probe: rule scored ${result.kind === "error" ? "error" : "empty vector"} — no trip (NaN)`,
+      );
+    }
     const tripped = evaluateThreshold(value, task.rule.threshold);
 
     if (!tripped) {

@@ -30,7 +30,7 @@ import { loadConfig } from "../config/loader.js";
 import { SkillStore } from "../skills/store.js";
 import { createModel } from "../mastra/index.js";
 import { InvestigationRunner } from "./investigation-runner.js";
-import { createWebhookHandler } from "./webhook-handler.js";
+import { createWebhookHandler, WEBHOOK_NOT_CONFIGURED_BODY } from "./webhook-handler.js";
 import { InvestigationDedup } from "./investigation-dedup.js";
 import { createApiKeyMiddleware } from "./auth-middleware.js";
 import { globalLimiter, strictLimiter, moderateLimiter } from "./rate-limit.js";
@@ -433,10 +433,7 @@ async function main() {
     // No secret configured: register 503 stubs at both the default and
     // stack-scoped routes so clients receive a structured JSON error.
     const notConfiguredResponse = (_req: Request, res: Response) => {
-      res.status(503).json({
-        error: "Webhook not configured",
-        hint: "Set webhook.secret in config.yaml and restart",
-      });
+      res.status(503).json(WEBHOOK_NOT_CONFIGURED_BODY);
     };
     app.post("/api/webhook/alert", notConfiguredResponse);
     app.post("/api/webhook/alert/:stackSlug", notConfiguredResponse);
