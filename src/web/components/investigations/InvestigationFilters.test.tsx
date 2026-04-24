@@ -132,6 +132,22 @@ describe("InvestigationFilters", () => {
     expect(onUpdate).toHaveBeenLastCalledWith({});
   });
 
+  it("sort change resets offset so the user doesn't land mid-list", () => {
+    // On page 2+ with sort=created_at, switching to confidence would otherwise
+    // drop the user into row 26 of the newly-sorted results instead of the
+    // highest-confidence row they asked for.
+    const onUpdate = vi.fn();
+    render(
+      <InvestigationFilters query={{ offset: 50 }} onUpdateQuery={onUpdate} />,
+    );
+
+    const select = screen.getByLabelText(/Sort by/i) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "confidence" } });
+    const call = onUpdate.mock.calls[0]![0];
+    expect(call.sort).toBe("confidence");
+    expect(call.offset).toBeUndefined();
+  });
+
   it("Clear button only appears when at least one filter is active", () => {
     const { rerender } = render(
       <InvestigationFilters query={{}} onUpdateQuery={vi.fn()} />,

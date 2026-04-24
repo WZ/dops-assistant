@@ -202,6 +202,11 @@ export function InvestigationFilters({ query, onUpdateQuery }: InvestigationFilt
             const value = e.target.value as Sort;
             if (value === "created_at") delete next.sort;
             else next.sort = value;
+            // Changing sort reorders the whole list, so a user on page 2+
+            // would otherwise land in the middle of the newly-sorted results
+            // and miss the rows they actually asked for (e.g. "Highest
+            // confidence" should start at the highest, not row 26).
+            delete next.offset;
             onUpdateQuery(next);
           }}
           className="h-8 pl-3 pr-7 rounded-md border border-border/40 bg-card/40 text-[11px] font-mono uppercase tracking-[0.08em] text-foreground/75 focus:outline-none focus:border-primary/60 appearance-none cursor-pointer"

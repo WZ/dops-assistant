@@ -105,6 +105,47 @@ describe("SeverityBreakdown", () => {
     expect(lowBtn.disabled).toBe(true); // zero + inactive
   });
 
+  it("ignores stale responses when the query changes before an earlier fetch resolves", async () => {
+    // Regression: previously, abort-only cleanup let a slow earlier response
+    // call setCounts AFTER a faster later response, flashing the wrong counts
+    // when the user toggled filters quickly.
+    const pending: Array<(value: { critical: number; high: number; medium: number; low: number }) => void> = [];
+    globalThis.fetch = vi.fn().mockImplementation(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => new Promise((resolve) => { pending.push(resolve); }),
+      }),
+    );
+
+    const { rerender } = render(
+      <SeverityBreakdown query={{}} onToggleSeverity={vi.fn()} />,
+      { wrapper: Wrapper },
+    );
+    // Let the first fetch's .then fire so pending[0] is populated.
+    await waitFor(() => expect(pending.length).toBeGreaterThanOrEqual(1));
+
+    // Change the query before the first fetch resolves.
+    rerender(
+      <SeverityBreakdown
+        query={{ status: ["running"] }}
+        onToggleSeverity={vi.fn()}
+      />,
+    );
+    await waitFor(() => expect(pending.length).toBeGreaterThanOrEqual(2));
+
+    // Resolve out of order: second (latest) resolves first, then the stale
+    // first resolves. Without the seq guard, the stale response would
+    // overwrite the latest.
+    pending[1]!({ critical: 9, high: 9, medium: 9, low: 9 });
+    await waitFor(() => expect(screen.getAllByText("9").length).toBeGreaterThan(0));
+    pending[0]!({ critical: 1, high: 1, medium: 1, low: 1 });
+
+    // Stale response must NOT overwrite. Still see 9s, not 1s.
+    await new Promise((r) => setTimeout(r, 30));
+    expect(screen.queryByText("1")).toBeNull();
+    expect(screen.getAllByText("9").length).toBeGreaterThan(0);
+  });
+
   it("fetches with the current filter minus severity/limit/offset/sort", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useStackContext } from "../../contexts/StackContext";
 import type {
   InvestigationsQuery,
@@ -60,7 +60,15 @@ export function SeverityBreakdown({ query, onToggleSeverity }: SeverityBreakdown
   const [loading, setLoading] = useState(true);
   const active = new Set<Severity>(query.severity ?? []);
 
+  // Stale-response guard: abort alone isn't enough when a response is already
+  // in-flight through .then() at the moment the next query arrives. A slow
+  // earlier fetch can setCounts AFTER a faster later fetch, briefly showing
+  // counts from the previous filter set. Every fetch bumps this counter; only
+  // the latest wins.
+  const fetchSeqRef = useRef(0);
+
   useEffect(() => {
+    const seq = ++fetchSeqRef.current;
     setLoading(true);
     const controller = new AbortController();
 
@@ -81,11 +89,17 @@ export function SeverityBreakdown({ query, onToggleSeverity }: SeverityBreakdown
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json() as Promise<SeverityCounts>;
       })
-      .then((data) => setCounts(data))
-      .catch((err) => {
-        if (err.name !== "AbortError") setCounts(null);
+      .then((data) => {
+        if (seq !== fetchSeqRef.current) return; // stale — a newer fetch already won
+        setCounts(data);
       })
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (err.name === "AbortError" || seq !== fetchSeqRef.current) return;
+        setCounts(null);
+      })
+      .finally(() => {
+        if (seq === fetchSeqRef.current) setLoading(false);
+      });
 
     return () => controller.abort();
   }, [stackFetch, query]);
