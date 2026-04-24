@@ -1,11 +1,13 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useStackContext } from "../contexts/StackContext";
 import { InvestigationRow } from "./dashboard/InvestigationRow";
+import { SeverityBreakdown } from "./investigations/SeverityBreakdown";
+import { InvestigationFilters } from "./investigations/InvestigationFilters";
 import type {
   InvestigationSummary,
   InvestigationListResponse,
 } from "../lib/dashboard-utils";
-import type { InvestigationsQuery } from "../lib/investigations-query";
+import type { InvestigationsQuery, Severity } from "../lib/investigations-query";
 import { stringifyInvestigationsQuery } from "../lib/investigations-query";
 
 const DEFAULT_LIMIT = 25;
@@ -98,8 +100,30 @@ export function InvestigationsPage({
     onUpdateQuery({ ...query, offset: offset + limit });
   }, [offset, limit, query, onUpdateQuery]);
 
+  const toggleSeverity = useCallback(
+    (sev: Severity) => {
+      const current = new Set(query.severity ?? []);
+      if (current.has(sev)) current.delete(sev);
+      else current.add(sev);
+      const next: InvestigationsQuery = { ...query };
+      delete next.offset; // severity change resets pagination
+      if (current.size === 0) delete next.severity;
+      else next.severity = Array.from(current);
+      onUpdateQuery(next);
+    },
+    [query, onUpdateQuery],
+  );
+
   const pageStart = total === 0 ? 0 : offset + 1;
   const pageEnd = Math.min(offset + rows.length, total);
+  const hasActiveFilters = Boolean(
+    (query.severity && query.severity.length > 0) ||
+      (query.status && query.status.length > 0) ||
+      query.service ||
+      query.since ||
+      query.until ||
+      query.q,
+  );
 
   return (
     <div className="h-full overflow-auto">
@@ -123,6 +147,9 @@ export function InvestigationsPage({
           </div>
         </header>
 
+        <SeverityBreakdown query={query} onToggleSeverity={toggleSeverity} />
+        <InvestigationFilters query={query} onUpdateQuery={onUpdateQuery} />
+
         {error && (
           <div
             role="alert"
@@ -144,13 +171,24 @@ export function InvestigationsPage({
             ))}
           </div>
         ) : rows.length === 0 && !error ? (
-          <div className="py-16 flex flex-col items-center gap-2 text-center">
+          <div className="py-16 flex flex-col items-center gap-3 text-center">
             <p className="font-display text-sm font-semibold text-muted-foreground/60">
-              No investigations match
+              {hasActiveFilters ? "No investigations match" : "No investigations yet"}
             </p>
             <p className="font-mono text-[10px] text-muted-foreground/40">
-              Try clearing filters or broadening the date range
+              {hasActiveFilters
+                ? "Try broadening the filters or date range"
+                : "Investigations will appear here as they run"}
             </p>
+            {hasActiveFilters && (
+              <button
+                type="button"
+                onClick={() => onUpdateQuery({})}
+                className="mt-1 font-mono text-[10px] uppercase tracking-[0.12em] text-primary hover:text-primary/80"
+              >
+                Clear all filters
+              </button>
+            )}
           </div>
         ) : (
           <div className="space-y-1.5">

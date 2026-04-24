@@ -1102,4 +1102,56 @@ describe("Database", () => {
       expect(db.countInvestigations("other", {})).toBe(1);
     });
   });
+
+  describe("countInvestigationsBySeverity", () => {
+    beforeEach(() => {
+      // 2 critical, 1 high, 1 medium, 1 low, 1 no-severity
+      db.createInvestigation(S, { id: "c1", service: "a", query: "q", status: "complete" });
+      db.updateInvestigation("c1", { report: JSON.stringify({ severity: "critical" }) });
+      db.createInvestigation(S, { id: "c2", service: "a", query: "q", status: "complete" });
+      db.updateInvestigation("c2", { report: JSON.stringify({ severity: "critical" }) });
+      db.createInvestigation(S, { id: "h1", service: "b", query: "q", status: "complete" });
+      db.updateInvestigation("h1", { report: JSON.stringify({ severity: "high" }) });
+      db.createInvestigation(S, { id: "m1", service: "c", query: "q", status: "complete" });
+      db.updateInvestigation("m1", { report: JSON.stringify({ severity: "medium" }) });
+      db.createInvestigation(S, { id: "l1", service: "d", query: "q", status: "complete" });
+      db.updateInvestigation("l1", { report: JSON.stringify({ severity: "low" }) });
+      // Row with no severity — excluded from the histogram so the pills sum to the total.
+      db.createInvestigation(S, { id: "n1", service: "e", query: "q", status: "running" });
+    });
+
+    it("groups by severity, excludes NULL severity rows", () => {
+      expect(db.countInvestigationsBySeverity(S, {})).toEqual({
+        critical: 2, high: 1, medium: 1, low: 1,
+      });
+    });
+
+    it("ignores the severity filter so the histogram doesn't self-filter", () => {
+      // Whether the user has severity=[critical] active or nothing, the pill
+      // counts must be the same — otherwise clicking a pill immediately
+      // zeros out the other pills and the strip becomes useless.
+      const withSeverityActive = db.countInvestigationsBySeverity(S, { severity: ["critical"] });
+      expect(withSeverityActive).toEqual({ critical: 2, high: 1, medium: 1, low: 1 });
+    });
+
+    it("applies every non-severity filter so pill counts reflect the other active filters", () => {
+      // Restrict to one service — only c1 matches.
+      expect(db.countInvestigationsBySeverity(S, { service: "a" })).toEqual({
+        critical: 2, high: 0, medium: 0, low: 0,
+      });
+    });
+
+    it("respects stack isolation", () => {
+      db.createInvestigation("other", { id: "other_c", service: "z", query: "q", status: "complete" });
+      db.updateInvestigation("other_c", { report: JSON.stringify({ severity: "critical" }) });
+      expect(db.countInvestigationsBySeverity(S, {}).critical).toBe(2);
+      expect(db.countInvestigationsBySeverity("other", {}).critical).toBe(1);
+    });
+
+    it("returns zeros for an empty stack", () => {
+      expect(db.countInvestigationsBySeverity("nonexistent", {})).toEqual({
+        critical: 0, high: 0, medium: 0, low: 0,
+      });
+    });
+  });
 });

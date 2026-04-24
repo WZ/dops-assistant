@@ -888,6 +888,20 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     res.json({ rows, total, hasMore: offset + rows.length < total });
   });
 
+  // Severity histogram for the /investigations breakdown strip. Re-uses the
+  // same filter parser so the client can pass its current query verbatim and
+  // get counts that match. The handler strips `severity` itself at the DB
+  // layer (see countInvestigationsBySeverity) so clicking a pill never
+  // self-filters the histogram.
+  app.get("/api/investigations/severity-counts", (req: Request, res: Response) => {
+    const parsed = parseInvestigationFilters(req.query);
+    if ("error" in parsed) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+    res.json(db.countInvestigationsBySeverity(req.stackId, parsed.filters));
+  });
+
   app.get("/api/investigations/:id", (req: Request, res: Response) => {
     const id = req.params["id"];
     const idStr = Array.isArray(id) ? id[0]! : id!;

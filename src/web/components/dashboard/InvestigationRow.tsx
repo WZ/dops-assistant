@@ -72,8 +72,10 @@ export const InvestigationRow = memo(function InvestigationRow({
         className,
       )}
     >
-      {/* Line 1: dot + service + severity + (right-aligned) confidence + tokens + duration */}
-      <div className="flex items-center justify-between gap-2">
+      {/* Line 1: dot + service + severity + (right-aligned) confidence + tokens + duration.
+          `flex-wrap` so the metrics drop below the service name on very narrow
+          viewports (<~360px) rather than overflow. */}
+      <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2 min-w-0">
           <div className={`flex-shrink-0 w-2 h-2 rounded-full ${statusColor} ${inv.status !== "running" ? "ring-2 ring-current/15" : ""}`} />
           <span className="font-body text-sm font-medium text-foreground/90 group-hover:text-foreground transition-colors truncate">
@@ -89,11 +91,15 @@ export const InvestigationRow = memo(function InvestigationRow({
           )}
         </div>
 
-        {/* Right-aligned metrics */}
-        <div className="flex items-center gap-2 flex-shrink-0">
+        {/* Right-aligned metrics. Progressive disclosure by viewport:
+            - <lg (1024px): hide confidence + tokens. Duration + age remain
+              so the row still tells you "when + how long" at a glance.
+            - The metrics block itself is flex-wrap so at very narrow widths
+              it breaks below the service name instead of overflowing. */}
+        <div className="flex items-center gap-2 flex-shrink-0 flex-wrap justify-end">
           {confidenceDisplay && (
             <span className={cn(
-              "font-mono text-[10px]",
+              "font-mono text-[10px] hidden lg:inline",
               (() => {
                 let num = parseFloat(confidenceDisplay);
                 if (isNaN(num)) return "text-foreground/75";
@@ -107,7 +113,7 @@ export const InvestigationRow = memo(function InvestigationRow({
             </span>
           )}
           {totalTokens > 0 && (
-            <span className="font-mono text-[10px] text-muted-foreground/50">
+            <span className="font-mono text-[10px] text-muted-foreground/50 hidden lg:inline">
               {formatTokens(totalTokens)}
             </span>
           )}

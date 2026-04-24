@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.2.0] - 2026-04-23
+
+### Added
+- **Filter bar on /investigations.** Search by service, query, or root cause (debounced so the URL doesn't thrash on every keystroke). Toggle status (Running / Complete / Failed). Jump to a date window with one click (24h / 7d / 30d / All). Sort by most recent or highest confidence. Clear-all link surfaces only when something is actually active.
+- **Severity breakdown strip.** Four clickable pills at the top of the page show how many investigations match each severity under the other active filters. Click one to filter; click again to remove. Pills with zero matches are disabled (unless already active, so you can always toggle off).
+- **Responsive list rows.** Confidence + token columns drop below 1024px so the service + severity + duration + age stay readable on narrower windows. Below ~360px the metrics wrap below the service name.
+
+### Changed
+- The /investigations empty state now distinguishes "no investigations yet" (fresh stack) from "no investigations match" (filters too tight) and offers a one-click Clear-all link when filters are the reason.
+
+### Server
+- `GET /api/investigations/severity-counts` — histogram endpoint that reuses the same filter parser and drops `severity` on the server side so the strip doesn't self-filter. NULL-severity rows are excluded so the four pill counts sum to a recognizable total.
+
 ## [0.2.1.1] - 2026-04-23
 
 ### Added

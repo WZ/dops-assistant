@@ -850,6 +850,41 @@ export class Database {
     return row.cnt;
   }
 
+  /**
+   * Severity histogram for the /investigations breakdown strip.
+   *
+   * Applies every non-severity filter (so the counts stay consistent with what
+   * the user currently has active — e.g. "Critical: 5" means 5 critical
+   * investigations ALSO match the current search + status + date range), then
+   * groups by severity. The `severity` filter itself is dropped — clicking a
+   * pill is meant to toggle the filter, not filter the histogram to itself.
+   *
+   * Rows with NULL severity (no RCA yet / pre-backfill) are excluded. They
+   * aren't clickable in the UI, so hiding them from the histogram keeps the
+   * total line up with the sum of the four pills.
+   */
+  countInvestigationsBySeverity(
+    stackId: string,
+    filters: InvestigationFilters = {},
+  ): { critical: number; high: number; medium: number; low: number } {
+    const filtersWithoutSeverity: InvestigationFilters = { ...filters };
+    delete filtersWithoutSeverity.severity;
+    const { sql: where, binds } = buildInvestigationsWhere(stackId, filtersWithoutSeverity);
+    const rows = this.db.prepare(
+      `SELECT severity, COUNT(*) AS cnt
+       FROM investigations
+       WHERE ${where} AND severity IS NOT NULL
+       GROUP BY severity`
+    ).all(...binds) as Array<{ severity: string; cnt: number }>;
+    const out = { critical: 0, high: 0, medium: 0, low: 0 };
+    for (const r of rows) {
+      if (r.severity === "critical" || r.severity === "high" || r.severity === "medium" || r.severity === "low") {
+        out[r.severity] = r.cnt;
+      }
+    }
+    return out;
+  }
+
   createPhase(phase: { id: string; investigationId: string; phase: string; status: string }): void {
     this.db.prepare("INSERT INTO investigation_phases (id, investigation_id, phase, status) VALUES (?, ?, ?, ?)").run(phase.id, phase.investigationId, phase.phase, phase.status);
   }
