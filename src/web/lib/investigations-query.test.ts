@@ -56,6 +56,35 @@ describe("parseInvestigationsQuery", () => {
     expect(parseInvestigationsQuery("?limit=not-a-number")).toEqual({});
   });
 
+  it("clamps limit to the server's HTTP cap (100)", () => {
+    // Server caps page size at 100. A raw URL limit > 100 would otherwise
+    // render 100 rows but advance the paginator by the full limit, skipping
+    // rows between pages.
+    expect(parseInvestigationsQuery("?limit=500")).toEqual({ limit: 100 });
+    expect(parseInvestigationsQuery("?limit=1000")).toEqual({ limit: 100 });
+    // Under the cap passes through verbatim.
+    expect(parseInvestigationsQuery("?limit=50")).toEqual({ limit: 50 });
+    expect(parseInvestigationsQuery("?limit=100")).toEqual({ limit: 100 });
+  });
+
+  it("drops since/until values the server won't accept so bookmarks stay loadable", () => {
+    // Server rejects anything Date.parse likes but SQLite datetime() can't
+    // parse (04/23/2026, "yesterday", RFC dates, etc.). Without this guard
+    // the parser hands the raw string to fetch and the page lands on a 400
+    // banner instead of the unfiltered list.
+    expect(parseInvestigationsQuery("?since=yesterday")).toEqual({});
+    expect(parseInvestigationsQuery("?since=04/23/2026")).toEqual({});
+    expect(parseInvestigationsQuery("?until=Thu Apr 23 2026")).toEqual({});
+    // Valid formats still pass.
+    expect(parseInvestigationsQuery("?since=2026-04-23T00:00:00Z")).toEqual({
+      since: "2026-04-23T00:00:00Z",
+    });
+    expect(parseInvestigationsQuery("?until=2026-04-23 00:00:00")).toEqual({
+      until: "2026-04-23 00:00:00",
+    });
+    expect(parseInvestigationsQuery("?since=2026-04-23")).toEqual({ since: "2026-04-23" });
+  });
+
   it("empty-string values behave like absent (no filter applied)", () => {
     expect(parseInvestigationsQuery("?service=&q=&severity=")).toEqual({});
   });

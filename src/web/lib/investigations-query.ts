@@ -27,6 +27,28 @@ const VALID_SEVERITY: ReadonlySet<Severity> = new Set(["critical", "high", "medi
 const VALID_STATUS: ReadonlySet<Status> = new Set(["running", "complete", "failed"]);
 const VALID_SORT: ReadonlySet<Sort> = new Set(["created_at", "confidence"]);
 
+/**
+ * Matches the server's HTTP cap in src/server/investigation-filters.ts.
+ * Without this ceiling, a URL like `?limit=1000` renders only the 100 rows
+ * the server actually returns but tells the paginator the page is 1000 wide,
+ * so Next jumps offset by 1000 and silently skips 900 investigations.
+ */
+const MAX_LIMIT = 100;
+
+/**
+ * Accept only formats SQLite's datetime() function can parse. Mirrors the
+ * server-side regex in src/server/investigation-filters.ts. Without this the
+ * client would happily pass strings like "yesterday" through to the API,
+ * which would 400; a bookmarked / hand-edited URL then lands the user on an
+ * error screen instead of falling back to the unfiltered list.
+ */
+const SQLITE_DATETIME_RE =
+  /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+
+function isValidTimestamp(s: string): boolean {
+  return SQLITE_DATETIME_RE.test(s) && Number.isFinite(Date.parse(s));
+}
+
 function parseCsv<T extends string>(raw: string | null, allowed: ReadonlySet<T>): T[] | undefined {
   if (!raw) return undefined;
   const parts = raw.split(",").map((p) => p.trim()).filter(Boolean);
@@ -62,10 +84,10 @@ export function parseInvestigationsQuery(search: string): InvestigationsQuery {
   if (service) q.service = service;
 
   const since = params.get("since");
-  if (since) q.since = since;
+  if (since && isValidTimestamp(since)) q.since = since;
 
   const until = params.get("until");
-  if (until) q.until = until;
+  if (until && isValidTimestamp(until)) q.until = until;
 
   const text = params.get("q");
   if (text) q.q = text;
@@ -74,7 +96,7 @@ export function parseInvestigationsQuery(search: string): InvestigationsQuery {
   if (sort && VALID_SORT.has(sort as Sort)) q.sort = sort as Sort;
 
   const limit = parseIntBounded(params.get("limit"), 1);
-  if (limit !== undefined) q.limit = limit;
+  if (limit !== undefined) q.limit = Math.min(limit, MAX_LIMIT);
 
   const offset = parseIntBounded(params.get("offset"), 0);
   if (offset !== undefined) q.offset = offset;
