@@ -11,6 +11,7 @@ import {
   severityVariant,
   normalizeConfidence,
 } from "@/lib/dashboard-utils";
+import type { InvestigationListResponse } from "@/lib/dashboard-utils";
 import type {
   InvestigationSummary,
   Pattern,
@@ -64,6 +65,10 @@ export function Dashboard({
   const [investigations, setInvestigations] = useState<InvestigationSummary[]>(
     [],
   );
+  // Total count matching any filter (none applied on the dashboard snippet) —
+  // used to render the "View all N →" link when the list exceeds the snippet
+  // cap of 10.
+  const [investigationsTotal, setInvestigationsTotal] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [patterns, setPatterns] = useState<Pattern[]>([]);
   const [patternsExpanded, setPatternsExpanded] = useState(false);
@@ -117,7 +122,7 @@ export function Dashboard({
       }
       if (seq !== fetchSeqRef.current) return; // stale response — newer fetch in flight
       const [invData, svcData] = await Promise.all([
-        invRes.json(),
+        invRes.json() as Promise<InvestigationListResponse>,
         svcRes.json(),
       ]);
       if (healthRes.ok) {
@@ -142,7 +147,10 @@ export function Dashboard({
       if (kpiRes.ok) {
         setKpiStats((await kpiRes.json()) as KpiStats);
       }
-      setInvestigations(invData);
+      // API returns {rows, total, hasMore} after PR 1. Store rows for the
+      // Investigation Log snippet; total drives the "View all N →" link.
+      setInvestigations(invData.rows);
+      setInvestigationsTotal(invData.total);
       setServices(svcData);
       // Reconcile: remove active investigations that are now complete/failed in DB
       setActiveInvestigations((prev) => {
@@ -150,7 +158,7 @@ export function Dashboard({
         let changed = false;
         const next = new Map(prev);
         const completedOrFailed = new Set(
-          (invData as InvestigationSummary[])
+          invData.rows
             .filter(
               (inv) => inv.status === "complete" || inv.status === "failed",
             )

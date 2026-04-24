@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { Database } from "./db.js";
+import { Database, severityOf } from "./db.js";
 
 const S = "test-stack"; // default stackId for all tests
 
@@ -34,7 +34,7 @@ describe("Database", () => {
     it("lists investigations ordered by created_at desc", () => {
       db.createInvestigation(S, { id: "inv_1", service: "svc-a", query: "q1", status: "complete" });
       db.createInvestigation(S, { id: "inv_2", service: "svc-b", query: "q2", status: "running" });
-      const list = db.listInvestigations(S, 10, 0);
+      const list = db.listInvestigations(S, { limit: 10 });
       expect(list).toHaveLength(2);
       expect(list[0]!.id).toBe("inv_2");
     });
@@ -43,7 +43,7 @@ describe("Database", () => {
       for (let i = 0; i < 5; i++) {
         db.createInvestigation(S, { id: `inv_${i}`, service: "svc", query: "q", status: "complete" });
       }
-      const page = db.listInvestigations(S, 2, 2);
+      const page = db.listInvestigations(S, { limit: 2, offset: 2 });
       expect(page).toHaveLength(2);
     });
   });
@@ -419,7 +419,7 @@ describe("Database", () => {
     it("extracts confidenceScore from valid report JSON via listInvestigations", () => {
       db.createInvestigation(S, { id: "inv_1", service: "svc", query: "q", status: "complete" });
       db.updateInvestigation("inv_1", { status: "complete", report: JSON.stringify({ confidenceScore: 0.85 }) });
-      const list = db.listInvestigations(S, 10, 0);
+      const list = db.listInvestigations(S, { limit: 10 });
       expect(list[0]!.confidence_score).toBe(0.85);
     });
 
@@ -635,25 +635,25 @@ describe("Database", () => {
     });
 
     it("filters by service when param provided", () => {
-      const list = db.listInvestigations(S, 10, 0, "payments-api");
+      const list = db.listInvestigations(S, { limit: 10, service: "payments-api" });
       expect(list).toHaveLength(2);
       expect(list.every(inv => inv.service === "payments-api")).toBe(true);
     });
 
     it("returns all when no service filter", () => {
-      const list = db.listInvestigations(S, 10, 0);
+      const list = db.listInvestigations(S, { limit: 10 });
       expect(list).toHaveLength(4);
     });
 
     it("returns empty array when service has no investigations", () => {
-      const list = db.listInvestigations(S, 10, 0, "nonexistent-service");
+      const list = db.listInvestigations(S, { limit: 10, service: "nonexistent-service" });
       expect(list).toEqual([]);
     });
 
     it("respects limit and offset with service filter", () => {
       // Add more investigations for payments-api
       db.createInvestigation(S, { id: "inv_5", service: "payments-api", query: "q5", status: "complete" });
-      const page = db.listInvestigations(S, 1, 1, "payments-api");
+      const page = db.listInvestigations(S, { limit: 1, offset: 1, service: "payments-api" });
       expect(page).toHaveLength(1);
       expect(page[0]!.service).toBe("payments-api");
     });
@@ -938,6 +938,168 @@ describe("Database", () => {
       expect(statsA.investigations.complete).toBe(2);
       expect(statsB.investigations.total).toBe(1);
       expect(statsB.investigations.active).toBe(1);
+    });
+  });
+
+  describe("severityOf", () => {
+    it("returns null for missing/invalid input", () => {
+      expect(severityOf(null)).toBeNull();
+      expect(severityOf("")).toBeNull();
+      expect(severityOf(undefined)).toBeNull();
+      expect(severityOf("not valid json")).toBeNull();
+      expect(severityOf("[]")).toBeNull();
+      expect(severityOf("null")).toBeNull();
+      expect(severityOf(JSON.stringify({}))).toBeNull();
+      expect(severityOf(JSON.stringify({ severity: null }))).toBeNull();
+      expect(severityOf(JSON.stringify({ severity: 42 }))).toBeNull();
+      expect(severityOf(JSON.stringify({ severity: "" }))).toBeNull();
+      expect(severityOf(JSON.stringify({ severity: "bogus" }))).toBeNull();
+    });
+
+    it("canonicalizes valid severities to lowercase", () => {
+      expect(severityOf(JSON.stringify({ severity: "critical" }))).toBe("critical");
+      expect(severityOf(JSON.stringify({ severity: "CRITICAL" }))).toBe("critical");
+      expect(severityOf(JSON.stringify({ severity: "  High  " }))).toBe("high");
+      expect(severityOf(JSON.stringify({ severity: "Medium" }))).toBe("medium");
+      expect(severityOf(JSON.stringify({ severity: "low" }))).toBe("low");
+    });
+  });
+
+  describe("severity column + backfill", () => {
+    it("populates severity column on updateInvestigation when report has severity", () => {
+      db.createInvestigation(S, { id: "inv_1", service: "api", query: "q", status: "running" });
+      db.updateInvestigation("inv_1", { status: "complete", report: JSON.stringify({ severity: "critical", rootCause: "OOM" }) });
+      const row = db.getInvestigation(S, "inv_1");
+      expect(row?.severity).toBe("critical");
+    });
+
+    it("sets severity to null when report has no valid severity", () => {
+      db.createInvestigation(S, { id: "inv_1", service: "api", query: "q", status: "running" });
+      db.updateInvestigation("inv_1", { status: "complete", report: JSON.stringify({ rootCause: "..." }) });
+      expect(db.getInvestigation(S, "inv_1")?.severity).toBeNull();
+    });
+
+    it("sets severity to null when report has invalid value", () => {
+      db.createInvestigation(S, { id: "inv_1", service: "api", query: "q", status: "running" });
+      db.updateInvestigation("inv_1", { status: "complete", report: JSON.stringify({ severity: "CATASTROPHIC" }) });
+      expect(db.getInvestigation(S, "inv_1")?.severity).toBeNull();
+    });
+
+    it("overwrites severity on subsequent report updates (keeps column in sync)", () => {
+      db.createInvestigation(S, { id: "inv_1", service: "api", query: "q", status: "running" });
+      db.updateInvestigation("inv_1", { status: "complete", report: JSON.stringify({ severity: "high" }) });
+      expect(db.getInvestigation(S, "inv_1")?.severity).toBe("high");
+      db.updateInvestigation("inv_1", { report: JSON.stringify({ severity: "critical" }) });
+      expect(db.getInvestigation(S, "inv_1")?.severity).toBe("critical");
+      db.updateInvestigation("inv_1", { report: JSON.stringify({ rootCause: "no sev" }) });
+      expect(db.getInvestigation(S, "inv_1")?.severity).toBeNull();
+    });
+  });
+
+  describe("listInvestigations filters", () => {
+    beforeEach(() => {
+      db.createInvestigation(S, { id: "inv_c", service: "admin-task", query: "q", status: "complete" });
+      db.updateInvestigation("inv_c", { status: "complete", report: JSON.stringify({ severity: "critical", summary: "Redis outage", rootCause: "pool exhaustion" }) });
+      db.createInvestigation(S, { id: "inv_h", service: "ingestion-flow", query: "q", status: "complete" });
+      db.updateInvestigation("inv_h", { status: "complete", report: JSON.stringify({ severity: "high", summary: "disk pressure", rootCause: "nfs full" }) });
+      db.createInvestigation(S, { id: "inv_m", service: "admin-task", query: "q", status: "complete" });
+      db.updateInvestigation("inv_m", { status: "complete", report: JSON.stringify({ severity: "medium", summary: "slow queries", rootCause: "missing index" }) });
+      db.createInvestigation(S, { id: "inv_r", service: "worker", query: "q", status: "running" });
+    });
+
+    it("no filters returns all rows in created_at DESC order", () => {
+      const list = db.listInvestigations(S, {});
+      expect(list.map((r) => r.id)).toEqual(["inv_r", "inv_m", "inv_h", "inv_c"]);
+    });
+
+    it("severity filter returns only matching rows", () => {
+      const list = db.listInvestigations(S, { severity: ["critical"] });
+      expect(list.map((r) => r.id)).toEqual(["inv_c"]);
+    });
+
+    it("severity multi-value applies OR semantics", () => {
+      const list = db.listInvestigations(S, { severity: ["critical", "high"] });
+      expect(new Set(list.map((r) => r.id))).toEqual(new Set(["inv_c", "inv_h"]));
+    });
+
+    it("status filter applies AND across filter groups", () => {
+      const list = db.listInvestigations(S, { severity: ["critical", "high"], status: ["complete"] });
+      expect(new Set(list.map((r) => r.id))).toEqual(new Set(["inv_c", "inv_h"]));
+      expect(db.listInvestigations(S, { status: ["running"] }).map((r) => r.id)).toEqual(["inv_r"]);
+    });
+
+    it("q search matches service, report.summary, and report.rootCause", () => {
+      expect(db.listInvestigations(S, { q: "admin" }).length).toBe(2);
+      expect(db.listInvestigations(S, { q: "Redis" })[0]?.id).toBe("inv_c"); // matches summary
+      expect(db.listInvestigations(S, { q: "nfs" })[0]?.id).toBe("inv_h"); // matches rootCause
+    });
+
+    it("q search escapes LIKE wildcards (% and _)", () => {
+      db.createInvestigation(S, { id: "inv_pct", service: "svc-%weird%", query: "q", status: "complete" });
+      const list = db.listInvestigations(S, { q: "%" });
+      expect(list.map((r) => r.id)).toEqual(["inv_pct"]);
+    });
+
+    it("q search survives rows with malformed JSON reports (json_valid guard)", () => {
+      // Historical rows can hold garbage in the report column. Without the
+      // json_valid guard, SQLite's json_extract throws and takes down the
+      // whole query with a 500. The filter should skip bad rows, not crash.
+      db.createInvestigation(S, { id: "inv_bad", service: "svc-bad", query: "q", status: "complete" });
+      const raw = (db as unknown as { db: { prepare: (s: string) => { run: (...args: unknown[]) => void } } }).db;
+      raw.prepare("UPDATE investigations SET report = ? WHERE id = ?").run("{not-json", "inv_bad");
+      // Must not throw. The bad row is skipped for JSON fields but still
+      // searchable by its service/query columns.
+      expect(() => db.listInvestigations(S, { q: "anything" })).not.toThrow();
+      expect(db.listInvestigations(S, { q: "svc-bad" }).map((r) => r.id)).toContain("inv_bad");
+    });
+
+    it("since/until use datetime() wrapping so ISO strings compare correctly", () => {
+      // Control time by setting created_at via raw SQL
+      const raw = (db as unknown as { db: { prepare: (s: string) => { run: (...args: unknown[]) => void } } }).db;
+      raw.prepare("UPDATE investigations SET created_at = ? WHERE id = ?").run("2024-06-01 10:00:00", "inv_c");
+      raw.prepare("UPDATE investigations SET created_at = ? WHERE id = ?").run("2024-06-15 10:00:00", "inv_h");
+      raw.prepare("UPDATE investigations SET created_at = ? WHERE id = ?").run("2024-07-01 10:00:00", "inv_m");
+      // ISO format (with T) — plain lexical compare would fail since stored format uses space.
+      const list = db.listInvestigations(S, { since: "2024-06-10T00:00:00Z", until: "2024-06-20T00:00:00Z" });
+      expect(list.map((r) => r.id)).toEqual(["inv_h"]);
+    });
+
+    it("stack isolation holds with all new filters", () => {
+      db.createInvestigation("other-stack", { id: "inv_other", service: "admin-task", query: "q", status: "complete" });
+      db.updateInvestigation("inv_other", { status: "complete", report: JSON.stringify({ severity: "critical" }) });
+      expect(db.listInvestigations(S, { severity: ["critical"] }).map((r) => r.id)).toEqual(["inv_c"]);
+    });
+
+    it("limit is clamped to [1, 10000]", () => {
+      expect(db.listInvestigations(S, { limit: 0 }).length).toBeLessThanOrEqual(1);
+      expect(db.listInvestigations(S, { limit: 50000 }).length).toBe(4); // still works, internal cap just prevents runaway
+    });
+  });
+
+  describe("countInvestigations", () => {
+    beforeEach(() => {
+      db.createInvestigation(S, { id: "inv_1", service: "a", query: "q", status: "complete" });
+      db.updateInvestigation("inv_1", { report: JSON.stringify({ severity: "critical" }) });
+      db.createInvestigation(S, { id: "inv_2", service: "b", query: "q", status: "complete" });
+      db.updateInvestigation("inv_2", { report: JSON.stringify({ severity: "high" }) });
+      db.createInvestigation(S, { id: "inv_3", service: "c", query: "q", status: "running" });
+    });
+
+    it("returns total count ignoring limit/offset", () => {
+      expect(db.countInvestigations(S, {})).toBe(3);
+      expect(db.countInvestigations(S, { limit: 1 })).toBe(3);
+      expect(db.countInvestigations(S, { offset: 100 })).toBe(3);
+    });
+
+    it("shares WHERE with list: same filter → consistent counts", () => {
+      const filter = { severity: ["critical" as const, "high" as const] };
+      expect(db.countInvestigations(S, filter)).toBe(db.listInvestigations(S, filter).length);
+    });
+
+    it("respects stack isolation", () => {
+      db.createInvestigation("other", { id: "inv_other", service: "x", query: "q", status: "complete" });
+      expect(db.countInvestigations(S, {})).toBe(3);
+      expect(db.countInvestigations("other", {})).toBe(1);
     });
   });
 });

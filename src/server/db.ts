@@ -96,6 +96,110 @@ export interface InvestigationRow {
   total_output_tokens: number;
   total_duration_ms: number;
   confidence_score: number | null;
+  severity: Severity | null;
+}
+
+export type Severity = "critical" | "high" | "medium" | "low";
+const VALID_SEVERITIES: ReadonlySet<Severity> = new Set(["critical", "high", "medium", "low"]);
+
+/**
+ * Canonicalize a report's severity value into the enum set, or null if the
+ * report is unparseable or the severity is missing/invalid. Shared by the
+ * backfill migration and the updateInvestigation write path so that the
+ * severity column never contains stray values like "Critical" or "HIGH".
+ */
+export function severityOf(reportJson: string | null | undefined): Severity | null {
+  if (!reportJson) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(reportJson);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  const raw = (parsed as { severity?: unknown }).severity;
+  if (typeof raw !== "string") return null;
+  const norm = raw.trim().toLowerCase();
+  return VALID_SEVERITIES.has(norm as Severity) ? (norm as Severity) : null;
+}
+
+export interface InvestigationFilters {
+  limit?: number;
+  offset?: number;
+  /** Exact match. Retained for backward compat with existing per-service callers. */
+  service?: string;
+  /** OR semantics within the array. */
+  severity?: Severity[];
+  /** OR semantics within the array. */
+  status?: string[];
+  /**
+   * ISO-8601 timestamps. Wrapped with SQLite's datetime() in the WHERE clause
+   * so they compare correctly against created_at (which stores the
+   * datetime('now') format, NOT ISO). Direct lexical comparison would silently
+   * return wrong rows.
+   */
+  since?: string;
+  until?: string;
+  /** Case-insensitive substring match across service, query, report.summary, report.rootCause. */
+  q?: string;
+  sort?: "created_at" | "confidence";
+}
+
+/**
+ * Escape the three special LIKE chars (%, _, \) so user input in `q` matches
+ * literally instead of being interpreted as wildcards. Paired with
+ * `ESCAPE '\\'` in the SQL fragment.
+ */
+function escapeLike(s: string): string {
+  return s.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
+/**
+ * Build the shared WHERE clause + bind array used by listInvestigations and
+ * countInvestigations. Centralizing this keeps the two queries in lockstep —
+ * any new filter automatically affects both the visible rows and the total
+ * count with no drift risk.
+ */
+function buildInvestigationsWhere(
+  stackId: string,
+  filters: InvestigationFilters,
+): { sql: string; binds: unknown[] } {
+  const clauses: string[] = ["stack_id = ?"];
+  const binds: unknown[] = [stackId];
+  if (filters.service) {
+    clauses.push("service = ?");
+    binds.push(filters.service);
+  }
+  if (filters.severity && filters.severity.length > 0) {
+    clauses.push(`severity IN (${filters.severity.map(() => "?").join(",")})`);
+    binds.push(...filters.severity);
+  }
+  if (filters.status && filters.status.length > 0) {
+    clauses.push(`status IN (${filters.status.map(() => "?").join(",")})`);
+    binds.push(...filters.status);
+  }
+  if (filters.since) {
+    clauses.push("created_at >= datetime(?)");
+    binds.push(filters.since);
+  }
+  if (filters.until) {
+    clauses.push("created_at <= datetime(?)");
+    binds.push(filters.until);
+  }
+  if (filters.q) {
+    const pattern = `%${escapeLike(filters.q)}%`;
+    // Guard json_extract with json_valid: SQLite throws on malformed JSON, so
+    // one bad historical row would 500 every q search. json_valid returns 0
+    // for non-JSON / malformed, cleanly excluding those rows from the match.
+    clauses.push(
+      "(service LIKE ? ESCAPE '\\' " +
+      "OR query LIKE ? ESCAPE '\\' " +
+      "OR (report IS NOT NULL AND json_valid(report) AND COALESCE(json_extract(report, '$.summary'), '') LIKE ? ESCAPE '\\') " +
+      "OR (report IS NOT NULL AND json_valid(report) AND COALESCE(json_extract(report, '$.rootCause'), '') LIKE ? ESCAPE '\\'))",
+    );
+    binds.push(pattern, pattern, pattern, pattern);
+  }
+  return { sql: clauses.join(" AND "), binds };
 }
 
 export interface KpiStats {
@@ -281,6 +385,8 @@ export class Database {
     try { this.db.exec("ALTER TABLE investigations ADD COLUMN total_input_tokens INTEGER DEFAULT 0"); } catch {}
     try { this.db.exec("ALTER TABLE investigations ADD COLUMN total_output_tokens INTEGER DEFAULT 0"); } catch {}
     try { this.db.exec("ALTER TABLE investigations ADD COLUMN total_duration_ms INTEGER DEFAULT 0"); } catch {}
+    try { this.db.exec("ALTER TABLE investigations ADD COLUMN severity TEXT"); } catch {}
+    try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_inv_stack_sev_created ON investigations (stack_id, severity, created_at DESC)"); } catch {}
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS investigation_events (
         id                TEXT PRIMARY KEY,
@@ -310,6 +416,30 @@ export class Database {
     this.migrateHiddenServices();
     this.migrateSettings();
     this.migrateScanRuns();
+    this.migrateInvestigationSeverity();
+  }
+
+  /**
+   * One-shot backfill: populate the new `severity` column for rows where it
+   * was never written (historical rows from before the column existed).
+   *
+   * Runs on every boot but is cheap after convergence — the WHERE clause
+   * matches zero rows once every investigation has been processed. Uses a
+   * transaction so the full backfill is atomic: either everything or nothing.
+   */
+  private migrateInvestigationSeverity(): void {
+    const rows = this.db.prepare(
+      "SELECT id, report FROM investigations WHERE severity IS NULL AND report IS NOT NULL"
+    ).all() as Array<{ id: string; report: string | null }>;
+    if (rows.length === 0) return;
+    const stmt = this.db.prepare("UPDATE investigations SET severity = ? WHERE id = ?");
+    const tx = this.db.transaction((batch: typeof rows) => {
+      for (const row of batch) {
+        const sev = severityOf(row.report);
+        if (sev !== null) stmt.run(sev, row.id);
+      }
+    });
+    tx(rows);
   }
 
   // ── Settings migration ─────────────────────────────────────────────────
@@ -664,7 +794,13 @@ export class Database {
     const sets: string[] = [];
     const vals: unknown[] = [];
     if (updates.status !== undefined) { sets.push("status = ?"); vals.push(updates.status); }
-    if (updates.report !== undefined) { sets.push("report = ?"); vals.push(updates.report); }
+    if (updates.report !== undefined) {
+      sets.push("report = ?"); vals.push(updates.report);
+      // Extract the canonical severity so it's always in sync with the stored
+      // report. Invalid/missing severities become NULL, never "Critical" or a
+      // stale leftover from a prior write.
+      sets.push("severity = ?"); vals.push(severityOf(updates.report));
+    }
     if (updates.completed_at !== undefined) { sets.push("completed_at = ?"); vals.push(updates.completed_at); }
     else if (updates.status === "complete" || updates.status === "failed") { sets.push("completed_at = datetime('now')"); }
     if (updates.total_input_tokens !== undefined) { sets.push("total_input_tokens = ?"); vals.push(updates.total_input_tokens); }
@@ -682,15 +818,36 @@ export class Database {
     return row ? normalizeRow(row) : undefined;
   }
 
-  listInvestigations(stackId: string, limit: number, offset: number, service?: string): InvestigationRow[] {
-    if (service) {
-      return (this.db.prepare(
-        "SELECT *, CASE WHEN json_valid(report) THEN json_extract(report, '$.confidenceScore') ELSE NULL END as confidence_score FROM investigations WHERE stack_id = ? AND service = ? ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?"
-      ).all(stackId, service, limit, offset) as InvestigationRow[]).map(normalizeRow);
-    }
-    return (this.db.prepare(
-      "SELECT *, CASE WHEN json_valid(report) THEN json_extract(report, '$.confidenceScore') ELSE NULL END as confidence_score FROM investigations WHERE stack_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?"
-    ).all(stackId, limit, offset) as InvestigationRow[]).map(normalizeRow);
+  listInvestigations(stackId: string, filters: InvestigationFilters = {}): InvestigationRow[] {
+    // Internal safety cap at 10k — the HTTP layer has its own stricter 100-row
+    // cap (see parseInvestigationFilters). Non-HTTP callers like rca-eval need
+    // the headroom to pull a full stack's history.
+    const limit = Math.max(1, Math.min(filters.limit ?? 25, 10_000));
+    const offset = Math.max(0, filters.offset ?? 0);
+    const sortCol = filters.sort === "confidence" ? "confidence_score" : "created_at";
+    const { sql: where, binds } = buildInvestigationsWhere(stackId, filters);
+    const stmt = this.db.prepare(
+      `SELECT *,
+         CASE WHEN json_valid(report) THEN json_extract(report, '$.confidenceScore') ELSE NULL END AS confidence_score
+       FROM investigations
+       WHERE ${where}
+       ORDER BY ${sortCol} DESC, rowid DESC
+       LIMIT ? OFFSET ?`
+    );
+    return (stmt.all(...binds, limit, offset) as InvestigationRow[]).map(normalizeRow);
+  }
+
+  /**
+   * Return the total count of investigations matching the same filters as
+   * listInvestigations, ignoring limit/offset. Used by the /investigations
+   * page to render "N of M match filters" and drive pagination.
+   */
+  countInvestigations(stackId: string, filters: InvestigationFilters = {}): number {
+    const { sql: where, binds } = buildInvestigationsWhere(stackId, filters);
+    const row = this.db.prepare(
+      `SELECT COUNT(*) AS cnt FROM investigations WHERE ${where}`
+    ).get(...binds) as { cnt: number };
+    return row.cnt;
   }
 
   createPhase(phase: { id: string; investigationId: string; phase: string; status: string }): void {

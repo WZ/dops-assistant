@@ -58,7 +58,7 @@ describe("ServiceHistory", () => {
   it("shows empty state when no investigations", async () => {
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ investigations: [] }),
+      json: () => Promise.resolve({ rows: [], total: 0, hasMore: false }),
     });
 
     render(
@@ -74,7 +74,7 @@ describe("ServiceHistory", () => {
   it("shows investigation list when data exists", async () => {
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ investigations: SAMPLE_INVESTIGATIONS }),
+      json: () => Promise.resolve({ rows: SAMPLE_INVESTIGATIONS, total: SAMPLE_INVESTIGATIONS.length, hasMore: false }),
     });
 
     render(
@@ -92,7 +92,7 @@ describe("ServiceHistory", () => {
   it("each investigation shows query text and status dot", async () => {
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ investigations: SAMPLE_INVESTIGATIONS }),
+      json: () => Promise.resolve({ rows: SAMPLE_INVESTIGATIONS, total: SAMPLE_INVESTIGATIONS.length, hasMore: false }),
     });
 
     const { container } = render(
@@ -117,7 +117,7 @@ describe("ServiceHistory", () => {
   it("click calls onViewInvestigation with correct ID", async () => {
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ investigations: SAMPLE_INVESTIGATIONS }),
+      json: () => Promise.resolve({ rows: SAMPLE_INVESTIGATIONS, total: SAMPLE_INVESTIGATIONS.length, hasMore: false }),
     });
 
     const onViewInvestigation = vi.fn();
@@ -142,7 +142,7 @@ describe("ServiceHistory", () => {
   it("shows confidence score when present", async () => {
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ investigations: SAMPLE_INVESTIGATIONS }),
+      json: () => Promise.resolve({ rows: SAMPLE_INVESTIGATIONS, total: SAMPLE_INVESTIGATIONS.length, hasMore: false }),
     });
 
     render(
