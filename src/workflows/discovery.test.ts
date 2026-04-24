@@ -129,6 +129,10 @@ describe("runDiscovery", () => {
       // Discovered services surface as unverified so services.yaml is still writable.
       expect(result.services).toHaveLength(1);
       expect(result.services[0]!.name).toBe("svc1");
+      // Load-bearing tagging — operators reading services.yaml must be able
+      // to distinguish fallback output from real validation output.
+      expect(result.services[0]!.confidence).toBe("unverified");
+      expect(result.services[0]!.validationNotes).toMatch(/validation did not complete/);
       // Terminal phase emitted so the caller knows validation failed but discovery produced data.
       expect(phases).toContain("discovery");
       expect(phases).toContain("validation");

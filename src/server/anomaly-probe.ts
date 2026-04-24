@@ -47,9 +47,8 @@ const logger = createLogger();
 
 // AP6: Per-tick query budget. When the probe generates more than this many
 // queries in a single tick, we emit a WARN log so operators notice
-// cardinality growth before it floods the metrics backend. 200 is the
-// observational threshold from /autoplan — chosen to trip at ~50 services
-// with 4 rules each, below which most stacks comfortably sit.
+// cardinality growth before it floods the metrics backend. Tuned so typical
+// stacks stay quiet; trips when services × rules grows unexpectedly.
 const QUERY_BUDGET_WARN_THRESHOLD = 200;
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -643,14 +642,10 @@ export async function runProbe(opts: ProbeOptions): Promise<ProbeResult> {
     const result = results[i]!;
     const value = result.value;
     const key = stateKey(task.service, task.origin, task.rule.name);
-    // AP4: Log at INFO when a rule scores NaN (empty vector, broken label
-    // set, Loki datasource unwired, MCP error, timeout). The tick summary
-    // already counts probeErrors and queriesEmpty in aggregate; this per-rule
-    // line is what operators need to find the specific broken rule. Skip
-    // for external aborts (task.signal aborted → kind "empty" but not
-    // actionable) — `kind === "empty"` with a wired logs/metrics tool AND
-    // a non-aborted signal is still interesting, so we don't filter on
-    // abort here since abort already returns `kind: "empty"` with NaN.
+    // AP4: Log at INFO when a rule scores NaN — empty vector, broken
+    // labels, unwired Loki datasource, MCP error, or timeout. The tick
+    // aggregate counters (probeErrors / queriesEmpty) don't name the
+    // specific rule; this line does.
     if (!Number.isFinite(value)) {
       logger.info(
         { service: task.service, ruleName: task.rule.name, origin: task.origin, kind: result.kind, query: task.query },

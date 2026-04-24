@@ -9,6 +9,19 @@ import type { Skill } from "../skills/store.js";
 
 const logger = createLogger("discover");
 
+/**
+ * Terminal discovery phases emitted by {@link runDiscovery}'s finally block.
+ * Exported so the WS bridge (and any other observer) can identify the
+ * terminal set without string-prefix matching against a drifting convention.
+ */
+export const TERMINAL_DISCOVERY_PHASES = [
+  "complete",
+  "complete-empty",
+  "complete-validation-failed",
+  "complete-failed",
+] as const;
+export type TerminalDiscoveryPhase = (typeof TERMINAL_DISCOVERY_PHASES)[number];
+
 export interface DiscoveryWorkflowConfig {
   model: LanguageModel;
   providers: MastraProvider[];
@@ -27,7 +40,7 @@ export async function runDiscovery(config: DiscoveryWorkflowConfig): Promise<Dis
   // validation failure falls back to the unverified discovered services so
   // `services.yaml` gets written instead of being lost to a mid-flow throw.
   let result: DiscoveryResult = { services: [], globalProbeRules: [] };
-  let terminalPhase: "complete" | "complete-empty" | "complete-validation-failed" | "complete-failed" = "complete-failed";
+  let terminalPhase: TerminalDiscoveryPhase = "complete";
   try {
     config.onPhase?.("discovery");
     const discovered = await runDiscoverStep({
@@ -53,8 +66,7 @@ export async function runDiscovery(config: DiscoveryWorkflowConfig): Promise<Dis
       // existing registry).
       logger.warn("discovery: no services produced, skipping validation phase");
       terminalPhase = "complete-empty";
-      result = { services: [], globalProbeRules: discovered.globalProbeRules };
-      return result;
+      return { services: [], globalProbeRules: discovered.globalProbeRules };
     }
 
     // Seed the fallback result with the unverified discovered services in
@@ -65,7 +77,7 @@ export async function runDiscovery(config: DiscoveryWorkflowConfig): Promise<Dis
       services: discovered.services.map((s) => ({
         ...s,
         confidence: "unverified" as const,
-        validationNotes: "validation step did not run (discovery mid-flow fallback)",
+        validationNotes: "validation did not complete (discovery mid-flow fallback)",
       })),
       globalProbeRules: discovered.globalProbeRules,
     };
@@ -83,14 +95,22 @@ export async function runDiscovery(config: DiscoveryWorkflowConfig): Promise<Dis
       result = { services: validated, globalProbeRules: discovered.globalProbeRules };
       terminalPhase = "complete";
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      // Preserve the full Error (including stack) via pino's default
+      // `err` serializer rather than coercing to a string — losing the
+      // stack here means the follow-up investigation starts blind.
       logger.warn(
-        { err: message, serviceCount: discovered.services.length },
+        { err, serviceCount: discovered.services.length },
         "discovery: validation step failed — returning unverified discovered services so services.yaml is still written",
       );
       terminalPhase = "complete-validation-failed";
     }
     return result;
+  } catch (err) {
+    // Discovery (or an unexpected throw from the non-validation path)
+    // failed. Surface a distinct terminal phase and re-throw so callers
+    // keep their existing promise-rejection semantics.
+    terminalPhase = "complete-failed";
+    throw err;
   } finally {
     config.onPhase?.(terminalPhase);
   }
