@@ -120,10 +120,17 @@ export function useRoute(
     const current = window.location.pathname + window.location.search;
     if (url !== current) {
       suppressPopstate.current = true;
+      // Tag each entry with `{ fromApp: true }` so detail pages can distinguish
+      // in-app history from direct-link arrivals when rendering "Back". Detail
+      // pages (/investigations/:id) use the tag to return to /investigations
+      // with filters preserved via history.back() when the user came from the
+      // list, and fall back to the dashboard when they pasted a direct link.
+      // Replace-state entries carry the same tag so filter-bar updates on
+      // /investigations don't strip it mid-session.
       if (opts?.replace) {
-        window.history.replaceState(null, "", url);
+        window.history.replaceState({ fromApp: true }, "", url);
       } else {
-        window.history.pushState(null, "", url);
+        window.history.pushState({ fromApp: true }, "", url);
       }
     }
     setLeftPane(view);

@@ -366,7 +366,20 @@ export function App() {
                     <InvestigationPane
                       investigationId={leftPane.id}
                       wsMessages={ws.messages}
-                      onBack={() => setLeftPane({ type: "dashboard" })}
+                      onBack={() => {
+                        // Smart back-nav. If the current history entry was
+                        // pushed by the app (user clicked a row rather than
+                        // pasted a direct link), `history.back()` returns them
+                        // to where they came from — typically /investigations
+                        // with their filters preserved, but also services,
+                        // dashboard, etc. If they direct-linked, fall back to
+                        // the dashboard instead of popping off the site.
+                        if (window.history.state?.fromApp) {
+                          window.history.back();
+                        } else {
+                          setLeftPane({ type: "dashboard" });
+                        }
+                      }}
                       onNavigateSkills={() => setLeftPane({ type: "settings", initialTab: "skills" })}
                       onRerun={(invId, template) => {
                         ws.send({ type: "rerun", investigationId: invId, template: template as any });

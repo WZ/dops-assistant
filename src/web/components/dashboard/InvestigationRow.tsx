@@ -2,7 +2,7 @@ import { memo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { formatTokens } from "@/lib/formatTokens";
-import { formatDuration, normalizeConfidence, severityVariant, timeAgo } from "@/lib/dashboard-utils";
+import { formatDuration, inferTriggerSource, normalizeConfidence, severityVariant, timeAgo } from "@/lib/dashboard-utils";
 import { withBase } from "@/lib/createStackFetch";
 import type { InvestigationSummary } from "@/lib/dashboard-utils";
 
@@ -89,6 +89,22 @@ export const InvestigationRow = memo(function InvestigationRow({
               {severity}
             </Badge>
           )}
+          {(() => {
+            // Trigger source badge — tells the operator at a glance whether
+            // this investigation came from the proactive scanner, an alert
+            // webhook, or a human asking a question. "user" is the common
+            // case, so we hide that label to avoid noise; scan/alert show.
+            const source = inferTriggerSource(inv.query);
+            if (source === "user") return null;
+            return (
+              <span
+                className="flex-shrink-0 font-mono text-[9px] uppercase tracking-[0.1em] text-muted-foreground/55 px-1.5 h-4 leading-4 rounded border border-border/35"
+                title={source === "scan" ? "Triggered by proactive scan" : "Triggered by alert webhook"}
+              >
+                {source}
+              </span>
+            );
+          })()}
         </div>
 
         {/* Right-aligned metrics. Progressive disclosure by viewport:

@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.2.1] - 2026-04-23
+
+### Added
+- **Trigger source badge on every investigation row.** Scans and alerts now show a small "SCAN" / "ALERT" tag next to the service name so you can tell at a glance whether the investigation came from the proactive scanner, an alertmanager webhook, or a human question. User-initiated investigations show no badge (they're the baseline — tagging them would just be noise).
+- **Smart back-nav from investigation detail.** Pressing Back on an investigation page now returns you to wherever you came from inside the app — including `/investigations` with your filters still applied. Direct-link arrivals (pasted URL, fresh tab) still fall back to the Operations Desk.
+
 ## [0.2.2.0] - 2026-04-23
 
 ### Added

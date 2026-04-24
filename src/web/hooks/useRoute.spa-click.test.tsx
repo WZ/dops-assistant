@@ -189,6 +189,22 @@ describe("Issue #13 — SPA click from Home renders service detail", () => {
     expect(screen.getByTestId("heading").textContent).toBe("admin-daphne");
     expect(window.location.pathname).toBe("/services/admin-daphne");
   });
+
+  it("navigate() tags pushed history entries so 'Back' knows they're in-app", () => {
+    // Smart back-nav (PR 4) checks window.history.state?.fromApp to decide
+    // whether pressing Back on a detail page should return to the previous
+    // in-app view or fall back to the dashboard. Direct-link arrivals have
+    // no such tag; only entries pushed by navigate() do.
+    render(<Harness />);
+
+    // Before any in-app navigation, the current entry has no fromApp tag.
+    expect(window.history.state?.fromApp).toBeFalsy();
+
+    fireEvent.click(screen.getByTestId("home-tile-admin-daphne"));
+
+    // After an in-app click, the current entry is tagged.
+    expect(window.history.state).toEqual({ fromApp: true });
+  });
 });
 
 describe("useRoute — {replace: true}", () => {

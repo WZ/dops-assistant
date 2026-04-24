@@ -4,6 +4,11 @@ import { formatTimestamp } from "./formatTimestamp";
 export interface InvestigationSummary {
   id: string;
   service: string;
+  /** Human-readable trigger text, e.g. "Proactive scan detected anomaly on X" or
+   *  "Alert: HighErrorRate (severity: critical)". Used to infer `TriggerSource`
+   *  for the list badge — see inferTriggerSource(). Optional on the client type
+   *  because older callers that pre-date the list page may not care. */
+  query?: string;
   status: string;
   report: string | null;
   created_at: string;
@@ -13,6 +18,24 @@ export interface InvestigationSummary {
   total_duration_ms: number;
   confidence_score: number | null;
   severity: "critical" | "high" | "medium" | "low" | null;
+}
+
+export type TriggerSource = "scan" | "alert" | "user";
+
+/**
+ * Derive the trigger source from the investigation's `query` text.
+ *
+ * No schema column for trigger source exists yet — proactive scans always
+ * prefix with "Proactive scan detected anomaly" (see anomaly-probe.ts) and
+ * alertmanager webhooks with "Alert:" (webhook-handler.ts). Anything else
+ * came from the chat UI or CLI, so we bucket it as "user". A future PR can
+ * promote this to a real column if we need to filter by source.
+ */
+export function inferTriggerSource(query: string | null | undefined): TriggerSource {
+  if (!query) return "user";
+  if (query.startsWith("Proactive scan detected anomaly")) return "scan";
+  if (query.startsWith("Alert:")) return "alert";
+  return "user";
 }
 
 /**
