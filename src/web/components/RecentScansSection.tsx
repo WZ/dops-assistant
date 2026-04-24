@@ -197,8 +197,12 @@ export function RecentScansSection({ scanEnabled, wsSend, wsMessages, onOpenRun 
           No scans yet &mdash; click &ldquo;Scan now&rdquo; to start your first one.
         </div>
       ) : (
+        // Ops Desk snippet: cap at 5 rows to match Investigation Log and keep
+        // the page scannable above the fold. Click-through to a scan-run
+        // detail is available on each row; a dedicated /scans list can come
+        // later when persistence warrants it.
         <ul className="divide-y divide-border/30 text-sm">
-          {collapsed.map((e, i) =>
+          {collapsed.slice(0, 5).map((e, i) =>
             e.kind === "collapsed" ? (
               <li
                 key={`c-${i}`}

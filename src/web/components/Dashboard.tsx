@@ -94,7 +94,7 @@ export function Dashboard({
     loading: recentEventsLoading,
     error: recentEventsError,
     truncated: recentEventsTruncated,
-  } = useRecentEvents({ limit: 50, pollMs: 5000 });
+  } = useRecentEvents({ limit: 25, pollMs: 5000 });
 
   // Source-of-truth for the "Scan now" button state. useScanActivity polls
   // /api/scan/activity which already returns `enabled` + live ticking state,

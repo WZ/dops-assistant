@@ -40,7 +40,12 @@ export function EventStream({ events, loading, error, truncated }: Props) {
         ) : events.length === 0 ? (
           <li className="px-3 py-4 text-xs text-muted-foreground">No recent events.</li>
         ) : (
-          events.map((e) => (
+          // Ops Desk snippet: cap at 5 rows so this section sits consistent
+          // with Investigation Log and Recent Scans above. The scroll
+          // container's max-height is now decorative — with 5 items it never
+          // overflows — but kept so a future "Expand" control or direct-
+          // linked /events page can reuse the same component.
+          events.slice(0, 5).map((e) => (
             <li key={e.id} role="listitem" className="flex items-start gap-2 px-3 py-2">
               <span className={`mt-1.5 inline-block w-1.5 h-1.5 rounded-full shrink-0 ${severityDot[e.severity]}`} aria-hidden />
               <div className="min-w-0 flex-1">
