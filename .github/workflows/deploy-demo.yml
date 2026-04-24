@@ -1,17 +1,28 @@
-# Deploy the public read-only demo site to Fly.io.
+# Deploy the public read-only demo site to GitHub Pages.
 #
 # Triggers:
-#   - push to main when demo-relevant files change (Dockerfile.demo, seed
-#     script, fly.toml, src/) so the demo stays in sync with what shipped
-#   - manual workflow_dispatch (reseed, banner copy change, force redeploy)
+#   - push to main when demo-relevant files change (seed script, fetch
+#     adapter, src/, etc.) so the demo stays in sync with what shipped
+#   - manual workflow_dispatch (quarterly reseed, force redeploy)
 #
-# Requires the FLY_API_TOKEN secret. Create via:
-#   flyctl tokens create deploy -x 8760h
-# and paste into Settings -> Secrets and variables -> Actions.
+# Setup (one time, per repo):
+#   Settings -> Pages -> Source: "GitHub Actions"
+#   That is the only manual step. No tokens, no volumes, no billing.
 #
-# NOTE: user-supplied inputs (inputs.reason) are intentionally NOT interpolated
-# into any `run:` command. They exist only for the GitHub UI history and are
-# read by humans looking at past runs. No shell injection surface.
+# What this job does:
+#   1. `npm ci`
+#   2. `VITE_DEMO_STATIC=true VITE_BASE_PATH=/<repo>/ npm run build:web`
+#      Bakes the static-demo flag + the GitHub Pages sub-path into the
+#      bundle. Pages serves the site at <user>.github.io/<repo>/ so the
+#      SPA's asset URLs need that prefix.
+#   3. `npm run seed:demo` -> writes fixture DB/services.yaml/providers.yaml
+#   4. `npm run export-static` -> boots the seeded server briefly, walks
+#      every known GET endpoint, dumps JSON snapshots into dist/web/api/.
+#      Also copies index.html -> 404.html so client-side routes work on Pages.
+#   5. Upload dist/web/ as the Pages artifact.
+#
+# NOTE: workflow_dispatch `reason` input is intentionally never interpolated
+# into any `run:` command. Descriptive only.
 
 name: deploy-demo
 
@@ -19,13 +30,15 @@ on:
   push:
     branches: [main]
     paths:
-      - "Dockerfile.demo"
-      - "fly.toml"
       - "scripts/seed-demo.ts"
+      - "scripts/export-static.ts"
+      - "src/web/lib/staticFetch.ts"
+      - "src/web/components/DemoBanner.tsx"
       - "demo/**"
       - "src/**"
       - "package.json"
       - "package-lock.json"
+      - ".github/workflows/deploy-demo.yml"
   workflow_dispatch:
     inputs:
       reason:
@@ -37,16 +50,52 @@ concurrency:
   group: deploy-demo
   cancel-in-progress: false
 
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
 jobs:
-  deploy:
-    name: Deploy to Fly.io
+  build:
+    name: Build static demo
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
 
-      - name: Deploy to Fly.io
-        run: flyctl deploy --dockerfile Dockerfile.demo --remote-only
+      - name: Install
+        run: npm ci
+
+      - name: Build static SPA (VITE_DEMO_STATIC=true)
+        run: npm run build:web
         env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          VITE_DEMO_STATIC: "true"
+          # Pages serves at <user>.github.io/<repo>/ — tell Vite to emit
+          # asset URLs with that prefix. `github.event.repository.name` is
+          # safe: it's the repo slug, not user-supplied text.
+          VITE_BASE_PATH: "/${{ github.event.repository.name }}/"
+
+      - name: Seed demo DB
+        run: npm run seed:demo
+
+      - name: Export static JSON snapshots
+        run: npm run export-static
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/web
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
