@@ -1,4 +1,5 @@
 import { safeGetItem } from "./utils";
+import { staticFetch, isStaticDemoBuild } from "./staticFetch";
 
 declare global {
   interface Window {
@@ -39,6 +40,12 @@ export function withBase(url: string): string {
 
 export function createStackFetch(activeStackId: string) {
   return (url: string, opts?: RequestInit): Promise<Response> => {
+    // Static-demo build: no server exists. Route every API call through
+    // staticFetch, which serves pre-generated JSON snapshots from the
+    // GitHub Pages bundle and returns a synthetic 403 for mutations.
+    if (isStaticDemoBuild()) {
+      return staticFetch(url, opts, withBase);
+    }
     const headers = new Headers(opts?.headers);
     headers.set("X-Stack-Id", activeStackId);
     const apiKey = safeGetItem("dops-api-key");

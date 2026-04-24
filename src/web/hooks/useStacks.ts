@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import type { StackSummary } from "../../types/stack-types.js";
 import { safeGetItem, safeSetItem } from "../lib/utils";
 import { withBase } from "../lib/createStackFetch";
+import { staticFetch, isStaticDemoBuild } from "../lib/staticFetch";
 
 const STORAGE_KEY = "dops:lastStackId";
 
@@ -21,7 +22,13 @@ export function useStacks(): UseStacksResult {
 
   const fetchStacks = useCallback(async () => {
     try {
-      const res = await fetch(withBase("/api/stacks"));
+      // This hook runs before any stack ID is known, so it can't use the
+      // stack-scoped `createStackFetch` wrapper. Route through staticFetch
+      // directly when the bundle was built for static-demo mode, otherwise
+      // fall back to raw fetch against the live server.
+      const res = isStaticDemoBuild()
+        ? await staticFetch("/api/stacks", undefined, withBase)
+        : await fetch(withBase("/api/stacks"));
       if (!res.ok) return;
       const data = (await res.json()) as StackSummary[];
       setStacks(data);
