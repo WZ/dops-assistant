@@ -1235,6 +1235,15 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
   app.get("/api/dependencies/:service", async (req: Request, res: Response) => {
     const service = Array.isArray(req.params["service"]) ? req.params["service"][0]! : req.params["service"]!;
+    // Demo mode: serve a curated topology so visitors see a real call graph.
+    // The seed services don't cross-reference each other in their metric/log
+    // labels, so the live inference below would only return the center node.
+    if (isDemoMode()) {
+      const { buildDemoDependencyGraph } = await import("./demo-fixtures.js");
+      const graph = buildDemoDependencyGraph(service);
+      res.json({ nodes: graph.nodes, edges: graph.edges });
+      return;
+    }
     try {
       const allServices = getAllServices(config, req);
       const graph = inferDependencyGraph(allServices);
