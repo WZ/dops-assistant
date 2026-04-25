@@ -219,6 +219,12 @@ describe("runProbe", () => {
       return typeof msg === "string" && msg.includes("queries (threshold");
     });
 
+  const findEmptyRulesWarn = () =>
+    loggerCalls.warn.find((call) => {
+      const msg = call[call.length - 1];
+      return typeof msg === "string" && msg.includes("probe generated 0 queries");
+    });
+
   const findNaNLog = (expected: { service: string; ruleName: string; kind: "empty" | "error" }) =>
     loggerCalls.info.find((call) => {
       const payload = call[0] as Record<string, unknown> | undefined;
@@ -270,6 +276,38 @@ describe("runProbe", () => {
       registryStore: fakeRegistryStore(),
     });
     expect(findBudgetWarn()).toBeUndefined();
+  });
+
+  it("AP8: WARNs when services exist but no rules generate any tasks", async () => {
+    mockTools = { query_prometheus: { execute: vi.fn(async () => promResult(1)) } };
+    // 3 services, but probe.metrics=[] AND no globalProbeRules AND no per-service rules
+    // → tasks.length === 0, scheduler ticks silently. AP8 surfaces this as a WARN
+    // so operators don't stare at an empty dashboard wondering why nothing's happening.
+    await runProbe({
+      services: ["svc-a", "svc-b", "svc-c"],
+      probe: buildProbe({ metrics: [], logs: { enabled: false, window: "5m", errorRateThreshold: 0, consecutiveTicks: 1 } }),
+      providers,
+      datasourceUid: "uid",
+      consecutiveState: new Map(),
+      registryStore: fakeRegistryStore(),
+    });
+    const warn = findEmptyRulesWarn();
+    expect(warn).toBeDefined();
+    expect(warn![0]).toMatchObject({ serviceCount: 3, defaultMetricsCount: 0, globalProbeRulesCount: 0 });
+  });
+
+  it("AP8: does NOT WARN when at least one rule generates a task", async () => {
+    mockTools = { query_prometheus: { execute: vi.fn(async () => promResult(1)) } };
+    // Default config has 2 metrics rules → tasks generated → no AP8 warn.
+    await runProbe({
+      services: ["svc-a"],
+      probe: buildProbe(),
+      providers,
+      datasourceUid: "uid",
+      consecutiveState: new Map(),
+      registryStore: fakeRegistryStore(),
+    });
+    expect(findEmptyRulesWarn()).toBeUndefined();
   });
 
   it("AP4: logs an INFO line when a rule scores NaN (empty vector)", async () => {

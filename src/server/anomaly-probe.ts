@@ -599,6 +599,23 @@ export async function runProbe(opts: ProbeOptions): Promise<ProbeResult> {
     );
   }
 
+  // AP8: Empty-rules feedback. Services exist but the probe generated zero
+  // queries — discovery hasn't written probeRules, no globals exist, and
+  // config.yaml has no `probe.metrics` defaults. Without this log, the scan
+  // scheduler ticks silently and operators stare at an empty dashboard
+  // wondering why nothing's happening. WARN-per-tick is fine on the
+  // scheduler's bounded cadence.
+  if (tasks.length === 0) {
+    logger.warn(
+      {
+        serviceCount: services.length,
+        defaultMetricsCount: probe.metrics.length,
+        globalProbeRulesCount: registry.globalProbeRules.length,
+      },
+      `anomaly-probe: ${services.length} services configured but probe generated 0 queries — no rules to evaluate; run discovery or add probe.metrics defaults to config.yaml`,
+    );
+  }
+
   // ── Garbage-collect orphaned consecutiveState entries ───────────────────
   // Discovery-driven rule changes (rename, remove, threshold rewrite) don't
   // currently fire `scan-scheduler.resetHysteresisForChangedRules` — that
