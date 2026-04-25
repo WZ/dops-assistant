@@ -182,7 +182,11 @@ describe("EventsTab", () => {
       { wrapper: Wrapper },
     );
 
-    await waitFor(() => screen.getByTestId("events-kind-select"));
+    await waitFor(() => {
+      const select = screen.getByTestId("events-kind-select") as HTMLSelectElement;
+      const options = Array.from(select.options).map((o) => o.value);
+      expect(options).toContain("investigation_started");
+    });
     fireEvent.change(screen.getByTestId("events-kind-select"), { target: { value: "investigation_started" } });
     expect(onUpdateQuery).toHaveBeenCalledWith({ kind: ["investigation_started"] });
   });
