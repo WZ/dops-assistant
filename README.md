@@ -20,7 +20,7 @@ AI-powered incident response for DevOps teams. Connects to your monitoring stack
 
 - **Automated RCA pipeline** — 6-phase investigation: prefetch → anomaly detection → planning → parallel evidence gathering (metrics + logs + infra + changes) → synthesis → report
 - **Proactive scanning** — cron-driven probe evaluates PromQL and LogQL rules across every configured service and kicks off headless investigations when thresholds trip. Four-track evaluator covers availability, pod-restart storms, log-error bursts, and custom rules
-- **AI service discovery** — `npm run discover` walks your Prometheus and Loki stack once, writes a `services.yaml` with canonical metrics and log labels per service, plus per-service and stack-wide probe rules you'd otherwise have to hand-craft
+- **AI service discovery** — guided setup wizard walks your Prometheus and Loki stack, with live progress (discover → validate → review) and a one-click **Accept** to populate the service catalog with canonical metrics, log labels, and per-service + stack-wide probe rules. Headless `npm run discover` available for CI
 - **MCP-agnostic providers** — pluggable architecture. Wire in Grafana, Kubernetes, GitLab, Coroot, or any MCP-compatible backend and assign roles (metrics, logs, infrastructure, changes, dependencies) in config
 - **Four trigger sources** — operator messages in chat, Alertmanager webhooks, health-poller transitions, and scheduled scans
 - **Notifications** — deliver every completed investigation to Slack and/or email. Per-recipient severity threshold and source allowlist (webhook / scan / poller / manual). Teams-safe HTML email
@@ -39,13 +39,9 @@ export OPENAI_API_KEY=sk-...
 npm run web                           # port 3000
 ```
 
-Open `http://localhost:3000`, then run discovery to populate the service registry:
+Open `http://localhost:3000`. The setup wizard guides you through three steps: **Connect Provider → Discover Services → Monitor**. On step 2, click **Run Discovery** — the AI walks your providers, finds services via Prometheus labels, and proposes per-service metrics, log selectors, and probe rules. Review the result and hit **Accept** to populate the service catalog.
 
-```bash
-npm run discover
-```
-
-Discovery walks your configured providers, finds services via Prometheus labels, and writes `services.yaml` with per-service metrics, log selectors, and probe rules. Review the result in the UI and hit **Accept**.
+Prefer headless? `npm run discover` does the same thing from the command line, useful for CI and scripted bootstraps.
 
 A minimal `config.yaml`:
 
