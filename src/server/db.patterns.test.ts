@@ -183,4 +183,57 @@ describe("Database.listPatterns + countPatterns", () => {
     const [row] = db.listPatterns({ stackId: S });
     expect(row?.source_investigation_id).toBe("inv_xyz");
   });
+
+  it("getPattern returns one pattern scoped to stack", () => {
+    seed(db, { id: "p1", service: "payments-api" });
+    db.createPattern("stack-b", {
+      id: "p2",
+      service: "payments-api",
+      symptom: "Other",
+      rootCause: "Other",
+      severity: "high",
+    });
+
+    expect(db.getPattern(S, "p1")?.service).toBe("payments-api");
+    expect(db.getPattern(S, "p2")).toBeUndefined();
+  });
+
+  it("listPatternsForService returns all same-service candidates newest-first and stack-scoped", () => {
+    seed(db, { id: "p1", service: "payments-api" });
+    seed(db, { id: "p2", service: "checkout-api" });
+    seed(db, { id: "p3", service: "payments-api" });
+    db.createPattern("stack-b", {
+      id: "p4",
+      service: "payments-api",
+      symptom: "Other",
+      rootCause: "Other",
+      severity: "high",
+    });
+
+    expect(db.listPatternsForService(S, "payments-api").map((r) => r.id)).toEqual(["p3", "p1"]);
+  });
+
+  it("getInvestigationSummary returns source investigation metadata scoped to stack", () => {
+    db.createInvestigation(S, {
+      id: "inv_1",
+      service: "payments-api",
+      query: "why 5xx?",
+      status: "complete",
+    });
+    db.updateInvestigation("inv_1", { completed_at: "2026-04-25T12:00:00.000Z" });
+    db.createInvestigation("stack-b", {
+      id: "inv_2",
+      service: "payments-api",
+      query: "other stack",
+      status: "complete",
+    });
+
+    expect(db.getInvestigationSummary(S, "inv_1")).toMatchObject({
+      id: "inv_1",
+      status: "complete",
+      query: "why 5xx?",
+      completed_at: "2026-04-25T12:00:00.000Z",
+    });
+    expect(db.getInvestigationSummary(S, "inv_2")).toBeUndefined();
+  });
 });

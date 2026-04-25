@@ -88,6 +88,10 @@ export function parseUrl(pathname: string, search: string = ""): LeftPaneView {
   const invMatch = p.match(/^\/investigations\/(.+)$/);
   if (invMatch) return { type: "investigation", id: invMatch[1]! };
 
+  // /patterns/:id — learned pattern recurrence detail page.
+  const patternMatch = p.match(/^\/patterns\/(.+)$/);
+  if (patternMatch) return { type: "pattern", id: patternMatch[1]! };
+
   // /scan/runs/:id — scan run detail page. Navigated to from the Ops Desk
   // "Recent Scans" rows and the optimistic nav after a manual Scan now.
   const scanRunMatch = p.match(/^\/scan\/runs\/([^/]+)$/);
@@ -126,6 +130,8 @@ export function viewToUrl(view: LeftPaneView): string {
   switch (view.type) {
     case "investigation":
       return `${base}/investigations/${view.id}`;
+    case "pattern":
+      return `${base}/patterns/${view.id}`;
     case "activity": {
       // Each tab serializes its own query shape. With AP12 + AP14 shipped,
       // all four tabs round-trip filter state through the URL.

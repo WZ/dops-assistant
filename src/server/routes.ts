@@ -32,6 +32,7 @@ import { notifyEmail } from "./email-notifier.js";
 import { parseInvestigationFilters } from "./investigation-filters.js";
 import { sendSlackScanRunPost } from "./slack-notifier.js";
 import { ALL_SOURCES } from "../types/notifications.js";
+import { buildPatternCluster } from "./pattern-similarity.js";
 
 /**
  * Zod schema for PUT /api/scan/settings body.
@@ -1551,6 +1552,29 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : "Failed to save feedback" });
     }
+  });
+
+  app.get("/api/patterns/:id", (req: Request, res: Response) => {
+    const patternId = Array.isArray(req.params["id"]) ? req.params["id"][0]! : req.params["id"]!;
+    const seed = db.getPattern(req.stackId, patternId);
+    if (!seed) {
+      res.status(404).json({ error: "Pattern not found" });
+      return;
+    }
+
+    const candidates = db.listPatternsForService(req.stackId, seed.service);
+    const cluster = buildPatternCluster(seed, candidates);
+    const occurrences = cluster.occurrences.map((occurrence) => ({
+      ...occurrence,
+      investigation: occurrence.source_investigation_id
+        ? db.getInvestigationSummary(req.stackId, occurrence.source_investigation_id) ?? null
+        : null,
+    }));
+
+    res.json({
+      ...cluster,
+      occurrences,
+    });
   });
 
   /**
