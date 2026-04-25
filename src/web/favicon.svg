@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="App favicon">
+  <defs>
+    <linearGradient id="scan" x1="18" y1="16" x2="48" y2="52" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#27D8F5"/>
+      <stop offset=".58" stop-color="#2F8CF4"/>
+      <stop offset="1" stop-color="#5657F5"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#071833"/>
+  <path d="M46 19A21 21 0 1 0 46 45" fill="none" stroke="url(#scan)" stroke-width="6.5" stroke-linecap="round"/>
+  <path d="M18 33h11l4-15 6 30 4-14h9" fill="none" stroke="url(#scan)" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="45" cy="34" r="9.5" fill="#071833" stroke="#FAFAF7" stroke-width="6"/>
+  <path d="M52 41l8 8" stroke="#FAFAF7" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="45" cy="34" r="3" fill="#2F8CF4"/>
+</svg>
