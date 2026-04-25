@@ -1484,13 +1484,57 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     }
   });
 
+  /**
+   * GET /api/patterns — list learned `incident_patterns` for the resolved
+   * stack, newest first.
+   *
+   * Query params (all optional — no required filter):
+   *  - `service`      — exact match, single-select.
+   *  - `severity`     — comma-separated subset of `low|medium|high|critical`.
+   *  - `since`,`until`— ISO 8601 timestamps applied to created_at.
+   *  - `q`            — case-insensitive substring across symptom, root_cause,
+   *                     and recommended_actions.
+   *  - `sort`         — `created_at` (default, desc) or `severity` (desc).
+   *  - `limit`        — default 25, hard cap 200.
+   *  - `offset`       — page offset, 0-indexed.
+   *
+   * Response shape: `{ rows, total, hasMore, services }`. `services` is the
+   * distinct list of services with at least one pattern in this stack —
+   * bundled here so the GUI service filter dropdown populates from a single
+   * round-trip.
+   *
+   * Back-compat: previously the endpoint required `?service=X` and returned
+   * a bare array. The Dashboard Learned Patterns section is the only caller
+   * and is updated in this PR to read `data.rows`. No public consumers.
+   */
   app.get("/api/patterns", (req: Request, res: Response) => {
     const service = req.query["service"] as string | undefined;
-    if (!service) {
-      res.status(400).json({ error: "service query parameter is required" });
-      return;
-    }
-    res.json(db.findSimilarPatterns(req.stackId, service));
+    const severity = parseEnumCsv(req.query["severity"] as string | undefined,
+      ["low", "medium", "high", "critical"] as const);
+    const since = parseIsoToEpochMs(req.query["since"] as string | undefined);
+    const until = parseIsoToEpochMs(req.query["until"] as string | undefined);
+    const q = (req.query["q"] as string | undefined)?.trim() || undefined;
+    const sortRaw = (req.query["sort"] as string | undefined) ?? "created_at";
+    const sort: "created_at" | "severity" = sortRaw === "severity" ? "severity" : "created_at";
+    const rawLimit = parseInt((req.query["limit"] as string) || "25", 10);
+    const limit = Math.min(Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 25, 200);
+    const rawOffset = parseInt((req.query["offset"] as string) || "0", 10);
+    const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
+
+    const filterOpts = {
+      stackId: req.stackId,
+      ...(service ? { service } : {}),
+      ...(severity.length ? { severity } : {}),
+      ...(since !== undefined ? { since } : {}),
+      ...(until !== undefined ? { until } : {}),
+      ...(q ? { q } : {}),
+    };
+
+    const rows = db.listPatterns({ ...filterOpts, limit, offset, sort });
+    const total = db.countPatterns(filterOpts);
+    const hasMore = offset + rows.length < total;
+    const services = db.listPatternServices(req.stackId);
+    res.json({ rows, total, hasMore, services });
   });
 
   // ── Metric Extraction (smart chart backfill) ─────────────────────

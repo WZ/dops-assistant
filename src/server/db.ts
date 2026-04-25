@@ -327,6 +327,56 @@ export interface UpdateScanRunInput {
  * for the mapping. Arrays are folded into IN-lists with placeholder generation
  * so we never interpolate values into the SQL string.
  */
+/**
+ * Build the WHERE clause + args for `listPatterns` / `countPatterns`. Shared
+ * so the page query and total query stay in lockstep. Same shape as
+ * `buildScanRunsWhere` — multi-select arrays fold into IN-lists, no value
+ * interpolation, soft-input (callers tolerate junk).
+ *
+ * `q` does a case-insensitive LIKE across symptom, root_cause, and
+ * recommended_actions. SQLite's `LIKE` is case-insensitive for ASCII by
+ * default; this is fine for the symptom/root_cause text we store. We escape
+ * the user input's `%` and `_` so they don't act as wildcards.
+ */
+function buildPatternsWhere(opts: {
+  stackId: string;
+  service?: string;
+  severity?: ReadonlyArray<"low" | "medium" | "high" | "critical">;
+  since?: number;
+  until?: number;
+  q?: string;
+}): { sql: string; args: (string | number)[] } {
+  const clauses: string[] = ["stack_id = ?"];
+  const args: (string | number)[] = [opts.stackId];
+
+  if (opts.service) {
+    clauses.push("service = ?");
+    args.push(opts.service);
+  }
+  if (opts.severity && opts.severity.length) {
+    clauses.push(`severity IN (${opts.severity.map(() => "?").join(",")})`);
+    args.push(...opts.severity);
+  }
+  if (opts.since !== undefined) {
+    // created_at is stored as ISO 8601; compare as text (lex order matches
+    // chronological order for ISO 8601 with the same offset). Convert the
+    // epoch-ms input.
+    clauses.push("created_at >= ?");
+    args.push(new Date(opts.since).toISOString());
+  }
+  if (opts.until !== undefined) {
+    clauses.push("created_at <= ?");
+    args.push(new Date(opts.until).toISOString());
+  }
+  if (opts.q && opts.q.trim()) {
+    const escaped = opts.q.trim().replace(/[\\%_]/g, (m) => "\\" + m);
+    const pattern = `%${escaped}%`;
+    clauses.push("(symptom LIKE ? ESCAPE '\\' OR root_cause LIKE ? ESCAPE '\\' OR recommended_actions LIKE ? ESCAPE '\\')");
+    args.push(pattern, pattern, pattern);
+  }
+  return { sql: clauses.join(" AND "), args };
+}
+
 function buildScanRunsWhere(opts: {
   stackId: string;
   before?: number;
@@ -1169,10 +1219,77 @@ export class Database {
     return row != null;
   }
 
-  findSimilarPatterns(stackId: string, service: string, limit = 5): Array<{ id: string; service: string; symptom: string; root_cause: string; severity: string; recommended_actions: string | null; created_at: string }> {
+  findSimilarPatterns(stackId: string, service: string, limit = 5): Array<{ id: string; service: string; symptom: string; root_cause: string; severity: string; recommended_actions: string | null; created_at: string; source_investigation_id: string | null }> {
     return (this.db.prepare(
-      "SELECT id, service, symptom, root_cause, severity, recommended_actions, created_at FROM incident_patterns WHERE stack_id = ? AND service = ? ORDER BY created_at DESC LIMIT ?"
+      "SELECT id, service, symptom, root_cause, severity, recommended_actions, source_investigation_id, created_at FROM incident_patterns WHERE stack_id = ? AND service = ? ORDER BY created_at DESC LIMIT ?"
     ).all(stackId, service, limit) as any[]).map(normalizeRow);
+  }
+
+  /**
+   * List patterns for a stack with optional filters + pagination. Mirrors the
+   * shape of `listInvestigations` / `listScanRuns`. Filter set:
+   *   - service        — exact match (single)
+   *   - severity       — multi-select, empty = no filter
+   *   - since, until   — ISO ms range applied to created_at
+   *   - q              — substring match across symptom / root_cause / recommended_actions
+   *   - sort           — "created_at" desc (default) or "severity" desc (critical→low)
+   *   - limit, offset  — pagination, default limit 25, max 200
+   *
+   * Returns the page rows; total count is via `countPatterns(opts)` so cheap
+   * "is there any data" calls don't materialize the whole match set.
+   */
+  listPatterns(opts: {
+    stackId: string;
+    service?: string;
+    severity?: ReadonlyArray<"low" | "medium" | "high" | "critical">;
+    since?: number;
+    until?: number;
+    q?: string;
+    sort?: "created_at" | "severity";
+    limit?: number;
+    offset?: number;
+  }): Array<{ id: string; service: string; symptom: string; root_cause: string; severity: string; recommended_actions: string | null; source_investigation_id: string | null; created_at: string }> {
+    const { sql, args } = buildPatternsWhere(opts);
+    const limit = Math.min(Math.max(1, opts.limit ?? 25), 200);
+    const offset = Math.max(0, opts.offset ?? 0);
+    const orderBy = opts.sort === "severity"
+      // Severity rank: critical=4 high=3 medium=2 low=1; tie-break newest-first
+      // so two same-severity rows still sort by recency.
+      ? "CASE severity WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END DESC, created_at DESC"
+      : "created_at DESC";
+    const rows = this.db.prepare(`
+      SELECT id, service, symptom, root_cause, severity, recommended_actions, source_investigation_id, created_at
+        FROM incident_patterns WHERE ${sql}
+      ORDER BY ${orderBy} LIMIT ? OFFSET ?
+    `).all(...args, limit, offset) as any[];
+    return rows.map(normalizeRow);
+  }
+
+  /** Count rows matching the same filter set as `listPatterns`. */
+  countPatterns(opts: {
+    stackId: string;
+    service?: string;
+    severity?: ReadonlyArray<"low" | "medium" | "high" | "critical">;
+    since?: number;
+    until?: number;
+    q?: string;
+  }): number {
+    const { sql, args } = buildPatternsWhere(opts);
+    const row = this.db.prepare(
+      `SELECT COUNT(*) AS n FROM incident_patterns WHERE ${sql}`
+    ).get(...args) as { n: number } | undefined;
+    return row?.n ?? 0;
+  }
+
+  /**
+   * Distinct service names that have at least one pattern in this stack. Powers
+   * the page's service filter dropdown — sorted alphabetically so the GUI
+   * stays stable across page loads.
+   */
+  listPatternServices(stackId: string): string[] {
+    return (this.db.prepare(
+      "SELECT DISTINCT service FROM incident_patterns WHERE stack_id = ? ORDER BY service ASC"
+    ).all(stackId) as Array<{ service: string }>).map((r) => r.service);
   }
 
   // ── Service health checks ────────────────────────────────────────────────

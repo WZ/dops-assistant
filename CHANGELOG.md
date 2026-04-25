@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.4.0] - 2026-04-25
+
+### Added
+- **/activity/patterns is live.** The Patterns tab on the Activity page now ships a full filter bar (severity chips, range presets, service dropdown, search box across symptom / root cause / actions), a sort dropdown (Most recent / Severity), paginated rows, and click-through to the source investigation that produced the pattern. Filters round-trip through the URL — bookmark `?service=payments-api&severity=critical&range=7d&q=oom` and the chips come back lit up. The Operations Desk Learned Patterns section header now has a clickable `View all →` next to the expand toggle.
+- **`GET /api/patterns` is now a proper list endpoint.** Optional filters: `service` (single-select), `severity` (CSV multi-select), `since` / `until` (ISO 8601), `q` (case-insensitive substring across symptom + root_cause + recommended_actions, with `%` and `_` escaped so they don't act as wildcards), `sort` (`created_at` default, or `severity` desc with newest-first tie-break), `limit` / `offset` for pagination. Response shape is `{rows, total, hasMore, services}` — `services` is the distinct list with at least one pattern in this stack so the UI dropdown populates from a single round-trip.
+
+### Changed
+- Previously `GET /api/patterns` required a `?service=X` param and 400d without it. The Dashboard's Learned Patterns section was the only caller and is updated in this PR to read `data.rows`.
+
+### Fixed
+- **Operations Desk Learned Patterns rows now show the root cause.** The section was reading `p.rootCause` (camelCase) but the API returns `root_cause` (snake_case), so the truncated text line under each pattern was silently empty. Long-standing pre-existing bug, fixed as a drive-by.
+
 ## [0.3.3.0] - 2026-04-25
 
 ### Added

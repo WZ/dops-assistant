@@ -9,6 +9,10 @@ import {
   parseScanRunsQuery,
   stringifyScanRunsQuery,
 } from "../lib/scan-runs-query";
+import {
+  parsePatternsQuery,
+  stringifyPatternsQuery,
+} from "../lib/patterns-query";
 
 /** Strip the base path prefix so route matching works regardless of sub-path. */
 function stripBase(pathname: string): string {
@@ -57,12 +61,13 @@ export function parseUrl(pathname: string, search: string = ""): LeftPaneView {
     const tab = actMatch[1]!;
     if (isActivityTab(tab)) {
       // Each tab parses its own URL state; mismatched query keys fall through
-      // to the empty object via the per-parser tolerance. Events and patterns
-      // carry no URL state in this PR (placeholders).
+      // to the empty object via the per-parser tolerance. Events still carries
+      // no URL state in this PR — that tab's filter shape lands when AP14
+      // ships (blocked on persistence).
       if (tab === "investigations") return { type: "activity", tab, query: parseInvestigationsQuery(search) };
       if (tab === "scans")          return { type: "activity", tab, query: parseScanRunsQuery(search) };
-      if (tab === "events")         return { type: "activity", tab, query: {} };
-      return { type: "activity", tab: "patterns", query: {} };
+      if (tab === "patterns")       return { type: "activity", tab, query: parsePatternsQuery(search) };
+      return { type: "activity", tab: "events", query: {} };
     }
   }
 
@@ -124,6 +129,7 @@ export function viewToUrl(view: LeftPaneView): string {
       let search = "";
       if (view.tab === "investigations") search = stringifyInvestigationsQuery(view.query);
       else if (view.tab === "scans")     search = stringifyScanRunsQuery(view.query);
+      else if (view.tab === "patterns")  search = stringifyPatternsQuery(view.query);
       const path = `${base}/activity/${view.tab}`;
       return search ? `${path}?${search}` : path;
     }
