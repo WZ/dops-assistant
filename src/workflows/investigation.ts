@@ -17,6 +17,7 @@ import { WorkflowInputSchema, PostSynthesisOutputSchema } from "./schemas.js";
 import type { MastraProvider } from "../mcp/provider.js";
 import type { ServiceConfig, InvestigationTemplate } from "../config/schema.js";
 import type { Skill } from "../skills/store.js";
+import type { IncidentPatternRow } from "../agents/shared/patterns.js";
 import { buildPrefetchStep } from "./steps/prefetch-step.js";
 import { buildAnomalyStep } from "./steps/anomaly.js";
 import { buildPlanningStep } from "./steps/planning.js";
@@ -51,6 +52,13 @@ export interface WorkflowConfig {
   onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
   /** Short-name → real datasource UID map for intercepting LLM hallucinations. */
   datasourceUidMap?: Map<string, string>;
+  /**
+   * Fetch up-to-N learned `incident_patterns` rows scoped to the adapter's
+   * stack, by service. Wired in by the adapter factory so workflow steps
+   * stay decoupled from the database. When undefined (CLI/test paths with
+   * no DB), planning + synthesis simply skip the pattern injection.
+   */
+  getSimilarPatterns?: (service: string, limit?: number) => IncidentPatternRow[];
 }
 
 // ── Workflow factory ──────────────────────────────────────────────────────────

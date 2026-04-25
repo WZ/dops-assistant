@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.1.0] - 2026-04-24
+
+### Added
+- **Thumbs-up / thumbs-down on every investigation.** A compact rating row renders under the RCA report once it lands. Hit 👍 to mark the investigation useful, 👎 to mark it not useful, or click again to switch. The Ops Desk's Learned Patterns section has existed for months but was empty on every install because nothing on the client ever called the feedback endpoint — fixed. A "useful" vote now upserts a row into `investigation_feedback` AND extracts an `incident_patterns` entry the first time (repeat clicks are idempotent, so mashing the button won't spam duplicates).
+- **`GET /api/investigations/:id/feedback`** — returns the current rating (or `null`) so the UI can hydrate the thumbs state on mount. Stack-scoped.
+
+### Changed
+- **Past useful patterns now feed back into every investigation.** Voting used to be a write-only loop — `incident_patterns` rows accumulated, but no agent ever read them. Now the planner gets up to 5 patterns for the target service as priors ("if the symptom matches one of these, prioritize the same metrics/logs that confirmed last time") and synthesis gets the same set with a calibration rule ("if the current symptom + root cause match, name the pattern id and bump confidence one tier"). Each pattern: id, severity, date, symptom, root cause, recommended actions, capped at 500 chars per field. Patterns are wrapped in `<untrusted_learned_patterns>` tags — they were originally LLM-synthesized text so they cross the same trust boundary as any other agent-derived input.
+
+### Fixed
+- `POST /api/investigations/:id/feedback` now upserts on `(investigation_id, stack_id)` instead of appending a new row per click. Before: five thumbs-ups created five pattern rows. After: one pattern, first click wins, re-clicks confirm the same rating without side effects. A one-shot migration dedups any duplicate rows left by the old behavior before installing the unique index.
+- `db.getFeedback()` now filters by `stack_id`, closing a cross-stack leak where a rating on one stack's investigation could bleed into another stack's view.
+
 ## [0.3.0.0] - 2026-04-24
 
 ### Added
@@ -17,7 +30,7 @@ All notable changes to this project will be documented in this file.
 - **Service health poller warms its cache from the database at construction.** Without this, `getHealth()` returned an empty map until the first poll lands ~60s later, painting the Ops Desk with "0/N services" on every restart. Now the last-known status per service shows immediately. (New `Database.getLatestHealthPerService(stackId)` helper.)
 - **`DATA_DIR` environment variable now controls the per-stack data root** (was hardcoded to `data/`). Default is unchanged. Lets the demo write to `/data` on a Fly volume, and the local demo write to `data-demo/`, without code changes.
 
-
+## [0.2.2.5] - 2026-04-24
 
 ### Deployment
 - **Configure investigation-complete email notifications from Helm.** The chart now accepts `config.notifications.email` (rendered verbatim into `config.yaml` on the pod) and a new top-level `extraEnvFrom` for pulling env vars out of existing Kubernetes Secrets. Typical setup: create a Secret with `SMTP_USER` / `SMTP_PASS`, point `extraEnvFrom` at it, and reference `${SMTP_USER}` / `${SMTP_PASS}` from inside the notifications block. SMTP credentials stay out of values.yaml. See `deploy/helm/dops-assistant/README.md` for the full example. Chart bumped to 0.1.3.

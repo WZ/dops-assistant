@@ -124,6 +124,7 @@ async function getOrCreateAgents(
   stackId: string,
   ctx: StackContext,
   config: Config,
+  db: Database,
 ): Promise<{ chatAgent: IChatAgent; investigationAgent: IInvestigationAgent; discoverAgent?: IDiscoverAgent }> {
   const cached = agentsCache.get(stackId);
   if (cached) return cached;
@@ -134,6 +135,8 @@ async function getOrCreateAgents(
     providers,
     registryStore: ctx.serviceRegistry,
     datasourceUidMap: ctx.providerRegistry.buildDatasourceUidMap(),
+    db,
+    stackId,
   });
 
   agentsCache.set(stackId, adapters);
@@ -206,7 +209,7 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
     const discoveryConfig = deps.config.discovery;
     if (discoveryConfig.autoRefresh) {
       try {
-        const agents = await getOrCreateAgents(stackId, ctx, deps.config);
+        const agents = await getOrCreateAgents(stackId, ctx, deps.config, deps.db);
         if (agents.discoverAgent) {
           agents.discoverAgent
             .discover(discoveryConfig)
@@ -332,7 +335,7 @@ async function handleDeepInvestigate(
   }
 
   const phases = db.getPhases(msg.investigationId);
-  const agents = await getOrCreateAgents(stackId, ctx, deps.config);
+  const agents = await getOrCreateAgents(stackId, ctx, deps.config, deps.db);
   const { chatAgent: agent } = agents;
 
   // Build context from investigation data
@@ -524,7 +527,7 @@ async function handleRerun(
     }
   }
 
-  const agents = await getOrCreateAgents(stackId, ctx, deps.config);
+  const agents = await getOrCreateAgents(stackId, ctx, deps.config, deps.db);
   const investigationAgent = agents.investigationAgent;
 
   const invId = `inv_${ulid()}`;
@@ -629,7 +632,7 @@ export async function handleClientMessage(
     return;
   }
 
-  const agents = await getOrCreateAgents(stackId, ctx, deps.config);
+  const agents = await getOrCreateAgents(stackId, ctx, deps.config, deps.db);
 
   if (msg.type === "discover" && agents.discoverAgent) {
     const totalTokens = { inputTokens: 0, outputTokens: 0 };

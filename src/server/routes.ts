@@ -1359,6 +1359,12 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   });
 
   // ── Feedback + Patterns REST API ────────────────────────────────────────
+  app.get("/api/investigations/:id/feedback", (req: Request, res: Response) => {
+    const investigationId = Array.isArray(req.params["id"]) ? req.params["id"][0]! : req.params["id"]!;
+    const existing = db.getFeedback(req.stackId, investigationId);
+    res.json({ rating: existing?.rating ?? null, created_at: existing?.created_at ?? null });
+  });
+
   app.post("/api/investigations/:id/feedback", async (req: Request, res: Response) => {
     try {
       const investigationId = Array.isArray(req.params["id"]) ? req.params["id"][0]! : req.params["id"]!;
@@ -1373,10 +1379,24 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         return;
       }
       const { ulid: makeId } = await import("ulid");
-      db.createFeedback(req.stackId, { id: `fb_${makeId()}`, investigationId, rating });
+      const { previousRating } = db.upsertFeedback(req.stackId, {
+        id: `fb_${makeId()}`,
+        investigationId,
+        rating,
+      });
 
-      // If positive feedback + report exists, extract a pattern
-      if (rating === "useful" && investigation.report) {
+      // Pattern extraction fires once per investigation per stack, no matter
+      // how many times the user flips the rating. The `previousRating` check
+      // alone isn't enough: a user who goes useful → not_useful → useful
+      // would create a second pattern on the re-vote. The `hasPatternForInvestigation`
+      // check is the hard backstop — if we've ever extracted a pattern from
+      // this investigation in this stack, skip.
+      if (
+        rating === "useful" &&
+        previousRating !== "useful" &&
+        investigation.report &&
+        !db.hasPatternForInvestigation(req.stackId, investigationId)
+      ) {
         try {
           const report = JSON.parse(investigation.report);
           const validSeverities = ["low", "medium", "high", "critical"];
@@ -1393,7 +1413,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         } catch { /* pattern extraction failed — not critical */ }
       }
 
-      res.json({ ok: true });
+      res.json({ ok: true, rating });
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : "Failed to save feedback" });
     }

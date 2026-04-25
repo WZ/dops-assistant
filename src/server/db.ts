@@ -586,6 +586,27 @@ export class Database {
     try { this.db.exec("ALTER TABLE investigation_feedback ADD COLUMN stack_id TEXT"); } catch {}
     try { this.db.exec("ALTER TABLE incident_patterns ADD COLUMN stack_id TEXT"); } catch {}
 
+    // One rating per (investigation, stack). Without this, a user mashing the
+    // thumbs-up creates duplicate feedback rows AND duplicate incident_patterns
+    // rows on every "useful" click — we upsert in createFeedback() to enforce
+    // this at the application level and rely on the index for a hard guarantee.
+    //
+    // Existing stacks may already carry duplicates from the pre-upsert era;
+    // dedup first (keep the most-recent rating per (investigation, stack))
+    // so the unique index creation doesn't throw on historical junk. Pattern
+    // rows in `incident_patterns` stay as-is — no dedup there is necessary
+    // because they're "observed occurrences" and duplicates don't break reads.
+    try {
+      this.db.exec(`
+        DELETE FROM investigation_feedback
+        WHERE rowid NOT IN (
+          SELECT MAX(rowid) FROM investigation_feedback
+          GROUP BY investigation_id, stack_id
+        );
+      `);
+      this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_inv_feedback_unique ON investigation_feedback (investigation_id, stack_id)");
+    } catch { /* older schema without stack_id — index creation skipped */ }
+
     // Migrate hidden_services to composite PK (stack_id, service)
     // Check if migration is needed by looking for the stack_id column
     const hiddenInfo = this.db.prepare("PRAGMA table_info(hidden_services)").all() as Array<{ name: string }>;
@@ -1035,12 +1056,38 @@ export class Database {
 
   // ── Feedback ─────────────────────────────────────────────────────────────
 
-  createFeedback(stackId: string, fb: { id: string; investigationId: string; rating: "useful" | "not_useful" }): void {
-    this.db.prepare("INSERT INTO investigation_feedback (id, investigation_id, rating, stack_id) VALUES (?, ?, ?, ?)").run(fb.id, fb.investigationId, fb.rating, stackId);
+  /**
+   * Upsert a rating for an investigation within a stack. The UNIQUE INDEX on
+   * (investigation_id, stack_id) means subsequent calls replace the previous
+   * rating instead of stacking new rows. Returns the PREVIOUS rating (or null
+   * if none existed) so the caller can decide whether pattern extraction is a
+   * genuine first-time "useful" vote or just a re-click.
+   */
+  upsertFeedback(
+    stackId: string,
+    fb: { id: string; investigationId: string; rating: "useful" | "not_useful" },
+  ): { previousRating: "useful" | "not_useful" | null } {
+    const existing = this.getFeedback(stackId, fb.investigationId);
+    const previousRating = (existing?.rating ?? null) as "useful" | "not_useful" | null;
+    this.db
+      .prepare(
+        `INSERT INTO investigation_feedback (id, investigation_id, rating, stack_id)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(investigation_id, stack_id)
+         DO UPDATE SET rating = excluded.rating, created_at = datetime('now')`,
+      )
+      .run(fb.id, fb.investigationId, fb.rating, stackId);
+    return { previousRating };
   }
 
-  getFeedback(investigationId: string): { rating: string; created_at: string } | undefined {
-    const row = this.db.prepare("SELECT rating, created_at FROM investigation_feedback WHERE investigation_id = ? ORDER BY created_at DESC LIMIT 1").get(investigationId) as { rating: string; created_at: string } | undefined;
+  getFeedback(stackId: string, investigationId: string): { rating: string; created_at: string } | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT rating, created_at FROM investigation_feedback
+         WHERE investigation_id = ? AND stack_id = ?
+         ORDER BY created_at DESC LIMIT 1`,
+      )
+      .get(investigationId, stackId) as { rating: string; created_at: string } | undefined;
     return row ? normalizeRow(row) : undefined;
   }
 
@@ -1050,6 +1097,24 @@ export class Database {
     this.db.prepare(
       "INSERT INTO incident_patterns (id, service, symptom, root_cause, severity, recommended_actions, source_investigation_id, stack_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
     ).run(p.id, p.service, p.symptom, p.rootCause, p.severity, p.recommendedActions ?? null, p.sourceInvestigationId ?? null, stackId);
+  }
+
+  /**
+   * Has a pattern row ever been extracted from this investigation?
+   *
+   * The feedback route uses this to make pattern extraction idempotent across
+   * flip-flops: a user who goes useful → not_useful → useful would otherwise
+   * produce a second pattern row on the re-vote, silently doubling a row in
+   * incident_patterns each cycle. Scoped to (stack_id, source_investigation_id)
+   * so extraction is per-stack idempotent.
+   */
+  hasPatternForInvestigation(stackId: string, investigationId: string): boolean {
+    const row = this.db
+      .prepare(
+        "SELECT 1 FROM incident_patterns WHERE stack_id = ? AND source_investigation_id = ? LIMIT 1",
+      )
+      .get(stackId, investigationId);
+    return row != null;
   }
 
   findSimilarPatterns(stackId: string, service: string, limit = 5): Array<{ id: string; service: string; symptom: string; root_cause: string; severity: string; recommended_actions: string | null; created_at: string }> {

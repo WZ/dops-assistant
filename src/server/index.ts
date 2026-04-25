@@ -270,7 +270,7 @@ async function main() {
 
     // Create agents lazily for the investigation
     const providers = ctx.providerRegistry.getProviders();
-    createMastraAdapters({ config, providers, registryStore: ctx.serviceRegistry, datasourceUidMap: ctx.providerRegistry.buildDatasourceUidMap() })
+    createMastraAdapters({ config, providers, registryStore: ctx.serviceRegistry, datasourceUidMap: ctx.providerRegistry.buildDatasourceUidMap(), db, stackId })
       .then(({ investigationAgent }) => {
         const runner = new InvestigationRunner({ db, investigationAgent, skillStore, globalOnComplete });
         return runner.run({
@@ -343,7 +343,7 @@ async function main() {
       }, "ScanScheduler: triggering auto-investigate");
 
       const providers = ctx.providerRegistry.getProviders();
-      createMastraAdapters({ config, providers, registryStore: ctx.serviceRegistry, datasourceUidMap: ctx.providerRegistry.buildDatasourceUidMap() })
+      createMastraAdapters({ config, providers, registryStore: ctx.serviceRegistry, datasourceUidMap: ctx.providerRegistry.buildDatasourceUidMap(), db, stackId })
         .then(({ investigationAgent }) => {
           const runner = new InvestigationRunner({ db, investigationAgent, skillStore, globalOnComplete });
           return runner.run({
@@ -394,7 +394,7 @@ async function main() {
     const defaultStackId = stackManager.getDefaultStackId();
     const defaultCtx = stackManager.getDefaultContext();
     const providers = defaultCtx.providerRegistry.getProviders();
-    const { investigationAgent } = await createMastraAdapters({ config, providers, registryStore: defaultCtx.serviceRegistry, datasourceUidMap: defaultCtx.providerRegistry.buildDatasourceUidMap() });
+    const { investigationAgent } = await createMastraAdapters({ config, providers, registryStore: defaultCtx.serviceRegistry, datasourceUidMap: defaultCtx.providerRegistry.buildDatasourceUidMap(), db, stackId: defaultStackId });
     const runner = new InvestigationRunner({ db, investigationAgent, skillStore, globalOnComplete });
 
     const webhookHandler = createWebhookHandler({
@@ -435,7 +435,7 @@ async function main() {
       stackManager.bumpActivity(stackRow.id);
       const ctx = stackManager.getContext(stackRow.id);
       const stackProviders = ctx.providerRegistry.getProviders();
-      const stackAdapters = await createMastraAdapters({ config, providers: stackProviders, registryStore: ctx.serviceRegistry, datasourceUidMap: ctx.providerRegistry.buildDatasourceUidMap() });
+      const stackAdapters = await createMastraAdapters({ config, providers: stackProviders, registryStore: ctx.serviceRegistry, datasourceUidMap: ctx.providerRegistry.buildDatasourceUidMap(), db, stackId: stackRow.id });
       const stackRunner = new InvestigationRunner({ db, investigationAgent: stackAdapters.investigationAgent, skillStore, globalOnComplete });
       const stackWebhookHandler = createWebhookHandler({
         runner: stackRunner,
