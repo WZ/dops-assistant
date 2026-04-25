@@ -68,11 +68,6 @@ describe("parseUrl", () => {
       .toEqual({ type: "activity", tab: "scans", query: { offset: 10 } });
   });
 
-  it("/activity/events ignores search params (placeholder tab — no URL state until AP14)", () => {
-    expect(parseUrl("/activity/events", "?status=failed"))
-      .toEqual({ type: "activity", tab: "events", query: {} });
-  });
-
   it("/activity/patterns parses its own PatternsQuery shape (service/severity/range/q/sort/offset)", () => {
     const view = parseUrl("/activity/patterns", "?service=payments-api&severity=critical,high&range=7d&q=oom&sort=severity&offset=25");
     expect(view).toEqual({
@@ -92,6 +87,25 @@ describe("parseUrl", () => {
   it("/activity/patterns drops keys that aren't part of PatternsQuery", () => {
     expect(parseUrl("/activity/patterns", "?status=failed&service=foo"))
       .toEqual({ type: "activity", tab: "patterns", query: { service: "foo" } });
+  });
+
+  it("/activity/events parses its own EventsQuery shape", () => {
+    const view = parseUrl("/activity/events", "?kind=investigation_started&severity=error,warn&service=payments-api&range=1h");
+    expect(view).toEqual({
+      type: "activity",
+      tab: "events",
+      query: {
+        kind: ["investigation_started"],
+        severity: ["error", "warn"],
+        service: "payments-api",
+        range: "1h",
+      },
+    });
+  });
+
+  it("/activity/events drops keys that aren't part of EventsQuery", () => {
+    expect(parseUrl("/activity/events", "?status=failed&service=foo"))
+      .toEqual({ type: "activity", tab: "events", query: { service: "foo" } });
   });
 
   it("legacy /investigations (no id) parses to the activity investigations tab — backwards compat", () => {
@@ -221,10 +235,6 @@ describe("viewToUrl", () => {
     ).toBe("/activity/scans?status=failed&trigger=cron&range=24h&offset=25");
   });
 
-  it("events tab always serializes to a clean path (no URL state until AP14 ships)", () => {
-    expect(viewToUrl({ type: "activity", tab: "events", query: {} })).toBe("/activity/events");
-  });
-
   it("patterns tab serializes its PatternsQuery shape", () => {
     expect(
       viewToUrl({
@@ -233,6 +243,16 @@ describe("viewToUrl", () => {
         query: { service: "payments-api", severity: ["critical"], range: "7d", q: "oom", sort: "severity" },
       }),
     ).toBe("/activity/patterns?service=payments-api&severity=critical&range=7d&q=oom&sort=severity");
+  });
+
+  it("events tab serializes its EventsQuery shape", () => {
+    expect(
+      viewToUrl({
+        type: "activity",
+        tab: "events",
+        query: { severity: ["error"], kind: ["investigation_started"], range: "1h" },
+      }),
+    ).toBe("/activity/events?kind=investigation_started&severity=error&range=1h");
   });
 });
 

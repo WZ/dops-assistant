@@ -7,6 +7,10 @@ interface Props {
   loading: boolean;
   error: string | null;
   truncated: boolean;
+  /** Navigate to the dedicated /activity/events tab. Renders a "View all →"
+   *  affordance via OpsDeskSectionHeader. Optional so existing test fixtures
+   *  that don't pass this prop still render. */
+  onViewAll?: () => void;
 }
 
 const severityDot: Record<RecentEvent["severity"], string> = {
@@ -26,7 +30,7 @@ function relTime(ts: number): string {
 
 const SNIPPET = 5;
 
-export function EventStream({ events, loading, error, truncated }: Props) {
+export function EventStream({ events, loading, error, truncated, onViewAll }: Props) {
   // `total` is unknown in absolute terms (events live in a ring buffer so the
   // server doesn't keep older ones), but `truncated` tells us "the buffer hit
   // its cap". Passing total=events.length keeps the header honest: it reads
@@ -39,6 +43,7 @@ export function EventStream({ events, loading, error, truncated }: Props) {
         title="Recent Events"
         count={displayed}
         total={total}
+        onViewAll={onViewAll}
       />
       <ul role="list" className="divide-y divide-border/30">
         {loading && events.length === 0 ? (

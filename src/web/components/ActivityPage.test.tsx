@@ -22,6 +22,11 @@ vi.mock("./PatternsTab", () => ({
     <div data-testid="patterns-tab-stub" data-query-keys={Object.keys(query).join(",")} />
   ),
 }));
+vi.mock("./EventsTab", () => ({
+  EventsTab: ({ query }: { query: Record<string, unknown> }) => (
+    <div data-testid="events-tab-stub" data-query-keys={Object.keys(query).join(",")} />
+  ),
+}));
 
 beforeEach(() => cleanup());
 
@@ -30,8 +35,10 @@ const baseHandlers = {
   onUpdateInvestigationsQuery: vi.fn(),
   onUpdateScansQuery: vi.fn(),
   onUpdatePatternsQuery: vi.fn(),
+  onUpdateEventsQuery: vi.fn(),
   onViewInvestigation: vi.fn(),
   onOpenScanRun: vi.fn(),
+  onNavigateHref: vi.fn(),
 };
 
 const investigationsView = (query: Record<string, unknown> = {}): ActivityView => ({
@@ -43,7 +50,9 @@ const scansView = (query: Record<string, unknown> = {}): ActivityView => ({
 const patternsView = (query: Record<string, unknown> = {}): ActivityView => ({
   type: "activity", tab: "patterns", query: query as never,
 });
-const eventsView: ActivityView = { type: "activity", tab: "events", query: {} };
+const eventsView = (query: Record<string, unknown> = {}): ActivityView => ({
+  type: "activity", tab: "events", query: query as never,
+});
 
 describe("ActivityPage", () => {
   it("renders four tabs in order", () => {
@@ -57,8 +66,8 @@ describe("ActivityPage", () => {
   });
 
   it("marks the current tab as selected via aria-selected", () => {
-    render(<ActivityPage view={patternsView()} {...baseHandlers} />);
-    expect(screen.getByRole("tab", { name: /patterns/i }).getAttribute("aria-selected")).toBe("true");
+    render(<ActivityPage view={eventsView()} {...baseHandlers} />);
+    expect(screen.getByRole("tab", { name: /events/i }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByRole("tab", { name: /investigations/i }).getAttribute("aria-selected")).toBe("false");
   });
 
@@ -67,6 +76,7 @@ describe("ActivityPage", () => {
     expect(screen.getByTestId("investigations-page-stub")).toBeDefined();
     expect(screen.queryByTestId("scans-tab-stub")).toBeNull();
     expect(screen.queryByTestId("patterns-tab-stub")).toBeNull();
+    expect(screen.queryByTestId("events-tab-stub")).toBeNull();
   });
 
   it("renders ScansTab on the scans tab", () => {
@@ -74,31 +84,31 @@ describe("ActivityPage", () => {
     expect(screen.getByTestId("scans-tab-stub")).toBeDefined();
     expect(screen.queryByTestId("investigations-page-stub")).toBeNull();
     expect(screen.queryByTestId("patterns-tab-stub")).toBeNull();
+    expect(screen.queryByTestId("events-tab-stub")).toBeNull();
   });
 
   it("renders PatternsTab on the patterns tab", () => {
     render(<ActivityPage view={patternsView()} {...baseHandlers} />);
     expect(screen.getByTestId("patterns-tab-stub")).toBeDefined();
-    expect(screen.queryByTestId("investigations-page-stub")).toBeNull();
-    expect(screen.queryByTestId("scans-tab-stub")).toBeNull();
+    expect(screen.queryByTestId("events-tab-stub")).toBeNull();
   });
 
-  it("renders the Events placeholder copy (still a scaffold — AP14)", () => {
-    render(<ActivityPage view={eventsView} {...baseHandlers} />);
-    expect(screen.getByText(/Events tab coming soon/i)).toBeDefined();
+  it("renders EventsTab on the events tab", () => {
+    render(<ActivityPage view={eventsView()} {...baseHandlers} />);
+    expect(screen.getByTestId("events-tab-stub")).toBeDefined();
+    expect(screen.queryByTestId("patterns-tab-stub")).toBeNull();
   });
 
   it("calls onChangeTab when a tab is clicked", () => {
     const onChangeTab = vi.fn();
     render(<ActivityPage view={investigationsView()} {...baseHandlers} onChangeTab={onChangeTab} />);
-    fireEvent.click(screen.getByRole("tab", { name: /patterns/i }));
-    expect(onChangeTab).toHaveBeenCalledWith("patterns");
+    fireEvent.click(screen.getByRole("tab", { name: /events/i }));
+    expect(onChangeTab).toHaveBeenCalledWith("events");
   });
 
-  it("only Events shows a 'soon' badge now that Patterns is wired up", () => {
+  it("no tab shows a 'soon' badge — the Activity refactor is complete", () => {
     render(<ActivityPage view={investigationsView()} {...baseHandlers} />);
-    const soonBadges = screen.getAllByText(/^soon$/i);
-    expect(soonBadges.length).toBe(1);
+    expect(screen.queryAllByText(/^soon$/i)).toHaveLength(0);
   });
 
   it("threads the query prop through to InvestigationsPage on the investigations tab", () => {
@@ -107,15 +117,15 @@ describe("ActivityPage", () => {
     expect(stub.getAttribute("data-query-keys")).toBe("severity,offset");
   });
 
-  it("threads the query prop through to ScansTab on the scans tab", () => {
-    render(<ActivityPage view={scansView({ status: ["failed"], offset: 10 })} {...baseHandlers} />);
-    const stub = screen.getByTestId("scans-tab-stub");
-    expect(stub.getAttribute("data-query-keys")).toBe("status,offset");
-  });
-
   it("threads the query prop through to PatternsTab on the patterns tab", () => {
     render(<ActivityPage view={patternsView({ service: "payments-api", severity: ["critical"] })} {...baseHandlers} />);
     const stub = screen.getByTestId("patterns-tab-stub");
     expect(stub.getAttribute("data-query-keys")).toBe("service,severity");
+  });
+
+  it("threads the query prop through to EventsTab on the events tab", () => {
+    render(<ActivityPage view={eventsView({ severity: ["error"], range: "24h" })} {...baseHandlers} />);
+    const stub = screen.getByTestId("events-tab-stub");
+    expect(stub.getAttribute("data-query-keys")).toBe("severity,range");
   });
 });

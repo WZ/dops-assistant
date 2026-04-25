@@ -35,6 +35,8 @@ import { InvestigationDedup } from "./investigation-dedup.js";
 import { createApiKeyMiddleware } from "./auth-middleware.js";
 import { globalLimiter, strictLimiter, moderateLimiter } from "./rate-limit.js";
 import { startHealthMonitor, stopHealthMonitor, healthHandler } from "./health-monitor.js";
+import { eventLog } from "./event-log.js";
+import { startEventsRetentionTask } from "./events-retention.js";
 import { createDemoModeMiddleware, isDemoMode } from "./demo-mode.js";
 import { StackManager } from "./stack-manager.js";
 import { createMastraAdapters } from "./agents.js";
@@ -57,6 +59,17 @@ async function main() {
 
   const dbPath = process.env["DB_PATH"] ?? "dops.sqlite";
   const db = new Database(dbPath);
+
+  // Wire the EventLog ring to also persist to the DB. After this call, every
+  // `eventLog.append(...)` writes a row into the `events` table — that's
+  // what powers /activity/events. Done at boot before any code path that
+  // emits events runs (StackManager init, scan scheduler, health pollers).
+  eventLog.bindDatabase(db);
+
+  // Background sweep of expired event rows. Default 30-day retention,
+  // configurable via `config.events.retentionDays`. `0` disables the sweep
+  // (for users with external archival).
+  startEventsRetentionTask({ db, retentionDays: config.events.retentionDays });
 
   // Clean up investigations left in 'running' state from prior crashes
   try {

@@ -3,9 +3,11 @@ import type { ActivityTab, ActivityView } from "../App";
 import type { InvestigationsQuery } from "../lib/investigations-query";
 import type { ScanRunsQuery } from "../lib/scan-runs-query";
 import type { PatternsQuery } from "../lib/patterns-query";
+import type { EventsQuery } from "../lib/events-query";
 import { InvestigationsPage } from "./InvestigationsPage";
 import { ScansTab } from "./ScansTab";
 import { PatternsTab } from "./PatternsTab";
+import { EventsTab } from "./EventsTab";
 
 interface ActivityPageProps {
   /** Discriminated view — `view.tab` narrows `view.query` automatically. */
@@ -14,28 +16,25 @@ interface ActivityPageProps {
   onUpdateInvestigationsQuery: (query: InvestigationsQuery) => void;
   onUpdateScansQuery: (query: ScanRunsQuery) => void;
   onUpdatePatternsQuery: (query: PatternsQuery) => void;
+  onUpdateEventsQuery: (query: EventsQuery) => void;
   onViewInvestigation: (id: string) => void;
   onOpenScanRun: (runId: string) => void;
+  /** Generic in-app navigation — used by event rows whose `href` deep-links to investigations / scan runs. */
+  onNavigateHref: (href: string) => void;
 }
 
 const TABS: { id: ActivityTab; label: string; icon: typeof Activity; ready: boolean }[] = [
   { id: "investigations", label: "Investigations", icon: FileSearch, ready: true },
   { id: "scans",          label: "Scans",          icon: Radar,      ready: true },
   { id: "patterns",       label: "Patterns",       icon: Sparkles,   ready: true },
-  // Events still ships as a scaffolded tab — the body lands in AP14 once
-  // event persistence exists (in-memory ring buffer today doesn't justify a
-  // dedicated page).
-  { id: "events",         label: "Events",         icon: Bell,       ready: false },
+  { id: "events",         label: "Events",         icon: Bell,       ready: true },
 ];
 
 const PLACEHOLDER_COPY: Record<ActivityTab, { title: string; body: string } | null> = {
   investigations: null,
   scans: null,
   patterns: null,
-  events: {
-    title: "Events tab coming soon",
-    body: "Recent system events — investigation lifecycle, scan dispatch, health transitions — are an in-memory ring buffer today. Persistence + a filterable feed lands once the events table migration is in.",
-  },
+  events: null,
 };
 
 /**
@@ -44,9 +43,8 @@ const PLACEHOLDER_COPY: Record<ActivityTab, { title: string; body: string } | nu
  * links + bookmarks work per surface; the URL-as-state pattern lives in
  * `useRoute`. This component is presentation only.
  *
- * Investigations and Scans render real implementations. Events and Patterns
- * ship as explanatory placeholders so the navigation story is coherent
- * today; the real surfaces land in follow-up PRs.
+ * All four tabs ship real implementations as of v0.3.5.0 (the Activity
+ * refactor is complete: Investigations + Scans + Patterns + Events).
  */
 export function ActivityPage({
   view,
@@ -54,8 +52,10 @@ export function ActivityPage({
   onUpdateInvestigationsQuery,
   onUpdateScansQuery,
   onUpdatePatternsQuery,
+  onUpdateEventsQuery,
   onViewInvestigation,
   onOpenScanRun,
+  onNavigateHref,
 }: ActivityPageProps) {
   const tab = view.tab;
   const placeholder = PLACEHOLDER_COPY[tab];
@@ -116,6 +116,12 @@ export function ActivityPage({
             query={view.query}
             onUpdateQuery={onUpdatePatternsQuery}
             onViewInvestigation={onViewInvestigation}
+          />
+        ) : view.tab === "events" ? (
+          <EventsTab
+            query={view.query}
+            onUpdateQuery={onUpdateEventsQuery}
+            onNavigate={onNavigateHref}
           />
         ) : placeholder ? (
           <div className="h-full flex flex-col items-center justify-center gap-3 px-8 text-center">

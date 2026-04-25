@@ -13,6 +13,10 @@ import {
   parsePatternsQuery,
   stringifyPatternsQuery,
 } from "../lib/patterns-query";
+import {
+  parseEventsQuery,
+  stringifyEventsQuery,
+} from "../lib/events-query";
 
 /** Strip the base path prefix so route matching works regardless of sub-path. */
 function stripBase(pathname: string): string {
@@ -61,13 +65,12 @@ export function parseUrl(pathname: string, search: string = ""): LeftPaneView {
     const tab = actMatch[1]!;
     if (isActivityTab(tab)) {
       // Each tab parses its own URL state; mismatched query keys fall through
-      // to the empty object via the per-parser tolerance. Events still carries
-      // no URL state in this PR — that tab's filter shape lands when AP14
-      // ships (blocked on persistence).
+      // to the empty object via the per-parser tolerance. With AP12 + AP14
+      // both shipped, every tab carries its own URL state.
       if (tab === "investigations") return { type: "activity", tab, query: parseInvestigationsQuery(search) };
       if (tab === "scans")          return { type: "activity", tab, query: parseScanRunsQuery(search) };
       if (tab === "patterns")       return { type: "activity", tab, query: parsePatternsQuery(search) };
-      return { type: "activity", tab: "events", query: {} };
+      return { type: "activity", tab: "events", query: parseEventsQuery(search) };
     }
   }
 
@@ -124,12 +127,13 @@ export function viewToUrl(view: LeftPaneView): string {
     case "investigation":
       return `${base}/investigations/${view.id}`;
     case "activity": {
-      // Each tab serializes its own query shape. Events and patterns are
-      // placeholders today and emit no URL state.
+      // Each tab serializes its own query shape. With AP12 + AP14 shipped,
+      // all four tabs round-trip filter state through the URL.
       let search = "";
       if (view.tab === "investigations") search = stringifyInvestigationsQuery(view.query);
       else if (view.tab === "scans")     search = stringifyScanRunsQuery(view.query);
       else if (view.tab === "patterns")  search = stringifyPatternsQuery(view.query);
+      else if (view.tab === "events")    search = stringifyEventsQuery(view.query);
       const path = `${base}/activity/${view.tab}`;
       return search ? `${path}?${search}` : path;
     }
