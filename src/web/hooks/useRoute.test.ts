@@ -14,25 +14,57 @@ describe("parseUrl", () => {
     expect(parseUrl("/investigations/inv_01KNR")).toEqual({ type: "investigation", id: "inv_01KNR" });
   });
 
-  it("parses /investigations (no id) as the list page with empty query", () => {
-    // Must match BEFORE /investigations/:id so the bare path doesn't resolve
-    // to an empty id.
-    expect(parseUrl("/investigations")).toEqual({ type: "investigations", query: {} });
+  it("parses /activity as the activity page on the investigations tab", () => {
+    expect(parseUrl("/activity")).toEqual({ type: "activity", tab: "investigations", query: {} });
   });
 
-  it("parses /investigations with search params into the query object", () => {
-    const view = parseUrl("/investigations", "?severity=critical,high&status=running&offset=25");
+  it("parses /activity/investigations as the investigations tab", () => {
+    expect(parseUrl("/activity/investigations")).toEqual({ type: "activity", tab: "investigations", query: {} });
+  });
+
+  it("parses /activity/scans, /activity/events, /activity/patterns into their tabs", () => {
+    expect(parseUrl("/activity/scans")).toEqual({ type: "activity", tab: "scans", query: {} });
+    expect(parseUrl("/activity/events")).toEqual({ type: "activity", tab: "events", query: {} });
+    expect(parseUrl("/activity/patterns")).toEqual({ type: "activity", tab: "patterns", query: {} });
+  });
+
+  it("returns notfound for unknown activity tabs", () => {
+    expect(parseUrl("/activity/bogus")).toEqual({ type: "notfound", path: "/activity/bogus" });
+  });
+
+  it("parses /activity/investigations with search params into the query object", () => {
+    const view = parseUrl("/activity/investigations", "?severity=critical,high&status=running&offset=25");
     expect(view).toEqual({
-      type: "investigations",
+      type: "activity",
+      tab: "investigations",
       query: { severity: ["critical", "high"], status: ["running"], offset: 25 },
     });
   });
 
-  it("list page ignores unknown search keys and invalid values", () => {
-    // URL state is soft input (bookmarks, pasted links). Drop junk and keep
-    // going so the user isn't blocked by a typo.
-    const view = parseUrl("/investigations", "?severity=bogus&unknown=x");
-    expect(view).toEqual({ type: "investigations", query: {} });
+  it("activity investigations tab ignores unknown search keys and invalid values", () => {
+    const view = parseUrl("/activity/investigations", "?severity=bogus&unknown=x");
+    expect(view).toEqual({ type: "activity", tab: "investigations", query: {} });
+  });
+
+  it("non-investigations tabs ignore search params (their filter shape will diverge)", () => {
+    expect(parseUrl("/activity/scans", "?severity=high&offset=10"))
+      .toEqual({ type: "activity", tab: "scans", query: {} });
+  });
+
+  it("legacy /investigations (no id) parses to the activity investigations tab — backwards compat", () => {
+    // Old bookmarks land on the activity page; the mount-time redirect in
+    // useRoute rewrites the URL to /activity/investigations so the user sees
+    // the canonical path on first load.
+    expect(parseUrl("/investigations")).toEqual({ type: "activity", tab: "investigations", query: {} });
+  });
+
+  it("legacy /investigations preserves search params on redirect", () => {
+    const view = parseUrl("/investigations", "?severity=critical,high&status=running&offset=25");
+    expect(view).toEqual({
+      type: "activity",
+      tab: "investigations",
+      query: { severity: ["critical", "high"], status: ["running"], offset: 25 },
+    });
   });
 
   it("parses /services", () => {
@@ -116,17 +148,34 @@ describe("viewToUrl", () => {
     expect(viewToUrl({ type: "scanrun", runId: "run_01J" })).toBe("/scan/runs/run_01J");
   });
 
-  it("maps investigations list with empty query to /investigations (no ?)", () => {
-    expect(viewToUrl({ type: "investigations", query: {} })).toBe("/investigations");
+  it("maps activity investigations tab with empty query to /activity/investigations (no ?)", () => {
+    expect(viewToUrl({ type: "activity", tab: "investigations", query: {} })).toBe("/activity/investigations");
   });
 
-  it("maps investigations list with filters to /investigations?...", () => {
+  it("maps activity investigations tab with filters to /activity/investigations?...", () => {
     expect(
       viewToUrl({
-        type: "investigations",
+        type: "activity",
+        tab: "investigations",
         query: { severity: ["critical"], status: ["complete", "failed"], offset: 25 },
       }),
-    ).toBe("/investigations?severity=critical&status=complete%2Cfailed&offset=25");
+    ).toBe("/activity/investigations?severity=critical&status=complete%2Cfailed&offset=25");
+  });
+
+  it("maps non-investigations tabs to /activity/<tab> with no search string", () => {
+    expect(viewToUrl({ type: "activity", tab: "scans", query: {} })).toBe("/activity/scans");
+    expect(viewToUrl({ type: "activity", tab: "events", query: {} })).toBe("/activity/events");
+    expect(viewToUrl({ type: "activity", tab: "patterns", query: {} })).toBe("/activity/patterns");
+  });
+
+  it("non-investigations tabs drop their query string on serialization (filter shapes will diverge)", () => {
+    expect(
+      viewToUrl({
+        type: "activity",
+        tab: "scans",
+        query: { severity: ["critical"], offset: 25 },
+      }),
+    ).toBe("/activity/scans");
   });
 });
 
@@ -135,6 +184,10 @@ describe("roundtrip", () => {
     const views = [
       { type: "dashboard" as const },
       { type: "investigation" as const, id: "inv_123" },
+      { type: "activity" as const, tab: "investigations" as const, query: {} },
+      { type: "activity" as const, tab: "scans" as const, query: {} },
+      { type: "activity" as const, tab: "events" as const, query: {} },
+      { type: "activity" as const, tab: "patterns" as const, query: {} },
       { type: "services" as const },
       { type: "services" as const, initialService: "my-svc" },
       { type: "settings" as const },
@@ -150,11 +203,12 @@ describe("roundtrip", () => {
   });
 
   it("parseUrl(viewToUrl(view)) preserves the investigations query", () => {
-    // viewToUrl returns `/investigations?...` — parseUrl needs the search
-    // half separately. Mirrors how useRoute feeds window.location.pathname
-    // and window.location.search at runtime.
+    // viewToUrl returns `/activity/investigations?...` — parseUrl needs the
+    // search half separately. Mirrors how useRoute feeds
+    // window.location.pathname + window.location.search at runtime.
     const view = {
-      type: "investigations" as const,
+      type: "activity" as const,
+      tab: "investigations" as const,
       query: {
         severity: ["critical" as const, "high" as const],
         status: ["running" as const],

@@ -10,7 +10,7 @@ import { ChatPane } from "./components/ChatPane";
 import { Dashboard } from "./components/Dashboard";
 import { InvestigationPane } from "./components/InvestigationPane";
 import { ScanRunDetail } from "./components/ScanRunDetail";
-import { InvestigationsPage } from "./components/InvestigationsPage";
+import { ActivityPage } from "./components/ActivityPage";
 import { Sidebar } from "./components/Sidebar";
 import type { SidebarPage } from "./components/Sidebar";
 import { ServicesPage } from "./components/ServicesPage";
@@ -38,10 +38,13 @@ function formatUptime(seconds: number): string {
   return `${mins}m`;
 }
 
+/** Tab inside the unified Activity page. New tabs add cases without churning the LeftPaneView union. */
+export type ActivityTab = "investigations" | "scans" | "events" | "patterns";
+
 export type LeftPaneView =
   | { type: "dashboard" }
   | { type: "investigation"; id: string }
-  | { type: "investigations"; query: InvestigationsQuery }
+  | { type: "activity"; tab: ActivityTab; query: InvestigationsQuery }
   | { type: "services"; initialService?: string }
   | { type: "settings"; initialTab?: "providers" | "skills" | "stacks" | "scan" | "notifications" }
   | { type: "scanrun"; runId: string }
@@ -60,7 +63,7 @@ export function shouldResetOnStackSwitch(paneType: LeftPaneView["type"]): boolea
     paneType === "services" ||
     paneType === "investigation" ||
     paneType === "scanrun" ||
-    paneType === "investigations"
+    paneType === "activity"
   );
 }
 
@@ -189,16 +192,15 @@ export function App() {
     }
   }, [setupStage]);
 
-  // Map the richer LeftPaneView union down to the 4 sidebar buckets. Both
-  // the list page (investigations) and a single-investigation detail page
-  // (investigation) highlight "Investigations" so the operator's mental
-  // model of "I'm in the investigations section" stays stable while
-  // drilling in and out.
+  // Map the richer LeftPaneView union down to the 4 sidebar buckets. The
+  // activity list (any tab) and a single-investigation detail page both
+  // highlight "Activity" so the operator's mental model of "I'm in the
+  // activity section" stays stable while drilling in and out of detail.
   const activePage: SidebarPage =
     leftPane.type === "services" ? "services"
     : leftPane.type === "settings" ? "settings"
-    : leftPane.type === "investigations" ? "investigations"
-    : leftPane.type === "investigation" ? "investigations"
+    : leftPane.type === "activity" ? "activity"
+    : leftPane.type === "investigation" ? "activity"
     : "dashboard";
 
   const stackFetchForBranding = useMemo(() => createStackFetch(activeStackId), [activeStackId]);
@@ -349,10 +351,11 @@ export function App() {
       <Sidebar
         activePage={activePage}
         onNavigate={(page) => {
-          // "investigations" is a LeftPaneView that carries a query; clicking
-          // the sidebar icon always means "take me to the unfiltered list",
-          // so pass an empty query. The other three sidebar pages map 1:1.
-          if (page === "investigations") setLeftPane({ type: "investigations", query: {} });
+          // "activity" is a LeftPaneView that carries a tab + query; clicking
+          // the sidebar icon always means "take me to the investigations tab,
+          // unfiltered", since that's the most-used surface. The other three
+          // sidebar pages map 1:1.
+          if (page === "activity") setLeftPane({ type: "activity", tab: "investigations", query: {} });
           else setLeftPane({ type: page });
         }}
         dark={theme.dark}
@@ -428,10 +431,10 @@ export function App() {
             stage={setupStage}
             onNavigate={(page) => {
               // SetupStepper only ever emits settings / services / dashboard
-              // today (see SetupStepper STEPS). The "investigations" branch
-              // exists for type soundness — if a future step ever points at
-              // the list, an empty query is the right default.
-              if (page === "investigations") setLeftPane({ type: "investigations", query: {} });
+              // today (see SetupStepper STEPS). The "activity" branch exists
+              // for type soundness — if a future step ever points there,
+              // landing on the investigations tab is the right default.
+              if (page === "activity") setLeftPane({ type: "activity", tab: "investigations", query: {} });
               else setLeftPane({ type: page });
             }}
             onSkip={handleSkipSetup}
@@ -451,7 +454,7 @@ export function App() {
                       onInvestigationClick={(id) => setLeftPane({ type: "investigation", id })}
                       onViewService={(name) => setLeftPane({ type: "services", initialService: name })}
                       onViewAllServices={() => setLeftPane({ type: "services" })}
-                      onViewAllInvestigations={() => setLeftPane({ type: "investigations", query: {} })}
+                      onViewAllInvestigations={() => setLeftPane({ type: "activity", tab: "investigations", query: {} })}
                       onOpenScanRun={(runId) => setLeftPane({ type: "scanrun", runId })}
                       stackName={hasMultipleStacks ? activeStack?.name : undefined}
                       setupStage={setupStage}
@@ -521,11 +524,15 @@ export function App() {
                       onSwitchStack={switchStack}
                       wsMessages={ws.messages}
                     />
-                  ) : leftPane.type === "investigations" ? (
-                    <InvestigationsPage
+                  ) : leftPane.type === "activity" ? (
+                    <ActivityPage
+                      tab={leftPane.tab}
                       query={leftPane.query}
+                      onChangeTab={(tab) =>
+                        setLeftPane({ type: "activity", tab, query: tab === "investigations" ? leftPane.query : {} })
+                      }
                       onUpdateQuery={(query) =>
-                        setLeftPane({ type: "investigations", query }, { replace: true })
+                        setLeftPane({ type: "activity", tab: leftPane.tab, query }, { replace: true })
                       }
                       onViewInvestigation={(id) => setLeftPane({ type: "investigation", id })}
                     />

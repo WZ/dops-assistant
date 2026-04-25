@@ -1,8 +1,8 @@
 // src/web/components/Sidebar.tsx
-import { LayoutGrid, Server, Settings, Sun, Moon, FileSearch } from "lucide-react";
+import { LayoutGrid, Server, Settings, Sun, Moon, Activity } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
-export type SidebarPage = "dashboard" | "investigations" | "services" | "settings";
+export type SidebarPage = "dashboard" | "activity" | "services" | "settings";
 
 interface SidebarProps {
   activePage: SidebarPage;
@@ -11,24 +11,28 @@ interface SidebarProps {
   onToggleTheme: () => void;
 }
 
-const NAV_ITEMS: { page: SidebarPage; label: string; icon: typeof LayoutGrid }[] = [
-  { page: "dashboard", label: "Operations Desk", icon: LayoutGrid },
-  { page: "investigations", label: "Investigations", icon: FileSearch },
-  { page: "services", label: "Services", icon: Server },
-  { page: "settings", label: "Settings", icon: Settings },
+// Activity is the unified surface for "things that happened on this stack over
+// time" — investigations, scans, events, learned patterns. Each lives in its
+// own tab under /activity/<tab>; clicking the sidebar entry deep-links to the
+// investigations tab (the most-used surface).
+const NAV_ITEMS: { page: SidebarPage; label: string; icon: typeof LayoutGrid; href: string }[] = [
+  { page: "dashboard", label: "Operations Desk", icon: LayoutGrid, href: "/" },
+  { page: "activity", label: "Activity", icon: Activity, href: "/activity/investigations" },
+  { page: "services", label: "Services", icon: Server, href: "/services" },
+  { page: "settings", label: "Settings", icon: Settings, href: "/settings" },
 ];
 
 export function Sidebar({ activePage, onNavigate, dark, onToggleTheme }: SidebarProps) {
   return (
     <nav className="w-12 bg-card border-r border-border/50 flex flex-col items-center py-3 shrink-0 z-20">
       <div className="flex flex-col items-center gap-1 flex-1">
-        {NAV_ITEMS.map(({ page, label, icon: Icon }) => {
+        {NAV_ITEMS.map(({ page, label, icon: Icon, href }) => {
           const isActive = activePage === page;
           return (
             <Tooltip key={page}>
               <TooltipTrigger asChild>
                 <a
-                  href={page === "dashboard" ? "/" : `/${page}`}
+                  href={href}
                   title={label}
                   onClick={(e) => { e.preventDefault(); onNavigate(page); }}
                   className={`relative w-9 h-9 rounded-lg flex items-center justify-center transition-all ${
