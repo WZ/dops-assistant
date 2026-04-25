@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.5.1] - 2026-04-25
+
+### Changed
+- **Probe ticks now log a WARN when there are services configured but zero rules to evaluate.** The scheduler used to tick silently in this state — services exist, but discovery hasn't written any `probeRules`, no `globalProbeRules` are set, and `config.yaml` has no `probe.metrics` defaults. Operators stared at an empty dashboard wondering why nothing was happening. New log line: `anomaly-probe: N services configured but probe generated 0 queries — no rules to evaluate; run discovery or add probe.metrics defaults to config.yaml`. Fires once per tick (no suppression) on the scheduler's bounded cadence. Pure observability — no behavior change.
+
 ## [0.3.5.0] - 2026-04-25
 
 ### Added
