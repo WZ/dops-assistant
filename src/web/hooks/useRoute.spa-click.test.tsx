@@ -257,14 +257,14 @@ describe("useRoute — {replace: true}", () => {
     const { result } = renderHook(() => useAppRouterHarness());
 
     act(() => {
-      result.current.navigate({ type: "investigations", query: {} });
+      result.current.navigate({ type: "activity", tab: "investigations", query: {} });
     });
     expect(push).toHaveBeenCalledTimes(1);
     expect(replace).not.toHaveBeenCalled();
 
     act(() => {
       result.current.navigate(
-        { type: "investigations", query: { q: "redis" } },
+        { type: "activity", tab: "investigations", query: { q: "redis" } },
         { replace: true },
       );
     });

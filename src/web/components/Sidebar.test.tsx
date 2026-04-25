@@ -24,7 +24,7 @@ describe("Sidebar", () => {
   it("renders all four navigation buttons", () => {
     renderSidebar();
     expect(screen.getByTitle("Operations Desk")).toBeDefined();
-    expect(screen.getByTitle("Investigations")).toBeDefined();
+    expect(screen.getByTitle("Activity")).toBeDefined();
     expect(screen.getByTitle("Services")).toBeDefined();
     expect(screen.getByTitle("Settings")).toBeDefined();
   });
@@ -35,12 +35,12 @@ describe("Sidebar", () => {
     expect(btn.className).toContain("text-primary");
   });
 
-  it("marks Investigations active for both list and detail views", () => {
-    // The parent maps both leftPane.type === "investigations" (list) and
-    // leftPane.type === "investigation" (detail) to "investigations" here,
-    // so drilling in and out keeps the sidebar highlight stable.
-    renderSidebar({ activePage: "investigations" });
-    const btn = screen.getByTitle("Investigations");
+  it("marks Activity active for both list and detail views", () => {
+    // The parent maps leftPane.type === "activity" (any tab) and
+    // leftPane.type === "investigation" (detail) to "activity" here, so
+    // drilling in and out keeps the sidebar highlight stable.
+    renderSidebar({ activePage: "activity" });
+    const btn = screen.getByTitle("Activity");
     expect(btn.className).toContain("text-primary");
   });
 
@@ -51,11 +51,20 @@ describe("Sidebar", () => {
     expect(onNavigate).toHaveBeenCalledWith("services");
   });
 
-  it("calls onNavigate with 'investigations' when Investigations is clicked", () => {
+  it("calls onNavigate with 'activity' when Activity is clicked", () => {
     const onNavigate = vi.fn();
     renderSidebar({ onNavigate });
-    fireEvent.click(screen.getByTitle("Investigations"));
-    expect(onNavigate).toHaveBeenCalledWith("investigations");
+    fireEvent.click(screen.getByTitle("Activity"));
+    expect(onNavigate).toHaveBeenCalledWith("activity");
+  });
+
+  it("Activity link href deep-links to the investigations tab", () => {
+    // Cmd-click / right-click on the sidebar entry should give the user a
+    // canonical URL — landing on /activity/investigations rather than the
+    // bare /activity (which would also work, but is less obvious).
+    renderSidebar();
+    const link = screen.getByTitle("Activity") as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("/activity/investigations");
   });
 
   it("calls onToggleTheme when theme button is clicked", () => {

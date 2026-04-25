@@ -1,5 +1,5 @@
 import { useEffect, useCallback } from "react";
-import type { LeftPaneView } from "../App";
+import type { ActivityTab, LeftPaneView } from "../App";
 import { APP_BASE_PATH } from "../lib/createStackFetch";
 import {
   parseInvestigationsQuery,
@@ -14,12 +14,25 @@ function stripBase(pathname: string): string {
   return pathname;
 }
 
+const ACTIVITY_TABS: readonly ActivityTab[] = ["investigations", "scans", "events", "patterns"] as const;
+
+function isActivityTab(s: string): s is ActivityTab {
+  return (ACTIVITY_TABS as readonly string[]).includes(s);
+}
+
 /**
  * Parse a URL pathname (+ optional search) into a LeftPaneView state.
  *
  * Search string is only consulted for routes that expose URL-as-state filters
- * (today: /investigations list view). Other routes ignore it so a stray
- * `?foo=bar` on the dashboard URL doesn't knock the parser off its rails.
+ * (today: the Activity page's investigations tab). Other routes ignore it so
+ * a stray `?foo=bar` on the dashboard URL doesn't knock the parser off its
+ * rails.
+ *
+ * Backwards compat: legacy `/investigations` (with optional query) parses to
+ * the Activity page on the investigations tab. The mount-time redirect in
+ * `useRoute` rewrites the URL to `/activity/investigations` so old bookmarks
+ * silently update on first load. `/investigations/:id` (the detail page) is
+ * unchanged — that's a different concept and keeps its own URL.
  */
 export function parseUrl(pathname: string, search: string = ""): LeftPaneView {
   const p = stripBase(pathname).replace(/\/+$/, "") || "/";
@@ -30,13 +43,34 @@ export function parseUrl(pathname: string, search: string = ""): LeftPaneView {
   // dead links invisible and hid routing bugs.
   if (p === "/" || p === "/dashboard") return { type: "dashboard" };
 
-  // /investigations — the list page. Must come before the /investigations/:id
-  // branch below so the bare path doesn't match as an empty id.
-  if (p === "/investigations") {
-    return { type: "investigations", query: parseInvestigationsQuery(search) };
+  // /activity → default tab (investigations).
+  // /activity/<tab> → that tab. Unknown tabs fall through to notfound.
+  if (p === "/activity") {
+    return { type: "activity", tab: "investigations", query: parseInvestigationsQuery(search) };
+  }
+  const actMatch = p.match(/^\/activity\/(.+)$/);
+  if (actMatch) {
+    const tab = actMatch[1]!;
+    if (isActivityTab(tab)) {
+      // Only the investigations tab consumes the query string today; other
+      // tabs ignore it (their filter shapes will diverge as they ship). An
+      // empty object is the safe default.
+      const query = tab === "investigations" ? parseInvestigationsQuery(search) : {};
+      return { type: "activity", tab, query };
+    }
   }
 
-  // /investigations/:id
+  // Legacy /investigations — list page. Backwards compat for bookmarks /
+  // external links from before the Activity refactor. Parses to the same
+  // pane as /activity/investigations; the mount-time redirect in useRoute
+  // swaps the URL so the user sees the canonical path on first load.
+  // Must come before the /investigations/:id branch so the bare path
+  // doesn't match as an empty id.
+  if (p === "/investigations") {
+    return { type: "activity", tab: "investigations", query: parseInvestigationsQuery(search) };
+  }
+
+  // /investigations/:id — single investigation detail page. Unchanged.
   const invMatch = p.match(/^\/investigations\/(.+)$/);
   if (invMatch) return { type: "investigation", id: invMatch[1]! };
 
@@ -78,9 +112,13 @@ export function viewToUrl(view: LeftPaneView): string {
   switch (view.type) {
     case "investigation":
       return `${base}/investigations/${view.id}`;
-    case "investigations": {
-      const search = stringifyInvestigationsQuery(view.query);
-      return search ? `${base}/investigations?${search}` : `${base}/investigations`;
+    case "activity": {
+      // Only the investigations tab serializes its query to the URL; other
+      // tabs would emit an empty string. Keeps URLs clean while still letting
+      // the investigations filter bar deep-link.
+      const search = view.tab === "investigations" ? stringifyInvestigationsQuery(view.query) : "";
+      const path = `${base}/activity/${view.tab}`;
+      return search ? `${path}?${search}` : path;
     }
     case "services":
       return view.initialService ? `${base}/services/${view.initialService}` : `${base}/services`;
@@ -103,6 +141,9 @@ export function viewToUrl(view: LeftPaneView): string {
  * Sync LeftPaneView state with the browser URL.
  *
  * - On mount: parses window.location.pathname (+ search) into initial state
+ *   AND silently rewrites the URL when it differs from the canonical form
+ *   for that view (e.g. legacy `/investigations` → `/activity/investigations`).
+ *   The rewrite uses replaceState so it doesn't pollute back-button history.
  * - On state change: pushes new URL via history.pushState
  * - On popstate (back/forward): updates state from URL
  */
@@ -111,8 +152,8 @@ export function useRoute(
 ): { initialView: LeftPaneView; navigate: (view: LeftPaneView, opts?: { replace?: boolean }) => void } {
   // `replace: true` swaps the current history entry via replaceState instead of
   // pushing a new one. Used for same-route state updates (filter bar changes on
-  // /investigations) so the Back button still exits the page in one press
-  // rather than unwinding every keystroke and pill click.
+  // the activity/investigations tab) so the Back button still exits the page
+  // in one press rather than unwinding every keystroke and pill click.
   //
   // There is no popstate guard here: pushState / replaceState do NOT fire
   // popstate (browser spec guarantee), so only genuine user-initiated
@@ -126,11 +167,11 @@ export function useRoute(
     if (url !== current) {
       // Tag each entry with `{ fromApp: true }` so detail pages can distinguish
       // in-app history from direct-link arrivals when rendering "Back". Detail
-      // pages (/investigations/:id) use the tag to return to /investigations
+      // pages (/investigations/:id) use the tag to return to the activity list
       // with filters preserved via history.back() when the user came from the
       // list, and fall back to the dashboard when they pasted a direct link.
       // Replace-state entries carry the same tag so filter-bar updates on
-      // /investigations don't strip it mid-session.
+      // activity/investigations don't strip it mid-session.
       if (opts?.replace) {
         window.history.replaceState({ fromApp: true }, "", url);
       } else {
@@ -140,16 +181,30 @@ export function useRoute(
     setLeftPane(view);
   }, [setLeftPane]);
 
+  const initialView = parseUrl(window.location.pathname, window.location.search);
+
   useEffect(() => {
+    // Mount-time canonicalization: if the parsed view serializes to a URL
+    // different from what the user typed (e.g. they hit /investigations and
+    // we resolved it to the activity page), silently swap the URL via
+    // replaceState. No new history entry, no new state push — same view.
+    const canonical = viewToUrl(initialView);
+    const current = window.location.pathname + window.location.search;
+    if (canonical !== current && initialView.type !== "notfound") {
+      window.history.replaceState({ fromApp: true }, "", canonical);
+    }
     const onPopstate = () => {
       setLeftPane(parseUrl(window.location.pathname, window.location.search));
     };
     window.addEventListener("popstate", onPopstate);
     return () => window.removeEventListener("popstate", onPopstate);
+    // initialView intentionally captured once at mount via the closure above.
+    // Re-running this effect on every state change would fight pushState.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setLeftPane]);
 
   return {
-    initialView: parseUrl(window.location.pathname, window.location.search),
+    initialView,
     navigate,
   };
 }

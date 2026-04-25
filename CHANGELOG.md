@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.2.0] - 2026-04-25
+
+### Changed
+- **Sidebar entry renamed to Activity, with a tabbed page underneath.** The standalone Investigations icon is now a single Activity entry that opens a tabbed view: Investigations (the existing list — same filters, same pagination, same severity strip) plus Scans, Events, and Patterns as scaffolded tabs. Each tab is its own URL (`/activity/investigations`, `/activity/scans`, `/activity/events`, `/activity/patterns`) so deep links and bookmarks work per surface. The Scans/Events/Patterns tabs are placeholders today — their real implementations land in follow-up PRs.
+- **Old `/investigations` URLs silently redirect to `/activity/investigations`.** Hit an old bookmark or an external link and the URL rewrites in place via `replaceState`, preserving any filter query string. No new history entry, no flash, just a canonical URL.
+- **Investigation detail back-nav still works.** Clicking back from `/investigations/:id` returns to the Activity page with your filter state intact, same as before — the smart-back behavior was preserved across the refactor.
+
 ## [0.3.1.0] - 2026-04-24
 
 ### Added
