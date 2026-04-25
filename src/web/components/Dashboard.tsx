@@ -32,6 +32,8 @@ interface DashboardProps {
   onViewService: (serviceName: string) => void;
   onViewAllServices: () => void;
   onViewAllInvestigations: () => void;
+  /** Navigate to the dedicated /activity/scans tab. */
+  onViewAllScans?: () => void;
   onOpenScanRun: (runId: string) => void;
   stackName?: string;
   setupStage?: import("../hooks/useSetupStage").SetupStage | null;
@@ -57,6 +59,7 @@ export function Dashboard({
   onViewService,
   onViewAllServices,
   onViewAllInvestigations,
+  onViewAllScans,
   onOpenScanRun,
   stackName,
   setupStage,
@@ -774,6 +777,7 @@ export function Dashboard({
               wsSend={wsSend}
               wsMessages={wsMessages}
               onOpenRun={onOpenScanRun}
+              onViewAllScans={onViewAllScans}
             />
           </div>
 

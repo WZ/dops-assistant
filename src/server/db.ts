@@ -319,6 +319,58 @@ export interface UpdateScanRunInput {
  * (scan_runs stores INTEGERs, not SQLite datetime strings) so no
  * normalizeTimestamp() conversion is needed here.
  */
+/**
+ * Build the WHERE clause + args for `listScanRuns` / `countScanRuns`. Shared
+ * so the page query and the total query stay in lockstep.
+ *
+ * `outcome` predicates are inlined here (no stored column) — see listScanRuns
+ * for the mapping. Arrays are folded into IN-lists with placeholder generation
+ * so we never interpolate values into the SQL string.
+ */
+function buildScanRunsWhere(opts: {
+  stackId: string;
+  before?: number;
+  status?: ReadonlyArray<"running" | "complete" | "failed" | "skipped">;
+  trigger?: ReadonlyArray<"manual" | "cron">;
+  outcome?: ReadonlyArray<"clean" | "tripped" | "dispatched">;
+  since?: number;
+  until?: number;
+}): { sql: string; args: (string | number)[] } {
+  const clauses: string[] = ["stack_id = ?"];
+  const args: (string | number)[] = [opts.stackId];
+
+  if (opts.before !== undefined) {
+    clauses.push("started_at < ?");
+    args.push(opts.before);
+  }
+  if (opts.since !== undefined) {
+    clauses.push("started_at >= ?");
+    args.push(opts.since);
+  }
+  if (opts.until !== undefined) {
+    clauses.push("started_at <= ?");
+    args.push(opts.until);
+  }
+  if (opts.status && opts.status.length) {
+    clauses.push(`status IN (${opts.status.map(() => "?").join(",")})`);
+    args.push(...opts.status);
+  }
+  if (opts.trigger && opts.trigger.length) {
+    clauses.push(`trigger IN (${opts.trigger.map(() => "?").join(",")})`);
+    args.push(...opts.trigger);
+  }
+  if (opts.outcome && opts.outcome.length) {
+    const parts: string[] = [];
+    for (const o of opts.outcome) {
+      if (o === "clean") parts.push("hits_raw = 0");
+      else if (o === "tripped") parts.push("(hits_raw > 0 AND hits_dispatched = 0)");
+      else if (o === "dispatched") parts.push("hits_dispatched > 0");
+    }
+    if (parts.length) clauses.push(`(${parts.join(" OR ")})`);
+  }
+  return { sql: clauses.join(" AND "), args };
+}
+
 function scanRunFromDbRow(r: Record<string, unknown>): ScanRunRow {
   return {
     id: r["id"] as string,
@@ -1670,19 +1722,71 @@ export class Database {
   }
 
   /**
-   * List scan_runs for a stack, newest first. `before` is an epoch-ms
-   * cursor: only rows with started_at strictly less than it are returned.
+   * List scan_runs for a stack with optional filters + pagination.
+   *
+   * Filter shape mirrors `/api/investigations`:
+   *   - status, trigger, outcome — multi-select arrays (empty = no filter)
+   *   - since, until — epoch ms range applied to started_at (inclusive)
+   *   - sort — "started_at" (desc) or "duration" (probe_duration_ms desc)
+   *   - limit, offset — pagination, default limit 50, max 200
+   *   - before — epoch-ms cursor, kept for back-compat with the Ops Desk
+   *     widget. Mutually exclusive with offset (offset wins if both set).
+   *
+   * `outcome` is derived from hits counts:
+   *   - clean      — hits_raw = 0
+   *   - tripped    — hits_raw > 0 AND hits_dispatched = 0 (deduped or capped)
+   *   - dispatched — hits_dispatched > 0
+   * Mapped to SQL inline rather than a stored column so we can change the
+   * mapping later without a migration.
+   *
+   * Returns the page rows; total count is via `countScanRuns(opts)` —
+   * separate so cheap "is there any data" checks don't materialize the
+   * whole match set.
    */
-  listScanRuns(opts: { stackId: string; limit: number; before?: number }): ScanRunRow[] {
-    const where = opts.before !== undefined
-      ? "stack_id = ? AND started_at < ?"
-      : "stack_id = ?";
-    const args = opts.before !== undefined ? [opts.stackId, opts.before] : [opts.stackId];
+  listScanRuns(opts: {
+    stackId: string;
+    limit?: number;
+    offset?: number;
+    before?: number;
+    status?: ReadonlyArray<"running" | "complete" | "failed" | "skipped">;
+    trigger?: ReadonlyArray<"manual" | "cron">;
+    outcome?: ReadonlyArray<"clean" | "tripped" | "dispatched">;
+    since?: number;
+    until?: number;
+    sort?: "started_at" | "duration";
+  }): ScanRunRow[] {
+    const { sql, args } = buildScanRunsWhere(opts);
+    const limit = Math.min(Math.max(1, opts.limit ?? 50), 200);
+    const offset = Math.max(0, opts.offset ?? 0);
+    const orderBy = opts.sort === "duration"
+      ? "probe_duration_ms IS NULL, probe_duration_ms DESC, started_at DESC"
+      : "started_at DESC";
     const rows = this.db.prepare(`
-      SELECT * FROM scan_runs WHERE ${where}
-      ORDER BY started_at DESC LIMIT ?
-    `).all(...args, opts.limit) as Record<string, unknown>[];
+      SELECT * FROM scan_runs WHERE ${sql}
+      ORDER BY ${orderBy} LIMIT ? OFFSET ?
+    `).all(...args, limit, offset) as Record<string, unknown>[];
     return rows.map(scanRunFromDbRow);
+  }
+
+  /**
+   * Count rows that match the same filter set as `listScanRuns`. Companion
+   * call so the UI can show "X of N" pagination without scanning the whole
+   * table twice (once for the page, once for the count).
+   */
+  countScanRuns(opts: {
+    stackId: string;
+    before?: number;
+    status?: ReadonlyArray<"running" | "complete" | "failed" | "skipped">;
+    trigger?: ReadonlyArray<"manual" | "cron">;
+    outcome?: ReadonlyArray<"clean" | "tripped" | "dispatched">;
+    since?: number;
+    until?: number;
+  }): number {
+    const { sql, args } = buildScanRunsWhere(opts);
+    const row = this.db.prepare(`
+      SELECT COUNT(*) AS n FROM scan_runs WHERE ${sql}
+    `).get(...args) as { n: number } | undefined;
+    return row?.n ?? 0;
   }
 
   /**

@@ -96,6 +96,35 @@ function extractReportSummary(reportJson: string): string | null {
   }
 }
 
+/**
+ * Parse a comma-separated query-string value into a typed enum array,
+ * dropping unknown tokens. Returns `[]` for missing/empty input so callers
+ * can use the array length directly as "any filter set?". Used by the scan
+ * runs list endpoint for status/trigger/outcome multi-select filters.
+ */
+function parseEnumCsv<T extends string>(raw: string | undefined, allowed: readonly T[]): T[] {
+  if (!raw) return [];
+  const valid = new Set<string>(allowed);
+  const out: T[] = [];
+  for (const tok of raw.split(",")) {
+    const t = tok.trim();
+    if (valid.has(t)) out.push(t as T);
+  }
+  return out;
+}
+
+/**
+ * Parse an ISO 8601 timestamp into epoch ms. Returns `undefined` when the
+ * string is missing or doesn't parse — callers treat that as "no filter".
+ * Tolerant by design: URL state is soft input from bookmarks and pasted
+ * links, so we drop garbage instead of 400-ing the request.
+ */
+function parseIsoToEpochMs(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const t = Date.parse(raw);
+  return Number.isFinite(t) ? t : undefined;
+}
+
 /** Get all services for a stack by merging config + registry */
 function getAllServices(config: Config, req: Request): ServiceConfig[] {
   const registryStore = req.stackContext.serviceRegistry;
@@ -382,13 +411,22 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
    * GET /api/scan/runs — list scan runs for the resolved stack, newest first.
    *
    * Query params:
-   *  - `limit` — max rows to return. Defaults to 50. Hard-capped at 200 so
-   *    one unbounded fetch can't pull the entire history into memory. NaN /
-   *    non-positive values fall back to the default.
-   *  - `before` — optional epoch-ms cursor. Only rows with started_at
-   *    strictly less than `before` are returned. Used for pagination by the
-   *    Recent Scans UI. Non-integer values are ignored (no-op), matching
-   *    db.listScanRuns({ before: undefined }).
+   *  - `limit` — max rows. Default 50. Hard-capped at 200.
+   *  - `offset` — page offset, 0-indexed. Default 0. Mutually exclusive
+   *    with `before`; offset wins if both arrive.
+   *  - `before` — legacy epoch-ms cursor used by the Ops Desk Recent Scans
+   *    widget. Newer callers should prefer `offset`.
+   *  - `status` — comma-separated subset of `running|complete|failed|skipped`.
+   *  - `trigger` — comma-separated subset of `manual|cron`.
+   *  - `outcome` — comma-separated subset of `clean|tripped|dispatched`,
+   *    derived from hits counts (see db.listScanRuns docstring).
+   *  - `since`, `until` — ISO 8601 timestamps, applied to started_at.
+   *    Invalid timestamps are ignored.
+   *  - `sort` — `started_at` (default, desc) or `duration` (probe_duration_ms desc).
+   *
+   * Response shape: `{ runs, total, hasMore }`. Legacy callers that read
+   * `data.runs` and ignored extras still work — `total` and `hasMore` are
+   * additive fields.
    *
    * Stack isolation is enforced by the /api middleware populating
    * req.stackId; db.listScanRuns filters by stack_id server-side.
@@ -396,15 +434,42 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   app.get("/api/scan/runs", (req: Request, res: Response) => {
     const rawLimit = parseInt((req.query["limit"] as string) || "50", 10);
     const limit = Math.min(Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 50, 200);
+    const rawOffset = parseInt((req.query["offset"] as string) || "0", 10);
+    const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
     const beforeRaw = req.query["before"] as string | undefined;
     const beforeParsed = beforeRaw !== undefined ? parseInt(beforeRaw, 10) : undefined;
     const before = Number.isFinite(beforeParsed as number) ? beforeParsed : undefined;
-    const runs = db.listScanRuns({
+
+    const status = parseEnumCsv(req.query["status"] as string | undefined,
+      ["running", "complete", "failed", "skipped"] as const);
+    const trigger = parseEnumCsv(req.query["trigger"] as string | undefined,
+      ["manual", "cron"] as const);
+    const outcome = parseEnumCsv(req.query["outcome"] as string | undefined,
+      ["clean", "tripped", "dispatched"] as const);
+
+    const since = parseIsoToEpochMs(req.query["since"] as string | undefined);
+    const until = parseIsoToEpochMs(req.query["until"] as string | undefined);
+
+    const sortRaw = (req.query["sort"] as string | undefined) ?? "started_at";
+    const sort: "started_at" | "duration" = sortRaw === "duration" ? "duration" : "started_at";
+
+    // `before` and `offset` are alternative paginators. Offset wins if both
+    // came in — that's the new canonical surface; `before` stays for the
+    // existing Ops Desk widget which calls with `?limit=5` and no offset.
+    const filterOpts = {
       stackId: req.stackId,
-      limit,
-      before,
-    });
-    res.json({ runs });
+      ...(before !== undefined && offset === 0 ? { before } : {}),
+      ...(status.length ? { status } : {}),
+      ...(trigger.length ? { trigger } : {}),
+      ...(outcome.length ? { outcome } : {}),
+      ...(since !== undefined ? { since } : {}),
+      ...(until !== undefined ? { until } : {}),
+    };
+
+    const runs = db.listScanRuns({ ...filterOpts, limit, offset, sort });
+    const total = db.countScanRuns(filterOpts);
+    const hasMore = offset + runs.length < total;
+    res.json({ runs, total, hasMore });
   });
 
   /**

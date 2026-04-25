@@ -46,9 +46,33 @@ describe("parseUrl", () => {
     expect(view).toEqual({ type: "activity", tab: "investigations", query: {} });
   });
 
-  it("non-investigations tabs ignore search params (their filter shape will diverge)", () => {
+  it("/activity/scans parses its own ScanRunsQuery shape (status/trigger/outcome/range/offset)", () => {
+    const view = parseUrl("/activity/scans", "?status=failed,complete&trigger=cron&outcome=dispatched&range=24h&offset=25");
+    expect(view).toEqual({
+      type: "activity",
+      tab: "scans",
+      query: {
+        status: ["failed", "complete"],
+        trigger: ["cron"],
+        outcome: ["dispatched"],
+        range: "24h",
+        offset: 25,
+      },
+    });
+  });
+
+  it("/activity/scans drops keys that aren't part of ScanRunsQuery", () => {
+    // `severity` is an InvestigationsQuery key — the scans parser doesn't
+    // recognize it, so it gets dropped. `offset` is shared.
     expect(parseUrl("/activity/scans", "?severity=high&offset=10"))
-      .toEqual({ type: "activity", tab: "scans", query: {} });
+      .toEqual({ type: "activity", tab: "scans", query: { offset: 10 } });
+  });
+
+  it("/activity/events and /activity/patterns ignore search params (placeholder tabs)", () => {
+    expect(parseUrl("/activity/events", "?status=failed"))
+      .toEqual({ type: "activity", tab: "events", query: {} });
+    expect(parseUrl("/activity/patterns", "?service=foo"))
+      .toEqual({ type: "activity", tab: "patterns", query: {} });
   });
 
   it("legacy /investigations (no id) parses to the activity investigations tab — backwards compat", () => {
@@ -168,14 +192,19 @@ describe("viewToUrl", () => {
     expect(viewToUrl({ type: "activity", tab: "patterns", query: {} })).toBe("/activity/patterns");
   });
 
-  it("non-investigations tabs drop their query string on serialization (filter shapes will diverge)", () => {
+  it("scans tab serializes its ScanRunsQuery shape", () => {
     expect(
       viewToUrl({
         type: "activity",
         tab: "scans",
-        query: { severity: ["critical"], offset: 25 },
+        query: { status: ["failed"], trigger: ["cron"], range: "24h", offset: 25 },
       }),
-    ).toBe("/activity/scans");
+    ).toBe("/activity/scans?status=failed&trigger=cron&range=24h&offset=25");
+  });
+
+  it("events and patterns tabs always serialize to a clean path (no URL state today)", () => {
+    expect(viewToUrl({ type: "activity", tab: "events", query: {} })).toBe("/activity/events");
+    expect(viewToUrl({ type: "activity", tab: "patterns", query: {} })).toBe("/activity/patterns");
   });
 });
 

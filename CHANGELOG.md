@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.3.0] - 2026-04-25
+
+### Added
+- **/activity/scans is live.** The Scans tab on the Activity page now ships a full filter bar (status / trigger / outcome / range presets), a sort dropdown (Most recent / Slowest first), paginated rows, and click-through to the existing scan-run detail page. Filters round-trip through the URL — bookmark `?status=failed&range=7d&trigger=cron` and the chips come back lit up. Each row shows trigger, relative time, duration, services probed, hits summary (clean / tripped / dispatched), and status — same shape the Ops Desk Recent Scans section uses.
+- **`View all N →` link on the Operations Desk Recent Scans section.** The "5 of N" hint that used to lead nowhere is now a clickable affordance that opens `/activity/scans`. Same pattern the Investigation Log got in v0.2.2.0.
+
+### Changed
+- **`GET /api/scan/runs` gains a real filter set.** Query params: `status`, `trigger`, `outcome` (CSV multi-select), `since` / `until` (ISO 8601), `sort` (`started_at` or `duration`), `offset` / `limit`. Response is now `{runs, total, hasMore}` — the legacy Ops Desk widget that reads `data.runs` and ignores extras still works without changes. The legacy `before` cursor stays for back-compat. `outcome` is derived from hits counts (raw=0 → clean, raw>0 dispatched=0 → tripped, dispatched>0 → dispatched) so the mapping can change without a migration.
+
 ## [0.3.2.0] - 2026-04-25
 
 ### Changed

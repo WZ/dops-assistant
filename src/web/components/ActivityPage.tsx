@@ -1,32 +1,33 @@
 import { Activity, FileSearch, Radar, Bell, Sparkles } from "lucide-react";
-import type { ActivityTab } from "../App";
+import type { ActivityTab, ActivityView } from "../App";
 import type { InvestigationsQuery } from "../lib/investigations-query";
+import type { ScanRunsQuery } from "../lib/scan-runs-query";
 import { InvestigationsPage } from "./InvestigationsPage";
+import { ScansTab } from "./ScansTab";
 
 interface ActivityPageProps {
-  tab: ActivityTab;
-  query: InvestigationsQuery;
+  /** Discriminated view — `view.tab` narrows `view.query` automatically. */
+  view: ActivityView;
   onChangeTab: (tab: ActivityTab) => void;
-  onUpdateQuery: (query: InvestigationsQuery) => void;
+  onUpdateInvestigationsQuery: (query: InvestigationsQuery) => void;
+  onUpdateScansQuery: (query: ScanRunsQuery) => void;
   onViewInvestigation: (id: string) => void;
+  onOpenScanRun: (runId: string) => void;
 }
 
 const TABS: { id: ActivityTab; label: string; icon: typeof Activity; ready: boolean }[] = [
   { id: "investigations", label: "Investigations", icon: FileSearch, ready: true },
-  // Scans, Events, Patterns are scaffolded as tabs in this PR but their
-  // bodies land in follow-ups (AP13 / AP14 / AP12). Empty-state copy is
-  // user-facing — keep it specific so visitors know what's coming.
-  { id: "scans",          label: "Scans",          icon: Radar,      ready: false },
+  { id: "scans",          label: "Scans",          icon: Radar,      ready: true },
+  // Events and Patterns ship as scaffolded tabs in this PR but their bodies
+  // land in follow-ups (AP14 / AP12). Empty-state copy is user-facing —
+  // keep it specific so visitors know what's coming.
   { id: "events",         label: "Events",         icon: Bell,       ready: false },
   { id: "patterns",       label: "Patterns",       icon: Sparkles,   ready: false },
 ];
 
 const PLACEHOLDER_COPY: Record<ActivityTab, { title: string; body: string } | null> = {
   investigations: null,
-  scans: {
-    title: "Scans tab coming soon",
-    body: "Every proactive scan tick (cron or manual) is already persisted as a `ScanRun` record. This tab will surface the full filterable history — until it ships, drill in from the Operations Desk's Recent Scans section.",
-  },
+  scans: null,
   events: {
     title: "Events tab coming soon",
     body: "Recent system events — investigation lifecycle, scan dispatch, health transitions — are an in-memory ring buffer today. Persistence + a filterable feed lands once the events table migration is in.",
@@ -38,23 +39,24 @@ const PLACEHOLDER_COPY: Record<ActivityTab, { title: string; body: string } | nu
 };
 
 /**
- * Unified Activity page. Replaces the standalone /investigations route as the
- * single sidebar destination for chronological views of stack activity. Each
- * tab gets its own URL (/activity/:tab) so deep links + bookmarks work per
- * surface; the URL-as-state pattern lives entirely in `useRoute`. This
- * component is presentation only.
+ * Unified Activity page. Single sidebar destination for chronological views
+ * of stack activity. Each tab gets its own URL (/activity/:tab) so deep
+ * links + bookmarks work per surface; the URL-as-state pattern lives in
+ * `useRoute`. This component is presentation only.
  *
- * The Investigations tab renders the existing InvestigationsPage component
- * verbatim — its filter bar, pagination, and severity strip carry over with
- * zero behavior change. Other tabs ship as placeholders in this PR.
+ * Investigations and Scans render real implementations. Events and Patterns
+ * ship as explanatory placeholders so the navigation story is coherent
+ * today; the real surfaces land in follow-up PRs.
  */
 export function ActivityPage({
-  tab,
-  query,
+  view,
   onChangeTab,
-  onUpdateQuery,
+  onUpdateInvestigationsQuery,
+  onUpdateScansQuery,
   onViewInvestigation,
+  onOpenScanRun,
 }: ActivityPageProps) {
+  const tab = view.tab;
   const placeholder = PLACEHOLDER_COPY[tab];
   return (
     <div className="h-full flex flex-col min-h-0">
@@ -96,11 +98,17 @@ export function ActivityPage({
         aria-labelledby={`activity-tab-${tab}`}
         className="flex-1 min-h-0"
       >
-        {tab === "investigations" ? (
+        {view.tab === "investigations" ? (
           <InvestigationsPage
-            query={query}
-            onUpdateQuery={onUpdateQuery}
+            query={view.query}
+            onUpdateQuery={onUpdateInvestigationsQuery}
             onViewInvestigation={onViewInvestigation}
+          />
+        ) : view.tab === "scans" ? (
+          <ScansTab
+            query={view.query}
+            onUpdateQuery={onUpdateScansQuery}
+            onOpenScanRun={onOpenScanRun}
           />
         ) : placeholder ? (
           <div className="h-full flex flex-col items-center justify-center gap-3 px-8 text-center">
