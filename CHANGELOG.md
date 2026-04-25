@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.5.0] - 2026-04-25
+
+### Added
+- **/activity/events is live with persistence.** The Events tab on the Activity page now ships a full filter bar (severity chips, range presets including 1h, kind dropdown, service dropdown, search box), paginated rows, and click-through to whatever the event's `href` points at — typically a linked investigation or scan run. Filters round-trip through the URL — bookmark `?severity=error&kind=investigation_started&range=1h` and the chips come back lit up. Closes the Activity refactor: all four tabs now ship real implementations.
+- **`events` table backed by 30-day TTL retention.** Recent events stopped living only in a 200-row in-memory ring; every `eventLog.append(...)` now also writes to a durable `events` table. Older entries don't drop silently anymore — the page can show "847 events in the last 7 days" instead of just the latest 25. Retention sweep is configurable via `config.events.retentionDays` (default 30, set `0` to disable for users with external archival pipelines).
+- **`GET /api/events` filter API.** Optional filters: `kind` (CSV multi-select, open-ended — new event kinds don't need a coordinated client release), `severity` (CSV multi-select), `service` (single), `since` / `until` (ISO 8601), `q` (case-insensitive substring on summary, with `%` and `_` escaped), `limit` / `offset` for pagination. Response: `{rows, total, hasMore, kinds, services}` — the `kinds` and `services` lists power the page's dropdowns from a single round-trip.
+- **`View all →` link on the Operations Desk Recent Events section.** Mirrors the affordance Investigation Log, Recent Scans, and Learned Patterns already had. Opens `/activity/events`.
+
+### Changed
+- The `EventLog` singleton (`src/server/event-log.ts`) now accepts an optional `bindDatabase(db)` call at server boot. After binding, every append writes to both the ring (for the Ops Desk strip) AND the events table (for the page). Existing call sites are unchanged — the persistence happens behind the same `eventLog.append(...)` API. Failures are best-effort; a transient DB write error doesn't break the ring.
+
 ## [0.3.4.0] - 2026-04-25
 
 ### Added

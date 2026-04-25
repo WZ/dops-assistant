@@ -158,7 +158,11 @@ describe("PatternsTab", () => {
       { wrapper: Wrapper },
     );
 
-    await waitFor(() => screen.getByTestId("patterns-service-select"));
+    await waitFor(() => {
+      const select = screen.getByTestId("patterns-service-select") as HTMLSelectElement;
+      const options = Array.from(select.options).map((o) => o.value);
+      expect(options).toContain("payments-api");
+    });
     fireEvent.change(screen.getByTestId("patterns-service-select"), { target: { value: "payments-api" } });
     expect(onUpdateQuery).toHaveBeenCalledWith({ service: "payments-api" });
     expect(onUpdateQuery.mock.calls[0][0]).not.toHaveProperty("offset");

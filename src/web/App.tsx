@@ -18,10 +18,11 @@ import { SettingsPage } from "./components/SettingsPage";
 import { ScanActivityBadge } from "./components/ScanActivityBadge";
 import { SetupStepper } from "./components/SetupStepper";
 import { DemoBanner } from "./components/DemoBanner";
-import { useRoute, viewToUrl } from "./hooks/useRoute";
+import { useRoute, viewToUrl, parseUrl } from "./hooks/useRoute";
 import type { InvestigationsQuery } from "./lib/investigations-query";
 import type { ScanRunsQuery } from "./lib/scan-runs-query";
 import type { PatternsQuery } from "./lib/patterns-query";
+import type { EventsQuery } from "./lib/events-query";
 import { StackSwitcher } from "./components/StackSwitcher";
 import { StackProvider } from "./contexts/StackContext";
 import { useWebSocket } from "./hooks/useWebSocket";
@@ -45,14 +46,14 @@ export type ActivityTab = "investigations" | "scans" | "events" | "patterns";
 
 /**
  * Per-tab query shapes. Discriminated by `tab` so callers narrow with a
- * single check. Events still carries no URL state — that tab's filter shape
- * lands when AP14 ships (blocked on persistence).
+ * single check. With AP12 (patterns) and AP14 (events) both shipped, all
+ * four tabs carry their own URL state.
  */
 export type ActivityView =
   | { type: "activity"; tab: "investigations"; query: InvestigationsQuery }
   | { type: "activity"; tab: "scans"; query: ScanRunsQuery }
   | { type: "activity"; tab: "patterns"; query: PatternsQuery }
-  | { type: "activity"; tab: "events"; query: Record<string, never> };
+  | { type: "activity"; tab: "events"; query: EventsQuery };
 
 export type LeftPaneView =
   | { type: "dashboard" }
@@ -470,6 +471,7 @@ export function App() {
                       onViewAllInvestigations={() => setLeftPane({ type: "activity", tab: "investigations", query: {} })}
                       onViewAllScans={() => setLeftPane({ type: "activity", tab: "scans", query: {} })}
                       onViewAllPatterns={() => setLeftPane({ type: "activity", tab: "patterns", query: {} })}
+                      onViewAllEvents={() => setLeftPane({ type: "activity", tab: "events", query: {} })}
                       onOpenScanRun={(runId) => setLeftPane({ type: "scanrun", runId })}
                       stackName={hasMultipleStacks ? activeStack?.name : undefined}
                       setupStage={setupStage}
@@ -560,8 +562,19 @@ export function App() {
                       onUpdatePatternsQuery={(query) =>
                         setLeftPane({ type: "activity", tab: "patterns", query }, { replace: true })
                       }
+                      onUpdateEventsQuery={(query) =>
+                        setLeftPane({ type: "activity", tab: "events", query }, { replace: true })
+                      }
                       onViewInvestigation={(id) => setLeftPane({ type: "investigation", id })}
                       onOpenScanRun={(runId) => setLeftPane({ type: "scanrun", runId })}
+                      onNavigateHref={(href) => {
+                        // Event rows carry an href like `/investigations/inv_…`
+                        // or `/scan/runs/run_…`. Reuse the URL parser to resolve
+                        // it to the correct LeftPaneView; falls back to
+                        // dashboard for unknown shapes (defensive).
+                        const view = parseUrl(href);
+                        setLeftPane(view);
+                      }}
                     />
                   ) : leftPane.type === "notfound" ? (
                     <div className="h-full flex flex-col items-center justify-center gap-3 p-8 text-center">

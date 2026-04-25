@@ -125,6 +125,22 @@ function parseIsoToEpochMs(raw: string | undefined): number | undefined {
   return Number.isFinite(t) ? t : undefined;
 }
 
+/**
+ * Loose CSV parser — keeps any non-empty trimmed token. Used for filters
+ * whose enum is open-ended (event `kind`), where new values can show up
+ * without a server config change. Each token still gets sanitized: trimmed,
+ * empty rejected, single-line only (drop CR/LF/null).
+ */
+function parseEnumCsvLoose(raw: string | undefined): string[] {
+  if (!raw) return [];
+  const out: string[] = [];
+  for (const tok of raw.split(",")) {
+    const t = tok.trim();
+    if (t && !/[\r\n\0]/.test(t)) out.push(t);
+  }
+  return out;
+}
+
 /** Get all services for a stack by merging config + registry */
 function getAllServices(config: Config, req: Request): ServiceConfig[] {
   const registryStore = req.stackContext.serviceRegistry;
@@ -988,6 +1004,59 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     // req.stackId is populated by the stack middleware; empty string means unresolved.
     const stackId = req.stackId && req.stackId !== "" ? req.stackId : undefined;
     res.json(eventLog.recent(limit, stackId));
+  });
+
+  /**
+   * GET /api/events — list persisted events for the resolved stack with
+   * optional filters + pagination. Source of truth for the
+   * `/activity/events` tab (the in-memory ring at /api/events/recent stays
+   * for the Ops Desk strip, which only needs the latest 25-50).
+   *
+   * Query params (all optional):
+   *  - `kind`     — comma-separated event kinds (multi-select)
+   *  - `severity` — comma-separated `info|warn|error|success`
+   *  - `service`  — exact match (single)
+   *  - `since`    — ISO 8601 timestamp, applied to ts >= since
+   *  - `until`    — ISO 8601 timestamp, applied to ts <= until
+   *  - `q`        — case-insensitive substring on summary
+   *  - `limit`    — default 25, hard cap 200
+   *  - `offset`   — default 0
+   *
+   * Response: `{ rows, total, hasMore, kinds, services }`. `kinds` and
+   * `services` are the distinct lists for filter-dropdown population.
+   */
+  app.get("/api/events", (req: Request, res: Response) => {
+    const stackId = req.stackId && req.stackId !== "" ? req.stackId : undefined;
+
+    const kind = parseEnumCsvLoose(req.query["kind"] as string | undefined);
+    const severity = parseEnumCsv(req.query["severity"] as string | undefined,
+      ["info", "warn", "error", "success"] as const);
+    const service = (req.query["service"] as string | undefined)?.trim() || undefined;
+    const since = parseIsoToEpochMs(req.query["since"] as string | undefined);
+    const until = parseIsoToEpochMs(req.query["until"] as string | undefined);
+    const q = (req.query["q"] as string | undefined)?.trim() || undefined;
+
+    const rawLimit = parseInt((req.query["limit"] as string) || "25", 10);
+    const limit = Math.min(Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 25, 200);
+    const rawOffset = parseInt((req.query["offset"] as string) || "0", 10);
+    const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
+
+    const filterOpts = {
+      stackId,
+      ...(kind.length ? { kind } : {}),
+      ...(severity.length ? { severity } : {}),
+      ...(service ? { service } : {}),
+      ...(since !== undefined ? { since } : {}),
+      ...(until !== undefined ? { until } : {}),
+      ...(q ? { q } : {}),
+    };
+
+    const rows = db.listEvents({ ...filterOpts, limit, offset });
+    const total = db.countEvents(filterOpts);
+    const hasMore = offset + rows.length < total;
+    const kinds = db.listEventKinds(stackId);
+    const services = db.listEventServices(stackId);
+    res.json({ rows, total, hasMore, kinds, services });
   });
 
   // ── Service Metadata REST API ──────────────────────────────────────────

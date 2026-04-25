@@ -377,6 +377,74 @@ function buildPatternsWhere(opts: {
   return { sql: clauses.join(" AND "), args };
 }
 
+/**
+ * Build the WHERE clause + args for `listEvents` / `countEvents`. Stack
+ * scoping mirrors the in-memory `EventLog.recent`: a row with NULL stack_id
+ * is "global" (process-wide probes, server lifecycle) and shows in every
+ * stack's view. When `stackId` is undefined, the scoping clause is dropped
+ * entirely (admin / cross-stack queries).
+ */
+function buildEventsWhere(opts: {
+  stackId?: string;
+  kind?: ReadonlyArray<string>;
+  severity?: ReadonlyArray<string>;
+  service?: string;
+  since?: number;
+  until?: number;
+  q?: string;
+}): { sql: string; args: (string | number)[] } {
+  const clauses: string[] = [];
+  const args: (string | number)[] = [];
+
+  if (opts.stackId !== undefined) {
+    // Match the EventLog ring's behavior: include the stack's own rows AND
+    // global (NULL stack_id) rows in the same view.
+    clauses.push("(stack_id IS NULL OR stack_id = ?)");
+    args.push(opts.stackId);
+  }
+  if (opts.kind && opts.kind.length) {
+    clauses.push(`kind IN (${opts.kind.map(() => "?").join(",")})`);
+    args.push(...opts.kind);
+  }
+  if (opts.severity && opts.severity.length) {
+    clauses.push(`severity IN (${opts.severity.map(() => "?").join(",")})`);
+    args.push(...opts.severity);
+  }
+  if (opts.service) {
+    clauses.push("service = ?");
+    args.push(opts.service);
+  }
+  if (opts.since !== undefined) {
+    clauses.push("ts >= ?");
+    args.push(opts.since);
+  }
+  if (opts.until !== undefined) {
+    clauses.push("ts <= ?");
+    args.push(opts.until);
+  }
+  if (opts.q && opts.q.trim()) {
+    const escaped = opts.q.trim().replace(/[\\%_]/g, (m) => "\\" + m);
+    clauses.push("summary LIKE ? ESCAPE '\\'");
+    args.push(`%${escaped}%`);
+  }
+  return { sql: clauses.length ? clauses.join(" AND ") : "1=1", args };
+}
+
+/**
+ * Parse a JSON column value safely. Returns null on parse error. Local to
+ * db.ts so the DB layer doesn't reach into agents/. Same intent as
+ * agents/shared/processors.safeJsonParse but isolated to keep the layering
+ * clean.
+ */
+function safeJsonParse(s: string): Record<string, string | number | boolean> | null {
+  try {
+    const v = JSON.parse(s);
+    return typeof v === "object" && v !== null ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 function buildScanRunsWhere(opts: {
   stackId: string;
   before?: number;
@@ -529,6 +597,55 @@ export class Database {
     this.migrateSettings();
     this.migrateScanRuns();
     this.migrateInvestigationSeverity();
+    this.migrateEvents();
+  }
+
+  /**
+   * Persistent activity feed. Mirrors the in-memory `EventLog` ring shape so
+   * the existing emit sites (investigation lifecycle, scan dispatch, health
+   * transitions, alerts) can write to both sources from one call site.
+   *
+   *   id          monotonic stringly-sortable id (matches RecentEvent.id)
+   *   ts          epoch ms — primary sort key, descending. Indexed.
+   *   kind        EventKind enum (TEXT — no enum check, server-side validated)
+   *   severity    info | warn | error | success
+   *   summary     <= 80 chars per the in-memory ring's truncation
+   *   stack_id    nullable — events with no stack are global (process-wide
+   *               probes, server lifecycle); see RecentEvent docstring
+   *   service     optional service name association (informational)
+   *   href        optional deep link (e.g., /investigations/inv_…)
+   *   meta_json   optional small JSON blob — used by the few callers that
+   *               need extra structured metadata (token counts, durations).
+   *               TEXT not BLOB so it stays human-readable in CLI dumps.
+   *   created_at  insertion epoch ms, separate from ts so an event's source
+   *               timestamp can drift from its DB write time without breaking
+   *               retention.
+   *
+   * Indexes: descending-ts for the page query (newest first), per-stack
+   * filter, and per-kind filter for the kind-dropdown counts.
+   *
+   * Retention: TTL purge handled by `purgeEventsOlderThan(beforeMs)` driven
+   * by the events retention task (see src/server/events-retention.ts). No
+   * cascade — removing an event row never touches investigations/scan_runs.
+   */
+  private migrateEvents(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS events (
+        id          TEXT PRIMARY KEY,
+        ts          INTEGER NOT NULL,
+        kind        TEXT NOT NULL,
+        severity    TEXT NOT NULL,
+        summary     TEXT NOT NULL,
+        stack_id    TEXT,
+        service     TEXT,
+        href        TEXT,
+        meta_json   TEXT,
+        created_at  INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
+      );
+      CREATE INDEX IF NOT EXISTS idx_events_ts_desc ON events (ts DESC);
+      CREATE INDEX IF NOT EXISTS idx_events_stack_ts ON events (stack_id, ts DESC);
+      CREATE INDEX IF NOT EXISTS idx_events_kind_ts ON events (kind, ts DESC);
+    `);
   }
 
   /**
@@ -1904,6 +2021,155 @@ export class Database {
       SELECT COUNT(*) AS n FROM scan_runs WHERE ${sql}
     `).get(...args) as { n: number } | undefined;
     return row?.n ?? 0;
+  }
+
+  // ── Events ───────────────────────────────────────────────────────────────
+
+  /**
+   * Insert a single event row. Caller owns id generation (must match the
+   * in-memory ring's id format so a row inserted here can later be deduped
+   * against the ring's append). `meta` is JSON-encoded if present; null
+   * otherwise. Failures are non-fatal — the in-memory ring is still the
+   * source for the recent-events strip on the Ops Desk, so a transient DB
+   * write failure doesn't surface to the user.
+   */
+  insertEvent(e: {
+    id: string;
+    ts: number;
+    kind: string;
+    severity: string;
+    summary: string;
+    stackId?: string;
+    service?: string;
+    href?: string;
+    meta?: Record<string, string | number | boolean>;
+  }): void {
+    this.db.prepare(`
+      INSERT OR IGNORE INTO events
+        (id, ts, kind, severity, summary, stack_id, service, href, meta_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      e.id, e.ts, e.kind, e.severity, e.summary,
+      e.stackId ?? null, e.service ?? null, e.href ?? null,
+      e.meta ? JSON.stringify(e.meta) : null,
+    );
+  }
+
+  /**
+   * List events for a stack with optional filters + pagination. Mirrors the
+   * shape of `listInvestigations` / `listScanRuns` / `listPatterns`. Filter
+   * set:
+   *   - kind, severity   — multi-select arrays (empty = no filter)
+   *   - service          — exact match (single)
+   *   - since, until     — epoch ms range applied to ts
+   *   - q                — case-insensitive substring on summary
+   *   - limit, offset    — pagination, default limit 25, max 200
+   *
+   * Returns rows in newest-first order. Stack scoping mirrors the in-memory
+   * ring: an event with no stack_id is "global" (process-wide probes, server
+   * lifecycle) and is included in every stack's view. Pass stackId=undefined
+   * to disable scoping (admin / cross-stack queries — none today).
+   */
+  listEvents(opts: {
+    stackId?: string;
+    kind?: ReadonlyArray<string>;
+    severity?: ReadonlyArray<string>;
+    service?: string;
+    since?: number;
+    until?: number;
+    q?: string;
+    limit?: number;
+    offset?: number;
+  }): Array<{
+    id: string;
+    ts: number;
+    kind: string;
+    severity: string;
+    summary: string;
+    stackId: string | null;
+    service: string | null;
+    href: string | null;
+    meta: Record<string, string | number | boolean> | null;
+  }> {
+    const { sql, args } = buildEventsWhere(opts);
+    const limit = Math.min(Math.max(1, opts.limit ?? 25), 200);
+    const offset = Math.max(0, opts.offset ?? 0);
+    const rows = this.db.prepare(`
+      SELECT id, ts, kind, severity, summary, stack_id, service, href, meta_json
+        FROM events WHERE ${sql}
+      ORDER BY ts DESC LIMIT ? OFFSET ?
+    `).all(...args, limit, offset) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      id: r["id"] as string,
+      ts: r["ts"] as number,
+      kind: r["kind"] as string,
+      severity: r["severity"] as string,
+      summary: r["summary"] as string,
+      stackId: (r["stack_id"] as string | null) ?? null,
+      service: (r["service"] as string | null) ?? null,
+      href: (r["href"] as string | null) ?? null,
+      meta: r["meta_json"] ? safeJsonParse(r["meta_json"] as string) : null,
+    }));
+  }
+
+  /** Count events matching the same filter set as `listEvents`. */
+  countEvents(opts: {
+    stackId?: string;
+    kind?: ReadonlyArray<string>;
+    severity?: ReadonlyArray<string>;
+    service?: string;
+    since?: number;
+    until?: number;
+    q?: string;
+  }): number {
+    const { sql, args } = buildEventsWhere(opts);
+    const row = this.db.prepare(
+      `SELECT COUNT(*) AS n FROM events WHERE ${sql}`
+    ).get(...args) as { n: number } | undefined;
+    return row?.n ?? 0;
+  }
+
+  /**
+   * Distinct event kinds visible in this stack (plus globals). Powers the
+   * Events page kind-filter dropdown. Sorted alphabetically so the UI is
+   * stable across page loads.
+   */
+  listEventKinds(stackId?: string): string[] {
+    const where = stackId
+      ? "stack_id IS NULL OR stack_id = ?"
+      : "1=1";
+    const args = stackId ? [stackId] : [];
+    return (this.db.prepare(
+      `SELECT DISTINCT kind FROM events WHERE ${where} ORDER BY kind ASC`
+    ).all(...args) as Array<{ kind: string }>).map((r) => r.kind);
+  }
+
+  /**
+   * Distinct services that have at least one event in this stack. Mirrors
+   * `listPatternServices` — single round-trip dropdown population.
+   */
+  listEventServices(stackId?: string): string[] {
+    const where = stackId
+      ? "(stack_id IS NULL OR stack_id = ?) AND service IS NOT NULL"
+      : "service IS NOT NULL";
+    const args = stackId ? [stackId] : [];
+    return (this.db.prepare(
+      `SELECT DISTINCT service FROM events WHERE ${where} ORDER BY service ASC`
+    ).all(...args) as Array<{ service: string }>).map((r) => r.service);
+  }
+
+  /**
+   * Delete every event with `ts < beforeMs`. Returns the row count. Driven
+   * by the retention task; safe to call from any context. Bounded so a
+   * misconfigured retention window can't lock the DB on a giant DELETE —
+   * we cap at 50k rows per call and the caller loops until the count drops
+   * below the cap.
+   */
+  purgeEventsOlderThan(beforeMs: number): number {
+    const result = this.db.prepare(
+      `DELETE FROM events WHERE id IN (SELECT id FROM events WHERE ts < ? LIMIT 50000)`
+    ).run(beforeMs);
+    return Number(result.changes);
   }
 
   /**

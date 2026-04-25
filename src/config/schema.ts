@@ -305,6 +305,16 @@ const NotificationsSchema = z.object({
   email: NotificationsEmailSchema.optional(),
 }).optional();
 
+/**
+ * Persistent activity feed (the `events` table — backs `/activity/events`).
+ * Currently only carries retention. Set `retentionDays: 0` to disable the
+ * sweep entirely (for users with external archival pipelines who don't want
+ * the server purging anything).
+ */
+const EventsSchema = z.object({
+  retentionDays: z.number().int().min(0).default(30),
+});
+
 export type ScanConfig = z.infer<typeof ScanSchema>;
 export type ProbeConfig = z.infer<typeof ProbeSchema>;
 export type ProbeMetricRule = z.infer<typeof ProbeMetricRuleSchema>;
@@ -330,6 +340,7 @@ export const ConfigSchema = z.object({
   memory: MemorySchema.optional().default({}),
   webhook: WebhookSchema.optional().default({}),
   scan: ScanSchema.optional().default({}),
+  events: EventsSchema.optional().default({}),
   notifications: NotificationsSchema,
   branding: BrandingSchema.optional().default({}),
 });
@@ -347,5 +358,6 @@ export type WebhookConfig = z.infer<typeof WebhookSchema>;
 export type BrandingConfig = z.infer<typeof BrandingSchema>;
 export type NotificationsConfig = z.infer<typeof NotificationsSchema>;
 export type NotificationsEmailConfig = z.infer<typeof NotificationsEmailSchema>;
+export type EventsConfig = z.infer<typeof EventsSchema>;
 export type SmtpConfig = z.infer<typeof SmtpSchema>;
 export type EmailRetryConfig = z.infer<typeof EmailRetrySchema>;

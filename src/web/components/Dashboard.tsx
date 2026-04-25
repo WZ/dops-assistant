@@ -36,6 +36,8 @@ interface DashboardProps {
   onViewAllScans?: () => void;
   /** Navigate to the dedicated /activity/patterns tab. */
   onViewAllPatterns?: () => void;
+  /** Navigate to the dedicated /activity/events tab. */
+  onViewAllEvents?: () => void;
   onOpenScanRun: (runId: string) => void;
   stackName?: string;
   setupStage?: import("../hooks/useSetupStage").SetupStage | null;
@@ -63,6 +65,7 @@ export function Dashboard({
   onViewAllInvestigations,
   onViewAllScans,
   onViewAllPatterns,
+  onViewAllEvents,
   onOpenScanRun,
   stackName,
   setupStage,
@@ -860,6 +863,7 @@ export function Dashboard({
               loading={recentEventsLoading}
               error={recentEventsError}
               truncated={recentEventsTruncated}
+              onViewAll={onViewAllEvents}
             />
           </div>
         </>
