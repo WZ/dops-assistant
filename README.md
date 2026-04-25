@@ -44,63 +44,9 @@ export OPENAI_API_KEY=sk-...
 npm run web                           # port 3000
 ```
 
-Open `http://localhost:3000`. The setup wizard guides you through three steps: **Connect Provider → Discover Services → Monitor**. On step 2, click **Run Discovery** — the AI walks your providers, finds services via Prometheus labels, and proposes per-service metrics, log selectors, and probe rules. Review the result and hit **Accept** to populate the service catalog.
+Open `http://localhost:3000`. The setup wizard walks you through **Connect Provider → Discover Services → Monitor** — point it at your Grafana MCP server and the AI populates the service catalog from your Prometheus labels. Headless equivalent: `npm run discover`.
 
-Prefer headless? `npm run discover` does the same thing from the command line, useful for CI and scripted bootstraps.
-
-A minimal `config.yaml`:
-
-```yaml
-llm:
-  model: gpt-4
-  apiKey: "${OPENAI_API_KEY}"
-
-providers:
-  - name: grafana
-    roles: [metrics, logs, dashboards]
-    mcpServer:
-      transport: http
-      url: "${GRAFANA_MCP_URL}"
-
-  # Optional — K8s API for infra evidence
-  # - name: kubernetes
-  #   roles: [infrastructure]
-  #   mcpServer: { transport: http, url: "${K8S_MCP_URL}" }
-
-  # Optional — deployment / MR context for root causes
-  # - name: gitlab
-  #   roles: [changes]
-  #   mcpServer: { transport: http, url: "${GITLAB_MCP_URL}" }
-
-# Optional — proactive scans
-scan:
-  enabled: true
-  cron: "0 */4 * * *"            # every 4 hours
-  timezone: "America/Los_Angeles"
-  investigationTemplate: standard
-
-# Optional — alert webhook for Alertmanager
-webhook:
-  defaultTemplate: standard      # quick | standard | full
-  severityTemplateMap:
-    critical: full
-    warning: standard
-
-# Optional — email notifications (SMTP infrastructure).
-# Slack webhook + scan-run notifications are configured at Settings → Notifications in the UI.
-notifications:
-  email:
-    enabled: true
-    from: "dops@example.com"
-    appBaseUrl: "https://dops.example.com"
-    smtp:
-      host: smtp.example.com
-      port: 587
-      user: "${SMTP_USER}"
-      pass: "${SMTP_PASS}"
-```
-
-See [`config.yaml.example`](config.yaml.example) for the full schema.
+For the full configuration reference (providers, scan rules, webhooks, notifications, SMTP), see the **[Ops Runbook](docs/runbook.md)** or [`config.yaml.example`](config.yaml.example).
 
 ## How It Works
 
