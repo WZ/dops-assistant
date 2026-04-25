@@ -83,7 +83,7 @@ export function ServiceOverview({ serviceName, onViewService }: ServiceOverviewP
         ) : (
           <ServiceBriefComponent
             summary={brief?.summary ?? null}
-            sectionStatus={brief?.sections.summary ?? fallbackStatus}
+            sectionStatus={brief?.sections?.summary ?? fallbackStatus}
           />
         )}
       </section>
@@ -108,7 +108,7 @@ export function ServiceOverview({ serviceName, onViewService }: ServiceOverviewP
         ) : (
           <InfrastructureStatus
             infrastructure={brief?.infrastructure ?? null}
-            sectionStatus={brief?.sections.infrastructure ?? fallbackStatus}
+            sectionStatus={brief?.sections?.infrastructure ?? fallbackStatus}
           />
         )}
       </section>
@@ -139,7 +139,7 @@ export function ServiceOverview({ serviceName, onViewService }: ServiceOverviewP
         ) : (
           <RecentChanges
             changes={brief?.changes ?? null}
-            sectionStatus={brief?.sections.changes ?? fallbackStatus}
+            sectionStatus={brief?.sections?.changes ?? fallbackStatus}
           />
         )}
       </section>
