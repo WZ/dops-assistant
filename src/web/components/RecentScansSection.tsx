@@ -84,9 +84,12 @@ interface Props {
   wsMessages: ServerMessage[];
   /** Navigate to the run detail page. Parent wires this to whatever router is in use. */
   onOpenRun: (runId: string) => void;
+  /** Navigate to the dedicated /activity/scans tab. Renders the section's
+   *  "View all N →" link via OpsDeskSectionHeader.onViewAll. */
+  onViewAllScans?: () => void;
 }
 
-export function RecentScansSection({ scanEnabled, wsSend, wsMessages, onOpenRun }: Props) {
+export function RecentScansSection({ scanEnabled, wsSend, wsMessages, onOpenRun, onViewAllScans }: Props) {
   const { stackFetch } = useStackContext();
   const [rows, setRows] = useState<ScanRunListRow[]>([]);
   const [ticking, setTicking] = useState(false);
@@ -176,6 +179,7 @@ export function RecentScansSection({ scanEnabled, wsSend, wsMessages, onOpenRun 
         title="Recent Scans"
         count={displayed}
         total={total}
+        onViewAll={onViewAllScans}
         action={
           <button
             type="button"

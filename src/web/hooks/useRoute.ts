@@ -5,6 +5,10 @@ import {
   parseInvestigationsQuery,
   stringifyInvestigationsQuery,
 } from "../lib/investigations-query";
+import {
+  parseScanRunsQuery,
+  stringifyScanRunsQuery,
+} from "../lib/scan-runs-query";
 
 /** Strip the base path prefix so route matching works regardless of sub-path. */
 function stripBase(pathname: string): string {
@@ -52,11 +56,13 @@ export function parseUrl(pathname: string, search: string = ""): LeftPaneView {
   if (actMatch) {
     const tab = actMatch[1]!;
     if (isActivityTab(tab)) {
-      // Only the investigations tab consumes the query string today; other
-      // tabs ignore it (their filter shapes will diverge as they ship). An
-      // empty object is the safe default.
-      const query = tab === "investigations" ? parseInvestigationsQuery(search) : {};
-      return { type: "activity", tab, query };
+      // Each tab parses its own URL state; mismatched query keys fall through
+      // to the empty object via the per-parser tolerance. Events and patterns
+      // carry no URL state in this PR (placeholders).
+      if (tab === "investigations") return { type: "activity", tab, query: parseInvestigationsQuery(search) };
+      if (tab === "scans")          return { type: "activity", tab, query: parseScanRunsQuery(search) };
+      if (tab === "events")         return { type: "activity", tab, query: {} };
+      return { type: "activity", tab: "patterns", query: {} };
     }
   }
 
@@ -113,10 +119,11 @@ export function viewToUrl(view: LeftPaneView): string {
     case "investigation":
       return `${base}/investigations/${view.id}`;
     case "activity": {
-      // Only the investigations tab serializes its query to the URL; other
-      // tabs would emit an empty string. Keeps URLs clean while still letting
-      // the investigations filter bar deep-link.
-      const search = view.tab === "investigations" ? stringifyInvestigationsQuery(view.query) : "";
+      // Each tab serializes its own query shape. Events and patterns are
+      // placeholders today and emit no URL state.
+      let search = "";
+      if (view.tab === "investigations") search = stringifyInvestigationsQuery(view.query);
+      else if (view.tab === "scans")     search = stringifyScanRunsQuery(view.query);
       const path = `${base}/activity/${view.tab}`;
       return search ? `${path}?${search}` : path;
     }

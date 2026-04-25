@@ -161,6 +161,135 @@ describe("GET /api/scan/runs", () => {
     expect(resNeg.status).toBe(200);
     expect(resNeg.body.runs).toHaveLength(50);
   });
+
+  it("response includes total + hasMore alongside runs (additive shape)", async () => {
+    ctx = makeApp(["stack-a"]);
+    const now = Date.now();
+    for (let i = 0; i < 12; i++) {
+      ctx.db.insertScanRun({ id: `r${i}`, stackId: "stack-a", trigger: "cron", startedAt: now - i });
+    }
+    const res = await request(ctx.app).get("/api/scan/runs?limit=5").set("X-Stack-Id", "stack-a");
+    expect(res.status).toBe(200);
+    expect(res.body.runs).toHaveLength(5);
+    expect(res.body.total).toBe(12);
+    expect(res.body.hasMore).toBe(true);
+  });
+
+  it("hasMore is false on the final page", async () => {
+    ctx = makeApp(["stack-a"]);
+    const now = Date.now();
+    for (let i = 0; i < 7; i++) {
+      ctx.db.insertScanRun({ id: `r${i}`, stackId: "stack-a", trigger: "cron", startedAt: now - i });
+    }
+    const res = await request(ctx.app).get("/api/scan/runs?limit=5&offset=5").set("X-Stack-Id", "stack-a");
+    expect(res.body.runs).toHaveLength(2);
+    expect(res.body.total).toBe(7);
+    expect(res.body.hasMore).toBe(false);
+  });
+
+  it("filters by trigger (CSV multi-select)", async () => {
+    ctx = makeApp(["stack-a"]);
+    const now = Date.now();
+    ctx.db.insertScanRun({ id: "m", stackId: "stack-a", trigger: "manual", startedAt: now });
+    ctx.db.insertScanRun({ id: "c", stackId: "stack-a", trigger: "cron", startedAt: now - 1 });
+
+    const resManual = await request(ctx.app).get("/api/scan/runs?trigger=manual").set("X-Stack-Id", "stack-a");
+    expect(resManual.body.runs.map((r: { id: string }) => r.id)).toEqual(["m"]);
+
+    const resBoth = await request(ctx.app).get("/api/scan/runs?trigger=manual,cron").set("X-Stack-Id", "stack-a");
+    expect(resBoth.body.total).toBe(2);
+  });
+
+  it("filters by status", async () => {
+    ctx = makeApp(["stack-a"]);
+    const now = Date.now();
+    ctx.db.insertScanRun({ id: "ok", stackId: "stack-a", trigger: "cron", startedAt: now });
+    ctx.db.updateScanRun("ok", { status: "complete", finishedAt: now + 100 });
+    ctx.db.insertScanRun({ id: "bad", stackId: "stack-a", trigger: "cron", startedAt: now - 1 });
+    ctx.db.updateScanRun("bad", { status: "failed", finishedAt: now });
+
+    const res = await request(ctx.app).get("/api/scan/runs?status=failed").set("X-Stack-Id", "stack-a");
+    expect(res.body.runs.map((r: { id: string }) => r.id)).toEqual(["bad"]);
+  });
+
+  it("filters by outcome (clean / tripped / dispatched derived from hits)", async () => {
+    ctx = makeApp(["stack-a"]);
+    const now = Date.now();
+    // clean: hits_raw=0 (default)
+    ctx.db.insertScanRun({ id: "clean", stackId: "stack-a", trigger: "cron", startedAt: now });
+    // tripped: raw>0, dispatched=0
+    ctx.db.insertScanRun({ id: "tripped", stackId: "stack-a", trigger: "cron", startedAt: now - 1 });
+    ctx.db.updateScanRun("tripped", { hitsRaw: 5, hitsDispatched: 0 });
+    // dispatched: dispatched>0
+    ctx.db.insertScanRun({ id: "disp", stackId: "stack-a", trigger: "cron", startedAt: now - 2 });
+    ctx.db.updateScanRun("disp", { hitsRaw: 3, hitsDispatched: 2 });
+
+    const clean = await request(ctx.app).get("/api/scan/runs?outcome=clean").set("X-Stack-Id", "stack-a");
+    expect(clean.body.runs.map((r: { id: string }) => r.id)).toEqual(["clean"]);
+
+    const tripped = await request(ctx.app).get("/api/scan/runs?outcome=tripped").set("X-Stack-Id", "stack-a");
+    expect(tripped.body.runs.map((r: { id: string }) => r.id)).toEqual(["tripped"]);
+
+    const dispatched = await request(ctx.app).get("/api/scan/runs?outcome=dispatched").set("X-Stack-Id", "stack-a");
+    expect(dispatched.body.runs.map((r: { id: string }) => r.id)).toEqual(["disp"]);
+
+    const trippedOrDispatched = await request(ctx.app).get("/api/scan/runs?outcome=tripped,dispatched").set("X-Stack-Id", "stack-a");
+    expect(trippedOrDispatched.body.runs.map((r: { id: string }) => r.id).sort()).toEqual(["disp", "tripped"]);
+  });
+
+  it("filters by since/until window (ISO timestamps)", async () => {
+    ctx = makeApp(["stack-a"]);
+    // Window is 11:59:30 → 12:00:30 (one minute centered on noon). The
+    // "early" and "late" rows sit five minutes outside it on either side
+    // so the filter must exclude them.
+    const t = new Date("2026-04-25T12:00:00Z").getTime();
+    ctx.db.insertScanRun({ id: "early", stackId: "stack-a", trigger: "cron", startedAt: t - 5 * 60_000 });
+    ctx.db.insertScanRun({ id: "in",    stackId: "stack-a", trigger: "cron", startedAt: t });
+    ctx.db.insertScanRun({ id: "late",  stackId: "stack-a", trigger: "cron", startedAt: t + 5 * 60_000 });
+
+    const res = await request(ctx.app)
+      .get(`/api/scan/runs?since=${encodeURIComponent("2026-04-25T11:59:30Z")}&until=${encodeURIComponent("2026-04-25T12:00:30Z")}`)
+      .set("X-Stack-Id", "stack-a");
+    expect(res.body.runs.map((r: { id: string }) => r.id).sort()).toEqual(["in"]);
+  });
+
+  it("ignores invalid filter tokens silently (URL state is soft input)", async () => {
+    ctx = makeApp(["stack-a"]);
+    ctx.db.insertScanRun({ id: "r1", stackId: "stack-a", trigger: "cron", startedAt: Date.now() });
+    const res = await request(ctx.app)
+      .get("/api/scan/runs?status=bogus,complete&trigger=junk&since=not-a-date")
+      .set("X-Stack-Id", "stack-a");
+    expect(res.status).toBe(200);
+    // status=complete still valid; "bogus" dropped. Run is still status=running
+    // (no finalize called), so it shouldn't match the complete filter.
+    expect(res.body.runs).toEqual([]);
+  });
+
+  it("offset paginates and offset wins over before when both present", async () => {
+    ctx = makeApp(["stack-a"]);
+    const now = Date.now();
+    for (let i = 0; i < 10; i++) {
+      ctx.db.insertScanRun({ id: `r${i}`, stackId: "stack-a", trigger: "cron", startedAt: now - i });
+    }
+    const res = await request(ctx.app).get(`/api/scan/runs?limit=3&offset=3&before=${now}`).set("X-Stack-Id", "stack-a");
+    // Newest first, offset 3 means r3..r5
+    expect(res.body.runs.map((r: { id: string }) => r.id)).toEqual(["r3", "r4", "r5"]);
+    expect(res.body.total).toBe(10);
+  });
+
+  it("sort=duration orders by probe_duration_ms desc with NULLs last", async () => {
+    ctx = makeApp(["stack-a"]);
+    const now = Date.now();
+    ctx.db.insertScanRun({ id: "fast", stackId: "stack-a", trigger: "cron", startedAt: now });
+    ctx.db.updateScanRun("fast", { probeDurationMs: 100 });
+    ctx.db.insertScanRun({ id: "slow", stackId: "stack-a", trigger: "cron", startedAt: now - 1 });
+    ctx.db.updateScanRun("slow", { probeDurationMs: 5000 });
+    ctx.db.insertScanRun({ id: "unknown", stackId: "stack-a", trigger: "cron", startedAt: now - 2 });
+    // probe_duration_ms stays NULL — no updateScanRun call
+
+    const res = await request(ctx.app).get("/api/scan/runs?sort=duration").set("X-Stack-Id", "stack-a");
+    expect(res.body.runs.map((r: { id: string }) => r.id)).toEqual(["slow", "fast", "unknown"]);
+  });
 });
 
 describe("GET /api/scan/runs/:id", () => {

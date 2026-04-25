@@ -20,6 +20,7 @@ import { SetupStepper } from "./components/SetupStepper";
 import { DemoBanner } from "./components/DemoBanner";
 import { useRoute, viewToUrl } from "./hooks/useRoute";
 import type { InvestigationsQuery } from "./lib/investigations-query";
+import type { ScanRunsQuery } from "./lib/scan-runs-query";
 import { StackSwitcher } from "./components/StackSwitcher";
 import { StackProvider } from "./contexts/StackContext";
 import { useWebSocket } from "./hooks/useWebSocket";
@@ -41,10 +42,21 @@ function formatUptime(seconds: number): string {
 /** Tab inside the unified Activity page. New tabs add cases without churning the LeftPaneView union. */
 export type ActivityTab = "investigations" | "scans" | "events" | "patterns";
 
+/**
+ * Per-tab query shapes. Discriminated by `tab` so callers narrow with a
+ * single check. Events and patterns carry no URL state in this PR — those
+ * tabs are placeholders; their query types fill in when AP14 / AP12 ship.
+ */
+export type ActivityView =
+  | { type: "activity"; tab: "investigations"; query: InvestigationsQuery }
+  | { type: "activity"; tab: "scans"; query: ScanRunsQuery }
+  | { type: "activity"; tab: "events"; query: Record<string, never> }
+  | { type: "activity"; tab: "patterns"; query: Record<string, never> };
+
 export type LeftPaneView =
   | { type: "dashboard" }
   | { type: "investigation"; id: string }
-  | { type: "activity"; tab: ActivityTab; query: InvestigationsQuery }
+  | ActivityView
   | { type: "services"; initialService?: string }
   | { type: "settings"; initialTab?: "providers" | "skills" | "stacks" | "scan" | "notifications" }
   | { type: "scanrun"; runId: string }
@@ -455,6 +467,7 @@ export function App() {
                       onViewService={(name) => setLeftPane({ type: "services", initialService: name })}
                       onViewAllServices={() => setLeftPane({ type: "services" })}
                       onViewAllInvestigations={() => setLeftPane({ type: "activity", tab: "investigations", query: {} })}
+                      onViewAllScans={() => setLeftPane({ type: "activity", tab: "scans", query: {} })}
                       onOpenScanRun={(runId) => setLeftPane({ type: "scanrun", runId })}
                       stackName={hasMultipleStacks ? activeStack?.name : undefined}
                       setupStage={setupStage}
@@ -526,15 +539,24 @@ export function App() {
                     />
                   ) : leftPane.type === "activity" ? (
                     <ActivityPage
-                      tab={leftPane.tab}
-                      query={leftPane.query}
-                      onChangeTab={(tab) =>
-                        setLeftPane({ type: "activity", tab, query: tab === "investigations" ? leftPane.query : {} })
+                      view={leftPane}
+                      onChangeTab={(tab) => {
+                        // Each tab carries its own query shape; switching
+                        // tabs resets to that tab's empty query rather than
+                        // trying to translate filters across surfaces.
+                        if (tab === "investigations") setLeftPane({ type: "activity", tab, query: {} });
+                        else if (tab === "scans") setLeftPane({ type: "activity", tab, query: {} });
+                        else if (tab === "events") setLeftPane({ type: "activity", tab, query: {} });
+                        else setLeftPane({ type: "activity", tab, query: {} });
+                      }}
+                      onUpdateInvestigationsQuery={(query) =>
+                        setLeftPane({ type: "activity", tab: "investigations", query }, { replace: true })
                       }
-                      onUpdateQuery={(query) =>
-                        setLeftPane({ type: "activity", tab: leftPane.tab, query }, { replace: true })
+                      onUpdateScansQuery={(query) =>
+                        setLeftPane({ type: "activity", tab: "scans", query }, { replace: true })
                       }
                       onViewInvestigation={(id) => setLeftPane({ type: "investigation", id })}
+                      onOpenScanRun={(runId) => setLeftPane({ type: "scanrun", runId })}
                     />
                   ) : leftPane.type === "notfound" ? (
                     <div className="h-full flex flex-col items-center justify-center gap-3 p-8 text-center">
