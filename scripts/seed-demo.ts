@@ -694,7 +694,7 @@ function main() {
 
   // ── Thumbs-up feedback on the completed investigations ──────────────────
   for (const inv of invs.filter((i) => i.status === "complete")) {
-    db.createFeedback(stackId, { id: `fb_${ulid()}`, investigationId: inv.id, rating: "useful" });
+    db.upsertFeedback(stackId, { id: `fb_${ulid()}`, investigationId: inv.id, rating: "useful" });
   }
 
   // ── Demo-mode notification settings ─────────────────────────────────────
