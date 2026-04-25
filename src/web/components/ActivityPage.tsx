@@ -17,6 +17,7 @@ interface ActivityPageProps {
   onUpdateScansQuery: (query: ScanRunsQuery) => void;
   onUpdatePatternsQuery: (query: PatternsQuery) => void;
   onUpdateEventsQuery: (query: EventsQuery) => void;
+  onViewPattern: (id: string) => void;
   onViewInvestigation: (id: string) => void;
   onOpenScanRun: (runId: string) => void;
   /** Generic in-app navigation — used by event rows whose `href` deep-links to investigations / scan runs. */
@@ -53,6 +54,7 @@ export function ActivityPage({
   onUpdateScansQuery,
   onUpdatePatternsQuery,
   onUpdateEventsQuery,
+  onViewPattern,
   onViewInvestigation,
   onOpenScanRun,
   onNavigateHref,
@@ -115,6 +117,7 @@ export function ActivityPage({
           <PatternsTab
             query={view.query}
             onUpdateQuery={onUpdatePatternsQuery}
+            onViewPattern={onViewPattern}
             onViewInvestigation={onViewInvestigation}
           />
         ) : view.tab === "events" ? (

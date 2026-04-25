@@ -14,6 +14,10 @@ describe("parseUrl", () => {
     expect(parseUrl("/investigations/inv_01KNR")).toEqual({ type: "investigation", id: "inv_01KNR" });
   });
 
+  it("parses /patterns/:id", () => {
+    expect(parseUrl("/patterns/pat_01KNR")).toEqual({ type: "pattern", id: "pat_01KNR" });
+  });
+
   it("parses /activity as the activity page on the investigations tab", () => {
     expect(parseUrl("/activity")).toEqual({ type: "activity", tab: "investigations", query: {} });
   });
@@ -185,6 +189,10 @@ describe("viewToUrl", () => {
     expect(viewToUrl({ type: "investigation", id: "inv_abc" })).toBe("/investigations/inv_abc");
   });
 
+  it("maps pattern to /patterns/:id", () => {
+    expect(viewToUrl({ type: "pattern", id: "pat_abc" })).toBe("/patterns/pat_abc");
+  });
+
   it("maps services to /services", () => {
     expect(viewToUrl({ type: "services" })).toBe("/services");
   });
@@ -261,6 +269,7 @@ describe("roundtrip", () => {
     const views = [
       { type: "dashboard" as const },
       { type: "investigation" as const, id: "inv_123" },
+      { type: "pattern" as const, id: "pat_123" },
       { type: "activity" as const, tab: "investigations" as const, query: {} },
       { type: "activity" as const, tab: "scans" as const, query: {} },
       { type: "activity" as const, tab: "events" as const, query: {} },
@@ -323,6 +332,7 @@ describe("useRoute — sub-path deploy (BASE_URL='/dops/')", () => {
 
     expect(mod.parseUrl("/dops/")).toEqual({ type: "dashboard" });
     expect(mod.parseUrl("/dops/investigations/inv_123")).toEqual({ type: "investigation", id: "inv_123" });
+    expect(mod.parseUrl("/dops/patterns/pat_123")).toEqual({ type: "pattern", id: "pat_123" });
     expect(mod.parseUrl("/dops/services/api")).toEqual({ type: "services", initialService: "api" });
     expect(mod.parseUrl("/dops/settings/providers")).toEqual({ type: "settings", initialTab: "providers" });
   });
@@ -343,6 +353,7 @@ describe("useRoute — sub-path deploy (BASE_URL='/dops/')", () => {
 
     expect(mod.viewToUrl({ type: "dashboard" })).toBe("/dops/");
     expect(mod.viewToUrl({ type: "investigation", id: "inv_1" })).toBe("/dops/investigations/inv_1");
+    expect(mod.viewToUrl({ type: "pattern", id: "pat_1" })).toBe("/dops/patterns/pat_1");
     expect(mod.viewToUrl({ type: "services" })).toBe("/dops/services");
     expect(mod.viewToUrl({ type: "services", initialService: "api" })).toBe("/dops/services/api");
     expect(mod.viewToUrl({ type: "settings", initialTab: "skills" })).toBe("/dops/settings/skills");
@@ -355,6 +366,7 @@ describe("useRoute — sub-path deploy (BASE_URL='/dops/')", () => {
     const views = [
       { type: "dashboard" as const },
       { type: "investigation" as const, id: "inv_123" },
+      { type: "pattern" as const, id: "pat_123" },
       { type: "services" as const, initialService: "api" },
       { type: "settings" as const, initialTab: "providers" as const },
     ];

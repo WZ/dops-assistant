@@ -99,39 +99,62 @@ describe("PatternsTab", () => {
     });
   });
 
-  it("clicking a row calls onViewInvestigation with the source_investigation_id", async () => {
+  it("clicking a row calls onViewPattern with the pattern id", async () => {
     globalThis.fetch = mockFetch({
       rows: [makeRow("p1", { source_investigation_id: "inv_xyz" })],
       total: 1,
     });
+    const onViewPattern = vi.fn();
     const onViewInvestigation = vi.fn();
 
     render(
-      <PatternsTab query={{}} onUpdateQuery={vi.fn()} onViewInvestigation={onViewInvestigation} />,
+      <PatternsTab query={{}} onUpdateQuery={vi.fn()} onViewPattern={onViewPattern} onViewInvestigation={onViewInvestigation} />,
       { wrapper: Wrapper },
     );
 
     await waitFor(() => expect(screen.getByTestId("patterns-list").children.length).toBe(1));
     fireEvent.click(screen.getByTestId("patterns-list").querySelector("button")!);
-    expect(onViewInvestigation).toHaveBeenCalledWith("inv_xyz");
+    expect(onViewPattern).toHaveBeenCalledWith("p1");
+    expect(onViewInvestigation).not.toHaveBeenCalled();
   });
 
-  it("does NOT call onViewInvestigation when a pattern has no source_investigation_id", async () => {
+  it("clicking the source affordance calls onViewInvestigation with the source_investigation_id", async () => {
+    globalThis.fetch = mockFetch({
+      rows: [makeRow("p1", { source_investigation_id: "inv_xyz" })],
+      total: 1,
+    });
+    const onViewPattern = vi.fn();
+    const onViewInvestigation = vi.fn();
+
+    render(
+      <PatternsTab query={{}} onUpdateQuery={vi.fn()} onViewPattern={onViewPattern} onViewInvestigation={onViewInvestigation} />,
+      { wrapper: Wrapper },
+    );
+
+    await waitFor(() => expect(screen.getByTestId("patterns-list").children.length).toBe(1));
+    fireEvent.click(screen.getByRole("button", { name: /source/i }));
+    expect(onViewInvestigation).toHaveBeenCalledWith("inv_xyz");
+    expect(onViewPattern).not.toHaveBeenCalled();
+  });
+
+  it("still opens pattern detail when a pattern has no source_investigation_id", async () => {
     globalThis.fetch = mockFetch({
       rows: [makeRow("p1", { source_investigation_id: null })],
       total: 1,
     });
+    const onViewPattern = vi.fn();
     const onViewInvestigation = vi.fn();
 
     render(
-      <PatternsTab query={{}} onUpdateQuery={vi.fn()} onViewInvestigation={onViewInvestigation} />,
+      <PatternsTab query={{}} onUpdateQuery={vi.fn()} onViewPattern={onViewPattern} onViewInvestigation={onViewInvestigation} />,
       { wrapper: Wrapper },
     );
 
     await waitFor(() => expect(screen.getByTestId("patterns-list").children.length).toBe(1));
     const btn = screen.getByTestId("patterns-list").querySelector("button")!;
-    expect((btn as HTMLButtonElement).disabled).toBe(true);
+    expect((btn as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(btn);
+    expect(onViewPattern).toHaveBeenCalledWith("p1");
     expect(onViewInvestigation).not.toHaveBeenCalled();
   });
 

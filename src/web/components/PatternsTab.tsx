@@ -32,6 +32,7 @@ interface PatternsListResponse {
 interface PatternsTabProps {
   query: PatternsQuery;
   onUpdateQuery: (query: PatternsQuery) => void;
+  onViewPattern: (id: string) => void;
   onViewInvestigation: (id: string) => void;
 }
 
@@ -76,9 +77,9 @@ function fmtRelative(iso: string, now = Date.now()): string {
  * see docs/TODOS.md) makes recurrence first-class with a /patterns/:id
  * detail page once volume justifies a similarity strategy.
  *
- * Click on a row → open the source investigation that produced the pattern.
+ * Click row -> open pattern detail; source affordance opens source investigation.
  */
-export function PatternsTab({ query, onUpdateQuery, onViewInvestigation }: PatternsTabProps) {
+export function PatternsTab({ query, onUpdateQuery, onViewPattern, onViewInvestigation }: PatternsTabProps) {
   const { stackFetch } = useStackContext();
   const [rows, setRows] = useState<PatternRow[]>([]);
   const [services, setServices] = useState<string[]>([]);
@@ -325,9 +326,10 @@ export function PatternsTab({ query, onUpdateQuery, onViewInvestigation }: Patte
               <PatternListRow
                 key={row.id}
                 row={row}
-                onClick={() => {
-                  if (row.source_investigation_id) onViewInvestigation(row.source_investigation_id);
-                }}
+                onOpenPattern={() => onViewPattern(row.id)}
+                onOpenInvestigation={row.source_investigation_id
+                  ? () => onViewInvestigation(row.source_investigation_id!)
+                  : undefined}
               />
             ))}
           </ul>
@@ -399,42 +401,52 @@ function Chip({
   );
 }
 
-function PatternListRow({ row, onClick }: { row: PatternRow; onClick: () => void }) {
+function PatternListRow({
+  row,
+  onOpenPattern,
+  onOpenInvestigation,
+}: {
+  row: PatternRow;
+  onOpenPattern: () => void;
+  onOpenInvestigation?: () => void;
+}) {
   const badgeClass = SEVERITY_BADGE[row.severity] ?? SEVERITY_BADGE["medium"]!;
-  const clickable = Boolean(row.source_investigation_id);
   return (
     <li>
-      <button
-        type="button"
-        onClick={clickable ? onClick : undefined}
-        disabled={!clickable}
-        className={`w-full text-left relative pl-3 pr-3 py-2.5 rounded-lg border border-border/40 bg-card/30 transition-colors ${
-          clickable ? "hover:bg-card/70 hover:border-border" : "cursor-default"
-        }`}
-      >
+      <div className="w-full relative pl-3 pr-3 py-2.5 rounded-lg border border-border/40 bg-card/30 transition-colors hover:bg-card/70 hover:border-border">
         <div className="flex items-start gap-3">
-          <span className={`font-mono text-[10px] uppercase tracking-[0.12em] px-1.5 h-5 rounded inline-flex items-center shrink-0 ${badgeClass}`}>
+          <button
+            type="button"
+            onClick={onOpenPattern}
+            className="min-w-0 flex-1 text-left flex items-start gap-3"
+          >
+            <span className={`font-mono text-[10px] uppercase tracking-[0.12em] px-1.5 h-5 rounded inline-flex items-center shrink-0 ${badgeClass}`}>
             {row.severity}
-          </span>
-          <span className="font-mono text-[11px] text-muted-foreground/70 tabular-nums w-20 shrink-0 mt-0.5">
-            {fmtRelative(row.created_at)}
-          </span>
-          <span className="font-body text-xs text-foreground/85 w-32 shrink-0 truncate mt-0.5">
-            {row.service}
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="font-body text-xs text-foreground/85 truncate">{row.symptom}</div>
-            <div className="font-mono text-[10px] text-muted-foreground/60 truncate mt-0.5">
-              {row.root_cause}
-            </div>
-          </div>
-          {clickable && (
-            <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/50 ml-2 mt-0.5">
-              source →
             </span>
+            <span className="font-mono text-[11px] text-muted-foreground/70 tabular-nums w-20 shrink-0 mt-0.5">
+            {fmtRelative(row.created_at)}
+            </span>
+            <span className="font-body text-xs text-foreground/85 w-32 shrink-0 truncate mt-0.5">
+            {row.service}
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="font-body text-xs text-foreground/85 truncate">{row.symptom}</div>
+              <div className="font-mono text-[10px] text-muted-foreground/60 truncate mt-0.5">
+                {row.root_cause}
+              </div>
+            </div>
+          </button>
+          {onOpenInvestigation && (
+            <button
+              type="button"
+              onClick={onOpenInvestigation}
+              className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/50 hover:text-primary ml-2 mt-0.5 shrink-0"
+            >
+              source →
+            </button>
           )}
         </div>
-      </button>
+      </div>
     </li>
   );
 }

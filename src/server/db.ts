@@ -99,6 +99,25 @@ export interface InvestigationRow {
   severity: Severity | null;
 }
 
+export interface InvestigationSummaryRow {
+  id: string;
+  status: string;
+  query: string;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface PatternRow {
+  id: string;
+  service: string;
+  symptom: string;
+  root_cause: string;
+  severity: string;
+  recommended_actions: string | null;
+  source_investigation_id: string | null;
+  created_at: string;
+}
+
 export type Severity = "critical" | "high" | "medium" | "low";
 const VALID_SEVERITIES: ReadonlySet<Severity> = new Set(["critical", "high", "medium", "low"]);
 
@@ -1336,10 +1355,30 @@ export class Database {
     return row != null;
   }
 
-  findSimilarPatterns(stackId: string, service: string, limit = 5): Array<{ id: string; service: string; symptom: string; root_cause: string; severity: string; recommended_actions: string | null; created_at: string; source_investigation_id: string | null }> {
+  findSimilarPatterns(stackId: string, service: string, limit = 5): PatternRow[] {
     return (this.db.prepare(
       "SELECT id, service, symptom, root_cause, severity, recommended_actions, source_investigation_id, created_at FROM incident_patterns WHERE stack_id = ? AND service = ? ORDER BY created_at DESC LIMIT ?"
     ).all(stackId, service, limit) as any[]).map(normalizeRow);
+  }
+
+  getPattern(stackId: string, patternId: string): PatternRow | undefined {
+    const row = this.db.prepare(
+      "SELECT id, service, symptom, root_cause, severity, recommended_actions, source_investigation_id, created_at FROM incident_patterns WHERE stack_id = ? AND id = ?"
+    ).get(stackId, patternId) as PatternRow | undefined;
+    return row ? normalizeRow(row) : undefined;
+  }
+
+  listPatternsForService(stackId: string, service: string): PatternRow[] {
+    return (this.db.prepare(
+      "SELECT id, service, symptom, root_cause, severity, recommended_actions, source_investigation_id, created_at FROM incident_patterns WHERE stack_id = ? AND service = ? ORDER BY created_at DESC"
+    ).all(stackId, service) as any[]).map(normalizeRow);
+  }
+
+  getInvestigationSummary(stackId: string, id: string): InvestigationSummaryRow | undefined {
+    const row = this.db.prepare(
+      "SELECT id, status, query, created_at, completed_at FROM investigations WHERE stack_id = ? AND id = ?"
+    ).get(stackId, id) as InvestigationSummaryRow | undefined;
+    return row ? normalizeRow(row) : undefined;
   }
 
   /**
@@ -1365,7 +1404,7 @@ export class Database {
     sort?: "created_at" | "severity";
     limit?: number;
     offset?: number;
-  }): Array<{ id: string; service: string; symptom: string; root_cause: string; severity: string; recommended_actions: string | null; source_investigation_id: string | null; created_at: string }> {
+  }): PatternRow[] {
     const { sql, args } = buildPatternsWhere(opts);
     const limit = Math.min(Math.max(1, opts.limit ?? 25), 200);
     const offset = Math.max(0, opts.offset ?? 0);

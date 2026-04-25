@@ -416,6 +416,124 @@ function makeEmailApp(opts?: { withSmtp?: boolean }): { app: Express; db: Databa
   return { app, db, cleanup: () => { db.close(); try { unlinkSync(dbPath); } catch {} } };
 }
 
+describe("GET /api/patterns/:id", () => {
+  let ctx: ReturnType<typeof makeEmailApp>;
+  beforeEach(() => { ctx = makeEmailApp(); });
+  afterEach(() => { ctx.cleanup(); });
+
+  function setPatternCreatedAt(id: string, iso: string) {
+    (ctx.db as any).db.prepare("UPDATE incident_patterns SET created_at = ? WHERE id = ?").run(iso, id);
+  }
+
+  it("returns a computed same-service recurrence cluster with source investigation metadata", async () => {
+    ctx.db.createInvestigation("default", {
+      id: "inv_seed",
+      service: "payments-api",
+      query: "why 5xx?",
+      status: "complete",
+    });
+    ctx.db.updateInvestigation("inv_seed", { completed_at: "2026-04-20T12:00:00.000Z" });
+    ctx.db.createInvestigation("default", {
+      id: "inv_match",
+      service: "payments-api",
+      query: "why pool exhausted?",
+      status: "complete",
+    });
+    ctx.db.updateInvestigation("inv_match", { completed_at: "2026-04-25T12:00:00.000Z" });
+    ctx.db.createPattern("default", {
+      id: "pat_seed",
+      service: "payments-api",
+      symptom: "5xx spike during deploy",
+      rootCause: "Connection pool exhaustion due to leaked database connections",
+      severity: "high",
+      recommendedActions: "Increase pool max; Audit retry release path",
+      sourceInvestigationId: "inv_seed",
+    });
+    ctx.db.createPattern("default", {
+      id: "pat_match",
+      service: "payments-api",
+      symptom: "Elevated latency and 5xx",
+      rootCause: "Leaked database connections exhausted the connection pool",
+      severity: "medium",
+      recommendedActions: "increase pool max; Add pool saturation alert",
+      sourceInvestigationId: "inv_match",
+    });
+    ctx.db.createPattern("default", {
+      id: "pat_miss",
+      service: "payments-api",
+      symptom: "Memory pressure",
+      rootCause: "OOMKilled pod due to memory limit",
+      severity: "high",
+    });
+    setPatternCreatedAt("pat_seed", "2026-04-20T00:00:00.000Z");
+    setPatternCreatedAt("pat_match", "2026-04-25T00:00:00.000Z");
+    setPatternCreatedAt("pat_miss", "2026-04-24T00:00:00.000Z");
+
+    const res = await request(ctx.app).get("/api/patterns/pat_seed");
+
+    expect(res.status).toBe(200);
+    expect(res.body.seed.id).toBe("pat_seed");
+    expect(res.body.clusterId).toBe("cluster_pat_seed");
+    expect(res.body.recurrenceCount).toBe(2);
+    expect(res.body.firstSeen).toBe("2026-04-20T00:00:00.000Z");
+    expect(res.body.lastSeen).toBe("2026-04-25T00:00:00.000Z");
+    expect(res.body.occurrences.map((o: { id: string }) => o.id)).toEqual(["pat_match", "pat_seed"]);
+    expect(res.body.occurrences[0].investigation).toMatchObject({
+      id: "inv_match",
+      status: "complete",
+      query: "why pool exhausted?",
+    });
+    expect(res.body.dedupedRecommendedActions).toEqual([
+      "increase pool max",
+      "Add pool saturation alert",
+      "Audit retry release path",
+    ]);
+    expect(res.body.matchBasis).toMatchObject({
+      strategy: "same_service_root_cause_overlap_v1",
+      serviceScoped: true,
+    });
+  });
+
+  it("returns 404 when the seed pattern is missing in the resolved stack", async () => {
+    const res = await request(ctx.app).get("/api/patterns/nope");
+    expect(res.status).toBe(404);
+  });
+
+  it("does not leak a seed pattern from another stack", async () => {
+    ctx.db.createPattern("other-stack", {
+      id: "pat_other",
+      service: "payments-api",
+      symptom: "x",
+      rootCause: "y",
+      severity: "high",
+    });
+
+    const res = await request(ctx.app).get("/api/patterns/pat_other");
+
+    expect(res.status).toBe(404);
+  });
+
+  it("keeps an occurrence when its source investigation is missing", async () => {
+    ctx.db.createPattern("default", {
+      id: "pat_seed",
+      service: "payments-api",
+      symptom: "5xx spike",
+      rootCause: "Connection pool exhaustion due to leaked database connections",
+      severity: "high",
+    });
+    (ctx.db as any).db.pragma("foreign_keys = OFF");
+    (ctx.db as any).db.prepare("UPDATE incident_patterns SET source_investigation_id = ? WHERE id = ?")
+      .run("missing_inv", "pat_seed");
+    (ctx.db as any).db.pragma("foreign_keys = ON");
+
+    const res = await request(ctx.app).get("/api/patterns/pat_seed");
+
+    expect(res.status).toBe(200);
+    expect(res.body.occurrences).toHaveLength(1);
+    expect(res.body.occurrences[0].investigation).toBeNull();
+  });
+});
+
 describe("/api/notifications/email", () => {
   let ctx: ReturnType<typeof makeEmailApp>;
   beforeEach(() => { ctx = makeEmailApp(); });

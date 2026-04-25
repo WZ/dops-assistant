@@ -9,6 +9,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ChatPane } from "./components/ChatPane";
 import { Dashboard } from "./components/Dashboard";
 import { InvestigationPane } from "./components/InvestigationPane";
+import { PatternDetail } from "./components/PatternDetail";
 import { ScanRunDetail } from "./components/ScanRunDetail";
 import { ActivityPage } from "./components/ActivityPage";
 import { Sidebar } from "./components/Sidebar";
@@ -58,6 +59,7 @@ export type ActivityView =
 export type LeftPaneView =
   | { type: "dashboard" }
   | { type: "investigation"; id: string }
+  | { type: "pattern"; id: string }
   | ActivityView
   | { type: "services"; initialService?: string }
   | { type: "settings"; initialTab?: "providers" | "skills" | "stacks" | "scan" | "notifications" }
@@ -76,6 +78,7 @@ export function shouldResetOnStackSwitch(paneType: LeftPaneView["type"]): boolea
   return (
     paneType === "services" ||
     paneType === "investigation" ||
+    paneType === "pattern" ||
     paneType === "scanrun" ||
     paneType === "activity"
   );
@@ -460,7 +463,7 @@ export function App() {
           <ResizablePanelGroup orientation="horizontal">
             <ResizablePanel defaultSize={60} minSize={30}>
               <div className="h-full bg-grid relative">
-                <div key={leftPane.type === "investigation" ? `inv-${leftPane.id}` : leftPane.type} className="h-full animate-fade-in">
+                <div key={leftPane.type === "investigation" ? `inv-${leftPane.id}` : leftPane.type === "pattern" ? `pattern-${leftPane.id}` : leftPane.type} className="h-full animate-fade-in">
                   {leftPane.type === "dashboard" ? (
                     <Dashboard
                       wsMessages={ws.messages}
@@ -500,6 +503,18 @@ export function App() {
                       onRerun={(invId, template) => {
                         ws.send({ type: "rerun", investigationId: invId, template: template as any });
                       }}
+                    />
+                  ) : leftPane.type === "pattern" ? (
+                    <PatternDetail
+                      patternId={leftPane.id}
+                      onBack={() => {
+                        if (window.history.state?.fromApp) {
+                          window.history.back();
+                        } else {
+                          setLeftPane({ type: "activity", tab: "patterns", query: {} });
+                        }
+                      }}
+                      onViewInvestigation={(id) => setLeftPane({ type: "investigation", id })}
                     />
                   ) : leftPane.type === "services" ? (
                     <ServicesPage
@@ -565,6 +580,7 @@ export function App() {
                       onUpdateEventsQuery={(query) =>
                         setLeftPane({ type: "activity", tab: "events", query }, { replace: true })
                       }
+                      onViewPattern={(id) => setLeftPane({ type: "pattern", id })}
                       onViewInvestigation={(id) => setLeftPane({ type: "investigation", id })}
                       onOpenScanRun={(runId) => setLeftPane({ type: "scanrun", runId })}
                       onNavigateHref={(href) => {

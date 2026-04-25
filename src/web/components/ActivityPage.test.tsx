@@ -18,8 +18,13 @@ vi.mock("./ScansTab", () => ({
   ),
 }));
 vi.mock("./PatternsTab", () => ({
-  PatternsTab: ({ query }: { query: Record<string, unknown> }) => (
-    <div data-testid="patterns-tab-stub" data-query-keys={Object.keys(query).join(",")} />
+  PatternsTab: ({ query, onViewPattern }: { query: Record<string, unknown>; onViewPattern: (id: string) => void }) => (
+    <button
+      type="button"
+      data-testid="patterns-tab-stub"
+      data-query-keys={Object.keys(query).join(",")}
+      onClick={() => onViewPattern("pat_123")}
+    />
   ),
 }));
 vi.mock("./EventsTab", () => ({
@@ -36,6 +41,7 @@ const baseHandlers = {
   onUpdateScansQuery: vi.fn(),
   onUpdatePatternsQuery: vi.fn(),
   onUpdateEventsQuery: vi.fn(),
+  onViewPattern: vi.fn(),
   onViewInvestigation: vi.fn(),
   onOpenScanRun: vi.fn(),
   onNavigateHref: vi.fn(),
@@ -121,6 +127,13 @@ describe("ActivityPage", () => {
     render(<ActivityPage view={patternsView({ service: "payments-api", severity: ["critical"] })} {...baseHandlers} />);
     const stub = screen.getByTestId("patterns-tab-stub");
     expect(stub.getAttribute("data-query-keys")).toBe("service,severity");
+  });
+
+  it("threads onViewPattern through to PatternsTab", () => {
+    const onViewPattern = vi.fn();
+    render(<ActivityPage view={patternsView()} {...baseHandlers} onViewPattern={onViewPattern} />);
+    fireEvent.click(screen.getByTestId("patterns-tab-stub"));
+    expect(onViewPattern).toHaveBeenCalledWith("pat_123");
   });
 
   it("threads the query prop through to EventsTab on the events tab", () => {
