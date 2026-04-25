@@ -90,6 +90,40 @@ export function loadInput(path: string, fixture: boolean = false): DiscoverInput
 const PLACEHOLDER_RE = /YOUR_|REPLACE_ME|TODO|PLACEHOLDER|\$\{[^}]*\}|<[a-z_]+>/i;
 
 /**
+ * Detect "desired-not-ready" availability antipatterns. Returns the offending
+ * metric name when the query uses a kube-state-metrics counter that reflects
+ * desired/total replica state rather than actual readiness — those metrics
+ * stay >0 during real outages (CrashLoopBackOff, ImagePullBackOff, Pending),
+ * so a `lt 1` threshold against them silently never trips.
+ *
+ * Used for `service_availability` rules and any global rule with `availability`
+ * in its name. Other rule names (pod_restarts, error_rate) intentionally use
+ * desired-style metrics or unrelated metrics — we don't flag those.
+ *
+ * Returns null when the query is acceptable (uses a `_available` / `_ready`
+ * / `number_ready` variant, or doesn't reference kube-state-metrics at all).
+ */
+export function detectAvailabilityAntipattern(query: string): string | null {
+  if (!query) return null;
+  const matches = query.match(/\bkube_[a-z_]+\b/g);
+  if (!matches) return null;
+  for (const name of matches) {
+    if (/_available|_ready|_unavailable/.test(name)) continue;
+    if (
+      name === "kube_deployment_status_replicas" ||
+      name === "kube_deployment_spec_replicas" ||
+      name === "kube_statefulset_status_replicas" ||
+      name === "kube_statefulset_replicas" ||
+      name === "kube_daemonset_status_desired_number_scheduled" ||
+      name === "kube_daemonset_status_current_number_scheduled"
+    ) {
+      return name;
+    }
+  }
+  return null;
+}
+
+/**
  * Lightweight PromQL syntax check. Not a real parser — just catches the
  * failure modes an LLM actually produces: empty string, unbalanced braces,
  * missing metric identifier, placeholder tokens. A string that passes this
@@ -174,6 +208,15 @@ function allLogRules(input: DiscoverInput): ProbeMetricRule[] {
   return out;
 }
 
+/**
+ * A rule's name suggests it's measuring availability if it contains the
+ * substring "availability" or "_available". Used to scope the desired-vs-ready
+ * antipattern check (we don't flag pod_restarts or error_rate rules).
+ */
+function isAvailabilityRule(ruleName: string): boolean {
+  return /availab/i.test(ruleName);
+}
+
 export function scorePromQLParses(input: DiscoverInput): DimensionScore {
   const rules = allMetricRules(input);
   if (rules.length === 0) {
@@ -184,7 +227,17 @@ export function scorePromQLParses(input: DiscoverInput): DimensionScore {
   const failures: string[] = [];
   for (const r of rules) {
     const check = parsesAsPromQL(r.query);
-    if (!check.ok) failures.push(`${r.name}: ${check.reason}`);
+    if (!check.ok) {
+      failures.push(`${r.name}: ${check.reason}`);
+      continue;
+    }
+    // For availability rules, also flag desired-not-ready antipatterns: the
+    // query parses syntactically but uses a metric that never drops to 0 on
+    // real outages, so the `lt 1` threshold silently never trips.
+    if (isAvailabilityRule(r.name)) {
+      const bad = detectAvailabilityAntipattern(r.query);
+      if (bad) failures.push(`${r.name}: uses ${bad} (desired-count, not readiness — switch to *_available / *_ready / number_ready)`);
+    }
   }
   const score = failures.length === 0
     ? 25

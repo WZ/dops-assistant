@@ -10,6 +10,7 @@ import {
   scoreLogQLParses,
   evalDiscoverOutput,
   loadInput,
+  detectAvailabilityAntipattern,
 } from "./discover-eval.js";
 
 // __dirname is stable enough under vitest; resolve relative to this test file.
@@ -135,6 +136,123 @@ describe("discover-eval / dimension scoring", () => {
               threshold: { op: "gt", value: 75 },
               consecutiveTicks: 2,
               source: "logs",
+            },
+          ],
+        },
+      ],
+      globalProbeRules: [],
+    });
+    expect(result.score).toBe(25);
+  });
+});
+
+describe("discover-eval / detectAvailabilityAntipattern", () => {
+  it("flags kube_deployment_status_replicas (desired count, not readiness)", () => {
+    expect(detectAvailabilityAntipattern('kube_deployment_status_replicas{deployment="x"}')).toBe(
+      "kube_deployment_status_replicas",
+    );
+  });
+
+  it("flags kube_statefulset_status_replicas", () => {
+    expect(detectAvailabilityAntipattern('kube_statefulset_status_replicas{statefulset="x"}')).toBe(
+      "kube_statefulset_status_replicas",
+    );
+  });
+
+  it("flags kube_daemonset_status_desired_number_scheduled", () => {
+    expect(detectAvailabilityAntipattern('kube_daemonset_status_desired_number_scheduled{daemonset="x"}')).toBe(
+      "kube_daemonset_status_desired_number_scheduled",
+    );
+  });
+
+  it("accepts kube_deployment_status_replicas_available", () => {
+    expect(detectAvailabilityAntipattern('kube_deployment_status_replicas_available{deployment="x"}')).toBeNull();
+  });
+
+  it("accepts kube_statefulset_status_replicas_ready", () => {
+    expect(detectAvailabilityAntipattern('kube_statefulset_status_replicas_ready{statefulset="x"}')).toBeNull();
+  });
+
+  it("accepts kube_daemonset_status_number_ready", () => {
+    expect(detectAvailabilityAntipattern('kube_daemonset_status_number_ready{daemonset="x"}')).toBeNull();
+  });
+
+  it("accepts up{} and other non-kube metrics", () => {
+    expect(detectAvailabilityAntipattern('up{app="x"}')).toBeNull();
+    expect(detectAvailabilityAntipattern('consul_catalog_service_node_healthy{service="x"}')).toBeNull();
+  });
+
+  it("returns null for empty string", () => {
+    expect(detectAvailabilityAntipattern("")).toBeNull();
+  });
+});
+
+describe("discover-eval / scorePromQLParses flags availability antipatterns", () => {
+  it("penalizes a service_availability rule that uses kube_deployment_status_replicas", () => {
+    const result = scorePromQLParses({
+      services: [
+        {
+          name: "checkout-api",
+          metrics: [],
+          logLabels: {},
+          probeRules: [
+            {
+              name: "service_availability",
+              query: 'kube_deployment_status_replicas{deployment="checkout-api"}',
+              threshold: { op: "lt", value: 1 },
+              consecutiveTicks: 3,
+              source: "metrics",
+            },
+          ],
+        },
+      ],
+      globalProbeRules: [],
+    });
+    expect(result.score).toBeLessThan(25);
+    expect(result.notes.join(" ")).toMatch(/desired-count|readiness|_available|_ready/);
+  });
+
+  it("does NOT penalize pod_restarts using kube_deployment_status_replicas (rule name doesn't suggest availability)", () => {
+    // pod_restarts and other non-availability rules are allowed to mention
+    // any kube-state-metric — only rules whose name suggests availability are
+    // checked. This test pins the scope so the antipattern check doesn't drift
+    // into false-positive territory.
+    const result = scorePromQLParses({
+      services: [
+        {
+          name: "x",
+          metrics: [],
+          logLabels: {},
+          probeRules: [
+            {
+              name: "pod_restarts",
+              query: 'rate(kube_pod_container_status_restarts_total{namespace="x"}[5m])',
+              threshold: { op: "gt", value: 0.033 },
+              consecutiveTicks: 2,
+              source: "metrics",
+            },
+          ],
+        },
+      ],
+      globalProbeRules: [],
+    });
+    expect(result.score).toBe(25);
+  });
+
+  it("accepts a service_availability rule that uses _available variant", () => {
+    const result = scorePromQLParses({
+      services: [
+        {
+          name: "x",
+          metrics: [],
+          logLabels: {},
+          probeRules: [
+            {
+              name: "service_availability",
+              query: 'kube_deployment_status_replicas_available{deployment="x"}',
+              threshold: { op: "lt", value: 1 },
+              consecutiveTicks: 3,
+              source: "metrics",
             },
           ],
         },
