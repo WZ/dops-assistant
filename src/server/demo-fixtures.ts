@@ -13,7 +13,7 @@
  * sparkline shapes don't reshuffle every fetch).
  */
 
-import type { ServiceBrief, InfrastructureSection, ChangesSection } from "../types/service-brief.js";
+import type { ServiceBrief, InfrastructureSection, ChangesSection, BriefDependencyNode, BriefDependencyEdge } from "../types/service-brief.js";
 import type { MetricSeries } from "./prometheus-query.js";
 
 // ── Tier inference ──────────────────────────────────────────────────────────
@@ -317,7 +317,7 @@ export function buildDemoBrief(name: string): ServiceBrief {
     summary: buildDemoSummary(name),
     changes: buildDemoChanges(name),
     infrastructure: buildDemoInfrastructure(name),
-    dependencies: null,            // dependency graph already populated by /api/dependencies/:service
+    dependencies: buildDemoDependencyGraph(name),
     sections: {
       summary:        okStatus(now),
       changes:        okStatus(now),
@@ -399,6 +399,103 @@ export function buildDemoMetrics(name: string, range: string): MetricSeries[] {
       fetchedAt,
     };
   });
+}
+
+// ── Dependency graph (curated topology) ─────────────────────────────────────
+
+/**
+ * Hand-authored microservices topology. The ServiceConfig metric/log labels
+ * don't cross-reference each other (intentional — that would muddy the
+ * discovery + probe paths), so the inferDependencyGraph() heuristic returns
+ * an empty edge set and the service detail view shows just the center node.
+ *
+ * In demo mode we serve this curated graph instead, so visitors see a
+ * realistic call topology when they click into any service.
+ *
+ * Edge convention: source → target means "source depends on target"
+ * (i.e. source calls target, or source reads from target).
+ */
+const DEMO_EDGES: ReadonlyArray<{ source: string; target: string; label?: string }> = [
+  // Edge ingress
+  { source: "ingress-nginx",       target: "api-gateway",      label: "http" },
+
+  // API gateway routing
+  { source: "api-gateway",         target: "checkout-api",     label: "/checkout/*" },
+  { source: "api-gateway",         target: "auth-api",         label: "/auth/*" },
+  { source: "api-gateway",         target: "search-api",       label: "/search/*" },
+
+  // Checkout fan-out (the busy path)
+  { source: "checkout-api",        target: "payments-worker",  label: "rpc" },
+  { source: "checkout-api",        target: "inventory-worker", label: "rpc" },
+  { source: "checkout-api",        target: "auth-api",         label: "verify" },
+  { source: "checkout-api",        target: "postgres-primary", label: "writes" },
+  { source: "checkout-api",        target: "redis-cache",      label: "session" },
+
+  // Workers
+  { source: "payments-worker",     target: "postgres-primary", label: "writes" },
+  { source: "payments-worker",     target: "rabbitmq",         label: "publish" },
+  { source: "inventory-worker",    target: "postgres-primary", label: "writes" },
+  { source: "inventory-worker",    target: "rabbitmq",         label: "publish" },
+  { source: "notification-worker", target: "rabbitmq",         label: "consume" },
+  { source: "notification-worker", target: "email-worker",     label: "rpc" },
+  { source: "email-worker",        target: "rabbitmq",         label: "consume" },
+
+  // Read-side services
+  { source: "auth-api",            target: "postgres-primary", label: "users" },
+  { source: "auth-api",            target: "redis-cache",      label: "sessions" },
+  { source: "search-api",          target: "postgres-replica", label: "reads" },
+  { source: "analytics-worker",    target: "postgres-replica", label: "reads" },
+  { source: "analytics-worker",    target: "rabbitmq",         label: "consume" },
+
+  // Replication
+  { source: "postgres-primary",    target: "postgres-replica", label: "replication" },
+];
+
+const NODE_TYPE: Record<string, BriefDependencyNode["type"]> = {
+  "postgres-primary": "database",
+  "postgres-replica": "database",
+  "redis-cache":      "cache",
+  "rabbitmq":         "queue",
+  "ingress-nginx":    "external",
+};
+
+const HEALTH_TO_NODE: Record<ServiceHealth, BriefDependencyNode["status"]> = {
+  healthy:  "healthy",
+  degraded: "degraded",
+  down:     "unhealthy",
+  unknown:  "unknown",
+};
+
+/**
+ * Build a subgraph centered on `service`: include the service itself plus
+ * everything one hop away (upstream callers + downstream dependencies).
+ */
+export function buildDemoDependencyGraph(service: string): {
+  nodes: BriefDependencyNode[];
+  edges: BriefDependencyEdge[];
+  source: "inferred";
+} {
+  const related = new Set<string>([service]);
+  for (const e of DEMO_EDGES) {
+    if (e.source === service) related.add(e.target);
+    if (e.target === service) related.add(e.source);
+  }
+
+  const nodes: BriefDependencyNode[] = [...related].map((name) => {
+    const meta = metaFor(name);
+    return {
+      id: name,
+      name,
+      type: NODE_TYPE[name] ?? "service",
+      status: HEALTH_TO_NODE[meta.health],
+    };
+  });
+
+  const edges: BriefDependencyEdge[] = DEMO_EDGES
+    .filter((e) => related.has(e.source) && related.has(e.target))
+    .map((e) => ({ source: e.source, target: e.target, ...(e.label ? { label: e.label } : {}) }));
+
+  return { nodes, edges, source: "inferred" };
 }
 
 function defaultMetricsForTier(tier: ServiceTier, name: string): MetricSpec[] {
