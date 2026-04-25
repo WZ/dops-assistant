@@ -1,0 +1,128 @@
+[
+  {
+    "id": "fixture-payments-db-pool",
+    "source": "scan",
+    "report": {
+      "service": "payments-api",
+      "severity": "high",
+      "summary": "payments-api returned 5xx for 14 minutes starting 2026-04-21T10:15 UTC",
+      "impact": {
+        "duration": "14m",
+        "description": "All checkout flows degraded; 12k requests returned 503 between 10:15 and 10:29 UTC"
+      },
+      "trigger": "Config rollout at 2026-04-21T10:14 UTC reduced DB connection limit below peak demand.",
+      "rootCause": "Upstream database connection pool exhausted after a config push reduced max_connections from 200 to 50 at 2026-04-21T10:14:32 UTC.",
+      "contributingFactors": [
+        "No alert was wired on db_connections_in_use approaching the cap",
+        "Config rollout skipped canary because reviewer flagged it as 'tuning only'"
+      ],
+      "timeline": [
+        {"time": "2026-04-21T10:14:32Z", "event": "config rollout reduced max_connections 200 -> 50"},
+        {"time": "2026-04-21T10:15:18Z", "event": "error_rate climbed past 1.0 req/s"},
+        {"time": "2026-04-21T10:29:05Z", "event": "config rolled back; pool recovered"}
+      ],
+      "evidence": {
+        "metrics": [
+          "error_rate climbed from 0.01 req/s to 8.2 req/s at 2026-04-21T10:15",
+          "db_connections_in_use hit 50 of 50 at 2026-04-21T10:16"
+        ],
+        "logs": [
+          "2026-04-21T10:15:33 payments-api ERROR could not acquire connection after 30s"
+        ],
+        "infra": [
+          "deployment payments-api unchanged across the window (replicas=4)"
+        ]
+      },
+      "dashboardLinks": [],
+      "recommendedActions": [
+        "Roll back the config change that lowered max_connections",
+        "Add alerting on db_connections_in_use >= 0.9 * max_connections",
+        "Require canary for any DB-limit config change"
+      ],
+      "confidence": "high",
+      "confidenceScore": 0.92,
+      "investigatedAt": "2026-04-21T10:32:00Z"
+    }
+  },
+  {
+    "id": "fixture-redis-eviction",
+    "source": "scan",
+    "report": {
+      "service": "session-cache",
+      "severity": "medium",
+      "summary": "session-cache hit ratio fell from 99.4% to 71% for 22 minutes on 2026-04-22",
+      "impact": {
+        "duration": "22m",
+        "description": "Session lookups added 80ms p95 latency for the duration; no failed requests"
+      },
+      "trigger": "Redis maxmemory hit at 2026-04-22T03:11:44 UTC after a backfill job added 2.4M new keys.",
+      "rootCause": "The nightly profile-backfill job wrote 2.4M new session keys without TTL, pushing Redis past its maxmemory limit at 2026-04-22T03:11:44 UTC and triggering allkeys-lru eviction across hot session entries.",
+      "contributingFactors": [
+        "The backfill job's TTL parameter was set to 0 in last week's PR",
+        "No staging test exists for the backfill at production key cardinality"
+      ],
+      "timeline": [
+        {"time": "2026-04-22T03:00:00Z", "event": "profile-backfill job started"},
+        {"time": "2026-04-22T03:11:44Z", "event": "Redis used_memory hit maxmemory; eviction began"},
+        {"time": "2026-04-22T03:33:20Z", "event": "backfill completed; hit ratio recovered"}
+      ],
+      "evidence": {
+        "metrics": [
+          "redis_used_memory_bytes climbed from 1.2GB to 4.0GB between 03:00 and 03:11 on 2026-04-22",
+          "redis_keyspace_hits / (redis_keyspace_hits + redis_keyspace_misses) dropped from 0.994 to 0.71 at 2026-04-22T03:12"
+        ],
+        "logs": [
+          "2026-04-22T03:11:44 redis-master WARN evicted 18432 keys (allkeys-lru)"
+        ],
+        "infra": []
+      },
+      "dashboardLinks": [],
+      "recommendedActions": [
+        "Patch the profile-backfill job to set TTL on every written key",
+        "Add a staging integration test that runs the backfill at production cardinality",
+        "Raise Redis maxmemory by 30% as a safety margin during the next deploy window"
+      ],
+      "confidence": "high",
+      "confidenceScore": 0.88,
+      "investigatedAt": "2026-04-22T03:35:00Z"
+    }
+  },
+  {
+    "id": "fixture-clean-window",
+    "source": "scan",
+    "report": {
+      "service": "ingestion-server",
+      "severity": "low",
+      "summary": "Routine 30-minute investigation triggered by Kafka producer epoch reset; no degradation observed",
+      "impact": {
+        "duration": "30m",
+        "description": "No customer impact; ingestion rate remained within normal variance"
+      },
+      "trigger": "Kafka producer epoch reset logged at 2026-04-23T20:06:55Z; classified as routine.",
+      "rootCause": "The Kafka producer client's epoch reset is part of normal exactly-once-semantics rebalancing and does not indicate a fault. Replicas held steady (5/5 ready) and ingestion_rate stayed within ±5% of the prior 7-day median across the window.",
+      "contributingFactors": [],
+      "timeline": [
+        {"time": "2026-04-23T20:06:55Z", "event": "kafka producer epoch reset logged"}
+      ],
+      "evidence": {
+        "metrics": [
+          "ingestion_rate stayed at 12.4k events/s ±5% from 2026-04-23T20:00 to 2026-04-23T20:30",
+          "kube_deployment_status_replicas{deployment=\"ingestion-server\"} = 5 throughout"
+        ],
+        "logs": [
+          "2026-04-23T20:06:55 ingestion-server INFO kafka producer epoch reset to 5"
+        ],
+        "infra": [
+          "ingestion-server pods all Ready; no restarts in the 8h prior"
+        ]
+      },
+      "dashboardLinks": [],
+      "recommendedActions": [
+        "Suppress proactive scans on bare epoch-reset log entries — they are benign and create noise"
+      ],
+      "confidence": "high",
+      "confidenceScore": 0.95,
+      "investigatedAt": "2026-04-23T20:36:00Z"
+    }
+  }
+]

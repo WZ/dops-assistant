@@ -259,6 +259,22 @@ export class ServiceHealthPoller {
     this.onTransition = deps.onTransition;
     this.getHiddenServices = deps.getHiddenServices;
     this.getPromDsUid = deps.getPrometheusDatasourceUid;
+
+    // Warm `cachedHealth` from the last-known row per service. Without this
+    // `getHealth()` returns an empty map until the first poll lands ~60s
+    // later, which paints the Ops Desk with "0/N services" on every restart
+    // (and permanently in demo mode, where the poller never runs). Best-effort
+    // — if the table isn't migrated yet or the query fails, we fall back to
+    // an empty cache as before.
+    try {
+      this.ensureMigrated();
+      const latest = this.db.getLatestHealthPerService(this.stackId);
+      for (const [service, status] of latest) {
+        if (status === "healthy" || status === "degraded" || status === "down" || status === "unknown") {
+          this.cachedHealth.set(service, status);
+        }
+      }
+    } catch { /* best-effort warm-up */ }
   }
 
   /** Start the poller — runs immediately, then on interval. */

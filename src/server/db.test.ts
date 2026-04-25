@@ -411,6 +411,27 @@ describe("Database", () => {
       const stale = db.getStaleUnknownServices(S, 7);
       expect(stale).not.toContain("kafka");
     });
+
+    it("getLatestHealthPerService returns the most recent status per service", () => {
+      db.insertServiceHealthCheck(S, "redis", "healthy", "2026-04-20T10:00:00Z");
+      db.insertServiceHealthCheck(S, "redis", "degraded", "2026-04-20T11:00:00Z");
+      db.insertServiceHealthCheck(S, "kafka", "down", "2026-04-20T09:00:00Z");
+      const latest = db.getLatestHealthPerService(S);
+      expect(latest.get("redis")).toBe("degraded");
+      expect(latest.get("kafka")).toBe("down");
+    });
+
+    it("getLatestHealthPerService scopes to stackId", () => {
+      db.insertServiceHealthCheck(S, "redis", "healthy", new Date().toISOString());
+      db.insertServiceHealthCheck("other-stack", "redis", "down", new Date().toISOString());
+      const latest = db.getLatestHealthPerService(S);
+      expect(latest.get("redis")).toBe("healthy");
+      expect(latest.size).toBe(1);
+    });
+
+    it("getLatestHealthPerService returns empty map when no checks recorded", () => {
+      expect(db.getLatestHealthPerService(S).size).toBe(0);
+    });
   });
 
   // ── Confidence score extraction ────────────────────────────────────────

@@ -1,0 +1,28 @@
+# Demo mode config. Loaded when the server starts with CONFIG_PATH=demo/config.yaml
+# and DEMO_MODE=true. Pairs with scripts/seed-demo.ts — the seed writes services
+# and providers into data/default/, so config.yaml only needs the minimum required
+# to satisfy Zod validation.
+
+llm:
+  # gpt-4 is the default. Value only matters for schema validation — in demo mode
+  # no LLM call is ever made, so the key is unused.
+  model: gpt-4
+  apiKey: "${OPENAI_API_KEY:-demo-placeholder}"
+
+providers: []
+
+services: []
+
+branding:
+  title: dops
+  subtitle: demo
+
+webhook:
+  dedupWindowSeconds: 300
+  maxConcurrent: 3
+  defaultTemplate: standard
+
+scan:
+  enabled: false
+  cron: "0 */4 * * *"
+  timezone: "UTC"

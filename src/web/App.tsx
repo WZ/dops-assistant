@@ -17,6 +17,7 @@ import { ServicesPage } from "./components/ServicesPage";
 import { SettingsPage } from "./components/SettingsPage";
 import { ScanActivityBadge } from "./components/ScanActivityBadge";
 import { SetupStepper } from "./components/SetupStepper";
+import { DemoBanner } from "./components/DemoBanner";
 import { useRoute, viewToUrl } from "./hooks/useRoute";
 import type { InvestigationsQuery } from "./lib/investigations-query";
 import { StackSwitcher } from "./components/StackSwitcher";
@@ -61,6 +62,41 @@ export function shouldResetOnStackSwitch(paneType: LeftPaneView["type"]): boolea
     paneType === "scanrun" ||
     paneType === "investigations"
   );
+}
+
+/**
+ * Pure helper: given the current setup stage and pane type, decide whether
+ * the auto-routing useEffect should redirect the user to a different page,
+ * and to which one.
+ *
+ * Returns `null` when no redirect should happen — including when the user
+ * is on a non-dashboard route (deep links, bookmarks, refreshed pages get
+ * to render the URL they asked for, with the setup stepper still nudging
+ * them via the page header). Returns "settings" or "services" when the
+ * user is on the dashboard and the setup stage warrants a redirect.
+ *
+ * Exported for unit testing. The full effect in App.tsx still owns
+ * `lastRoutedStageRef` bookkeeping; this helper only encodes the
+ * stage → target-page decision.
+ */
+export function autoRouteTargetForSetupStage(
+  args: {
+    setupStage: string | null | undefined;
+    setupDismissed: boolean;
+    setupLoading: boolean;
+    paneType: LeftPaneView["type"];
+    lastRoutedStage: string | null;
+  },
+): "settings" | "services" | null {
+  const { setupStage, setupDismissed, setupLoading, paneType, lastRoutedStage } = args;
+  if (!setupStage || setupStage === "complete" || setupDismissed || setupLoading) return null;
+  if (lastRoutedStage === setupStage) return null;
+  // Only redirect from the dashboard. Any deliberate navigation to a deep
+  // route stays put — the stepper at the top still surfaces the next step.
+  if (paneType !== "dashboard") return null;
+  if (setupStage === "needs-provider" || setupStage === "needs-provider-connected") return "settings";
+  if (setupStage === "needs-discovery") return "services";
+  return null;
 }
 
 function useTheme() {
@@ -112,21 +148,38 @@ export function App() {
     setSetupDismissed(!!safeGetItem(`dops:setup_dismissed:${activeStackId}`));
   }, [activeStackId]);
 
-  // Auto-routing: on setup stage transitions, navigate to the appropriate page
+  // Auto-routing: on setup stage transitions, nudge the user toward the next
+  // setup step — but ONLY when the user is on the dashboard (the natural
+  // starting page). If they explicitly navigated to /investigations,
+  // /services, /scan/runs/:id, or any other deep route (bookmark, shared
+  // link, browser reload), respect that intent and leave them there. The
+  // setup stepper at the top of the page still surfaces the next step, so
+  // operators don't lose the onboarding nudge — they just don't get yanked
+  // away from a URL they typed on purpose. See autoRouteTargetForSetupStage.
   const lastRoutedStageRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!setupStage || setupStage === "complete" || setupDismissed || setupLoading) return;
-    if (lastRoutedStageRef.current === setupStage) return;
-    lastRoutedStageRef.current = setupStage;
-
-    if (setupStage === "needs-provider" || setupStage === "needs-provider-connected") {
+    const target = autoRouteTargetForSetupStage({
+      setupStage,
+      setupDismissed,
+      setupLoading,
+      paneType: leftPane.type,
+      lastRoutedStage: lastRoutedStageRef.current,
+    });
+    // Track that we've seen this stage even if we didn't redirect, so a
+    // later transition (e.g. provider added → needs-discovery) doesn't
+    // re-fire on the same stage.
+    if (setupStage && setupStage !== lastRoutedStageRef.current) {
+      lastRoutedStageRef.current = setupStage;
+    }
+    if (!target) return;
+    if (target === "settings") {
       setLeftPaneRaw({ type: "settings", initialTab: "providers" });
       history.replaceState(null, "", viewToUrl({ type: "settings" }));
-    } else if (setupStage === "needs-discovery") {
+    } else if (target === "services") {
       setLeftPaneRaw({ type: "services" });
       history.replaceState(null, "", viewToUrl({ type: "services" }));
     }
-  }, [setupStage, setupDismissed, setupLoading]);
+  }, [setupStage, setupDismissed, setupLoading, leftPane.type]);
 
   useEffect(() => {
     if (setupStage === "complete" && lastRoutedStageRef.current && lastRoutedStageRef.current !== "complete") {
@@ -289,7 +342,9 @@ export function App() {
   return (
     <StackProvider activeStackId={activeStackId}>
     <TooltipProvider delayDuration={200}>
-    <div className="h-screen flex bg-background text-foreground noise relative overflow-hidden">
+    <div className="h-screen flex flex-col bg-background text-foreground noise relative overflow-hidden">
+    <DemoBanner />
+    <div className="flex-1 flex min-h-0">
       {/* Sidebar */}
       <Sidebar
         activePage={activePage}
@@ -505,6 +560,7 @@ export function App() {
           </ResizablePanelGroup>
         </div>
       </div>
+    </div>
     </div>
     </TooltipProvider>
     </StackProvider>

@@ -4,20 +4,31 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## [0.2.4.0] - 2026-04-24
-
-### Changed
-- **Past useful patterns now feed back into every investigation.** When you 👍 an RCA the server already saved a row into `incident_patterns`, but no agent ever read those rows — voting was a write-only loop. Now the planner gets up to 5 patterns for the target service as priors ("if the symptom matches one of these, prioritize the same metrics/logs that confirmed last time") and synthesis gets the same set with a calibration rule ("if the current symptom + root cause match, name the pattern id and bump confidence one tier"). Each pattern: id, severity, date, symptom, root cause, recommended actions, capped at 500 chars per field. Patterns are wrapped in `<untrusted_learned_patterns>` tags — they were originally LLM-synthesized text so they cross the same trust boundary as any other agent-derived input.
-
-## [0.2.3.0] - 2026-04-24
+## [0.3.1.0] - 2026-04-24
 
 ### Added
 - **Thumbs-up / thumbs-down on every investigation.** A compact rating row renders under the RCA report once it lands. Hit 👍 to mark the investigation useful, 👎 to mark it not useful, or click again to switch. The Ops Desk's Learned Patterns section has existed for months but was empty on every install because nothing on the client ever called the feedback endpoint — fixed. A "useful" vote now upserts a row into `investigation_feedback` AND extracts an `incident_patterns` entry the first time (repeat clicks are idempotent, so mashing the button won't spam duplicates).
 - **`GET /api/investigations/:id/feedback`** — returns the current rating (or `null`) so the UI can hydrate the thumbs state on mount. Stack-scoped.
 
+### Changed
+- **Past useful patterns now feed back into every investigation.** Voting used to be a write-only loop — `incident_patterns` rows accumulated, but no agent ever read them. Now the planner gets up to 5 patterns for the target service as priors ("if the symptom matches one of these, prioritize the same metrics/logs that confirmed last time") and synthesis gets the same set with a calibration rule ("if the current symptom + root cause match, name the pattern id and bump confidence one tier"). Each pattern: id, severity, date, symptom, root cause, recommended actions, capped at 500 chars per field. Patterns are wrapped in `<untrusted_learned_patterns>` tags — they were originally LLM-synthesized text so they cross the same trust boundary as any other agent-derived input.
+
 ### Fixed
 - `POST /api/investigations/:id/feedback` now upserts on `(investigation_id, stack_id)` instead of appending a new row per click. Before: five thumbs-ups created five pattern rows. After: one pattern, first click wins, re-clicks confirm the same rating without side effects. A one-shot migration dedups any duplicate rows left by the old behavior before installing the unique index.
 - `db.getFeedback()` now filters by `stack_id`, closing a cross-stack leak where a rating on one stack's investigation could bleed into another stack's view.
+
+## [0.3.0.0] - 2026-04-24
+
+### Added
+- **Public read-only demo mode.** Set `DEMO_MODE=true` and dops-assistant boots as a public-safe showcase: every mutating HTTP request returns a structured 403, every WebSocket message that would reach an LLM or MCP backend gets a friendly refusal, and the LLM-backed REST endpoints (`/api/services/:name/brief`, `/api/services/:name/metrics`) short-circuit to demo responses instead of burning tokens or hitting Prometheus. Background jobs — health monitor, service health pollers, scan schedulers, TTL reaper, webhook handler — are all skipped at boot. A persistent amber strip at the top of the UI tells visitors what they're looking at and links to the repo.
+- **One-shot deterministic seed (`scripts/seed-demo.ts`).** Writes 15 services across web/worker/datastore/infra tiers, 3 stub MCP providers (URLs that fail closed), 5 completed investigations covering all four trigger sources plus 1 frozen "running" investigation so the streaming UI shows motion, 2 scan runs, and a couple of learned incident patterns. Relative timestamps are computed at seed time, so freshness looks right on the day the seed runs.
+- **Fly.io deploy pipeline for the demo.** `Dockerfile.demo`, `fly.toml`, and `.github/workflows/deploy-demo.yml` ship a public demo on push to main with auto-stop machines, scale-to-zero, and a 1GB shared-cpu VM. The seed runs on every container start; storage is ephemeral.
+- **Screenshots inline in the README.** Operations Desk, investigation detail, investigations list, scan run detail, and notifications panel — captured from the demo via `scripts/capture-screenshots.ts`.
+- **`npm run demo` and `npm run seed:demo`.** Local demo iteration: seed → boot. Both write to `data-demo/` (gitignored) so they never touch your real dev data.
+
+### Changed
+- **Service health poller warms its cache from the database at construction.** Without this, `getHealth()` returned an empty map until the first poll lands ~60s later, painting the Ops Desk with "0/N services" on every restart. Now the last-known status per service shows immediately. (New `Database.getLatestHealthPerService(stackId)` helper.)
+- **`DATA_DIR` environment variable now controls the per-stack data root** (was hardcoded to `data/`). Default is unchanged. Lets the demo write to `/data` on a Fly volume, and the local demo write to `data-demo/`, without code changes.
 
 ## [0.2.2.5] - 2026-04-24
 
