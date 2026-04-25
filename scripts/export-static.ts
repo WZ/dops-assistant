@@ -262,7 +262,14 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error("[export-static] failed:", err);
-  process.exit(1);
-});
+// Force a clean exit once snapshotting completes. Without this the script
+// hangs after writing all snapshots: keep-alive HTTP connections to the
+// spawned demo server keep Node's event loop alive even though shutdown()
+// has SIGTERM'd the child. Locally `timeout` masked this; in GitHub Actions
+// the job sat idle for 10+ min before the runner orphan-killed npm.
+main()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error("[export-static] failed:", err);
+    process.exit(1);
+  });
