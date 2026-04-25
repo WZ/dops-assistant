@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils.js";
 
@@ -59,6 +59,19 @@ export function ProviderForm({
     error?: string;
   } | null>(null);
   const [testing, setTesting] = useState(false);
+
+  // Re-seed form state when the parent swaps in a different provider to edit
+  // (e.g. clicking Edit on a second provider while the form is already open).
+  useEffect(() => {
+    if (!initialValues) return;
+    setName(initialValues.name);
+    setUrl(initialValues.mcpServer.url ?? "");
+    setRoles(new Set(initialValues.roles));
+    setRegion(initialValues.region ?? "");
+    setWebUrl(initialValues.webUrl ?? "");
+    setErrors({});
+    setTestResult(null);
+  }, [initialValues]);
 
   const isEditMode = Boolean(initialValues);
 

@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.5.2] - 2026-04-25
+
+### Fixed
+- **Editing a second provider now loads that provider's values instead of the first one's.** With the inline edit form already open, clicking Edit on a different provider in the list used to keep showing the first provider's name, URL, and roles — the form mounted once and ignored later prop changes. Now the form re-seeds its inputs whenever the parent swaps in a different provider to edit.
+
 ## [0.3.5.1] - 2026-04-25
 
 ### Changed
