@@ -14,6 +14,11 @@ interface ServiceOverviewProps {
 
 const loadingStatus: SectionStatus = { status: "ok" as const };
 const errorStatus: SectionStatus = { status: "error" as const, error: "Fetch failed" };
+// Demo mode response is `{text: null, demoMode: true}` with no `sections` key.
+// Use "unconfigured" instead of falling back to loadingStatus (which would
+// keep the infra/changes skeletons spinning forever) — this surfaces the
+// "Connect a K8s/GitLab provider..." copy that those panels already render.
+const unconfiguredStatus: SectionStatus = { status: "unconfigured" as const };
 
 export function ServiceOverview({ serviceName, onViewService }: ServiceOverviewProps) {
   const { stackFetch } = useStackContext();
@@ -60,8 +65,14 @@ export function ServiceOverview({ serviceName, onViewService }: ServiceOverviewP
 
   const dependencySource = brief?.dependencies?.source;
 
-  // When fetch fails entirely, use errorStatus instead of loadingStatus
-  const fallbackStatus = error ? errorStatus : loadingStatus;
+  // Brief returned `{text: null, demoMode: true}` — no per-section status.
+  // Treat it as "no provider connected" so the panels render their empty-state
+  // copy instead of an indefinite shimmer.
+  const isDemo = brief !== null && (brief as { demoMode?: boolean }).demoMode === true;
+
+  // When fetch fails entirely, use errorStatus. Demo brief → unconfigured.
+  // Otherwise (still loading), fall back to loadingStatus.
+  const fallbackStatus = error ? errorStatus : isDemo ? unconfiguredStatus : loadingStatus;
 
   // Brief-dependent sections show skeletons while loading, not blank
   const briefLoading = loading && !brief;
