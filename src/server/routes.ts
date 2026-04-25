@@ -1137,11 +1137,14 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   app.get("/api/services/:name/metrics", async (req: Request, res: Response) => {
     const name = req.params["name"] as string;
     if (!NAME_PATTERN.test(name)) { res.status(400).json({ error: "Invalid service name" }); return; }
-    // Demo mode: never run live PromQL — providers are stubs and the call
-    // would fail noisily anyway. Return an empty metrics list with a flag the
-    // UI can use to show "metrics unavailable in demo".
+    // Demo mode: providers are stubs, but we still want the page to look real.
+    // Synthesize believable random-walk series keyed off the service name.
     if (isDemoMode()) {
-      res.json({ metrics: [], cached: false, fetchedAt: Date.now(), demoMode: true });
+      const { buildDemoMetrics } = await import("./demo-fixtures.js");
+      const rawRange = (req.query["range"] as string) || "24h";
+      const range = VALID_RANGES.has(rawRange) ? rawRange : "24h";
+      const metrics = buildDemoMetrics(name, range);
+      res.json({ metrics, cached: false, fetchedAt: Date.now(), demoMode: true });
       return;
     }
     const rawRange = (req.query["range"] as string) || "24h";
@@ -1185,11 +1188,12 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   app.get("/api/services/:name/brief", async (req: Request, res: Response) => {
     const name = req.params["name"] as string;
     if (!NAME_PATTERN.test(name)) { res.status(400).json({ error: "Invalid service name" }); return; }
-    // Demo mode: brief is LLM-generated. Refuse instead of burning tokens
-    // (or 401-ing against the placeholder API key). UI handles `demoMode:true`
-    // by hiding the brief panel.
+    // Demo mode: providers are stubs and the LLM key is a placeholder.
+    // Return a fully-populated mock brief (summary + infra + changes) so the
+    // service detail page shows what a live brief looks like end-to-end.
     if (isDemoMode()) {
-      res.json({ text: null, demoMode: true });
+      const { buildDemoBrief } = await import("./demo-fixtures.js");
+      res.json(buildDemoBrief(name));
       return;
     }
     try {

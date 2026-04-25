@@ -38,6 +38,7 @@ export function ProvidersPage({ onRunDiscovery, onProviderSaved }: ProvidersPage
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({});
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval>>(undefined);
+  const formSectionRef = useRef<HTMLElement | null>(null);
 
   const fetchProviders = useCallback(async () => {
     try {
@@ -54,6 +55,13 @@ export function ProvidersPage({ onRunDiscovery, onProviderSaved }: ProvidersPage
     pollRef.current = setInterval(fetchProviders, 30_000);
     return () => clearInterval(pollRef.current);
   }, [fetchProviders]);
+
+  // Scroll the form into view when it opens — with many providers, the form
+  // can render below the fold and the user wouldn't notice it appeared.
+  useEffect(() => {
+    if (!showForm) return;
+    formSectionRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+  }, [showForm, editingProvider]);
 
   // Add or update provider
   const handleSave = async (data: ProviderFormData) => {
@@ -262,7 +270,7 @@ export function ProvidersPage({ onRunDiscovery, onProviderSaved }: ProvidersPage
 
       {/* Inline form */}
       {showForm && (
-        <section aria-label="Add Provider" className="mb-6 animate-fade-up">
+        <section ref={formSectionRef} aria-label="Add Provider" className="mb-6 animate-fade-up scroll-mt-4">
           <div className="flex items-center gap-2 mb-3">
             <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
             <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
