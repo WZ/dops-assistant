@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/typescript-ESM-3178c6" alt="TypeScript ESM"/>
 </p>
 
-AI-powered incident response for DevOps teams. Connects to your monitoring stack via [MCP](https://modelcontextprotocol.io/) to investigate incidents, scan for problems before they alert, and deliver structured RCA reports with evidence — automatically.
+AI-powered incident response for DevOps teams. Connects to your monitoring stack via [MCP](https://modelcontextprotocol.io/) to investigate incidents, scan for problems before they alert, and deliver structured RCA reports with evidence — automatically. Skip the part where you tab between five dashboards at 3am trying to figure out what broke.
 
 <p align="center">
   <img src="docs/img/screenshots/01-ops-desk.png" alt="Operations Desk — live service catalog, investigation log, scan runs" width="900"/>
