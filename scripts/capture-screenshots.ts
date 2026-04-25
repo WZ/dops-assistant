@@ -86,8 +86,8 @@ async function main() {
     // Completed investigation detail (payments-worker / critical / rich RCA)
     { slug: "02-investigation-detail", path: `/investigations/${paymentsInv.id}`, pause: 1500 },
 
-    // The /investigations list page with filter bar + severity breakdown
-    { slug: "03-investigations-list", path: "/investigations", pause: 1000 },
+    // /activity/investigations — filter bar + severity breakdown + paginated rows
+    { slug: "03-activity-investigations", path: "/activity/investigations", pause: 1000 },
 
     // Service detail — Investigations tab (Metrics tab renders empty cards
     // without a real Prometheus backend; the Investigations tab shows the
@@ -100,10 +100,19 @@ async function main() {
     // Settings → Notifications (seed enables email so this section isn't empty)
     { slug: "06-notifications", path: "/settings/notifications", pause: 1000 },
 
+    // /activity/scans — paginated scan history with trigger / hits / status filters
+    { slug: "07-activity-scans", path: "/activity/scans", pause: 1000 },
+
+    // /activity/patterns — learned-pattern catalog with severity + service filters
+    { slug: "08-activity-patterns", path: "/activity/patterns", pause: 1000 },
+
+    // /activity/events — persistent feed across all four trigger sources
+    { slug: "09-activity-events", path: "/activity/events", pause: 1000 },
+
     // Frozen "in-flight" investigation — phase rail mid-stream. Useful for
     // showing the streaming UI but relatively sparse content-wise, so we
     // keep it last and treat it as optional.
-    { slug: "07-investigation-running", path: `/investigations/${runningInv.id}`, pause: 1500 },
+    { slug: "10-investigation-running", path: `/investigations/${runningInv.id}`, pause: 1500 },
   ];
 
   for (const shot of shots) {

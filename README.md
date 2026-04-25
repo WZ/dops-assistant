@@ -25,7 +25,7 @@ AI-powered incident response for DevOps teams. Connects to your monitoring stack
 - **Four trigger sources** — operator messages in chat, Alertmanager webhooks, health-poller transitions, and scheduled scans
 - **Notifications** — deliver every completed investigation to Slack and/or email. Per-recipient severity threshold and source allowlist (webhook / scan / poller / manual). Teams-safe HTML email
 - **Operations Desk** — live catalog of services with health chips, investigation stream, recent scan runs, and an event rail in one view
-- **Investigation explorer** — dedicated `/investigations` page with filter bar, severity breakdown, URL-driven filter state, and shareable per-investigation links
+- **Activity center** — unified `/activity` route with four tabs (Investigations, Scans, Patterns, Events). Shared filter-bar idiom, URL-driven state, paginated history, and a 30-day persistent event feed
 - **Multi-stack** — run prod, staging, and dev side-by-side in one deployment. Each stack has its own providers, services, probe rules, and investigation history
 - **Web UI + CLI** — real-time progress over WebSocket, or a terminal REPL (Ink) with tool call visibility
 - **Deploy anywhere** — single Docker image, Helm chart for Kubernetes, or run `npm run web` behind your own process manager
@@ -175,10 +175,32 @@ Every investigation gets a shareable URL, a phase rail that streams live, and a 
   <img src="docs/img/screenshots/02-investigation-detail.png" alt="Investigation detail — RCA report with timeline + evidence" width="900"/>
 </p>
 
-The dedicated `/investigations` page has filter pills for severity, status toggles, a search across service/query/root-cause, date-window shortcuts, and URL-driven filter state so bookmarks and browser history Just Work.
+## Activity
+
+Everything that happens in the system — investigations, scan runs, learned patterns, and lifecycle events — lives under a single `/activity` route, split into four tabs that share a filter-bar idiom (search, severity pills, status toggles, time-window shortcuts, URL-driven state).
+
+**Investigations** — every investigation, filterable by severity / status / service / time. URL-driven filters mean bookmarks and browser history Just Work.
 
 <p align="center">
-  <img src="docs/img/screenshots/03-investigations-list.png" alt="Investigations list — filter bar, severity pills, severity-striped rows" width="900"/>
+  <img src="docs/img/screenshots/03-activity-investigations.png" alt="Activity → Investigations — filter bar, severity pills, severity-striped rows" width="900"/>
+</p>
+
+**Scans** — every probe tick the scheduler ran, with trigger (cron / manual / webhook), status, hits dispatched, and a deep link to each run's Probe → Triage → Investigate breakdown. Click into a run from anywhere it's referenced.
+
+<p align="center">
+  <img src="docs/img/screenshots/07-activity-scans.png" alt="Activity → Scans — paginated history with trigger / hits / status filters" width="900"/>
+</p>
+
+**Patterns** — the learned-pattern catalog. Every confirmed RCA contributes to a service's pattern library, scoped by severity + service, with drill-down to the source investigation that taught it.
+
+<p align="center">
+  <img src="docs/img/screenshots/08-activity-patterns.png" alt="Activity → Patterns — learned-pattern catalog with severity + service filters" width="900"/>
+</p>
+
+**Events** — the persistent system feed. Investigation lifecycle (`investigation_started` / `_completed` / `_failed`), alert webhooks, scan-run completions, manual scan triggers, and provider health crossings — all backed by a 30-day retention window and filterable by kind / severity / service / time.
+
+<p align="center">
+  <img src="docs/img/screenshots/09-activity-events.png" alt="Activity → Events — persistent feed across all four trigger sources" width="900"/>
 </p>
 
 ## Notifications

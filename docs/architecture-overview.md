@@ -12,7 +12,7 @@ It exposes two interfaces — a web UI on port 3000 and a terminal CLI — both 
 
 ## Interfaces
 
-**Web UI** (`src/server/`) — Express server with WebSocket transport. Serves a React SPA (Vite) from `dist/web/`. Chat messages and investigation progress stream over WebSocket (`chat:stream_delta`, `investigation:phase`, `investigation:tool_call`, `scan:trigger`, `discover`). The UI is a 4-page SPA: Operations Desk, `/investigations`, `/services`, `/settings`.
+**Web UI** (`src/server/`) — Express server with WebSocket transport. Serves a React SPA (Vite) from `dist/web/`. Chat messages and investigation progress stream over WebSocket (`chat:stream_delta`, `investigation:phase`, `investigation:tool_call`, `scan:trigger`, `discover`). The UI is a 4-page SPA: Operations Desk, `/activity` (Investigations / Scans / Patterns / Events), `/services`, `/settings`.
 
 **CLI** (`src/cli/`) — Terminal REPL built with Ink (React for CLIs). Same agent and workflow stack as the web server, rendered in the terminal with tool call logging, markdown rendering, and RCA reports in bordered boxes. Note: Ink requires raw stdin and does not work inside Claude Code or other piped shells — use `npm run web` for those environments.
 
@@ -272,7 +272,11 @@ SMTP infrastructure (host, port, credentials) is in `config.yaml` (or sourced fr
 A 4-page React SPA (Vite, in `src/web/`):
 
 - **Operations Desk** (`/`) — live SOC console: health strip, service catalog with status chips, investigation log, recent scan runs with **Scan now**, event stream rail. Drilling into a service opens a tabbed detail view (overview, metrics, history, scan).
-- **Investigations** (`/investigations`) — filter bar, severity breakdown, search across service / query / root-cause, date-window shortcuts, URL-driven filter state. Per-investigation pages at `/investigations/:id` with shareable links and a live phase rail.
+- **Activity** (`/activity/:tab`) — unified history surface across four tabs:
+  - `/activity/investigations` — filter bar, severity breakdown, search across service / query / root-cause, date-window shortcuts, URL-driven filter state. Per-investigation detail at `/investigations/:id` with shareable links and a live phase rail.
+  - `/activity/scans` — paginated scan history filtered by trigger / status / hits, with deep links to each run's `/scan/runs/:id` Probe → Triage → Investigate breakdown.
+  - `/activity/patterns` — learned-pattern catalog scoped by severity + service, drill-down to the source investigation that taught each pattern.
+  - `/activity/events` — persistent system feed (`investigation_started`/`_completed`/`_failed`, `alert_received`, `scan_run_complete`, `scan_triggered_manually`, `provider_health_changed`) with 30-day retention, multi-axis filters (kind / severity / service / time). Events table is GC'd by `src/server/events-retention.ts`.
 - **Services** (`/services` and `/services/:name`) — service catalog grid + detail view (overview, history, scan override).
 - **Settings** (`/settings`) — Providers, Skills, Stacks, Scan, Notifications. Setup wizard (`SetupStepper`) guides new users through Connect Provider → Discover Services → Monitor.
 

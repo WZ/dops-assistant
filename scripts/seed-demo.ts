@@ -703,6 +703,108 @@ function main() {
   db.setSetting("notifications.slack.enabled", "false");
   db.setSetting("notifications.email.enabled", "true");
 
+  // ── Persistent events feed (powers /activity/events) ────────────────────
+  // The event log mirrors what real triggers would emit. We replay one
+  // started + completed pair per investigation, plus alert/scan/health
+  // crossings, so the tab opens with a varied feed instead of "no events".
+  const ago = (ms: number) => Date.now() - ms;
+  const evId = () => `ev_${ulid()}`;
+
+  for (const inv of invs) {
+    const startedAt = new Date(inv.createdAt + "Z").getTime();
+    db.insertEvent({
+      id: evId(),
+      ts: startedAt,
+      kind: "investigation_started",
+      severity: "info",
+      summary: `investigation started · ${inv.service}`,
+      stackId,
+      service: inv.service,
+      href: `/investigations/${inv.id}`,
+    });
+    if (inv.status === "complete" && inv.completedAt) {
+      const finishedAt = new Date(inv.completedAt + "Z").getTime();
+      const conf = inv.report?.confidenceScore != null ? Math.round(inv.report.confidenceScore * 100) : null;
+      db.insertEvent({
+        id: evId(),
+        ts: finishedAt,
+        kind: "investigation_completed",
+        severity: "success",
+        summary: conf != null
+          ? `investigation complete · ${inv.service} · confidence ${conf}%`
+          : `investigation complete · ${inv.service}`,
+        stackId,
+        service: inv.service,
+        href: `/investigations/${inv.id}`,
+      });
+    }
+  }
+
+  // Alert webhook events for the two webhook-triggered investigations
+  for (const inv of invs.filter((i) => i.source === "webhook")) {
+    const ts = new Date(inv.createdAt + "Z").getTime() - 30_000; // alert lands 30s before investigation starts
+    db.insertEvent({
+      id: evId(),
+      ts,
+      kind: "alert_received",
+      severity: "warn",
+      summary: `alert · ${inv.service.replace(/-/g, "_")}_error_rate_high · ${inv.service}`,
+      stackId,
+      service: inv.service,
+      meta: { source: "alertmanager" },
+    });
+  }
+
+  // Scan-run completion events (one clean, one with hits)
+  db.insertEvent({
+    id: evId(),
+    ts: ago(2 * HOUR + 47 * MINUTE),
+    kind: "scan_run_complete",
+    severity: "warn",
+    summary: "Scan flagged 2 services",
+    stackId,
+    href: `/scan/runs/${hitRunId}`,
+    meta: { hitsDispatched: 2, trigger: "cron" },
+  });
+  db.insertEvent({
+    id: evId(),
+    ts: ago(6 * HOUR),
+    kind: "scan_run_complete",
+    severity: "info",
+    summary: "Scan clean (15 probed, cron)",
+    stackId,
+    meta: { hitsDispatched: 0, trigger: "cron" },
+  });
+
+  // Provider health crossings — one flap into degraded, then recovery
+  db.insertEvent({
+    id: evId(),
+    ts: ago(8 * HOUR + 17 * MINUTE),
+    kind: "provider_health_changed",
+    severity: "error",
+    summary: "provider grafana: ok → error",
+    meta: { provider: "grafana", from: "ok", to: "error" },
+  });
+  db.insertEvent({
+    id: evId(),
+    ts: ago(8 * HOUR + 11 * MINUTE),
+    kind: "provider_health_changed",
+    severity: "success",
+    summary: "provider grafana: error → ok",
+    meta: { provider: "grafana", from: "error", to: "ok" },
+  });
+
+  // Manual scan trigger
+  db.insertEvent({
+    id: evId(),
+    ts: ago(45 * MINUTE),
+    kind: "scan_triggered_manually",
+    severity: "info",
+    summary: "Manual scan triggered from Operations Desk",
+    stackId,
+    meta: { trigger: "manual" },
+  });
+
   raw.close();
   db.close();
 
