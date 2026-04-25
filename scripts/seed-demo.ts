@@ -653,7 +653,52 @@ function main() {
   });
   console.log(`[seed] inserted 2 scan runs (1 clean, 1 with 2 dispatched hits)`);
 
-  // ── Chat messages (a short conversation around the checkout investigation) ─
+  // ── Chat messages (a varied set of interactions for the demo console) ─────
+  // Order matters: messages share created_at default and order in the recent
+  // panel by rowid ASC. Each block is one self-contained exchange.
+
+  // Exchange 1 — quick health check (standalone Q&A, no investigation)
+  db.createMessage(stackId, {
+    id: `msg_${ulid()}`,
+    role: "user",
+    content: "which services are unhealthy right now?",
+  });
+  db.createMessage(stackId, {
+    id: `msg_${ulid()}`,
+    role: "assistant",
+    content: [
+      "**4 services need attention right now:**",
+      "",
+      "- `payments-worker` — **DOWN** · pod restart loop, 5xx error rate climbing",
+      "- `inventory-worker` — **DOWN** · OOMKilled across 3 pods",
+      "- `auth-api` — **DEGRADED** · p95 latency at 3.2s (baseline 180ms)",
+      "- `notification-worker` — **UNKNOWN** · replicas=0, possibly intentional",
+      "",
+      "The `payments-worker` incident has an active investigation — see Operations Desk for the live RCA.",
+    ].join("\n"),
+  });
+
+  // Exchange 2 — deployment / changes context (markdown list, named individuals)
+  db.createMessage(stackId, {
+    id: `msg_${ulid()}`,
+    role: "user",
+    content: "what shipped to commerce in the last 24h?",
+  });
+  db.createMessage(stackId, {
+    id: `msg_${ulid()}`,
+    role: "assistant",
+    content: [
+      "**3 deploys to the `commerce` namespace in the last 24h:**",
+      "",
+      "- `checkout-api` `v2.14.3` — 4h ago, by alice · config: lower retry timeout `30s → 10s`",
+      "- `payments-worker` `v3.8.1` — 11h ago, by bob · Helm: HPA bound `replicas=3 → 8`",
+      "- `inventory-worker` `v1.22.0` — 18h ago, by carol · new `/batch` ingestion endpoint",
+      "",
+      "The `payments-worker` HPA bump is implicated in the active incident — pool_size in the chart didn't track the replica count, so aggregate connection capacity stayed at the pre-scale-out limit.",
+    ].join("\n"),
+  });
+
+  // Exchange 3 — operator triggers an investigation, sees the RCA card render
   db.createMessage(stackId, {
     id: `msg_${ulid()}`,
     role: "user",

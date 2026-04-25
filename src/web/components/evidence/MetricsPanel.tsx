@@ -5,6 +5,8 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useStackContext } from "../../contexts/StackContext";
 import { extractMetricExpression } from "../../../lib/prom-metric.js";
+import { isStaticDemoBuild } from "../../lib/staticFetch";
+import { synthesizeDemoSeries } from "./demo-series";
 
 export interface StructuredMetricObs {
   metric: string;
@@ -39,6 +41,21 @@ export function MetricsPanel({ timeSeries, textObservations, structuredObservati
 
   useEffect(() => {
     if (textObservations.length === 0) return;
+
+    // Static demo: there's no /api/metrics/extract POST to call (mutations are
+    // 403'd in static mode). Synthesize a believable random-walk series per
+    // observation so the evidence cards render charts instead of empty
+    // "no data" placeholders.
+    if (isStaticDemoBuild()) {
+      const toExtract = textObservations.slice(0, MAX_EXTRACTIONS);
+      setExtractions(toExtract.map((text) => ({
+        text,
+        series: [synthesizeDemoSeries(text, service)],
+        loading: false,
+        failed: false,
+      })));
+      return;
+    }
 
     abortRef.current?.abort();
     const controller = new AbortController();
