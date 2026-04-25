@@ -2,8 +2,10 @@ import { Activity, FileSearch, Radar, Bell, Sparkles } from "lucide-react";
 import type { ActivityTab, ActivityView } from "../App";
 import type { InvestigationsQuery } from "../lib/investigations-query";
 import type { ScanRunsQuery } from "../lib/scan-runs-query";
+import type { PatternsQuery } from "../lib/patterns-query";
 import { InvestigationsPage } from "./InvestigationsPage";
 import { ScansTab } from "./ScansTab";
+import { PatternsTab } from "./PatternsTab";
 
 interface ActivityPageProps {
   /** Discriminated view — `view.tab` narrows `view.query` automatically. */
@@ -11,6 +13,7 @@ interface ActivityPageProps {
   onChangeTab: (tab: ActivityTab) => void;
   onUpdateInvestigationsQuery: (query: InvestigationsQuery) => void;
   onUpdateScansQuery: (query: ScanRunsQuery) => void;
+  onUpdatePatternsQuery: (query: PatternsQuery) => void;
   onViewInvestigation: (id: string) => void;
   onOpenScanRun: (runId: string) => void;
 }
@@ -18,23 +21,20 @@ interface ActivityPageProps {
 const TABS: { id: ActivityTab; label: string; icon: typeof Activity; ready: boolean }[] = [
   { id: "investigations", label: "Investigations", icon: FileSearch, ready: true },
   { id: "scans",          label: "Scans",          icon: Radar,      ready: true },
-  // Events and Patterns ship as scaffolded tabs in this PR but their bodies
-  // land in follow-ups (AP14 / AP12). Empty-state copy is user-facing —
-  // keep it specific so visitors know what's coming.
+  { id: "patterns",       label: "Patterns",       icon: Sparkles,   ready: true },
+  // Events still ships as a scaffolded tab — the body lands in AP14 once
+  // event persistence exists (in-memory ring buffer today doesn't justify a
+  // dedicated page).
   { id: "events",         label: "Events",         icon: Bell,       ready: false },
-  { id: "patterns",       label: "Patterns",       icon: Sparkles,   ready: false },
 ];
 
 const PLACEHOLDER_COPY: Record<ActivityTab, { title: string; body: string } | null> = {
   investigations: null,
   scans: null,
+  patterns: null,
   events: {
     title: "Events tab coming soon",
     body: "Recent system events — investigation lifecycle, scan dispatch, health transitions — are an in-memory ring buffer today. Persistence + a filterable feed lands once the events table migration is in.",
-  },
-  patterns: {
-    title: "Patterns tab coming soon",
-    body: "Learned incident patterns from your thumbs-up feedback. The Operations Desk shows top services today; this tab will list them all with filters by service / severity / date.",
   },
 };
 
@@ -53,6 +53,7 @@ export function ActivityPage({
   onChangeTab,
   onUpdateInvestigationsQuery,
   onUpdateScansQuery,
+  onUpdatePatternsQuery,
   onViewInvestigation,
   onOpenScanRun,
 }: ActivityPageProps) {
@@ -109,6 +110,12 @@ export function ActivityPage({
             query={view.query}
             onUpdateQuery={onUpdateScansQuery}
             onOpenScanRun={onOpenScanRun}
+          />
+        ) : view.tab === "patterns" ? (
+          <PatternsTab
+            query={view.query}
+            onUpdateQuery={onUpdatePatternsQuery}
+            onViewInvestigation={onViewInvestigation}
           />
         ) : placeholder ? (
           <div className="h-full flex flex-col items-center justify-center gap-3 px-8 text-center">

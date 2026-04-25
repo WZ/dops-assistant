@@ -34,6 +34,8 @@ interface DashboardProps {
   onViewAllInvestigations: () => void;
   /** Navigate to the dedicated /activity/scans tab. */
   onViewAllScans?: () => void;
+  /** Navigate to the dedicated /activity/patterns tab. */
+  onViewAllPatterns?: () => void;
   onOpenScanRun: (runId: string) => void;
   stackName?: string;
   setupStage?: import("../hooks/useSetupStage").SetupStage | null;
@@ -60,6 +62,7 @@ export function Dashboard({
   onViewAllServices,
   onViewAllInvestigations,
   onViewAllScans,
+  onViewAllPatterns,
   onOpenScanRun,
   stackName,
   setupStage,
@@ -323,8 +326,12 @@ export function Dashboard({
 
     Promise.all(
       topServices.map((svc) =>
+        // Endpoint shape changed in v0.3.4.0: was a bare array, now
+        // `{rows, total, hasMore, services}`. Extract `rows` and tolerate
+        // the legacy bare-array case for safety.
         stackFetch(`/api/patterns?service=${encodeURIComponent(svc)}`)
           .then((r) => r.json())
+          .then((data) => Array.isArray(data) ? data : (data?.rows ?? []))
           .catch(() => []),
       ),
     ).then((results) => setPatterns(results.flat()));
@@ -784,25 +791,36 @@ export function Dashboard({
           {/* Section F: Learned Patterns */}
           {patterns.length > 0 && (
             <section aria-label="Learned Patterns" className="mb-4">
-              <button
-                aria-expanded={patternsExpanded}
-                onClick={() => setPatternsExpanded(!patternsExpanded)}
-                className="flex items-center gap-2 mb-3 group cursor-pointer"
-              >
-                <div className="w-0.5 h-3.5 rounded-full bg-primary/40" />
-                <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60 group-hover:text-muted-foreground/80 transition-colors">
-                  Learned Patterns ({patterns.length})
-                </h2>
-                <svg
-                  className={`w-3 h-3 text-muted-foreground/40 transition-transform ${patternsExpanded ? "rotate-180" : ""}`}
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
+              <div className="flex items-center justify-between mb-3">
+                <button
+                  aria-expanded={patternsExpanded}
+                  onClick={() => setPatternsExpanded(!patternsExpanded)}
+                  className="flex items-center gap-2 group cursor-pointer"
                 >
-                  <path d="m6 9 6 6 6-6" />
-                </svg>
-              </button>
+                  <div className="w-0.5 h-3.5 rounded-full bg-primary/40" />
+                  <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60 group-hover:text-muted-foreground/80 transition-colors">
+                    Learned Patterns ({patterns.length})
+                  </h2>
+                  <svg
+                    className={`w-3 h-3 text-muted-foreground/40 transition-transform ${patternsExpanded ? "rotate-180" : ""}`}
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <path d="m6 9 6 6 6-6" />
+                  </svg>
+                </button>
+                {onViewAllPatterns && (
+                  <button
+                    type="button"
+                    onClick={onViewAllPatterns}
+                    className="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground/60 hover:text-primary transition-colors"
+                  >
+                    View all →
+                  </button>
+                )}
+              </div>
               <div
                 className="grid transition-[grid-template-rows] duration-300 ease-out"
                 style={{ gridTemplateRows: patternsExpanded ? "1fr" : "0fr" }}
@@ -825,7 +843,7 @@ export function Dashboard({
                           {p.service}
                         </span>
                         <span className="font-mono text-[10px] text-muted-foreground/50 truncate">
-                          {p.rootCause}
+                          {(p as { root_cause?: string; rootCause?: string }).root_cause ?? p.rootCause}
                         </span>
                       </div>
                     ))}

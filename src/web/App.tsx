@@ -21,6 +21,7 @@ import { DemoBanner } from "./components/DemoBanner";
 import { useRoute, viewToUrl } from "./hooks/useRoute";
 import type { InvestigationsQuery } from "./lib/investigations-query";
 import type { ScanRunsQuery } from "./lib/scan-runs-query";
+import type { PatternsQuery } from "./lib/patterns-query";
 import { StackSwitcher } from "./components/StackSwitcher";
 import { StackProvider } from "./contexts/StackContext";
 import { useWebSocket } from "./hooks/useWebSocket";
@@ -44,14 +45,14 @@ export type ActivityTab = "investigations" | "scans" | "events" | "patterns";
 
 /**
  * Per-tab query shapes. Discriminated by `tab` so callers narrow with a
- * single check. Events and patterns carry no URL state in this PR — those
- * tabs are placeholders; their query types fill in when AP14 / AP12 ship.
+ * single check. Events still carries no URL state — that tab's filter shape
+ * lands when AP14 ships (blocked on persistence).
  */
 export type ActivityView =
   | { type: "activity"; tab: "investigations"; query: InvestigationsQuery }
   | { type: "activity"; tab: "scans"; query: ScanRunsQuery }
-  | { type: "activity"; tab: "events"; query: Record<string, never> }
-  | { type: "activity"; tab: "patterns"; query: Record<string, never> };
+  | { type: "activity"; tab: "patterns"; query: PatternsQuery }
+  | { type: "activity"; tab: "events"; query: Record<string, never> };
 
 export type LeftPaneView =
   | { type: "dashboard" }
@@ -468,6 +469,7 @@ export function App() {
                       onViewAllServices={() => setLeftPane({ type: "services" })}
                       onViewAllInvestigations={() => setLeftPane({ type: "activity", tab: "investigations", query: {} })}
                       onViewAllScans={() => setLeftPane({ type: "activity", tab: "scans", query: {} })}
+                      onViewAllPatterns={() => setLeftPane({ type: "activity", tab: "patterns", query: {} })}
                       onOpenScanRun={(runId) => setLeftPane({ type: "scanrun", runId })}
                       stackName={hasMultipleStacks ? activeStack?.name : undefined}
                       setupStage={setupStage}
@@ -554,6 +556,9 @@ export function App() {
                       }
                       onUpdateScansQuery={(query) =>
                         setLeftPane({ type: "activity", tab: "scans", query }, { replace: true })
+                      }
+                      onUpdatePatternsQuery={(query) =>
+                        setLeftPane({ type: "activity", tab: "patterns", query }, { replace: true })
                       }
                       onViewInvestigation={(id) => setLeftPane({ type: "investigation", id })}
                       onOpenScanRun={(runId) => setLeftPane({ type: "scanrun", runId })}
