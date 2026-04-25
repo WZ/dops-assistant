@@ -3,9 +3,14 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"/></a>
-  <img src="https://img.shields.io/badge/node-%E2%89%A520-339933" alt="Node >= 20"/>
-  <img src="https://img.shields.io/badge/typescript-ESM-3178c6" alt="TypeScript ESM"/>
+  <a href="https://wz.github.io/dops-assistant/"><img src="https://img.shields.io/badge/demo-live-brightgreen.svg?style=for-the-badge" alt="Live Demo"/></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg?style=for-the-badge" alt="License: MIT"/></a>
+  <img src="https://img.shields.io/badge/node-%E2%89%A520-339933?style=for-the-badge" alt="Node >= 20"/>
+  <img src="https://img.shields.io/badge/typescript-ESM-3178c6?style=for-the-badge" alt="TypeScript ESM"/>
+</p>
+
+<p align="center">
+  <strong>👉 <a href="https://wz.github.io/dops-assistant/">Try the live demo</a></strong> — read-only, seeded with realistic incidents, no signup
 </p>
 
 AI-powered incident response for DevOps teams. Connects to your monitoring stack via [MCP](https://modelcontextprotocol.io/) to investigate incidents, scan for problems before they alert, and deliver structured RCA reports with evidence — automatically. Skip the part where you tab between five dashboards at 3am trying to figure out what broke.
@@ -223,7 +228,9 @@ The default landing page is a live SOC-style console: health strip, service cata
 
 ## Try It
 
-Want to click around before cloning? The entire UI above runs as a read-only demo against seeded fixture data.
+**Live demo: [wz.github.io/dops-assistant](https://wz.github.io/dops-assistant/)** — fully interactive, hosted on GitHub Pages, no signup. Click into any investigation, browse the service catalog, drill into a scan run. Mutations are disabled (it's static), but every read path is real.
+
+Want to run the same thing yourself?
 
 **Locally (Node server):**
 

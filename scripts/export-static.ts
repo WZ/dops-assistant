@@ -65,7 +65,9 @@ const STATIC_TOP: string[] = [
   "/api/skills",
   "/api/stacks",
   "/api/stats/kpi",
-  "/api/events/recent",
+  "/api/events/recent",       // in-memory ring (Ops Desk event rail)
+  "/api/events",               // persisted feed (/activity/events tab)
+  "/api/patterns",             // unfiltered list (/activity/patterns tab)
   "/api/messages",
 ];
 
