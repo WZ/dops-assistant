@@ -76,6 +76,54 @@ function isProbablyK8s(tools: Record<string, unknown>): { eventsTool: ToolExecut
   return { eventsTool, podsTool };
 }
 
+interface RawK8sEvent {
+  reason: string;
+  message?: string;
+  lastTimestamp?: string;
+  firstTimestamp?: string;
+  type?: string;
+  involvedObject: { kind: string; name: string; uid?: string; namespace?: string };
+}
+
+/**
+ * Resolve a pod / owner-ref name to a registered service. Mirrors the
+ * matching logic in service-health-poller.ts:165-234 (exact-then-longest-prefix).
+ */
+function resolveServiceForName(name: string, services: Set<string>): string | null {
+  if (services.has(name)) return name;
+  let best = "";
+  for (const svc of services) {
+    if ((name.startsWith(svc + "-") || name.startsWith(svc + "_")) && svc.length > best.length) {
+      best = svc;
+    }
+  }
+  return best || null;
+}
+
+export function matchEventsToServices(
+  events: RawK8sEvent[],
+  services: Set<string>,
+  badReasons: Set<string>,
+  ignoreReasons: Set<string>,
+): K8sEventHit[] {
+  const hits: K8sEventHit[] = [];
+  for (const ev of events) {
+    if (ignoreReasons.has(ev.reason)) continue;
+    if (!badReasons.has(ev.reason)) continue;
+    const service = resolveServiceForName(ev.involvedObject.name, services);
+    if (!service) continue;
+    hits.push({
+      service,
+      podUid: ev.involvedObject.uid ?? `${ev.involvedObject.kind}/${ev.involvedObject.name}`,
+      reason: ev.reason,
+      message: ev.message ?? "",
+      occurredAt: ev.lastTimestamp ?? ev.firstTimestamp ?? new Date().toISOString(),
+      source: "event",
+    });
+  }
+  return hits;
+}
+
 export class K8sEventPoller {
   private readonly resolveProviders: () => MastraProvider[];
   private readonly registryStore: ServiceRegistryStore;

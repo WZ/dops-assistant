@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   K8sEventPoller,
+  matchEventsToServices,
   type K8sEventPollerDeps,
   type K8sEventHit,
   type DegradedReason,
@@ -99,5 +100,66 @@ describe("K8sEventPoller.resolveInfraTools", () => {
     }));
     await poller.poll();
     expect(poller.getDegradedReason()).toBeNull();
+  });
+});
+
+describe("matchEventsToServices", () => {
+  const services = new Set(["serviceA", "serviceB"]);
+  const badReasons = new Set(["OOMKilled", "CrashLoopBackOff"]);
+  const ignoreReasons = new Set(["Completed"]);
+
+  it("matches event for registered service via deployment owner ref", () => {
+    const events = [
+      {
+        reason: "OOMKilled",
+        message: "Container killed",
+        lastTimestamp: "2026-04-26T12:00:00Z",
+        involvedObject: { kind: "Pod", name: "serviceA-7f8c-xyz", uid: "uid-1" },
+        type: "Warning",
+      },
+    ];
+    const hits = matchEventsToServices(events, services, badReasons, ignoreReasons);
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toMatchObject({
+      service: "serviceA",
+      reason: "OOMKilled",
+      podUid: "uid-1",
+      source: "event",
+    });
+  });
+
+  it("skips events with reasons not on the bad list", () => {
+    const events = [
+      { reason: "Pulling", message: "x", lastTimestamp: "2026-04-26T12:00:00Z",
+        involvedObject: { kind: "Pod", name: "serviceA-abc", uid: "u1" }, type: "Normal" },
+    ];
+    expect(matchEventsToServices(events, services, badReasons, ignoreReasons)).toEqual([]);
+  });
+
+  it("skips events with reasons on the ignore list, even if also on bad list", () => {
+    const ignoreOverlap = new Set(["OOMKilled"]);
+    const events = [
+      { reason: "OOMKilled", message: "x", lastTimestamp: "2026-04-26T12:00:00Z",
+        involvedObject: { kind: "Pod", name: "serviceA-abc", uid: "u1" }, type: "Warning" },
+    ];
+    expect(matchEventsToServices(events, services, badReasons, ignoreOverlap)).toEqual([]);
+  });
+
+  it("skips events for pods not matching any registered service", () => {
+    const events = [
+      { reason: "OOMKilled", message: "x", lastTimestamp: "2026-04-26T12:00:00Z",
+        involvedObject: { kind: "Pod", name: "kube-proxy-abc", uid: "u1" }, type: "Warning" },
+    ];
+    expect(matchEventsToServices(events, services, badReasons, ignoreReasons)).toEqual([]);
+  });
+
+  it("uses longest-prefix match for pod-hash suffixes", () => {
+    const longSvcs = new Set(["serviceA", "serviceA-cluster-agent"]);
+    const events = [
+      { reason: "OOMKilled", message: "x", lastTimestamp: "2026-04-26T12:00:00Z",
+        involvedObject: { kind: "Pod", name: "serviceA-cluster-agent-7f8-xyz", uid: "u1" }, type: "Warning" },
+    ];
+    const hits = matchEventsToServices(events, longSvcs, badReasons, ignoreReasons);
+    expect(hits[0]?.service).toBe("serviceA-cluster-agent");
   });
 });
