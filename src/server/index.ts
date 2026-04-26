@@ -303,6 +303,91 @@ async function main() {
       });
   };
 
+  // Wire k8s event handler for auto-investigate. Same dispatch shape as
+  // onHealthTransition above. SYNC GUARD: no await between
+  // sharedDedup.shouldInvestigate and sharedDedup.markStarted — this is what
+  // makes cross-detector dedup race-safe (see spec at
+  // docs/superpowers/specs/2026-04-26-k8s-event-poller-design.md).
+  stackManager.onK8sEvent = (stackId, hit) => {
+    if (db.isServiceHidden(stackId, hit.service)) return;
+
+    logger.info(
+      { stackId, service: hit.service, reason: hit.reason, source: hit.source, podUid: hit.podUid },
+      "K8sEventPoller: hit detected",
+    );
+
+    if (!sharedDedup.shouldInvestigate(stackId, hit.service).allowed) {
+      logger.info(
+        { stackId, service: hit.service, activeCount: sharedDedup.getActiveCount() },
+        "K8sEventPoller: auto-investigate suppressed by dedup/concurrency",
+      );
+      return;
+    }
+
+    const ctx = stackManager.getContext(stackId);
+    const allServices = [
+      ...config.services,
+      ...ctx.serviceRegistry.load().filter((s) => !config.services.some((c) => c.name === s.name)),
+    ];
+    const serviceConfig = allServices.find((s) => s.name === hit.service);
+    if (!serviceConfig) {
+      logger.warn(
+        { stackId, service: hit.service },
+        "K8sEventPoller: service not found in config or registry, skipping auto-investigate",
+      );
+      return;
+    }
+
+    const messageParts = [
+      `K8s event detected on ${hit.service}: reason=${hit.reason} source=${hit.source}.`,
+      `Pod UID: ${hit.podUid}. Occurred at: ${hit.occurredAt}.`,
+    ];
+    if (hit.message) messageParts.push(`Detail: ${hit.message}`);
+    if (hit.restartCount !== undefined) messageParts.push(`restartCount: ${hit.restartCount}.`);
+    if (serviceConfig.metrics?.length) {
+      messageParts.push(
+        `Known metrics: ${serviceConfig.metrics.map((m) => `${m.description} (${m.query})`).slice(0, 3).join("; ")}`,
+      );
+    }
+    if (serviceConfig.logLabels && Object.keys(serviceConfig.logLabels).length > 0) {
+      const labels = Object.entries(serviceConfig.logLabels).map(([k, v]) => `${k}="${v}"`).join(",");
+      messageParts.push(`Log selector: {${labels}}`);
+    }
+
+    logger.info(
+      { stackId, service: hit.service },
+      "K8sEventPoller: triggering auto-investigate (template=standard)",
+    );
+    sharedDedup.markStarted(stackId, hit.service);   // SYNC — no await above
+
+    const providers = ctx.providerRegistry.getProviders();
+    createMastraAdapters({
+      config,
+      providers,
+      registryStore: ctx.serviceRegistry,
+      datasourceUidMap: ctx.providerRegistry.buildDatasourceUidMap(),
+      db,
+      stackId,
+    })
+      .then(({ investigationAgent }) => {
+        const runner = new InvestigationRunner({ db, investigationAgent, skillStore, globalOnComplete });
+        return runner.run({
+          service: serviceConfig,
+          message: messageParts.join("\n"),
+          template: "standard",
+          stackId,
+          readOnlyTools: true,
+          source: "k8s-event-poller",
+        });
+      })
+      .catch((err) => {
+        logger.error({ err, stackId, service: hit.service }, "K8sEventPoller: auto-investigate failed");
+      })
+      .finally(() => {
+        sharedDedup.markCompleted();
+      });
+  };
+
   // Wire scan anomaly handler: for each flagged service, dedup-check + lazy-runner
   // This mirrors the onHealthTransition pattern above. Scheduler does NOT await
   // this callback, so each investigation runs in the background.

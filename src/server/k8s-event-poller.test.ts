@@ -8,6 +8,7 @@ import {
   type K8sEventHit,
   type DegradedReason,
 } from "./k8s-event-poller.js";
+import { InvestigationDedup } from "./investigation-dedup.js";
 import type { MastraProvider } from "../mcp/provider.js";
 import type { ServiceRegistryStore } from "../services/registry.js";
 import type { Database } from "./db.js";
@@ -367,5 +368,28 @@ describe("extractNamespace", () => {
   });
   it("returns undefined when logLabels missing", () => {
     expect(extractNamespace({ name: "x" } as any)).toBeUndefined();
+  });
+});
+
+describe("K8sEventPoller dedup interaction", () => {
+  it("never both fires when a sibling detector already markStarted'd the same service", () => {
+    const dedup = new InvestigationDedup({ dedupWindowSeconds: 300, maxConcurrent: 3 });
+    // Sibling detector took the lock first.
+    expect(dedup.shouldInvestigate("stack1", "svcA").allowed).toBe(true);
+    dedup.markStarted("stack1", "svcA");
+
+    // K8s poller arrives second on the same tick.
+    expect(dedup.shouldInvestigate("stack1", "svcA").allowed).toBe(false);
+  });
+
+  it("re-allows after window expires", () => {
+    vi.useFakeTimers();
+    const dedup = new InvestigationDedup({ dedupWindowSeconds: 1, maxConcurrent: 3 });
+    dedup.markStarted("stack1", "svcA");
+    expect(dedup.shouldInvestigate("stack1", "svcA").allowed).toBe(false);
+    dedup.markCompleted();
+    vi.advanceTimersByTime(1100);
+    expect(dedup.shouldInvestigate("stack1", "svcA").allowed).toBe(true);
+    vi.useRealTimers();
   });
 });
