@@ -12,7 +12,9 @@
  *   - "infrastructure-not-kubernetes"   — infra MCP wired but lacks k8s tools (ECS/Nomad/etc)
  *   - "infrastructure-call-failed"      — k8s tool call threw or timed out
  *
- * The poll() body is filled across tasks 3-7 of the implementation plan.
+ * Hits flow: poll → list_events + list_pods → match{Events,Restarts}ToServices
+ *           → within-tick dedup → maxEventsPerTick cap → onK8sEvent callback.
+ * Cross-detector dedup is enforced upstream by sharedDedup keyed on (stackId, service).
  */
 import { createLogger } from "../logger.js";
 import type { MastraProvider } from "../mcp/provider.js";
