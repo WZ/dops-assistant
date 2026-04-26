@@ -34,6 +34,8 @@ import { createInfraAgent } from "../../agents/infra.js";
 import { createChangesAgent } from "../../agents/changes.js";
 import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
 import { createLogger } from "../../logger.js";
+import { withLlmRetry } from "../../agents/shared/llm-retry.js";
+import { isLlmUnavailable, LlmUnavailableError } from "../../agents/shared/llm-errors.js";
 
 const logger = createLogger("evidence");
 
@@ -160,7 +162,8 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
       const generateStartMs = Date.now();
       logLlmCallStart({ callId, agent: phaseName, phase: phaseName, promptChars: prompt.length, prompt });
       try {
-        agentResult = await agent.generate(prompt, {
+        agentResult = await withLlmRetry(
+          () => agent.generate(prompt, {
           onStepFinish: (step: any) => {
             try {
               iterationCount++;
@@ -194,13 +197,16 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
               debug(`${phaseName.toUpperCase()} onStepFinish error:`, err);
             }
           },
-        });
+        }),
+          workflowConfig.llmRetry ?? { maxAttempts: 1 },
+        );
       } catch (err) {
+        if (err instanceof LlmUnavailableError) throw err;
         const errMsg = err instanceof Error ? err.message : String(err);
         debug(`${phaseName.toUpperCase()} agent.generate error:`, err);
         generateError = errMsg;
         // Only set llmError for network errors (controls phase UI state)
-        if (/ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ENETUNREACH|EHOSTUNREACH|ECONNRESET|Cannot connect to API|502|503/i.test(errMsg)) {
+        if (isLlmUnavailable(err)) {
           llmError = errMsg;
         }
       }
