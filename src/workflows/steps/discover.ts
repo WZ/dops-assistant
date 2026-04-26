@@ -9,6 +9,8 @@ import { ProbeMetricRuleSchema } from "../../config/schema.js";
 import type { OnToolCallEnriched, OnIteration } from "../../types/agent-interfaces.js";
 import type { Skill } from "../../skills/store.js";
 import type { LlmRetryConfig } from "../../agents/shared/llm-retry.js";
+import { withLlmRetry } from "../../agents/shared/llm-retry.js";
+import { LlmUnavailableError } from "../../agents/shared/llm-errors.js";
 import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
 import { logLlmCall, logLlmCallStart, logToolCall, newCallId, type ToolCallEvent } from "../../server/llm-logger.js";
 import { createLogger } from "../../logger.js";
@@ -331,7 +333,8 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
     });
 
     try {
-      const result = await agent.generate(discoverPrompt, {
+      const result = await withLlmRetry(
+        () => agent.generate(discoverPrompt, {
         providerOptions: { "openai-compatible": { max_tokens: 32768 } },
         onStepFinish: (step: any) => {
           if (!step.toolResults?.length) return;
@@ -360,7 +363,9 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
             }
           }
         },
-      } as any);
+      } as any),
+        config.llmRetry ?? { maxAttempts: 1 },
+      );
 
       const usage = (result as any).totalUsage ?? (result as any).usage;
       const inTok = usage?.inputTokens ?? 0;
@@ -425,6 +430,10 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
         error: message,
       });
       logger.warn({ attempt, err: message }, "discovery attempt failed");
+      // LLM-unavailable already retried inside withLlmRetry — bypass the
+      // outer parse-retry loop (parse-retry is for malformed JSON, not
+      // for sustained network outages).
+      if (err instanceof LlmUnavailableError) throw err;
       if (attempt === MAX_RETRIES) throw err;
     }
   }
