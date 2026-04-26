@@ -80,9 +80,13 @@ describe("notifySlack", () => {
     expect(confidenceField.text).toContain("92%");
   });
 
-  it("includes a View Investigation button when grafanaUrl is provided", async () => {
+  it("includes a View Investigation button with the canonical stack-scoped URL", async () => {
+    // Regression: previously emitted `${grafanaUrl}/#/investigations/:id`
+    // which used hash routing on a pushState SPA — the hash got ignored,
+    // landing the user on the Grafana homepage. Now uses the SPA's
+    // /stacks/:stackId/investigations/:id form.
     await notifySlack(
-      { slackWebhookUrl: "https://hooks.slack.com/test", grafanaUrl: "https://grafana.example.com" },
+      { slackWebhookUrl: "https://hooks.slack.com/test", appBaseUrl: "https://dops.example.com", stackId: "prod" },
       "inv_abc",
       "payments-api",
       makeReport(),
@@ -91,10 +95,55 @@ describe("notifySlack", () => {
     const body = JSON.parse(fetchSpy.mock.calls[0]![1].body);
     const actionsBlock = body.blocks.find((b: any) => b.type === "actions");
     expect(actionsBlock).toBeDefined();
-    expect(actionsBlock.elements[0].url).toBe("https://grafana.example.com/#/investigations/inv_abc");
+    expect(actionsBlock.elements[0].url).toBe("https://dops.example.com/stacks/prod/investigations/inv_abc");
   });
 
-  it("omits actions block when grafanaUrl is not provided", async () => {
+  it("falls back to the legacy /investigations/:id form when stackId is unknown", async () => {
+    // Test-notification path doesn't have a real stackId. Locate-and-redirect
+    // on the SPA side handles the legacy form, so the link still works.
+    await notifySlack(
+      { slackWebhookUrl: "https://hooks.slack.com/test", appBaseUrl: "https://dops.example.com" },
+      "inv_abc",
+      "payments-api",
+      makeReport(),
+    );
+
+    const body = JSON.parse(fetchSpy.mock.calls[0]![1].body);
+    const actionsBlock = body.blocks.find((b: any) => b.type === "actions");
+    expect(actionsBlock.elements[0].url).toBe("https://dops.example.com/investigations/inv_abc");
+  });
+
+  it("strips a trailing slash on appBaseUrl so the URL doesn't double-slash", async () => {
+    await notifySlack(
+      { slackWebhookUrl: "https://hooks.slack.com/test", appBaseUrl: "https://dops.example.com/", stackId: "prod" },
+      "inv_abc",
+      "payments-api",
+      makeReport(),
+    );
+
+    const body = JSON.parse(fetchSpy.mock.calls[0]![1].body);
+    const actionsBlock = body.blocks.find((b: any) => b.type === "actions");
+    expect(actionsBlock.elements[0].url).toBe("https://dops.example.com/stacks/prod/investigations/inv_abc");
+  });
+
+  it("encodes URL segments so the link survives a future schema broadening", async () => {
+    // ULIDs are alphanumeric so this isn't a hot path today; defensive
+    // against any future widening of the stack-id charset (slugs, etc.).
+    await notifySlack(
+      { slackWebhookUrl: "https://hooks.slack.com/test", appBaseUrl: "https://dops.example.com", stackId: "stack/with slash" },
+      "inv with space",
+      "payments-api",
+      makeReport(),
+    );
+
+    const body = JSON.parse(fetchSpy.mock.calls[0]![1].body);
+    const actionsBlock = body.blocks.find((b: any) => b.type === "actions");
+    expect(actionsBlock.elements[0].url).toBe(
+      "https://dops.example.com/stacks/stack%2Fwith%20slash/investigations/inv%20with%20space",
+    );
+  });
+
+  it("omits actions block when appBaseUrl is not provided", async () => {
     await notifySlack(
       { slackWebhookUrl: "https://hooks.slack.com/test" },
       "inv_abc",

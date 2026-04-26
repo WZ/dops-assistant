@@ -99,7 +99,7 @@ export interface RunnerDeps {
   investigationAgent: IInvestigationAgent;
   skillStore?: SkillStore;
   /** Global callback fired after every successful investigation (e.g. Slack notification) */
-  globalOnComplete?: (investigationId: string, service: string, report: RcaReport, source: NotificationSource) => void;
+  globalOnComplete?: (investigationId: string, service: string, report: RcaReport, stackId: string | undefined, source: NotificationSource) => void;
 }
 
 export interface RunOptions {
@@ -126,7 +126,7 @@ export class InvestigationRunner {
   private db: Database;
   private investigationAgent: IInvestigationAgent;
   private skillStore?: SkillStore;
-  private globalOnComplete?: (investigationId: string, service: string, report: RcaReport, source: NotificationSource) => void;
+  private globalOnComplete?: (investigationId: string, service: string, report: RcaReport, stackId: string | undefined, source: NotificationSource) => void;
 
   constructor(deps: RunnerDeps) {
     this.db = deps.db;
@@ -334,7 +334,7 @@ export class InvestigationRunner {
 
       // Fire global completion handler (e.g. Slack notifications)
       try {
-        this.globalOnComplete?.(invId, service.name, report, source);
+        this.globalOnComplete?.(invId, service.name, report, stackId, source);
       } catch (globalErr) {
         logger.warn({ err: globalErr, invId }, "Global onComplete handler failed");
       }

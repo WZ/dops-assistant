@@ -11,8 +11,18 @@ const logger = createLogger();
 export interface SlackNotifierOptions {
   /** Slack incoming webhook URL */
   slackWebhookUrl: string;
-  /** Optional Grafana base URL for linking to investigations */
-  grafanaUrl?: string;
+  /** Base URL of the dops-assistant SPA, used to build the "View
+   *  Investigation" deep link. Pre-stack-scoped versions of this notifier
+   *  shipped this as `grafanaUrl` and emitted a hash-routed URL
+   *  (`${url}/#/investigations/...`) — but the SPA uses pushState, not hash
+   *  routing, so the link landed on the Grafana homepage and the hash was
+   *  ignored. Drop the link when this isn't configured rather than
+   *  pretending. */
+  appBaseUrl?: string;
+  /** Owning stack of the investigation. Threaded into the canonical
+   *  `/stacks/:stackId/investigations/:id` URL. Optional so the test
+   *  notification path (which has no real investigation) still renders. */
+  stackId?: string;
 }
 
 /**
@@ -27,7 +37,7 @@ export async function notifySlack(
   service: string,
   report: RcaReport,
 ): Promise<void> {
-  const { slackWebhookUrl, grafanaUrl } = opts;
+  const { slackWebhookUrl, appBaseUrl, stackId } = opts;
 
   const severity = report.severity ?? "unknown";
   const confidence = report.confidenceScore != null
@@ -69,14 +79,18 @@ export async function notifySlack(
     });
   }
 
-  if (grafanaUrl) {
+  if (appBaseUrl) {
+    const base = appBaseUrl.replace(/\/$/, "");
+    const path = stackId
+      ? `/stacks/${encodeURIComponent(stackId)}/investigations/${encodeURIComponent(investigationId)}`
+      : `/investigations/${encodeURIComponent(investigationId)}`;
     blocks.push({
       type: "actions",
       elements: [
         {
           type: "button",
           text: { type: "plain_text", text: "View Investigation" },
-          url: `${grafanaUrl.replace(/\/$/, "")}/#/investigations/${investigationId}`,
+          url: `${base}${path}`,
         },
       ],
     });

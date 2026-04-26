@@ -2037,8 +2037,13 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     }
     try {
       const { notifySlack } = await import("./slack-notifier.js");
+      // Pass appBaseUrl so the operator can verify the "View Investigation"
+      // button shape end-to-end. The button URL points at a synthetic id
+      // that 404s in the SPA — the user is testing the wiring, not the
+      // landing page, so a not-found pane is the honest outcome.
+      const appBaseUrl = config.notifications?.email?.appBaseUrl;
       await notifySlack(
-        { slackWebhookUrl: slackUrl },
+        { slackWebhookUrl: slackUrl, appBaseUrl },
         "test_notification",
         "Test Service",
         {
