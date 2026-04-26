@@ -112,6 +112,14 @@ function makeConfig(overrides?: Partial<Config>): Config {
       },
     },
     branding: { title: "dops", subtitle: "assistant" },
+    k8sEvents: {
+      enabled: false,
+      intervalSeconds: 300,
+      badReasons: ["OOMKilled"],
+      ignoreReasons: ["Completed"],
+      maxEventsPerTick: 50,
+      queryTimeoutMs: 15_000,
+    },
     ...overrides,
   } as Config;
 }
