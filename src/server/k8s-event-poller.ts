@@ -16,6 +16,7 @@
  */
 import { createLogger } from "../logger.js";
 import type { MastraProvider } from "../mcp/provider.js";
+import { getToolsByRole } from "../mcp/provider.js";
 import type { ServiceRegistryStore } from "../services/registry.js";
 import type { Database } from "./db.js";
 import type { K8sEventsConfig } from "../config/schema.js";
@@ -48,6 +49,32 @@ export interface K8sEventPollerDeps {
 }
 
 const RECENT_HITS_CAP = 100;
+
+interface ToolExecutor {
+  execute: (args: unknown, context?: { abortSignal?: AbortSignal }) => Promise<unknown>;
+}
+
+function findToolByShape(
+  tools: Record<string, unknown>,
+  matchers: Array<string | RegExp>,
+): ToolExecutor | null {
+  for (const matcher of matchers) {
+    for (const [name, tool] of Object.entries(tools)) {
+      const matched = typeof matcher === "string"
+        ? name === matcher || name.endsWith(matcher) || name === matcher.replace(/_/g, "-")
+        : matcher.test(name);
+      if (matched) return tool as ToolExecutor;
+    }
+  }
+  return null;
+}
+
+function isProbablyK8s(tools: Record<string, unknown>): { eventsTool: ToolExecutor; podsTool: ToolExecutor } | null {
+  const eventsTool = findToolByShape(tools, ["list_events", "get_events", "events_list", /event/i]);
+  const podsTool = findToolByShape(tools, ["list_pods", "get_pods", "pods_list", /^pod/i]);
+  if (!eventsTool || !podsTool) return null;
+  return { eventsTool, podsTool };
+}
 
 export class K8sEventPoller {
   private readonly resolveProviders: () => MastraProvider[];
@@ -99,7 +126,43 @@ export class K8sEventPoller {
   }
 
   async poll(): Promise<void> {
-    // Filled in Task 7.
+    this.lastTickAt = new Date();
+    const tools = await this.resolveInfraTools();
+    if (!tools) return;
+    // Tasks 4-7 fill in the rest.
+  }
+
+  private async resolveInfraTools(): Promise<{ eventsTool: ToolExecutor; podsTool: ToolExecutor } | null> {
+    let tools: Record<string, unknown>;
+    try {
+      tools = await getToolsByRole(this.resolveProviders(), "infrastructure") as Record<string, unknown>;
+    } catch {
+      this.transitionDegraded("infrastructure-role-not-resolved");
+      return null;
+    }
+    if (!tools || Object.keys(tools).length === 0) {
+      this.transitionDegraded("infrastructure-role-not-resolved");
+      return null;
+    }
+    const k8sTools = isProbablyK8s(tools);
+    if (!k8sTools) {
+      this.transitionDegraded("infrastructure-not-kubernetes");
+      return null;
+    }
+    this.transitionDegraded(null);
+    return k8sTools;
+  }
+
+  private transitionDegraded(next: DegradedReason | null): void {
+    if (this.degradedReason === next) return;
+    if (next === null) {
+      logger.info({ stackId: this.stackId, from: this.degradedReason }, "K8sEventPoller: recovered");
+    } else if (next === "infrastructure-not-kubernetes") {
+      logger.info({ stackId: this.stackId }, "K8sEventPoller: infra MCP is not kubernetes — disabling poller for this stack");
+    } else {
+      logger.warn({ stackId: this.stackId, reason: next }, "K8sEventPoller: degraded");
+    }
+    this.degradedReason = next;
   }
 
   getLastTickAt(): Date | null { return this.lastTickAt; }

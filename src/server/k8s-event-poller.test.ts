@@ -27,7 +27,7 @@ function makeDb(): Database {
 
 function makeDeps(opts: Partial<K8sEventPollerDeps> = {}): K8sEventPollerDeps {
   return {
-    providers: [],
+    providers: opts.providers ?? [],
     registryStore: opts.registryStore ?? makeRegistryStore(),
     db: opts.db ?? makeDb(),
     stackId: opts.stackId ?? "test-stack",
@@ -59,5 +59,45 @@ describe("K8sEventPoller skeleton", () => {
     poller.stop();
     poller.stop();    // second call is a no-op
     // No assertion needed — just verify nothing throws.
+  });
+});
+
+function makeProvider(toolMap: Record<string, { execute: (args: unknown) => Promise<unknown> }>): MastraProvider {
+  return {
+    name: "infra",
+    roles: ["infrastructure"],
+    client: {
+      listTools: vi.fn().mockResolvedValue(toolMap),
+    },
+  } as unknown as MastraProvider;
+}
+
+describe("K8sEventPoller.resolveInfraTools", () => {
+  it("sets infrastructure-role-not-resolved when no infra provider exists", async () => {
+    const poller = new K8sEventPoller(makeDeps({ providers: [] }));
+    await poller.poll();
+    expect(poller.getDegradedReason()).toBe("infrastructure-role-not-resolved");
+  });
+
+  it("sets infrastructure-not-kubernetes when infra provider exists but lacks k8s tools", async () => {
+    const provider = makeProvider({
+      list_clusters: { execute: vi.fn().mockResolvedValue({}) },
+    });
+    const poller = new K8sEventPoller(makeDeps({ providers: [provider] }));
+    await poller.poll();
+    expect(poller.getDegradedReason()).toBe("infrastructure-not-kubernetes");
+  });
+
+  it("clears degraded state once both list_pods and list_events are present", async () => {
+    const provider = makeProvider({
+      list_pods: { execute: vi.fn().mockResolvedValue({ content: [{ type: "text", text: '{"items":[]}' }] }) },
+      list_events: { execute: vi.fn().mockResolvedValue({ content: [{ type: "text", text: '{"items":[]}' }] }) },
+    });
+    const poller = new K8sEventPoller(makeDeps({
+      providers: [provider],
+      registryStore: makeRegistryStore([{ name: "svcA", logLabels: { namespace: "ns1" } }]),
+    }));
+    await poller.poll();
+    expect(poller.getDegradedReason()).toBeNull();
   });
 });
