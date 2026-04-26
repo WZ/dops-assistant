@@ -3,9 +3,18 @@ import express, { type Express } from "express";
 import request from "supertest";
 import { registerRoutes } from "./routes.js";
 import { Database } from "./db.js";
+import { __resetAppBaseUrlWarn } from "./slack-notifier.js";
 import { unlinkSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
+
+// The slack-notifier holds a module-level "warn once per process" flag so
+// operators don't get spammed when notifications.email.appBaseUrl is unset.
+// Vitest's default forks-per-file isolation means the flag doesn't actually
+// leak between this file and slack-notifier.test.ts today — the reset is
+// defensive against a future test in this file that asserts on the
+// missing-config branch and would otherwise be order-dependent.
+beforeEach(() => { __resetAppBaseUrlWarn(); });
 
 /**
  * Route tests for GET /api/scan/runs.

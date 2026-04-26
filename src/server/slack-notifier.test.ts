@@ -289,6 +289,26 @@ describe("notifySlackOnScanComplete", () => {
     expect(bodyStr).not.toContain("example.com//");
   });
 
+  it("treats empty / whitespace-only appBaseUrl as missing — guards against cleared GUI inputs", async () => {
+    // db.getSetting can return "" from a cleared notification field if the
+    // operator wipes it in the GUI. Without the trim, the resolver would
+    // accept the empty string and emit `/scan/runs/r1` with no origin — a
+    // useless relative-path link in a Slack message.
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    for (const empty of ["", "   ", "\t\n"]) {
+      __resetAppBaseUrlWarn();
+      fetchMock.mockClear();
+      await notifySlackOnScanComplete(
+        { slackWebhookUrl: "https://hooks.slack.com/test", appBaseUrl: empty },
+        { runId: "r1", stackId: "s1", trigger: "manual", startedAt: 0, durationMs: 0, servicesProbed: 1, hitsDispatched: 0, dispatchedServices: [] },
+      );
+      const bodyStr = JSON.stringify(JSON.parse(fetchMock.mock.calls[0]![1]!.body as string));
+      expect(bodyStr).not.toContain("View run");
+      expect(bodyStr).not.toContain("/scan/runs/");
+    }
+  });
+
   it("encodes runId so a future schema broadening doesn't corrupt the link", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true });
     global.fetch = fetchMock as unknown as typeof fetch;

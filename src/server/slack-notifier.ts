@@ -27,9 +27,16 @@ export function __resetAppBaseUrlWarn(): void {
 /** Centralizes the "Slack configured but appBaseUrl unset" policy: warn
  *  once, then return undefined so the caller omits the link. Every Slack
  *  path (investigation-complete, scan-run auto, scan-run manual) goes
- *  through this so the policy stays consistent. */
+ *  through this so the policy stays consistent.
+ *
+ *  Trimming happens before the falsy check so empty/whitespace-only
+ *  values from cleared GUI inputs (db.getSetting can return "") behave
+ *  identically to undefined — otherwise an operator who wipes the field
+ *  in a settings UI would get an emit-only-`/scan/runs/...` URL with no
+ *  origin, which is worse than no link. */
 function resolveAppBaseUrl(appBaseUrl: string | undefined): string | undefined {
-  if (appBaseUrl) return appBaseUrl.replace(/\/$/, "");
+  const trimmed = appBaseUrl?.trim();
+  if (trimmed) return trimmed.replace(/\/$/, "");
   if (!warnedMissingAppBaseUrl) {
     warnedMissingAppBaseUrl = true;
     logger.warn(
