@@ -1011,4 +1011,44 @@ describe("event-log emission", () => {
     expect(events[0]!.severity).toBe("error");
     expect(events[0]!.meta).toEqual({ from: "unknown", to: "down" });
   });
+
+  it("does not emit when status is unchanged across polls", async () => {
+    const { poller } = makeMultiPollPoller({
+      services: ["api"],
+      stackId: "stack-test",
+      pollResults: [
+        // Single entry: same result for both polls (helper repeats the last entry).
+        {
+          kube_deployment_status_replicas: [makePrometheusEntry({ deployment: "api" }, "1")],
+          up: [makePrometheusEntry({ job: "api" }, "1")],
+        },
+      ],
+    });
+
+    await poller.poll();
+    eventLog.reset();
+    await poller.poll();
+
+    const { events } = eventLog.recent(10);
+    expect(events).toHaveLength(0);
+  });
+
+  it("emits the event even when onTransition throws", async () => {
+    const { poller } = makeMultiPollPoller({
+      services: ["api"],
+      stackId: "stack-test",
+      onTransition: () => { throw new Error("boom"); },
+      pollResults: [
+        {
+          up: [makePrometheusEntry({ job: "api" }, "0")],
+        },
+      ],
+    });
+
+    await poller.poll();
+
+    const { events } = eventLog.recent(10);
+    expect(events).toHaveLength(1);
+    expect(events[0]!.kind).toBe("service_health_changed");
+  });
 });
