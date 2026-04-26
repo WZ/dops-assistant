@@ -162,4 +162,14 @@ describe("matchEventsToServices", () => {
     const hits = matchEventsToServices(events, longSvcs, badReasons, ignoreReasons);
     expect(hits[0]?.service).toBe("serviceA-cluster-agent");
   });
+
+  it("skips events whose involvedObject is not a Pod (e.g. Deployment, Node)", () => {
+    const events = [
+      { reason: "OOMKilled", message: "x", lastTimestamp: "2026-04-26T12:00:00Z",
+        involvedObject: { kind: "Deployment", name: "serviceA", uid: "u1" }, type: "Warning" },
+      { reason: "OOMKilled", message: "x", lastTimestamp: "2026-04-26T12:00:00Z",
+        involvedObject: { kind: "Node", name: "serviceA-worker-1", uid: "u2" }, type: "Warning" },
+    ];
+    expect(matchEventsToServices(events, services, badReasons, ignoreReasons)).toEqual([]);
+  });
 });

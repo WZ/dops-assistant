@@ -110,6 +110,10 @@ export function matchEventsToServices(
   for (const ev of events) {
     if (ignoreReasons.has(ev.reason)) continue;
     if (!badReasons.has(ev.reason)) continue;
+    // K8s events come from many object kinds (Pod, Deployment, ReplicaSet,
+    // Node, ...); the bad-reason list is meaningful only for Pod-level
+    // events. Skip everything else to avoid false-positive prefix matches.
+    if (ev.involvedObject.kind !== "Pod") continue;
     const service = resolveServiceForName(ev.involvedObject.name, services);
     if (!service) continue;
     hits.push({
