@@ -247,6 +247,111 @@ describe("matchRestartsToServices", () => {
   });
 });
 
+function makeContentToolResult(json: unknown) {
+  return { content: [{ type: "text", text: JSON.stringify(json) }] };
+}
+
+describe("K8sEventPoller.poll orchestration", () => {
+  it("emits onK8sEvent for OOMKilled on a registered service", async () => {
+    const eventsExecute = vi.fn().mockResolvedValue(makeContentToolResult({
+      items: [{
+        reason: "OOMKilled",
+        message: "killed",
+        lastTimestamp: "2026-04-26T12:00:00Z",
+        involvedObject: { kind: "Pod", name: "svcA-abc-xyz", uid: "u1" },
+        type: "Warning",
+      }],
+    }));
+    const podsExecute = vi.fn().mockResolvedValue(makeContentToolResult({ items: [] }));
+    const provider = makeProvider({
+      list_events: { execute: eventsExecute },
+      list_pods: { execute: podsExecute },
+    });
+    const seen: K8sEventHit[] = [];
+    const poller = new K8sEventPoller(makeDeps({
+      providers: [provider],
+      registryStore: makeRegistryStore([{ name: "svcA", logLabels: { namespace: "ns1" } }]),
+      onK8sEvent: (h) => seen.push(h),
+    }));
+    await poller.poll();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ service: "svcA", reason: "OOMKilled", source: "event" });
+    expect(poller.getRecentHits(10)).toHaveLength(1);
+  });
+
+  it("does not emit when service is hidden", async () => {
+    const provider = makeProvider({
+      list_events: { execute: vi.fn().mockResolvedValue(makeContentToolResult({
+        items: [{ reason: "OOMKilled", involvedObject: { kind: "Pod", name: "svcA-abc", uid: "u1" }, type: "Warning", lastTimestamp: "2026-04-26T12:00:00Z" }],
+      })) },
+      list_pods: { execute: vi.fn().mockResolvedValue(makeContentToolResult({ items: [] })) },
+    });
+    const seen: K8sEventHit[] = [];
+    const poller = new K8sEventPoller(makeDeps({
+      providers: [provider],
+      registryStore: makeRegistryStore([{ name: "svcA", logLabels: { namespace: "ns1" } }]),
+      getHiddenServices: () => new Set(["svcA"]),
+      onK8sEvent: (h) => seen.push(h),
+    }));
+    await poller.poll();
+    expect(seen).toEqual([]);
+  });
+
+  it("skips services without a derivable namespace and logs nothing fatal", async () => {
+    const eventsExecute = vi.fn().mockResolvedValue(makeContentToolResult({ items: [] }));
+    const podsExecute = vi.fn().mockResolvedValue(makeContentToolResult({ items: [] }));
+    const provider = makeProvider({
+      list_events: { execute: eventsExecute },
+      list_pods: { execute: podsExecute },
+    });
+    const poller = new K8sEventPoller(makeDeps({
+      providers: [provider],
+      registryStore: makeRegistryStore([{ name: "svcA", logLabels: {} }]),
+    }));
+    await poller.poll();
+    expect(poller.getDegradedReason()).toBeNull();
+  });
+
+  it("caps at maxEventsPerTick and warn-logs", async () => {
+    const manyEvents = Array.from({ length: 150 }, (_, i) => ({
+      reason: "OOMKilled",
+      lastTimestamp: `2026-04-26T12:00:${String(i % 60).padStart(2, "0")}Z`,
+      involvedObject: { kind: "Pod", name: `svcA-${i}`, uid: `u${i}` },
+      type: "Warning",
+    }));
+    const provider = makeProvider({
+      list_events: { execute: vi.fn().mockResolvedValue(makeContentToolResult({ items: manyEvents })) },
+      list_pods: { execute: vi.fn().mockResolvedValue(makeContentToolResult({ items: [] })) },
+    });
+    const seen: K8sEventHit[] = [];
+    const poller = new K8sEventPoller(makeDeps({
+      providers: [provider],
+      registryStore: makeRegistryStore([{ name: "svcA", logLabels: { namespace: "ns1" } }]),
+      onK8sEvent: (h) => seen.push(h),
+      config: {
+        enabled: true, intervalSeconds: 300,
+        badReasons: ["OOMKilled"], ignoreReasons: [],
+        maxEventsPerTick: 50, queryTimeoutMs: 15_000,
+      },
+    }));
+    await poller.poll();
+    expect(seen.length).toBe(50);
+  });
+
+  it("infrastructure-call-failed when tool call throws", async () => {
+    const provider = makeProvider({
+      list_events: { execute: vi.fn().mockRejectedValue(new Error("MCP down")) },
+      list_pods: { execute: vi.fn().mockResolvedValue(makeContentToolResult({ items: [] })) },
+    });
+    const poller = new K8sEventPoller(makeDeps({
+      providers: [provider],
+      registryStore: makeRegistryStore([{ name: "svcA", logLabels: { namespace: "ns1" } }]),
+    }));
+    await poller.poll();
+    expect(poller.getDegradedReason()).toBe("infrastructure-call-failed");
+  });
+});
+
 describe("extractNamespace", () => {
   it("reads logLabels.namespace", () => {
     expect(extractNamespace({ name: "x", logLabels: { namespace: "ns1" } } as any)).toBe("ns1");

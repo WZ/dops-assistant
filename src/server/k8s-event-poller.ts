@@ -17,6 +17,7 @@
 import { createLogger } from "../logger.js";
 import type { MastraProvider } from "../mcp/provider.js";
 import { getToolsByRole } from "../mcp/provider.js";
+import { withTimeoutAndAbort } from "./anomaly-probe.js";
 import type { ServiceRegistryStore } from "../services/registry.js";
 import type { Database } from "./db.js";
 import type { K8sEventsConfig, ServiceConfig } from "../config/schema.js";
@@ -155,6 +156,35 @@ export function matchRestartsToServices(
 }
 
 /**
+ * Parse an MCP tool result into an array of items. Handles the MCP
+ * `{ content: [{ type: "text", text }] }` wrapping and direct objects;
+ * falls back through `Array → { items: [...] }`. Mirrors `parsePrometheusResult`
+ * shape from `service-health-poller.ts`. Never throws — returns [] on parse fail.
+ */
+function parseToolItems<T>(raw: unknown): T[] {
+  if (!raw) return [];
+  let parsed: unknown = raw;
+  if (typeof raw === "object" && raw !== null && "content" in raw) {
+    const content = (raw as { content: unknown[] }).content;
+    if (Array.isArray(content) && content.length > 0) {
+      const first = content[0] as { type?: string; text?: string };
+      if (first.type === "text" && typeof first.text === "string") {
+        try { parsed = JSON.parse(first.text); } catch { return []; }
+      }
+    }
+  }
+  if (typeof parsed === "string") {
+    try { parsed = JSON.parse(parsed); } catch { return []; }
+  }
+  if (Array.isArray(parsed)) return parsed as T[];
+  if (typeof parsed === "object" && parsed !== null && "items" in parsed) {
+    const items = (parsed as { items: unknown }).items;
+    if (Array.isArray(items)) return items as T[];
+  }
+  return [];
+}
+
+/**
  * Derive a service's namespace from its logLabels, since `ServiceSchema` has
  * no explicit namespace field. Discovery typically writes one of these keys.
  */
@@ -256,10 +286,100 @@ export class K8sEventPoller {
   }
 
   async poll(): Promise<void> {
-    this.lastTickAt = new Date();
+    const tickStart = new Date();
+    const previousTickAt = this.lastTickAt;
+    this.lastTickAt = tickStart;
+
     const tools = await this.resolveInfraTools();
     if (!tools) return;
-    // Tasks 4-7 fill in the rest.
+
+    const allServices = this.registryStore.load();
+    const hidden = this.getHiddenServices?.() ?? new Set<string>();
+    const services = allServices.filter((s) => !hidden.has(s.name));
+    if (services.length === 0) return;
+
+    const namespaceByService = new Map<string, string>();
+    for (const s of services) {
+      const ns = extractNamespace(s);
+      if (ns) namespaceByService.set(s.name, ns);
+    }
+    if (namespaceByService.size === 0) {
+      logger.debug({ stackId: this.stackId, serviceCount: services.length },
+        "K8sEventPoller: no services have a derivable namespace, skipping tick");
+      return;
+    }
+
+    const namespaces = Array.from(new Set(namespaceByService.values()));
+    const sinceTime = previousTickAt && previousTickAt < tickStart
+      ? previousTickAt
+      : new Date(tickStart.getTime() - this.config.intervalSeconds * 1000);
+
+    // withTimeoutAndAbort never throws — returns undefined on timeout/error.
+    // Bounded per-call timeout (default 15s) so a wedged MCP server can't
+    // stall the poll indefinitely.
+    const [eventsRaw, podsRaw] = await Promise.all([
+      withTimeoutAndAbort(
+        tools.eventsTool,
+        { namespaces, sinceTime: sinceTime.toISOString(), type: "Warning" },
+        undefined,
+        this.config.queryTimeoutMs,
+      ),
+      withTimeoutAndAbort(
+        tools.podsTool,
+        { namespaces },
+        undefined,
+        this.config.queryTimeoutMs,
+      ),
+    ]);
+    if (eventsRaw === undefined || podsRaw === undefined) {
+      this.transitionDegraded("infrastructure-call-failed");
+      return;
+    }
+
+    const events = parseToolItems<RawK8sEvent>(eventsRaw);
+    const pods = parseToolItems<RawK8sPod>(podsRaw);
+
+    const serviceNameSet = new Set(services.map((s) => s.name));
+    const badReasons = new Set(this.config.badReasons);
+    const ignoreReasons = new Set(this.config.ignoreReasons);
+
+    const eventHits = matchEventsToServices(events, serviceNameSet, badReasons, ignoreReasons);
+    const restartHits = matchRestartsToServices(pods, serviceNameSet, this.restartCache);
+
+    // De-dupe within tick by (service, podUid, reason).
+    const seen = new Set<string>();
+    const allHits: K8sEventHit[] = [];
+    for (const hit of [...eventHits, ...restartHits]) {
+      const key = `${hit.service}:${hit.podUid}:${hit.reason}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      allHits.push(hit);
+    }
+
+    // Cap, sorted by occurredAt desc.
+    allHits.sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
+    if (allHits.length > this.config.maxEventsPerTick) {
+      logger.warn(
+        { stackId: this.stackId, dropped: allHits.length - this.config.maxEventsPerTick, cap: this.config.maxEventsPerTick },
+        "K8sEventPoller: tick produced more hits than maxEventsPerTick; dropping oldest",
+      );
+      allHits.length = this.config.maxEventsPerTick;
+    }
+
+    for (const hit of allHits) {
+      this.recentHits.push(hit);
+      if (this.recentHits.length > RECENT_HITS_CAP) this.recentHits.shift();
+      try {
+        this.onK8sEvent?.(hit);
+      } catch (err) {
+        logger.warn({ err, stackId: this.stackId, service: hit.service }, "K8sEventPoller: onK8sEvent callback threw");
+      }
+    }
+
+    logger.info(
+      { stackId: this.stackId, eventHits: eventHits.length, restartHits: restartHits.length, dispatched: allHits.length },
+      "K8sEventPoller: poll complete",
+    );
   }
 
   private async resolveInfraTools(): Promise<{ eventsTool: ToolExecutor; podsTool: ToolExecutor } | null> {
