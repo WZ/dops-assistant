@@ -974,4 +974,41 @@ describe("event-log emission", () => {
     expect(events[0]!.severity).toBe("success");
     expect(events[0]!.meta).toEqual({ from: "down", to: "healthy" });
   });
+
+  it("does NOT emit on first-poll when only signal is replicas=0 (scaled-down workload)", async () => {
+    const { poller } = makeMultiPollPoller({
+      services: ["api"],
+      stackId: "stack-test",
+      pollResults: [
+        {
+          kube_deployment_status_replicas: [makePrometheusEntry({ deployment: "api" }, "0")],
+        },
+      ],
+    });
+
+    await poller.poll();
+
+    const { events } = eventLog.recent(10);
+    expect(events).toHaveLength(0);
+  });
+
+  it("emits on first-poll when up=0 (real scrape failure, in downViaUp)", async () => {
+    const { poller } = makeMultiPollPoller({
+      services: ["api"],
+      stackId: "stack-test",
+      pollResults: [
+        {
+          up: [makePrometheusEntry({ job: "api" }, "0")],
+        },
+      ],
+    });
+
+    await poller.poll();
+
+    const { events } = eventLog.recent(10);
+    expect(events).toHaveLength(1);
+    expect(events[0]!.kind).toBe("service_health_changed");
+    expect(events[0]!.severity).toBe("error");
+    expect(events[0]!.meta).toEqual({ from: "unknown", to: "down" });
+  });
 });
