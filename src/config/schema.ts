@@ -284,6 +284,25 @@ const ScanSchema = z.object({
   probe: ProbeSchema.optional().default({}),
 });
 
+const K8sEventsSchema = z.object({
+  enabled: z.boolean().default(true),
+  intervalSeconds: z.number().int().min(60).default(300),
+  badReasons: z.array(z.string()).default([
+    "OOMKilled",
+    "CrashLoopBackOff",
+    "Error",
+    "ImagePullBackOff",
+    "ErrImagePull",
+    "Unhealthy",
+    "Failed",
+  ]),
+  ignoreReasons: z.array(z.string()).default(["Completed"]),
+  maxEventsPerTick: z.number().int().min(1).default(50),
+  queryTimeoutMs: z.number().int().min(1_000).default(15_000),
+});
+
+export type K8sEventsConfig = z.infer<typeof K8sEventsSchema>;
+
 const SmtpSchema = z.object({
   host: z.string().min(1),
   port: z.number().int().min(1).max(65535).default(587),
@@ -347,6 +366,7 @@ export const ConfigSchema = z.object({
   memory: MemorySchema.optional().default({}),
   webhook: WebhookSchema.optional().default({}),
   scan: ScanSchema.optional().default({}),
+  k8sEvents: K8sEventsSchema.optional().default({}),
   events: EventsSchema.optional().default({}),
   notifications: NotificationsSchema,
   branding: BrandingSchema.optional().default({}),
