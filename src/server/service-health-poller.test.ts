@@ -945,4 +945,33 @@ describe("event-log emission", () => {
     expect(ev.href).toBe("/services/api");
     expect(ev.meta).toEqual({ from: "healthy", to: "down" });
   });
+
+  it("emits service_health_changed on down → healthy with severity=success", async () => {
+    const { poller, advance } = makeMultiPollPoller({
+      services: ["api"],
+      stackId: "stack-test",
+      pollResults: [
+        // Poll 1: down via up=0. Replicas batch empty so healthy-from-replicas
+        // doesn't shadow the up-batch DOWN verdict.
+        {
+          up: [makePrometheusEntry({ job: "api" }, "0")],
+        },
+        // Poll 2: healthy.
+        {
+          kube_deployment_status_replicas: [makePrometheusEntry({ deployment: "api" }, "1")],
+          up: [makePrometheusEntry({ job: "api" }, "1")],
+        },
+      ],
+    });
+
+    await poller.poll();   // first poll: down (via up=0)
+    advance();
+    eventLog.reset();
+    await poller.poll();   // second poll: healthy
+
+    const { events } = eventLog.recent(10);
+    expect(events).toHaveLength(1);
+    expect(events[0]!.severity).toBe("success");
+    expect(events[0]!.meta).toEqual({ from: "down", to: "healthy" });
+  });
 });
