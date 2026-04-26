@@ -209,6 +209,9 @@ async function main() {
 
   // Build a global onComplete handler for Slack + email notifications.
   // Reads URL/settings dynamically so GUI changes take effect without restart.
+  // Tracks whether we've already warned about a missing appBaseUrl so the
+  // operator gets one nudge per process instead of one per investigation.
+  let warnedSlackAppBaseUrlMissing = false;
   const globalOnComplete = (
     investigationId: string,
     service: string,
@@ -227,6 +230,12 @@ async function main() {
       // which built `${grafanaUrl}/#/investigations/:id` and pointed users
       // at Grafana's homepage with an ignored hash on a pushState SPA).
       const appBaseUrl = config.notifications?.email?.appBaseUrl;
+      if (!appBaseUrl && !warnedSlackAppBaseUrlMissing) {
+        warnedSlackAppBaseUrlMissing = true;
+        logger.warn(
+          "Slack notifications enabled but notifications.email.appBaseUrl is unset — 'View Investigation' link will be omitted from Slack posts. Set this field to surface clickable links.",
+        );
+      }
       notifySlack(
         { slackWebhookUrl: slackUrl, appBaseUrl, stackId },
         investigationId,
