@@ -301,8 +301,6 @@ const K8sEventsSchema = z.object({
   queryTimeoutMs: z.number().int().min(1_000).default(15_000),
 });
 
-export type K8sEventsConfig = z.infer<typeof K8sEventsSchema>;
-
 const SmtpSchema = z.object({
   host: z.string().min(1),
   port: z.number().int().min(1).max(65535).default(587),
@@ -341,6 +339,7 @@ const EventsSchema = z.object({
   retentionDays: z.number().int().min(0).default(30),
 });
 
+export type K8sEventsConfig = z.infer<typeof K8sEventsSchema>;
 export type ScanConfig = z.infer<typeof ScanSchema>;
 export type ProbeConfig = z.infer<typeof ProbeSchema>;
 export type ProbeMetricRule = z.infer<typeof ProbeMetricRuleSchema>;
