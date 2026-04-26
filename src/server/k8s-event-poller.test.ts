@@ -3,6 +3,7 @@ import {
   K8sEventPoller,
   matchEventsToServices,
   matchRestartsToServices,
+  extractNamespace,
   type K8sEventPollerDeps,
   type K8sEventHit,
   type DegradedReason,
@@ -243,5 +244,23 @@ describe("matchRestartsToServices", () => {
     const cache = new Map<string, number>();
     const pods = [makePod("u1", "kube-proxy-abc", [{ name: "main", restartCount: 5 }])];
     expect(matchRestartsToServices(pods, services, cache)).toEqual([]);
+  });
+});
+
+describe("extractNamespace", () => {
+  it("reads logLabels.namespace", () => {
+    expect(extractNamespace({ name: "x", logLabels: { namespace: "ns1" } } as any)).toBe("ns1");
+  });
+  it("falls back to logLabels.kubernetes_namespace", () => {
+    expect(extractNamespace({ name: "x", logLabels: { kubernetes_namespace: "ns2" } } as any)).toBe("ns2");
+  });
+  it("falls back to logLabels.k8s_namespace", () => {
+    expect(extractNamespace({ name: "x", logLabels: { k8s_namespace: "ns3" } } as any)).toBe("ns3");
+  });
+  it("returns undefined when no namespace key present", () => {
+    expect(extractNamespace({ name: "x", logLabels: { app: "x" } } as any)).toBeUndefined();
+  });
+  it("returns undefined when logLabels missing", () => {
+    expect(extractNamespace({ name: "x" } as any)).toBeUndefined();
   });
 });

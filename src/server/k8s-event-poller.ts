@@ -19,7 +19,7 @@ import type { MastraProvider } from "../mcp/provider.js";
 import { getToolsByRole } from "../mcp/provider.js";
 import type { ServiceRegistryStore } from "../services/registry.js";
 import type { Database } from "./db.js";
-import type { K8sEventsConfig } from "../config/schema.js";
+import type { K8sEventsConfig, ServiceConfig } from "../config/schema.js";
 
 const logger = createLogger();
 
@@ -152,6 +152,15 @@ export function matchRestartsToServices(
   }
 
   return hits;
+}
+
+/**
+ * Derive a service's namespace from its logLabels, since `ServiceSchema` has
+ * no explicit namespace field. Discovery typically writes one of these keys.
+ */
+export function extractNamespace(service: ServiceConfig): string | undefined {
+  const labels = service.logLabels ?? {};
+  return labels.namespace ?? labels.kubernetes_namespace ?? labels.k8s_namespace ?? undefined;
 }
 
 /**
