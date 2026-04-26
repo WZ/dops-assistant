@@ -174,7 +174,7 @@ Each service in "services" must have:
                                                                               kube_statefulset_replicas
         DaemonSet                kube_daemonset_status_number_ready           kube_daemonset_status_desired_number_scheduled
                                                                               kube_daemonset_status_current_number_scheduled
-        Service-level / app      up{...}=1                                    n/a (\`up\` is the canonical readiness gauge)
+        Service-level / app      up{...}                                      n/a (\`up\` is the canonical readiness gauge — \`lt 1\` already encodes "drops to 0 = down", do NOT add \`=1\` to the query)
         Consul                   consul_catalog_service_node_healthy          n/a
 
       Why: \`kube_*_status_replicas\` reports \`.status.replicas\` (total
@@ -216,22 +216,33 @@ Each service in "services" must have:
         1. \`{deployment="<name>"}\`, \`{statefulset="<name>"}\`,
            \`{daemonset="<name>"}\` — kube-state-metrics emits
            \`kube_pod_container_status_restarts_total\` joined with these
-           workload labels via recording rules on most stacks. If the
-           label is present in your stack's metrics, prefer it.
-        2. \`{namespace="<ns>",pod=~"<workload>-.*"}\` — when the
-           workload name prefixes its pods (Deployment ReplicaSet hash
-           or StatefulSet ordinal), a regex match on \`pod=~\` narrows
-           to this service's pods inside the namespace. Always include
-           the trailing \`.*\` and anchor the prefix.
-        3. \`{namespace="<ns>"}\` — last-resort fallback when no workload
-           selector is known AND no pod-name prefix is identifiable. Use
-           this only when the namespace contains exactly one service.
+           workload labels via recording rules on most stacks. Exact
+           match, no prefix-overlap risk. If the label is present in
+           your stack's metrics, prefer it.
+        2. \`{namespace="<ns>",container="<workload>"}\` — the
+           \`container\` label is the workload's container name and is
+           an exact match. Use this when workload labels are not
+           available but the container name is known.
+        3. \`{namespace="<ns>",pod=~"<workload>-[a-f0-9]+-[a-z0-9]+$"}\`
+           for Deployments (ReplicaSet hash + pod hash suffix), or
+           \`{namespace="<ns>",pod=~"<workload>-[0-9]+$"}\` for
+           StatefulSets (ordinal suffix). The trailing \`$\` anchor is
+           CRITICAL — without it, a service \`api\` would match
+           \`api-internal-7f8c-xyz\` pods belonging to a sibling
+           service. Bare \`<workload>-.*\` is NOT safe when sibling
+           services share a name prefix.
+        4. \`{namespace="<ns>"}\` — last-resort fallback when none of
+           the above is available. Use this ONLY when the namespace
+           contains exactly one workload — otherwise restarts in
+           sibling pods get attributed to this service.
 
       Examples:
 
         Best:    rate(kube_pod_container_status_restarts_total{deployment="checkout-api"}[5m])
-        Good:    rate(kube_pod_container_status_restarts_total{namespace="checkout",pod=~"checkout-api-.*"}[5m])
-        Risky:   rate(kube_pod_container_status_restarts_total{namespace="checkout"}[5m])
+        Good:    rate(kube_pod_container_status_restarts_total{namespace="checkout",container="checkout-api"}[5m])
+        OK:      rate(kube_pod_container_status_restarts_total{namespace="checkout",pod=~"checkout-api-[a-f0-9]+-[a-z0-9]+$"}[5m])
+        Avoid:   rate(kube_pod_container_status_restarts_total{namespace="checkout"}[5m])
+        Wrong:   rate(kube_pod_container_status_restarts_total{namespace="checkout",pod=~"api-.*"}[5m])  # also matches api-internal-* pods
 
       Rule shape:
 

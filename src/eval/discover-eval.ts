@@ -90,35 +90,61 @@ export function loadInput(path: string, fixture: boolean = false): DiscoverInput
 const PLACEHOLDER_RE = /YOUR_|REPLACE_ME|TODO|PLACEHOLDER|\$\{[^}]*\}|<[a-z_]+>/i;
 
 /**
+ * kube-state-metrics gauges that report desired / scheduled / total counts —
+ * NOT actual readiness. They stay >0 during CrashLoopBackOff, ImagePullBackOff,
+ * and Pending, so a `lt 1` threshold against them silently never trips.
+ *
+ * Exported so the prompt's DO NOT USE table and this set can be cross-checked
+ * by a unit test (drift between the two would let a regression slip through).
+ */
+export const AVAILABILITY_ANTIPATTERN_METRICS = new Set<string>([
+  "kube_deployment_status_replicas",
+  "kube_deployment_spec_replicas",
+  "kube_deployment_status_replicas_updated",
+  "kube_statefulset_status_replicas",
+  "kube_statefulset_replicas",
+  "kube_statefulset_status_replicas_current",
+  "kube_statefulset_status_replicas_updated",
+  "kube_daemonset_status_desired_number_scheduled",
+  "kube_daemonset_status_current_number_scheduled",
+]);
+
+/** True readiness signals — when present in a query, bare desired-count
+ * metrics in the same expression are likely arithmetic guards, not the
+ * primary alarm signal. The default config in `src/config/schema.ts` uses
+ * `replicas_available{} and spec_replicas{} > 0` as a scale-to-zero guard. */
+const READINESS_SIGNAL_RE = /(?:_available|_ready|number_ready)\b/;
+
+/** `_unavailable` metrics are inverted — they go UP during outages.
+ * Pairing them with the standard `lt 1` availability threshold makes the
+ * rule trip on healthy clusters, not unhealthy ones. */
+const UNAVAILABLE_METRIC_RE = /^kube_[a-z0-9_]+_unavailable$/;
+
+/**
  * Detect "desired-not-ready" availability antipatterns. Returns the offending
  * metric name when the query uses a kube-state-metrics counter that reflects
- * desired/total replica state rather than actual readiness — those metrics
- * stay >0 during real outages (CrashLoopBackOff, ImagePullBackOff, Pending),
- * so a `lt 1` threshold against them silently never trips.
+ * desired/total replica state rather than actual readiness, or an
+ * `_unavailable` variant whose semantics are inverted relative to the
+ * standard `lt 1` threshold.
  *
- * Used for `service_availability` rules and any global rule with `availability`
- * in its name. Other rule names (pod_restarts, error_rate) intentionally use
- * desired-style metrics or unrelated metrics — we don't flag those.
+ * Used for availability-named rules only (`isAvailabilityRule`). Other rule
+ * names intentionally use desired-style or unrelated metrics — we don't flag
+ * those. When a query references a true readiness signal alongside a bare
+ * desired-count metric (the standard scale-to-zero guard pattern), the bare
+ * metric is treated as a guard, not an alarm signal.
  *
- * Returns null when the query is acceptable (uses a `_available` / `_ready`
- * / `number_ready` variant, or doesn't reference kube-state-metrics at all).
+ * Returns null when the query is acceptable.
  */
 export function detectAvailabilityAntipattern(query: string): string | null {
   if (!query) return null;
-  const matches = query.match(/\bkube_[a-z_]+\b/g);
+  const matches = query.match(/\bkube_[a-z0-9_]+\b/g);
   if (!matches) return null;
+  // Guarded form: the query also references a real readiness signal, so any
+  // bare desired-count references are arithmetic guards (e.g. scale-to-zero).
+  if (matches.some((name) => READINESS_SIGNAL_RE.test(name))) return null;
   for (const name of matches) {
-    if (/_available|_ready|_unavailable/.test(name)) continue;
-    if (
-      name === "kube_deployment_status_replicas" ||
-      name === "kube_deployment_spec_replicas" ||
-      name === "kube_statefulset_status_replicas" ||
-      name === "kube_statefulset_replicas" ||
-      name === "kube_daemonset_status_desired_number_scheduled" ||
-      name === "kube_daemonset_status_current_number_scheduled"
-    ) {
-      return name;
-    }
+    if (AVAILABILITY_ANTIPATTERN_METRICS.has(name)) return name;
+    if (UNAVAILABLE_METRIC_RE.test(name)) return name;
   }
   return null;
 }
@@ -209,12 +235,17 @@ function allLogRules(input: DiscoverInput): ProbeMetricRule[] {
 }
 
 /**
- * A rule's name suggests it's measuring availability if it contains the
- * substring "availability" or "_available". Used to scope the desired-vs-ready
- * antipattern check (we don't flag pod_restarts or error_rate rules).
+ * A rule name suggests it's measuring availability/health. Used to scope the
+ * desired-vs-ready antipattern check. We deliberately match more than just
+ * `availability` because the LLM is not strictly bound to the prompt's
+ * `service_availability` name — `service_health`, `liveness`, `readiness`,
+ * and bare `up`-style names are plausible renames that should still be checked.
+ * Rules whose names suggest other concerns (`pod_restarts`, `error_rate`,
+ * `latency`, `cpu_*`) are not flagged — they intentionally use desired-style
+ * or unrelated metrics.
  */
 function isAvailabilityRule(ruleName: string): boolean {
-  return /availab/i.test(ruleName);
+  return /availab|health|liveness|readiness/i.test(ruleName) || /^up(_|$)/i.test(ruleName);
 }
 
 export function scorePromQLParses(input: DiscoverInput): DimensionScore {
