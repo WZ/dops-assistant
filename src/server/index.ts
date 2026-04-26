@@ -209,22 +209,35 @@ async function main() {
 
   // Build a global onComplete handler for Slack + email notifications.
   // Reads URL/settings dynamically so GUI changes take effect without restart.
+  // Tracks whether we've already warned about a missing appBaseUrl so the
+  // operator gets one nudge per process instead of one per investigation.
+  let warnedSlackAppBaseUrlMissing = false;
   const globalOnComplete = (
     investigationId: string,
     service: string,
     report: import("../types/rca-types.js").RcaReport,
+    stackId: string | undefined,
     source: import("../types/notifications.js").NotificationSource,
   ) => {
     // ── Slack (existing) ────────────────────────────────────────────
     const slackUrl = db.getSetting("notifications.slack.webhookUrl") ?? config.webhook.slackWebhookUrl;
     const slackEnabled = db.getSetting("notifications.slack.enabled");
     if (slackUrl && slackEnabled !== "false") {
-      const defaultCtx = stackManager.getDefaultContext();
-      const dashProvider = defaultCtx.providerRegistry.getAll().find(
-        (p: { config: { roles: string[]; webUrl?: string } }) => p.config.roles.includes("dashboards") && p.config.webUrl,
-      );
+      // Reuse the email-notifier's appBaseUrl as the SPA's public URL —
+      // there's no Slack-specific config field, and the test endpoint at
+      // routes.ts:2097 already follows this pattern. When email isn't
+      // configured the link is omitted (better than the previous behavior,
+      // which built `${grafanaUrl}/#/investigations/:id` and pointed users
+      // at Grafana's homepage with an ignored hash on a pushState SPA).
+      const appBaseUrl = config.notifications?.email?.appBaseUrl;
+      if (!appBaseUrl && !warnedSlackAppBaseUrlMissing) {
+        warnedSlackAppBaseUrlMissing = true;
+        logger.warn(
+          "Slack notifications enabled but notifications.email.appBaseUrl is unset — 'View Investigation' link will be omitted from Slack posts. Set this field to surface clickable links.",
+        );
+      }
       notifySlack(
-        { slackWebhookUrl: slackUrl, grafanaUrl: dashProvider?.config.webUrl },
+        { slackWebhookUrl: slackUrl, appBaseUrl, stackId },
         investigationId,
         service,
         report,
