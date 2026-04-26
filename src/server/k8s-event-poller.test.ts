@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import {
   K8sEventPoller,
   matchEventsToServices,
+  matchRestartsToServices,
   type K8sEventPollerDeps,
   type K8sEventHit,
   type DegradedReason,
@@ -171,5 +172,76 @@ describe("matchEventsToServices", () => {
         involvedObject: { kind: "Node", name: "serviceA-worker-1", uid: "u2" }, type: "Warning" },
     ];
     expect(matchEventsToServices(events, services, badReasons, ignoreReasons)).toEqual([]);
+  });
+});
+
+describe("matchRestartsToServices", () => {
+  const services = new Set(["svcA"]);
+
+  function makePod(uid: string, ownerName: string, statuses: Array<{ name: string; restartCount: number; finishedAt?: string; reason?: string; message?: string }>) {
+    return {
+      metadata: { uid, namespace: "ns1", ownerReferences: [{ kind: "ReplicaSet", name: ownerName }] },
+      status: {
+        containerStatuses: statuses.map((s) => ({
+          name: s.name,
+          restartCount: s.restartCount,
+          lastState: s.finishedAt ? { terminated: { reason: s.reason, message: s.message, finishedAt: s.finishedAt } } : {},
+        })),
+      },
+    };
+  }
+
+  it("first poll seeds cache, fires no hits", () => {
+    const cache = new Map<string, number>();
+    const pods = [makePod("u1", "svcA-7f8c", [{ name: "main", restartCount: 0 }])];
+    const hits = matchRestartsToServices(pods, services, cache);
+    expect(hits).toEqual([]);
+    expect(cache.get("u1:main")).toBe(0);
+  });
+
+  it("emits hit when restartCount increments", () => {
+    const cache = new Map<string, number>([["u1:main", 0]]);
+    const pods = [makePod("u1", "svcA-7f8c",
+      [{ name: "main", restartCount: 1, finishedAt: "2026-04-26T12:00:00Z", reason: "Error", message: "boom" }],
+    )];
+    const hits = matchRestartsToServices(pods, services, cache);
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toMatchObject({
+      service: "svcA",
+      podUid: "u1",
+      restartCount: 1,
+      source: "restart-count",
+      reason: "Error",
+    });
+    expect(cache.get("u1:main")).toBe(1);
+  });
+
+  it("no hit when restartCount unchanged", () => {
+    const cache = new Map<string, number>([["u1:main", 1]]);
+    const pods = [makePod("u1", "svcA-7f8c", [{ name: "main", restartCount: 1 }])];
+    expect(matchRestartsToServices(pods, services, cache)).toEqual([]);
+  });
+
+  it("no hit when restartCount decreased (pod recreated)", () => {
+    const cache = new Map<string, number>([["u1:main", 5]]);
+    const pods = [makePod("u1", "svcA-7f8c", [{ name: "main", restartCount: 0 }])];
+    expect(matchRestartsToServices(pods, services, cache)).toEqual([]);
+    expect(cache.get("u1:main")).toBe(0);
+  });
+
+  it("GCs cache entries for pod UIDs no longer present", () => {
+    const cache = new Map<string, number>([
+      ["u1:main", 0],
+      ["u-gone:main", 3],
+    ]);
+    const pods = [makePod("u1", "svcA-7f8c", [{ name: "main", restartCount: 0 }])];
+    matchRestartsToServices(pods, services, cache);
+    expect(cache.has("u-gone:main")).toBe(false);
+  });
+
+  it("skips pods not mapped to a registered service", () => {
+    const cache = new Map<string, number>();
+    const pods = [makePod("u1", "kube-proxy-abc", [{ name: "main", restartCount: 5 }])];
+    expect(matchRestartsToServices(pods, services, cache)).toEqual([]);
   });
 });

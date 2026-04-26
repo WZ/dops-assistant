@@ -85,6 +85,75 @@ interface RawK8sEvent {
   involvedObject: { kind: string; name: string; uid?: string; namespace?: string };
 }
 
+interface RawK8sPod {
+  metadata: {
+    uid: string;
+    namespace?: string;
+    name?: string;
+    ownerReferences?: Array<{ kind: string; name: string }>;
+  };
+  status?: {
+    containerStatuses?: Array<{
+      name: string;
+      restartCount: number;
+      lastState?: {
+        terminated?: { reason?: string; message?: string; finishedAt?: string };
+      };
+    }>;
+  };
+}
+
+export function matchRestartsToServices(
+  pods: RawK8sPod[],
+  services: Set<string>,
+  restartCache: Map<string, number>,
+): K8sEventHit[] {
+  const hits: K8sEventHit[] = [];
+  const seenKeys = new Set<string>();
+
+  for (const pod of pods) {
+    const uid = pod.metadata.uid;
+    // Owner-ref typically points at a ReplicaSet "<deployment>-<hash>"; strip
+    // the trailing hash to recover the deployment name. If the owner is some
+    // other kind (DaemonSet, StatefulSet) the name is already the workload name.
+    const ownerName = pod.metadata.ownerReferences?.[0]?.name ?? pod.metadata.name ?? "";
+    const ownerStripped = ownerName.replace(/-[a-f0-9]{6,10}$/, "");
+    const service = resolveServiceForName(ownerStripped, services)
+      ?? resolveServiceForName(ownerName, services)
+      ?? resolveServiceForName(pod.metadata.name ?? "", services);
+    const containers = pod.status?.containerStatuses ?? [];
+
+    for (const c of containers) {
+      const key = `${uid}:${c.name}`;
+      seenKeys.add(key);
+      const prev = restartCache.get(key);
+      const prevExisted = prev !== undefined;
+      restartCache.set(key, c.restartCount);
+      if (!service) continue;
+      if (!prevExisted) continue;             // first poll seeds cache, never fires
+      if (c.restartCount <= prev) continue;   // no change or pod recreated
+
+      const term = c.lastState?.terminated;
+      hits.push({
+        service,
+        podUid: uid,
+        reason: term?.reason ?? "Restarted",
+        message: term?.message ?? `restartCount ${prev} → ${c.restartCount}`,
+        occurredAt: term?.finishedAt ?? new Date().toISOString(),
+        source: "restart-count",
+        restartCount: c.restartCount,
+      });
+    }
+  }
+
+  // GC cache entries for pods we did not see in this poll.
+  for (const key of [...restartCache.keys()]) {
+    if (!seenKeys.has(key)) restartCache.delete(key);
+  }
+
+  return hits;
+}
+
 /**
  * Resolve a pod / owner-ref name to a registered service. Mirrors the
  * matching logic in service-health-poller.ts:165-234 (exact-then-longest-prefix).
