@@ -1,3 +1,19 @@
+/**
+ * K8sEventPoller — per-stack background poller that detects transient pod
+ * crashes by reading k8s events and pod restartCount via the `infrastructure`
+ * MCP role. Dispatches investigations on bad-reason events (OOMKilled,
+ * CrashLoopBackOff, etc.) or restartCount increments.
+ *
+ * Mirrors the shape of service-health-poller.ts: per-stack class with
+ * start()/stop()/poll() and an in-memory cache.
+ *
+ * Three degraded states surface via getDegradedReason():
+ *   - "infrastructure-role-not-resolved" — no infra MCP wired
+ *   - "infrastructure-not-kubernetes"   — infra MCP wired but lacks k8s tools (ECS/Nomad/etc)
+ *   - "infrastructure-call-failed"      — k8s tool call threw or timed out
+ *
+ * The poll() body is filled across tasks 3-7 of the implementation plan.
+ */
 import { createLogger } from "../logger.js";
 import type { MastraProvider } from "../mcp/provider.js";
 import type { ServiceRegistryStore } from "../services/registry.js";
@@ -45,8 +61,8 @@ export class K8sEventPoller {
   private intervalHandle: ReturnType<typeof setInterval> | undefined;
   private lastTickAt: Date | null = null;
   private degradedReason: DegradedReason | null = null;
-  private readonly restartCache: Map<string, number> = new Map();
-  private readonly recentHits: K8sEventHit[] = [];
+  private restartCache: Map<string, number> = new Map();
+  private recentHits: K8sEventHit[] = [];
 
   constructor(deps: K8sEventPollerDeps) {
     this.resolveProviders = typeof deps.providers === "function"
