@@ -82,11 +82,16 @@ export const StackConfigSchema = z.object({
 export type ProviderRole = z.infer<typeof ProviderRoleSchema>;
 export type ProviderConfig = z.infer<typeof ProviderSchema>;
 
+const LlmRetrySchema = z.object({
+  maxAttempts: z.number().int().min(1).max(15).default(8),
+}).default({});
+
 const LlmSchema = z.object({
   model: z.string().default("gpt-4"),
   maxTokens: z.number().default(4096),
   apiKey: z.string(),
   baseURL: z.string().optional(),
+  retry: LlmRetrySchema,
 });
 
 const ConversationMemorySchema = z.object({
