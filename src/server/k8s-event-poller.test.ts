@@ -11,7 +11,6 @@ import {
 import { InvestigationDedup } from "./investigation-dedup.js";
 import type { MastraProvider } from "../mcp/provider.js";
 import type { ServiceRegistryStore } from "../services/registry.js";
-import type { Database } from "./db.js";
 
 function makeRegistryStore(services: Array<{ name: string; logLabels?: Record<string, string> }> = []): ServiceRegistryStore {
   return {
@@ -25,15 +24,10 @@ function makeRegistryStore(services: Array<{ name: string; logLabels?: Record<st
   } as unknown as ServiceRegistryStore;
 }
 
-function makeDb(): Database {
-  return {} as unknown as Database;
-}
-
 function makeDeps(opts: Partial<K8sEventPollerDeps> = {}): K8sEventPollerDeps {
   return {
     providers: opts.providers ?? [],
     registryStore: opts.registryStore ?? makeRegistryStore(),
-    db: opts.db ?? makeDb(),
     stackId: opts.stackId ?? "test-stack",
     config: opts.config ?? {
       enabled: true,

@@ -189,7 +189,6 @@ export class StackManager {
     const k8sEventPoller = new K8sEventPoller({
       providers: () => providerRegistry.getProviders(),
       registryStore: serviceRegistry,
-      db: this.db,
       stackId: row.id,
       config: this.config.k8sEvents,
       onK8sEvent: (hit) => { this.onK8sEvent?.(row.id, hit); },

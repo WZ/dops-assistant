@@ -21,7 +21,6 @@ import type { MastraProvider } from "../mcp/provider.js";
 import { getToolsByRole } from "../mcp/provider.js";
 import { withTimeoutAndAbort } from "./anomaly-probe.js";
 import type { ServiceRegistryStore } from "../services/registry.js";
-import type { Database } from "./db.js";
 import type { K8sEventsConfig, ServiceConfig } from "../config/schema.js";
 
 const logger = createLogger();
@@ -44,7 +43,6 @@ export interface K8sEventHit {
 export interface K8sEventPollerDeps {
   providers: MastraProvider[] | (() => MastraProvider[]);
   registryStore: ServiceRegistryStore;
-  db: Database;
   stackId: string;
   config: K8sEventsConfig;
   onK8sEvent?: (hit: K8sEventHit) => void;
@@ -241,7 +239,6 @@ export function matchEventsToServices(
 export class K8sEventPoller {
   private readonly resolveProviders: () => MastraProvider[];
   private readonly registryStore: ServiceRegistryStore;
-  private readonly db: Database;
   private readonly stackId: string;
   private readonly config: K8sEventsConfig;
   private readonly onK8sEvent?: (hit: K8sEventHit) => void;
@@ -258,7 +255,6 @@ export class K8sEventPoller {
       ? deps.providers
       : () => deps.providers as MastraProvider[];
     this.registryStore = deps.registryStore;
-    this.db = deps.db;
     this.stackId = deps.stackId;
     this.config = deps.config;
     this.onK8sEvent = deps.onK8sEvent;
