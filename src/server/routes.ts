@@ -2103,7 +2103,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       return;
     }
     const investigations = db.getScanRunInvestigations(body.runId);
-    const appBaseUrl = config.notifications?.email?.appBaseUrl ?? "http://localhost:3000";
+    const appBaseUrl = config.notifications?.email?.appBaseUrl;
     try {
       await sendSlackScanRunPost(
         { slackWebhookUrl: url, appBaseUrl },

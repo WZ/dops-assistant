@@ -676,7 +676,7 @@ export class StackManager {
     const slackEnabled = this.db.getSetting("notifications.slack.enabled") !== "false";
     const slackUrl = this.db.getSetting("notifications.slack.webhookUrl")
       ?? this.config.webhook?.slackWebhookUrl;
-    const appBaseUrl = this.config.notifications?.email?.appBaseUrl ?? "http://localhost:3000";
+    const appBaseUrl = this.config.notifications?.email?.appBaseUrl;
 
     const shouldFireSlack = slackEnabled && !!slackUrl && (
       slackMode === "always"
