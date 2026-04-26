@@ -50,26 +50,26 @@ describe("InvestigationRow — left border encodes severity, not status", () => 
     // against is "green stripe just because it's complete", regardless of
     // how bad the incident was.
     const { container } = render(
-      <InvestigationRow investigation={make(sev, "complete")} onClick={() => {}} />,
+      <InvestigationRow investigation={make(sev, "complete")} onClick={() => {}} stackId="test-stack" />,
     );
     expect(borderClass(container)).toBe(expected);
   });
 
   it("severity=null → neutral stripe (no severity yet, e.g. still running)", () => {
     const { container } = render(
-      <InvestigationRow investigation={make(null, "running")} onClick={() => {}} />,
+      <InvestigationRow investigation={make(null, "running")} onClick={() => {}} stackId="test-stack" />,
     );
     expect(borderClass(container)).toBe("border-l-border");
   });
 
   it("status does NOT change the stripe — high-severity complete row stays warning, not success", () => {
     const { container } = render(
-      <InvestigationRow investigation={make("high", "complete")} onClick={() => {}} />,
+      <InvestigationRow investigation={make("high", "complete")} onClick={() => {}} stackId="test-stack" />,
     );
     expect(borderClass(container)).toBe("border-l-warning");
     // And critical-failed keeps destructive rather than switching for failure.
     const { container: c2 } = render(
-      <InvestigationRow investigation={make("critical", "failed")} onClick={() => {}} />,
+      <InvestigationRow investigation={make("critical", "failed")} onClick={() => {}} stackId="test-stack" />,
     );
     expect(borderClass(c2)).toBe("border-l-destructive");
   });

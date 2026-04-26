@@ -72,7 +72,7 @@ export function Dashboard({
   setupDismissed,
   onResumeSetup,
 }: DashboardProps) {
-  const { stackFetch } = useStackContext();
+  const { stackFetch, activeStackId } = useStackContext();
   const [services, setServices] = useState<ServiceConfig[]>([]);
   const [investigations, setInvestigations] = useState<InvestigationSummary[]>(
     [],
@@ -770,6 +770,7 @@ export function Dashboard({
                     <InvestigationRow
                       investigation={inv}
                       onClick={onInvestigationClick}
+                      stackId={activeStackId}
                     />
                   </div>
                 ))}

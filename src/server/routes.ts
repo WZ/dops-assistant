@@ -998,6 +998,32 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     res.json({ investigation, phases, events });
   });
 
+  // Stack-agnostic lookup. Resolves an investigation id (ULID, globally
+  // unique) to the stack that owns it. Used by the SPA when a legacy
+  // /investigations/:id deep link is opened in a clean browser session: the
+  // URL omits the stack, so the frontend hits this endpoint, switches to the
+  // returned stack, and replaceState's the URL to the canonical
+  // /stacks/:stackId/investigations/:id form.
+  //
+  // Auth posture: this endpoint is symmetric with /api/investigations/:id —
+  // both bypass auth on GETs (see auth-middleware.ts:30-34, intentional
+  // VPN-trust posture for the staging deploy). When `apiKey` is configured
+  // and reads get gated in the future, locate MUST gate the same way as the
+  // per-stack endpoint, otherwise it becomes a soft cross-stack enumeration
+  // vector for an attacker with leaked ULIDs (one round-trip vs brute-forcing
+  // X-Stack-Id per stack). Keep them as siblings — if you add auth to one,
+  // add it to the other.
+  app.get("/api/investigations/:id/locate", (req: Request, res: Response) => {
+    const id = req.params["id"];
+    const idStr = Array.isArray(id) ? id[0]! : id!;
+    const stackId = db.findInvestigationStack(idStr);
+    if (!stackId) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json({ stackId });
+  });
+
   app.get("/api/events/recent", (req: Request, res: Response) => {
     const limitParam = Number(req.query.limit);
     const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 200) : 50;
@@ -2011,8 +2037,17 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     }
     try {
       const { notifySlack } = await import("./slack-notifier.js");
+      // Pass appBaseUrl so the operator can verify the "View Investigation"
+      // button shape end-to-end. The button URL points at a synthetic id
+      // that 404s in the SPA — the user is testing the wiring, not the
+      // landing page, so a not-found pane is the honest outcome.
+      const appBaseUrl = config.notifications?.email?.appBaseUrl;
+      // Use the active stack so the test post emits the canonical
+      // /stacks/:stackId/investigations/:id form — operators verifying
+      // wiring should see the same URL shape as production traffic, even
+      // though the synthetic id will 404 in the SPA.
       await notifySlack(
-        { slackWebhookUrl: slackUrl },
+        { slackWebhookUrl: slackUrl, appBaseUrl, stackId: req.stackId },
         "test_notification",
         "Test Service",
         {

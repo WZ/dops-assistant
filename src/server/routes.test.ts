@@ -534,6 +534,47 @@ describe("GET /api/patterns/:id", () => {
   });
 });
 
+describe("GET /api/investigations/:id/locate", () => {
+  // Regression: deep-linking to /investigations/:id in a clean browser
+  // session lands on the default stack, and the investigation 404s if it
+  // lives in a different stack. The SPA now hits this endpoint to discover
+  // the owning stack and replaceState's to /stacks/:stackId/investigations/:id.
+  let ctx: ReturnType<typeof makeEmailApp>;
+  beforeEach(() => { ctx = makeEmailApp(); });
+  afterEach(() => { ctx.cleanup(); });
+
+  it("resolves an investigation id to its owning stack regardless of req.stackId", async () => {
+    // Seed investigations in two different stacks. The mock stackManager
+    // resolves req.stackId to "default" (see makeEmailApp), so a regular
+    // GET /api/investigations/:id would 404 for inv_other_stack.
+    ctx.db.createInvestigation("default", {
+      id: "inv_in_default",
+      service: "payments-api",
+      query: "x",
+      status: "complete",
+    });
+    ctx.db.createInvestigation("staging", {
+      id: "inv_in_staging",
+      service: "payments-api",
+      query: "y",
+      status: "complete",
+    });
+
+    const a = await request(ctx.app).get("/api/investigations/inv_in_default/locate");
+    expect(a.status).toBe(200);
+    expect(a.body).toEqual({ stackId: "default" });
+
+    const b = await request(ctx.app).get("/api/investigations/inv_in_staging/locate");
+    expect(b.status).toBe(200);
+    expect(b.body).toEqual({ stackId: "staging" });
+  });
+
+  it("returns 404 when the investigation id doesn't exist in any stack", async () => {
+    const res = await request(ctx.app).get("/api/investigations/inv_does_not_exist/locate");
+    expect(res.status).toBe(404);
+  });
+});
+
 describe("/api/notifications/email", () => {
   let ctx: ReturnType<typeof makeEmailApp>;
   beforeEach(() => { ctx = makeEmailApp(); });

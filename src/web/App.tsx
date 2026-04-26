@@ -58,7 +58,12 @@ export type ActivityView =
 
 export type LeftPaneView =
   | { type: "dashboard" }
-  | { type: "investigation"; id: string }
+  // `stackId` is the stack that owns this investigation. Empty string is the
+  // legacy-URL sentinel: the user landed on /investigations/:id (no stack in
+  // the URL) and the SPA has not yet resolved which stack owns this id.
+  // InvestigationPane handles that case by hitting /api/investigations/:id/locate
+  // and replaceState'ing the URL to the canonical /stacks/:stackId/investigations/:id form.
+  | { type: "investigation"; id: string; stackId: string }
   | { type: "pattern"; id: string }
   | ActivityView
   | { type: "services"; initialService?: string }
@@ -148,7 +153,7 @@ export function App() {
       }
     }
   }
-  const { stacks, activeStackId, activeStack, switchStack, refetch: refetchStacks } = useStacks();
+  const { stacks, activeStackId, activeStack, switchStack, loading: stacksLoading, refetch: refetchStacks } = useStacks();
   const ws = useWebSocket(activeStackId);
   const theme = useTheme();
   const health = useHealthPolling();
@@ -314,10 +319,100 @@ export function App() {
       if (msg.type !== "investigation:started" || !msg.parentInvestigationId) continue;
       const pane = leftPaneRef.current;
       if (pane.type === "investigation" && pane.id === msg.parentInvestigationId) {
-        setLeftPane({ type: "investigation", id: msg.id });
+        setLeftPane({ type: "investigation", id: msg.id, stackId: activeStackId });
       }
     }
   }, [ws.messages, setLeftPane]);
+
+  // Sync the global active stack to the investigation pane's owning stack.
+  //
+  // Two cases:
+  //   1. Legacy URL `/investigations/:id` (parser sets stackId="") — hit
+  //      `/api/investigations/:id/locate` to discover the owning stack,
+  //      switch to it, and replaceState the URL to the canonical
+  //      `/stacks/:stackId/investigations/:id` form.
+  //   2. Stack-scoped URL `/stacks/:stackId/investigations/:id` opened in a
+  //      browser whose last-active stack is different — switch to the URL's
+  //      stack so the investigation, the sidebar, and any subsequent
+  //      navigation share one consistent stack context.
+  //
+  // Effect waits for `useStacks` to finish its initial fetch (`stacksLoading`)
+  // so it has a real stack list to validate against — otherwise it could
+  // race with the bootstrap and switch to a stack that's about to be
+  // overwritten by the localStorage default-pick.
+  const investigationStackId = leftPane.type === "investigation" ? leftPane.stackId : null;
+  const investigationId = leftPane.type === "investigation" ? leftPane.id : null;
+  // True when the URL names a stack we know about. Used both to decide
+  // whether to skip the locate fetch and as a stable effect dep — comparing
+  // a boolean avoids re-firing on every `stacks` array reference change.
+  const ownedByKnownStack =
+    investigationStackId !== null && investigationStackId !== "" &&
+    stacks.some((s) => s.id === investigationStackId);
+  useEffect(() => {
+    if (stacksLoading) return;
+    if (investigationId == null) return;
+
+    // Need to discover the owning stack: either the URL omitted it (legacy
+    // /investigations/:id) or it names a stack that isn't in the registry
+    // anymore (renamed, deleted, or typo'd). Both fall back to the locate
+    // endpoint and replaceState the user onto the canonical URL.
+    if (!ownedByKnownStack) {
+      let cancelled = false;
+      const fetcher = createStackFetch(activeStackId);
+      // When locate can't resolve the id (truly missing, or network error),
+      // route to the not-found view. Keeping the URL the user typed makes
+      // copy-paste honest — an earlier draft replaceState'd to /stacks/<active>
+      // /investigations/<id>, which falsely implied the id belonged to the
+      // active stack and sent the next person digging in the wrong place.
+      const fallbackToNotFound = () => {
+        if (cancelled) return;
+        setLeftPane(
+          { type: "notfound", path: window.location.pathname + window.location.search },
+          { replace: true },
+        );
+      };
+      fetcher(`/api/investigations/${investigationId}/locate`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data: { stackId?: string } | null) => {
+          if (cancelled) return;
+          if (data?.stackId) {
+            switchStack(data.stackId);
+            setLeftPane(
+              { type: "investigation", id: investigationId, stackId: data.stackId },
+              { replace: true },
+            );
+          } else {
+            fallbackToNotFound();
+          }
+        })
+        .catch(fallbackToNotFound);
+      return () => { cancelled = true; };
+    }
+
+    if (investigationStackId !== activeStackId) {
+      switchStack(investigationStackId!);
+    }
+  }, [investigationId, investigationStackId, ownedByKnownStack, stacksLoading, activeStackId, switchStack, setLeftPane]);
+
+  // Recovery for wrong-but-known stack URLs. Hand-edited links and
+  // rename-stale bookmarks land on a known stack that doesn't actually own
+  // the investigation; InvestigationPane catches the per-stack 404, probes
+  // /api/investigations/:id/locate, and asks us to relocate when the id
+  // genuinely lives elsewhere. Wrapped in useCallback so the pane's data
+  // effect can include it in deps without re-running on every parent
+  // render.
+  const handleWrongStack = useCallback(
+    (correctStackId: string) => {
+      const pane = leftPaneRef.current;
+      if (pane.type !== "investigation") return;
+      switchStack(correctStackId);
+      setLeftPane(
+        { type: "investigation", id: pane.id, stackId: correctStackId },
+        { replace: true },
+      );
+    },
+    [switchStack, setLeftPane],
+  );
 
   // Reset view + discovery state on stack switch.
   //
@@ -330,7 +425,16 @@ export function App() {
   const prevStackRef = useRef(activeStackId);
   useEffect(() => {
     if (prevStackRef.current !== activeStackId && prevStackRef.current) {
-      if (shouldResetOnStackSwitch(leftPaneRef.current.type)) {
+      const pane = leftPaneRef.current;
+      // Deep-link case: when the URL is /stacks/:stackId/investigations/:id,
+      // the locate-and-switch effect below switches the global active stack
+      // to match the investigation's owning stack. The pane is already in
+      // its canonical state — bouncing to dashboard would break the deep
+      // link the user just opened. Only reset when the new active stack
+      // genuinely doesn't match the pane's intent.
+      const investigationOwnsThisStack =
+        pane.type === "investigation" && pane.stackId === activeStackId;
+      if (shouldResetOnStackSwitch(pane.type) && !investigationOwnsThisStack) {
         setLeftPane({ type: "dashboard" });
       }
     }
@@ -468,7 +572,7 @@ export function App() {
                     <Dashboard
                       wsMessages={ws.messages}
                       wsSend={ws.send}
-                      onInvestigationClick={(id) => setLeftPane({ type: "investigation", id })}
+                      onInvestigationClick={(id) => setLeftPane({ type: "investigation", id, stackId: activeStackId })}
                       onViewService={(name) => setLeftPane({ type: "services", initialService: name })}
                       onViewAllServices={() => setLeftPane({ type: "services" })}
                       onViewAllInvestigations={() => setLeftPane({ type: "activity", tab: "investigations", query: {} })}
@@ -482,6 +586,16 @@ export function App() {
                       onResumeSetup={() => { setSetupDismissed(false); safeSetItem(`dops:setup_dismissed:${activeStackId}`, ""); }}
                     />
                   ) : leftPane.type === "investigation" ? (
+                    // Two states delay rendering the pane until the active
+                    // stack matches the investigation's owning stack:
+                    //   1. stackId === ""  → legacy URL, locate-and-redirect
+                    //                        effect is in flight
+                    //   2. stackId mismatch → URL stack differs from active,
+                    //                         switchStack effect in flight
+                    // Mounting the pane during either state would fetch with
+                    // the wrong X-Stack-Id header and 404, then never re-fetch
+                    // (the pane's data effect doesn't depend on stackFetch).
+                    leftPane.stackId && leftPane.stackId === activeStackId ? (
                     <InvestigationPane
                       investigationId={leftPane.id}
                       wsMessages={ws.messages}
@@ -503,7 +617,15 @@ export function App() {
                       onRerun={(invId, template) => {
                         ws.send({ type: "rerun", investigationId: invId, template: template as any });
                       }}
+                      onWrongStack={handleWrongStack}
                     />
+                    ) : (
+                      <div className="h-full flex items-center justify-center">
+                        <span className="font-mono text-[11px] text-muted-foreground/70">
+                          Resolving investigation…
+                        </span>
+                      </div>
+                    )
                   ) : leftPane.type === "pattern" ? (
                     <PatternDetail
                       patternId={leftPane.id}
@@ -514,12 +636,12 @@ export function App() {
                           setLeftPane({ type: "activity", tab: "patterns", query: {} });
                         }
                       }}
-                      onViewInvestigation={(id) => setLeftPane({ type: "investigation", id })}
+                      onViewInvestigation={(id) => setLeftPane({ type: "investigation", id, stackId: activeStackId })}
                     />
                   ) : leftPane.type === "services" ? (
                     <ServicesPage
                       ws={ws}
-                      onViewInvestigation={(id) => setLeftPane({ type: "investigation", id })}
+                      onViewInvestigation={(id) => setLeftPane({ type: "investigation", id, stackId: activeStackId })}
                       initialService={leftPane.initialService}
                       onSelectService={(name) => {
                         if (leftPane.type === "services") setLeftPane({ ...leftPane, initialService: name });
@@ -552,7 +674,7 @@ export function App() {
                     <ScanRunDetail
                       runId={leftPane.runId}
                       onBack={() => setLeftPane({ type: "dashboard" })}
-                      onOpenInvestigation={(invId) => setLeftPane({ type: "investigation", id: invId })}
+                      onOpenInvestigation={(invId) => setLeftPane({ type: "investigation", id: invId, stackId: activeStackId })}
                       onSwitchStack={switchStack}
                       wsMessages={ws.messages}
                     />
@@ -581,7 +703,7 @@ export function App() {
                         setLeftPane({ type: "activity", tab: "events", query }, { replace: true })
                       }
                       onViewPattern={(id) => setLeftPane({ type: "pattern", id })}
-                      onViewInvestigation={(id) => setLeftPane({ type: "investigation", id })}
+                      onViewInvestigation={(id) => setLeftPane({ type: "investigation", id, stackId: activeStackId })}
                       onOpenScanRun={(runId) => setLeftPane({ type: "scanrun", runId })}
                       onNavigateHref={(href) => {
                         // Event rows carry an href like `/investigations/inv_…`
@@ -615,8 +737,8 @@ export function App() {
             <ResizablePanel defaultSize={40} minSize={25}>
               <ChatPane
                 ws={ws}
-                onInvestigationStarted={(id) => setLeftPane({ type: "investigation", id })}
-                onViewInvestigation={(id) => setLeftPane({ type: "investigation", id })}
+                onInvestigationStarted={(id) => setLeftPane({ type: "investigation", id, stackId: activeStackId })}
+                onViewInvestigation={(id) => setLeftPane({ type: "investigation", id, stackId: activeStackId })}
                 activeInvestigationId={leftPane.type === "investigation" ? leftPane.id : undefined}
               />
             </ResizablePanel>
