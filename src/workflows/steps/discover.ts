@@ -8,6 +8,7 @@ import type { ServiceConfig, DiscoveryConfig, DiscoveryRecipe, ProbeMetricRule }
 import { ProbeMetricRuleSchema } from "../../config/schema.js";
 import type { OnToolCallEnriched, OnIteration } from "../../types/agent-interfaces.js";
 import type { Skill } from "../../skills/store.js";
+import type { LlmRetryConfig } from "../../agents/shared/llm-retry.js";
 import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
 import { logLlmCall, logLlmCallStart, logToolCall, newCallId, type ToolCallEvent } from "../../server/llm-logger.js";
 import { createLogger } from "../../logger.js";
@@ -24,6 +25,8 @@ export interface DiscoverStepConfig {
   onRetry?: (attempt: number, maxRetries: number, reason: string) => void;
   skills?: Skill[];
   maxCharsPerSkill?: number;
+  /** Retry config for transient LLM-call failures. Falls back to no-retry when omitted. */
+  llmRetry?: LlmRetryConfig;
 }
 
 const MAX_RETRIES = 3;

@@ -40,6 +40,7 @@ import { getAllTools } from "../mcp/provider.js";
 import { coerceLokiArgs } from "../workflows/tool-utils.js";
 import type { ServiceRegistryStore } from "../services/registry.js";
 import type { LanguageModel } from "ai";
+import type { LlmRetryConfig } from "../agents/shared/llm-retry.js";
 
 type MastraChatAgent = ReturnType<typeof createChatAgent>;
 type MastraStreamInput = Parameters<MastraChatAgent["stream"]>[0];
@@ -393,6 +394,8 @@ export interface MastraDiscoverAdapterDeps {
   providers: MastraProvider[];
   discoveryConfig: DiscoveryConfig;
   registryStore: ServiceRegistryStore;
+  /** Retry config for transient LLM-call failures. */
+  llmRetry?: LlmRetryConfig;
 }
 
 export class MastraDiscoverAdapter implements IDiscoverAgent {
@@ -421,6 +424,7 @@ export class MastraDiscoverAdapter implements IDiscoverAgent {
       onTokenUsage,
       skills,
       onRetry,
+      llmRetry: this.deps.llmRetry,
     });
   }
 
@@ -538,6 +542,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
     getSimilarPatterns: db && stackId
       ? (service, limit = 5) => db.findSimilarPatterns(stackId, service, limit)
       : undefined,
+    llmRetry: config.llm.retry,
   };
 
   const investigationAgent = new MastraInvestigationAdapter(workflowConfig);
@@ -548,6 +553,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
         providers,
         discoveryConfig: config.discovery,
         registryStore: deps.registryStore,
+        llmRetry: config.llm.retry,
       })
     : undefined;
 
