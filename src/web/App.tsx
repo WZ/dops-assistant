@@ -342,32 +342,57 @@ export function App() {
   // overwritten by the localStorage default-pick.
   const investigationStackId = leftPane.type === "investigation" ? leftPane.stackId : null;
   const investigationId = leftPane.type === "investigation" ? leftPane.id : null;
+  // True when the URL names a stack we know about. Used both to decide
+  // whether to skip the locate fetch and as a stable effect dep — comparing
+  // a boolean avoids re-firing on every `stacks` array reference change.
+  const ownedByKnownStack =
+    investigationStackId !== null && investigationStackId !== "" &&
+    stacks.some((s) => s.id === investigationStackId);
   useEffect(() => {
     if (stacksLoading) return;
     if (investigationId == null) return;
 
-    if (investigationStackId === "") {
+    // Need to discover the owning stack: either the URL omitted it (legacy
+    // /investigations/:id) or it names a stack that isn't in the registry
+    // anymore (renamed, deleted, or typo'd). Both fall back to the locate
+    // endpoint and replaceState the user onto the canonical URL.
+    if (!ownedByKnownStack) {
       let cancelled = false;
       const fetcher = createStackFetch(activeStackId);
+      // When locate can't resolve the id (truly missing, or network error),
+      // route to the not-found view. Keeping the URL the user typed makes
+      // copy-paste honest — an earlier draft replaceState'd to /stacks/<active>
+      // /investigations/<id>, which falsely implied the id belonged to the
+      // active stack and sent the next person digging in the wrong place.
+      const fallbackToNotFound = () => {
+        if (cancelled) return;
+        setLeftPane(
+          { type: "notfound", path: window.location.pathname + window.location.search },
+          { replace: true },
+        );
+      };
       fetcher(`/api/investigations/${investigationId}/locate`)
         .then((r) => (r.ok ? r.json() : null))
         .then((data: { stackId?: string } | null) => {
-          if (cancelled || !data?.stackId) return;
-          switchStack(data.stackId);
-          setLeftPane(
-            { type: "investigation", id: investigationId, stackId: data.stackId },
-            { replace: true },
-          );
+          if (cancelled) return;
+          if (data?.stackId) {
+            switchStack(data.stackId);
+            setLeftPane(
+              { type: "investigation", id: investigationId, stackId: data.stackId },
+              { replace: true },
+            );
+          } else {
+            fallbackToNotFound();
+          }
         })
-        .catch(() => { /* leave pane in its empty-stackId state; pane shows "not found" */ });
+        .catch(fallbackToNotFound);
       return () => { cancelled = true; };
     }
 
-    if (investigationStackId && investigationStackId !== activeStackId &&
-        stacks.some((s) => s.id === investigationStackId)) {
-      switchStack(investigationStackId);
+    if (investigationStackId !== activeStackId) {
+      switchStack(investigationStackId!);
     }
-  }, [investigationId, investigationStackId, stacksLoading, activeStackId, stacks, switchStack, setLeftPane]);
+  }, [investigationId, investigationStackId, ownedByKnownStack, stacksLoading, activeStackId, switchStack, setLeftPane]);
 
   // Reset view + discovery state on stack switch.
   //
