@@ -47,7 +47,7 @@ export function scanRunToMarkdown(
     lines.push("## Dispatched investigations");
     for (const inv of investigations) {
       lines.push(
-        `- **${inv.service}** (${inv.ruleName}) — ${inv.status} · [${inv.investigationId}](/stacks/${run.stackId}/investigations/${inv.investigationId})`,
+        `- **${inv.service}** (${inv.ruleName}) — ${inv.status} · [${inv.investigationId}](/stacks/${encodeURIComponent(run.stackId)}/investigations/${encodeURIComponent(inv.investigationId)})`,
       );
       if (inv.reportSummary) lines.push(`  - _${inv.reportSummary}_`);
     }

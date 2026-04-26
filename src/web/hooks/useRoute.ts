@@ -18,6 +18,21 @@ import {
   stringifyEventsQuery,
 } from "../lib/events-query";
 
+/** Decode a URL path segment captured from window.location.pathname.
+ *  Today's stackIds and investigation IDs are ULIDs (alphanumeric), so the
+ *  decode is a no-op. Kept symmetric with the encodeURIComponent in
+ *  viewToUrl so the URL contract survives a future schema broadening
+ *  (uppercase, underscores, slugs, etc.) without silently breaking
+ *  bookmarks. Falls back to the raw segment on malformed encoding so a
+ *  hand-typed `%` doesn't blow up the router. */
+function safeDecode(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
 /** Strip the base path prefix so route matching works regardless of sub-path. */
 function stripBase(pathname: string): string {
   if (APP_BASE_PATH === "/") return pathname;
@@ -92,7 +107,11 @@ export function parseUrl(pathname: string, search: string = ""): LeftPaneView {
   // stack and 404s when the investigation lives elsewhere.
   const stackInvMatch = p.match(/^\/stacks\/([^/]+)\/investigations\/(.+)$/);
   if (stackInvMatch) {
-    return { type: "investigation", stackId: stackInvMatch[1]!, id: stackInvMatch[2]! };
+    return {
+      type: "investigation",
+      stackId: safeDecode(stackInvMatch[1]!),
+      id: safeDecode(stackInvMatch[2]!),
+    };
   }
 
   // Legacy /investigations/:id — kept so existing bookmarks, Slack links,
@@ -101,7 +120,7 @@ export function parseUrl(pathname: string, search: string = ""): LeftPaneView {
   // that by hitting /api/investigations/:id/locate and replaceState'ing
   // to the canonical /stacks/:stackId/investigations/:id form on first paint.
   const invMatch = p.match(/^\/investigations\/(.+)$/);
-  if (invMatch) return { type: "investigation", id: invMatch[1]!, stackId: "" };
+  if (invMatch) return { type: "investigation", id: safeDecode(invMatch[1]!), stackId: "" };
 
   // /patterns/:id — learned pattern recurrence detail page.
   const patternMatch = p.match(/^\/patterns\/(.+)$/);
@@ -147,10 +166,12 @@ export function viewToUrl(view: LeftPaneView): string {
       // Canonical form is stack-scoped. When stackId is empty (the legacy
       // /investigations/:id parser sentinel), emit the legacy URL so the
       // SPA can fetch /api/investigations/:id/locate to discover the stack
-      // before replaceState'ing the user onto the canonical URL.
+      // before replaceState'ing the user onto the canonical URL. Encode
+      // segments so any future widening of the stack-id charset (slugs,
+      // underscores, etc.) doesn't silently corrupt the URL.
       return view.stackId
-        ? `${base}/stacks/${view.stackId}/investigations/${view.id}`
-        : `${base}/investigations/${view.id}`;
+        ? `${base}/stacks/${encodeURIComponent(view.stackId)}/investigations/${encodeURIComponent(view.id)}`
+        : `${base}/investigations/${encodeURIComponent(view.id)}`;
     case "pattern":
       return `${base}/patterns/${view.id}`;
     case "activity": {

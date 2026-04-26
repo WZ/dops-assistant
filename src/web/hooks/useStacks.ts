@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { StackSummary } from "../../types/stack-types.js";
 import { safeGetItem, safeSetItem } from "../lib/utils";
 import { withBase } from "../lib/createStackFetch";
@@ -56,10 +56,26 @@ export function useStacks(): UseStacksResult {
     fetchStacks();
   }, [fetchStacks]);
 
+  // Mirror `stacks` into a ref so switchStack can validate against the
+  // current list without re-creating its useCallback identity on every
+  // stacks update (which would cascade into every consumer's effect deps).
+  const stacksRef = useRef(stacks);
+  stacksRef.current = stacks;
+
   const switchStack = useCallback((stackId: string) => {
+    // If the target id isn't in our currently-loaded list, refetch in the
+    // background. Common case: the locate endpoint returned a stack that
+    // was created on another tab, or the stacks list is stale after a
+    // rename. Without the refetch, `activeStack` (consumed by the header,
+    // StackSwitcher, etc.) resolves to undefined and the UI silently
+    // renders blank stack-name strings while the rest of the app still
+    // talks to the right stack via the X-Stack-Id header.
+    if (stackId && !stacksRef.current.some((s) => s.id === stackId)) {
+      void fetchStacks();
+    }
     setActiveStackId(stackId);
     safeSetItem(STORAGE_KEY, stackId);
-  }, []);
+  }, [fetchStacks]);
 
   const activeStack = stacks.find((s) => s.id === activeStackId);
 

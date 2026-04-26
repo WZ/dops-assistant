@@ -394,6 +394,26 @@ export function App() {
     }
   }, [investigationId, investigationStackId, ownedByKnownStack, stacksLoading, activeStackId, switchStack, setLeftPane]);
 
+  // Recovery for wrong-but-known stack URLs. Hand-edited links and
+  // rename-stale bookmarks land on a known stack that doesn't actually own
+  // the investigation; InvestigationPane catches the per-stack 404, probes
+  // /api/investigations/:id/locate, and asks us to relocate when the id
+  // genuinely lives elsewhere. Wrapped in useCallback so the pane's data
+  // effect can include it in deps without re-running on every parent
+  // render.
+  const handleWrongStack = useCallback(
+    (correctStackId: string) => {
+      const pane = leftPaneRef.current;
+      if (pane.type !== "investigation") return;
+      switchStack(correctStackId);
+      setLeftPane(
+        { type: "investigation", id: pane.id, stackId: correctStackId },
+        { replace: true },
+      );
+    },
+    [switchStack, setLeftPane],
+  );
+
   // Reset view + discovery state on stack switch.
   //
   // The reset-to-dashboard is only needed for panes that render
@@ -597,6 +617,7 @@ export function App() {
                       onRerun={(invId, template) => {
                         ws.send({ type: "rerun", investigationId: invId, template: template as any });
                       }}
+                      onWrongStack={handleWrongStack}
                     />
                     ) : (
                       <div className="h-full flex items-center justify-center">

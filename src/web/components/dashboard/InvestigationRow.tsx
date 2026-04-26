@@ -84,7 +84,7 @@ export const InvestigationRow = memo(function InvestigationRow({
 
   return (
     <a
-      href={withBase(`/stacks/${stackId}/investigations/${inv.id}`)}
+      href={withBase(`/stacks/${encodeURIComponent(stackId)}/investigations/${encodeURIComponent(inv.id)}`)}
       tabIndex={0}
       onClick={(e) => { e.preventDefault(); onClick(inv.id); }}
       onKeyDown={handleKeyDown}

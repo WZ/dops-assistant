@@ -131,8 +131,27 @@ function ExportMenu({ report, service, reportRef, onSaveAsSkill }: ExportMenuPro
   );
 }
 
-export function InvestigationPane({ investigationId, wsMessages, onBack, onNavigateSkills, onRerun }: { investigationId: string; wsMessages: ServerMessage[]; onBack: () => void; onNavigateSkills?: () => void; onRerun?: (investigationId: string, template?: string) => void }) {
-  const { stackFetch } = useStackContext();
+export function InvestigationPane({
+  investigationId,
+  wsMessages,
+  onBack,
+  onNavigateSkills,
+  onRerun,
+  onWrongStack,
+}: {
+  investigationId: string;
+  wsMessages: ServerMessage[];
+  onBack: () => void;
+  onNavigateSkills?: () => void;
+  onRerun?: (investigationId: string, template?: string) => void;
+  /** Called when the investigation 404s in the active stack but the locate
+   *  endpoint reports it lives in a different stack. The parent should
+   *  switchStack + navigate to the correct stack-scoped URL — keeps
+   *  hand-edited or rename-stale links resolving instead of dead-ending
+   *  on "not found" when the id genuinely exists somewhere. */
+  onWrongStack?: (correctStackId: string) => void;
+}) {
+  const { stackFetch, activeStackId } = useStackContext();
   const [phases, setPhases] = useState<PhaseState[]>(DEFAULT_PHASES);
   const [evidence, setEvidence] = useState<Record<string, unknown>>({});
   const [report, setReport] = useState<unknown | null>(null);
@@ -216,9 +235,31 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
     // investigation ID — don't let a stale "not found" persist across ids.
     setNotFound(false);
     stackFetch(`/api/investigations/${investigationId}`)
-      .then((r) => {
+      .then(async (r) => {
         if (r.status === 404) {
-          setNotFound(true);
+          // The active stack doesn't have this investigation, but the URL
+          // could just have the wrong stack scope (hand-edited, or the
+          // stack got renamed). Probe the stack-agnostic locate endpoint:
+          // if the id lives in another stack, ask the parent to switch
+          // and re-route. Falls through to the existing "not found" UI
+          // when locate confirms the id doesn't exist anywhere.
+          try {
+            const lr = await stackFetch(`/api/investigations/${investigationId}/locate`);
+            if (cancelled) return null;
+            if (lr.ok) {
+              const ld = (await lr.json()) as { stackId?: string };
+              if (ld?.stackId && ld.stackId !== activeStackId && onWrongStack) {
+                onWrongStack(ld.stackId);
+                // Parent will replaceState onto the new stack-scoped URL,
+                // which remounts this pane against the right stack. Don't
+                // flip notFound — the brief blank on the existing pane is
+                // less jarring than a flash of "not found" before the
+                // re-route lands.
+                return null;
+              }
+            }
+          } catch { /* fall through to notFound */ }
+          if (!cancelled) setNotFound(true);
           return null;
         }
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -305,7 +346,12 @@ export function InvestigationPane({ investigationId, wsMessages, onBack, onNavig
       .catch(() => { /* silently fail */ });
 
     return () => { cancelled = true; };
-  }, [investigationId, isActive]);
+    // stackFetch and activeStackId are explicit deps so the effect re-runs
+    // after a stack switch (e.g., the wrong-stack callback below moves the
+    // user to the investigation's real stack). Without them, the effect
+    // would still hold the previous stack's fetcher in closure and never
+    // re-fetch against the corrected stack.
+  }, [investigationId, isActive, stackFetch, activeStackId, onWrongStack]);
 
   // Process live WebSocket messages
   useEffect(() => {

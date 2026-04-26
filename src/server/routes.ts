@@ -1004,6 +1004,15 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   // URL omits the stack, so the frontend hits this endpoint, switches to the
   // returned stack, and replaceState's the URL to the canonical
   // /stacks/:stackId/investigations/:id form.
+  //
+  // Auth posture: this endpoint is symmetric with /api/investigations/:id —
+  // both bypass auth on GETs (see auth-middleware.ts:30-34, intentional
+  // VPN-trust posture for the staging deploy). When `apiKey` is configured
+  // and reads get gated in the future, locate MUST gate the same way as the
+  // per-stack endpoint, otherwise it becomes a soft cross-stack enumeration
+  // vector for an attacker with leaked ULIDs (one round-trip vs brute-forcing
+  // X-Stack-Id per stack). Keep them as siblings — if you add auth to one,
+  // add it to the other.
   app.get("/api/investigations/:id/locate", (req: Request, res: Response) => {
     const id = req.params["id"];
     const idStr = Array.isArray(id) ? id[0]! : id!;

@@ -18,6 +18,17 @@ describe("parseUrl", () => {
     });
   });
 
+  it("encodes and decodes special characters in stackId / investigation id (defensive against schema broadening)", () => {
+    // ULIDs are alphanumeric so this isn't a hot path today, but the URL
+    // contract should survive a future change to slugs / mixed-case / etc.
+    // Round-trip a value that needs percent-encoding through the serializer
+    // and parser: viewToUrl encodes, parseUrl decodes, equality holds.
+    const view = { type: "investigation" as const, id: "inv with space", stackId: "stack/slug" };
+    const url = viewToUrl(view);
+    expect(url).toBe("/stacks/stack%2Fslug/investigations/inv%20with%20space");
+    expect(parseUrl(url)).toEqual(view);
+  });
+
   it("parses legacy /investigations/:id with stackId='' sentinel for locate-and-redirect", () => {
     // Pre-stack-scoped bookmarks (Slack links, email notifications, etc.)
     // need to keep resolving. The empty stackId is the locate-pending
