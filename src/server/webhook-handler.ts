@@ -83,15 +83,49 @@ export interface WebhookHandlerDeps {
 }
 
 /**
- * AP9: Shared 503 body for the "webhook.secret is unset" path. Exported so
- * `src/server/index.ts`'s fallback stub (the route registered when no secret
- * is configured at all) emits the same operator-facing hint as this
- * handler. Two sources of truth for operator-facing text always drift.
+ * AP9: Shared 503 body for the "webhook auth is unset" path. Exported so
+ * `src/server/index.ts`'s fallback stub (the route registered when neither
+ * `webhook.secret` nor `webhook.tokens` is configured) emits the same
+ * operator-facing hint as this handler. Two sources of truth for
+ * operator-facing text always drift.
+ *
+ * The hint mentions both forms because the legacy single-token path
+ * (`webhook.secret`) and the per-sender path (`webhook.tokens.<name>`) are
+ * both supported — operators can use either or both.
  */
 export const WEBHOOK_NOT_CONFIGURED_BODY = {
   error: "Webhook not configured",
-  hint: "Set webhook.secret in config.yaml under the webhook section and restart the server",
+  hint: "Set webhook.secret (or webhook.tokens.<sender>) in config.yaml under the webhook section and restart the server",
 } as const;
+
+/** True when at least one auth credential (legacy `secret` or named token) is configured. */
+export function isWebhookAuthConfigured(config: WebhookConfig): boolean {
+  if (config.secret) return true;
+  return Boolean(config.tokens && Object.keys(config.tokens).length > 0);
+}
+
+/**
+ * Resolve the bearer header to a sender name, or null if the token is not
+ * recognised. The legacy `secret` resolves to the sender name "default";
+ * tokens in `webhook.tokens` resolve to their map key. Used to attribute
+ * webhook calls in logs and the event log so a noisy source can be traced
+ * and revoked without rotating tokens for everyone.
+ *
+ * Plain `===` rather than constant-time compare, matching the rest of the
+ * auth posture in this server. Bearer tokens are random ≥32-byte strings,
+ * so timing leakage is bounded by the longest matching prefix.
+ */
+function resolveSender(authHeader: string | undefined, config: WebhookConfig): string | null {
+  if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
+  const presented = authHeader.slice("Bearer ".length);
+  if (config.secret && presented === config.secret) return "default";
+  if (config.tokens) {
+    for (const [name, token] of Object.entries(config.tokens)) {
+      if (presented === token) return name;
+    }
+  }
+  return null;
+}
 
 export function createWebhookHandler(deps: WebhookHandlerDeps) {
   const { runner, config } = deps;
@@ -108,17 +142,17 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
 
   return async (req: Request, res: Response): Promise<void> => {
     // 1. Validate bearer token.
-    // Without a configured secret we respond 503 instead of silently accepting
+    // Without configured auth we respond 503 instead of silently accepting
     // traffic — this endpoint is unauthenticated-by-omission otherwise, and
     // without the clear hint operators were seeing Express's default HTML 404
     // ("Cannot POST /api/webhook/alert") in the QA logs, which looks like the
     // route is missing rather than misconfigured.
-    if (!config.secret) {
+    if (!isWebhookAuthConfigured(config)) {
       res.status(503).json(WEBHOOK_NOT_CONFIGURED_BODY);
       return;
     }
-    const authHeader = req.headers.authorization;
-    if (!authHeader || authHeader !== `Bearer ${config.secret}`) {
+    const sender = resolveSender(req.headers.authorization, config);
+    if (!sender) {
       res.status(401).json({ error: "Invalid or missing authorization token" });
       return;
     }
@@ -151,7 +185,7 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
     // 3. Match service (exclude hidden services)
     const service = extractServiceFromAlert(alert, getVisibleServices());
     if (!service) {
-      logger.warn({ labels: alert.labels }, "Alert webhook: could not match service from labels");
+      logger.warn({ labels: alert.labels, sender }, "Alert webhook: could not match service from labels");
       res.status(422).json({ error: "Could not identify service from alert labels" });
       return;
     }
@@ -204,14 +238,14 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
     }
 
     // 7. Run investigation in background (headless — no WS callbacks)
-    logger.info({ service: service.name, template, alertName }, "Alert webhook: starting headless investigation");
+    logger.info({ service: service.name, template, alertName, sender }, "Alert webhook: starting headless investigation");
     eventLog.append({
       kind: "alert_received",
       severity: "warn",
       summary: `alert · ${alertName} · ${service.name}`,
       stackId,
       service: service.name,
-      meta: { source: "alertmanager" },
+      meta: { source: "alertmanager", sender },
     });
     try {
       await runner.run({

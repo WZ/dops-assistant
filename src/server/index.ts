@@ -30,7 +30,7 @@ import { loadConfig } from "../config/loader.js";
 import { SkillStore } from "../skills/store.js";
 import { createModel } from "../mastra/index.js";
 import { InvestigationRunner } from "./investigation-runner.js";
-import { createWebhookHandler, WEBHOOK_NOT_CONFIGURED_BODY } from "./webhook-handler.js";
+import { createWebhookHandler, WEBHOOK_NOT_CONFIGURED_BODY, isWebhookAuthConfigured } from "./webhook-handler.js";
 import { InvestigationDedup } from "./investigation-dedup.js";
 import { createApiKeyMiddleware } from "./auth-middleware.js";
 import { globalLimiter, strictLimiter, moderateLimiter } from "./rate-limit.js";
@@ -393,17 +393,18 @@ async function main() {
   app.get("/api/health", healthHandler);
 
   // Alert webhook endpoint.
-  // The route is always registered. When `config.webhook.secret` is unset, the
-  // handler itself returns a structured 503 with a hint, so operators posting
-  // to this URL see a meaningful error instead of Express's default HTML 404
-  // ("Cannot POST /api/webhook/alert"). When the secret IS set, we eagerly
-  // build the runner/adapters so the first webhook call doesn't pay that cost.
+  // The route is always registered. When neither `webhook.secret` nor
+  // `webhook.tokens` is set, the handler itself returns a structured 503 with
+  // a hint, so operators posting to this URL see a meaningful error instead
+  // of Express's default HTML 404 ("Cannot POST /api/webhook/alert"). When
+  // any auth credential IS set, we eagerly build the runner/adapters so the
+  // first webhook call doesn't pay that cost.
   //
-  // Demo mode: never wire the real webhook handler even if a secret is set —
+  // Demo mode: never wire the real webhook handler even if auth is set —
   // demo-mode middleware would reject it anyway, but treating it as unconfigured
   // keeps the startup path free of adapter construction (which would try to
   // connect to stub MCP providers).
-  if (config.webhook.secret && !isDemoMode()) {
+  if (isWebhookAuthConfigured(config.webhook) && !isDemoMode()) {
     const defaultStackId = stackManager.getDefaultStackId();
     const defaultCtx = stackManager.getDefaultContext();
     const providers = defaultCtx.providerRegistry.getProviders();
@@ -418,10 +419,15 @@ async function main() {
       dedup: sharedDedup,
       getHiddenServices: () => db.getHiddenServices(defaultStackId),
     });
-    app.post("/api/webhook/alert", webhookHandler);
+    // strictLimiter (60 req/min/IP) sits in front of the webhook routes
+    // because each accepted call can fan out into a full investigation
+    // (multiple LLM agents). The global moderate limiter (120/min on /api)
+    // already applies; layering strict on top means the tighter bucket wins
+    // for this specific endpoint without affecting GUI traffic.
+    app.post("/api/webhook/alert", strictLimiter, webhookHandler);
 
     // Stack-scoped webhook: POST /api/webhook/alert/:stackSlug
-    app.post("/api/webhook/alert/:stackSlug", async (req, res) => {
+    app.post("/api/webhook/alert/:stackSlug", strictLimiter, async (req, res) => {
       const slug = req.params["stackSlug"] as string;
       const stackRow = db.getStackBySlug(slug);
       if (!stackRow) {
@@ -463,14 +469,14 @@ async function main() {
 
     logger.info("Alert webhook enabled at POST /api/webhook/alert");
   } else {
-    // No secret configured: register 503 stubs at both the default and
+    // No webhook auth configured: register 503 stubs at both the default and
     // stack-scoped routes so clients receive a structured JSON error.
     const notConfiguredResponse = (_req: Request, res: Response) => {
       res.status(503).json(WEBHOOK_NOT_CONFIGURED_BODY);
     };
     app.post("/api/webhook/alert", notConfiguredResponse);
     app.post("/api/webhook/alert/:stackSlug", notConfiguredResponse);
-    logger.warn("Alert webhook registered but DISABLED: webhook.secret is unset — POST /api/webhook/alert will return 503");
+    logger.warn("Alert webhook registered but DISABLED: neither webhook.secret nor webhook.tokens is configured — POST /api/webhook/alert will return 503");
   }
 
   setupWebSocket(server, {

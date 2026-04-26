@@ -205,6 +205,123 @@ describe("webhook handler", () => {
   });
 });
 
+describe("webhook handler — named tokens (per-sender auth)", () => {
+  let runner: InvestigationRunner;
+
+  beforeEach(() => {
+    runner = mockRunner();
+    eventLog.reset();
+  });
+
+  const VALID_ALERT = {
+    alerts: [{
+      status: "firing" as const,
+      labels: { alertname: "HighErrorRate", service: "checkout-service", severity: "critical" },
+      annotations: { summary: "Error rate is high" },
+      startsAt: "2026-04-26T10:00:00Z",
+      endsAt: "0001-01-01T00:00:00Z",
+    }],
+  };
+
+  it("accepts a token from webhook.tokens (no legacy secret)", async () => {
+    const config: WebhookConfig = {
+      ...DEFAULT_CONFIG,
+      secret: undefined,
+      tokens: { grafana: "grafana-token", "fortinet-shim": "fortinet-token" },
+    };
+    const handler = createWebhookHandler({ runner, config, services: SERVICES });
+    const { req, res } = mockReqRes(VALID_ALERT, "Bearer grafana-token");
+
+    await handler(req, res);
+    expect(res.status).toHaveBeenCalledWith(202);
+  });
+
+  it("accepts each named token in the map", async () => {
+    const config: WebhookConfig = {
+      ...DEFAULT_CONFIG,
+      secret: undefined,
+      tokens: { a: "token-a", b: "token-b" },
+    };
+    for (const token of ["token-a", "token-b"]) {
+      const localRunner = mockRunner();
+      const handler = createWebhookHandler({ runner: localRunner, config, services: SERVICES });
+      const { req, res } = mockReqRes(VALID_ALERT, `Bearer ${token}`);
+      await handler(req, res);
+      expect(res.status).toHaveBeenCalledWith(202);
+    }
+  });
+
+  it("legacy secret still works alongside tokens", async () => {
+    const config: WebhookConfig = {
+      ...DEFAULT_CONFIG,
+      tokens: { other: "other-token" },
+    };
+    const handler = createWebhookHandler({ runner, config, services: SERVICES });
+    const { req, res } = mockReqRes(VALID_ALERT, "Bearer test-secret");
+
+    await handler(req, res);
+    expect(res.status).toHaveBeenCalledWith(202);
+  });
+
+  it("rejects unknown tokens when only tokens map is set", async () => {
+    const config: WebhookConfig = {
+      ...DEFAULT_CONFIG,
+      secret: undefined,
+      tokens: { grafana: "grafana-token" },
+    };
+    const handler = createWebhookHandler({ runner, config, services: SERVICES });
+    const { req, res } = mockReqRes(VALID_ALERT, "Bearer wrong-token");
+
+    await handler(req, res);
+    expect(res.status).toHaveBeenCalledWith(401);
+  });
+
+  it("returns 503 when neither secret nor tokens map is configured", async () => {
+    const config: WebhookConfig = { ...DEFAULT_CONFIG, secret: undefined };
+    const handler = createWebhookHandler({ runner, config, services: SERVICES });
+    const { req, res } = mockReqRes(VALID_ALERT, "Bearer any-token");
+
+    await handler(req, res);
+    expect(res.status).toHaveBeenCalledWith(503);
+  });
+
+  it("returns 503 when tokens map is present but empty", async () => {
+    const config: WebhookConfig = { ...DEFAULT_CONFIG, secret: undefined, tokens: {} };
+    const handler = createWebhookHandler({ runner, config, services: SERVICES });
+    const { req, res } = mockReqRes(VALID_ALERT, "Bearer any-token");
+
+    await handler(req, res);
+    expect(res.status).toHaveBeenCalledWith(503);
+  });
+
+  it("attributes the sender name in the alert_received event", async () => {
+    const config: WebhookConfig = {
+      ...DEFAULT_CONFIG,
+      secret: undefined,
+      tokens: { "fortinet-shim": "fortinet-token" },
+    };
+    const handler = createWebhookHandler({ runner, config, services: SERVICES });
+    const { req, res } = mockReqRes(VALID_ALERT, "Bearer fortinet-token");
+
+    await handler(req, res);
+
+    const { events } = eventLog.recent(10);
+    expect(events.length).toBeGreaterThan(0);
+    expect(events[0].kind).toBe("alert_received");
+    expect(events[0].meta).toMatchObject({ sender: "fortinet-shim" });
+  });
+
+  it('attributes the legacy secret as sender "default"', async () => {
+    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES });
+    const { req, res } = mockReqRes(VALID_ALERT, "Bearer test-secret");
+
+    await handler(req, res);
+
+    const { events } = eventLog.recent(10);
+    expect(events[0].meta).toMatchObject({ sender: "default" });
+  });
+});
+
 describe("webhook handler eventLog integration", () => {
   let runner: InvestigationRunner;
 
