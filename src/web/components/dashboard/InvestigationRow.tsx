@@ -9,12 +9,19 @@ import type { InvestigationSummary } from "@/lib/dashboard-utils";
 interface InvestigationRowProps {
   investigation: InvestigationSummary;
   onClick: (id: string) => void;
+  /** Stack that owns this investigation. Threaded into the visible href so
+   *  right-click → "open in new tab" lands on the canonical stack-scoped URL,
+   *  matching what the click handler does. The list itself is already
+   *  stack-scoped (server filters by req.stackId), so callers just pass the
+   *  active stack from context. */
+  stackId: string;
   className?: string;
 }
 
 export const InvestigationRow = memo(function InvestigationRow({
   investigation: inv,
   onClick,
+  stackId,
   className,
 }: InvestigationRowProps) {
   // Severity and confidence both come from DB columns now (severity from the
@@ -77,7 +84,7 @@ export const InvestigationRow = memo(function InvestigationRow({
 
   return (
     <a
-      href={withBase(`/investigations/${inv.id}`)}
+      href={withBase(`/stacks/${stackId}/investigations/${inv.id}`)}
       tabIndex={0}
       onClick={(e) => { e.preventDefault(); onClick(inv.id); }}
       onKeyDown={handleKeyDown}

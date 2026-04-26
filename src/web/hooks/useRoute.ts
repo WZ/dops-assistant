@@ -84,9 +84,24 @@ export function parseUrl(pathname: string, search: string = ""): LeftPaneView {
     return { type: "activity", tab: "investigations", query: parseInvestigationsQuery(search) };
   }
 
-  // /investigations/:id — single investigation detail page. Unchanged.
+  // /stacks/:stackId/investigations/:id — canonical, stack-scoped detail page.
+  // The stack is part of the URL because investigation lookups on the server
+  // are scoped to a stack (db.getInvestigation takes both stackId and id).
+  // Without the stackId in the URL, a deep link in a clean browser session
+  // (no localStorage to recall the last active stack) lands on the default
+  // stack and 404s when the investigation lives elsewhere.
+  const stackInvMatch = p.match(/^\/stacks\/([^/]+)\/investigations\/(.+)$/);
+  if (stackInvMatch) {
+    return { type: "investigation", stackId: stackInvMatch[1]!, id: stackInvMatch[2]! };
+  }
+
+  // Legacy /investigations/:id — kept so existing bookmarks, Slack links,
+  // and event-log hrefs from before the stack-scoped URL change still
+  // resolve. Returns stackId="" as a sentinel; InvestigationPane handles
+  // that by hitting /api/investigations/:id/locate and replaceState'ing
+  // to the canonical /stacks/:stackId/investigations/:id form on first paint.
   const invMatch = p.match(/^\/investigations\/(.+)$/);
-  if (invMatch) return { type: "investigation", id: invMatch[1]! };
+  if (invMatch) return { type: "investigation", id: invMatch[1]!, stackId: "" };
 
   // /patterns/:id — learned pattern recurrence detail page.
   const patternMatch = p.match(/^\/patterns\/(.+)$/);
@@ -129,7 +144,13 @@ export function viewToUrl(view: LeftPaneView): string {
   const base = APP_BASE_PATH.replace(/\/+$/, "");
   switch (view.type) {
     case "investigation":
-      return `${base}/investigations/${view.id}`;
+      // Canonical form is stack-scoped. When stackId is empty (the legacy
+      // /investigations/:id parser sentinel), emit the legacy URL so the
+      // SPA can fetch /api/investigations/:id/locate to discover the stack
+      // before replaceState'ing the user onto the canonical URL.
+      return view.stackId
+        ? `${base}/stacks/${view.stackId}/investigations/${view.id}`
+        : `${base}/investigations/${view.id}`;
     case "pattern":
       return `${base}/patterns/${view.id}`;
     case "activity": {

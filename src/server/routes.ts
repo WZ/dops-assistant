@@ -998,6 +998,23 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     res.json({ investigation, phases, events });
   });
 
+  // Stack-agnostic lookup. Resolves an investigation id (ULID, globally
+  // unique) to the stack that owns it. Used by the SPA when a legacy
+  // /investigations/:id deep link is opened in a clean browser session: the
+  // URL omits the stack, so the frontend hits this endpoint, switches to the
+  // returned stack, and replaceState's the URL to the canonical
+  // /stacks/:stackId/investigations/:id form.
+  app.get("/api/investigations/:id/locate", (req: Request, res: Response) => {
+    const id = req.params["id"];
+    const idStr = Array.isArray(id) ? id[0]! : id!;
+    const stackId = db.findInvestigationStack(idStr);
+    if (!stackId) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    res.json({ stackId });
+  });
+
   app.get("/api/events/recent", (req: Request, res: Response) => {
     const limitParam = Number(req.query.limit);
     const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 200) : 50;

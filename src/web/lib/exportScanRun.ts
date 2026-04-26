@@ -7,6 +7,10 @@ import { toPng } from "html-to-image";
 
 export interface ScanRunSummaryShape {
   id: string;
+  /** Stack that owns this run + its investigations. Threaded into the
+   *  Markdown investigation links so pasting them into Slack/docs lands the
+   *  reader on the canonical stack-scoped URL. */
+  stackId: string;
   trigger: "manual" | "cron";
   status: "running" | "complete" | "failed" | "skipped";
   startedAt: number;
@@ -43,7 +47,7 @@ export function scanRunToMarkdown(
     lines.push("## Dispatched investigations");
     for (const inv of investigations) {
       lines.push(
-        `- **${inv.service}** (${inv.ruleName}) — ${inv.status} · [${inv.investigationId}](/investigations/${inv.investigationId})`,
+        `- **${inv.service}** (${inv.ruleName}) — ${inv.status} · [${inv.investigationId}](/stacks/${run.stackId}/investigations/${inv.investigationId})`,
       );
       if (inv.reportSummary) lines.push(`  - _${inv.reportSummary}_`);
     }

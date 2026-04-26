@@ -10,8 +10,24 @@ describe("parseUrl", () => {
     expect(parseUrl("")).toEqual({ type: "dashboard" });
   });
 
-  it("parses /investigations/:id", () => {
-    expect(parseUrl("/investigations/inv_01KNR")).toEqual({ type: "investigation", id: "inv_01KNR" });
+  it("parses /stacks/:stackId/investigations/:id (canonical, stack-scoped)", () => {
+    expect(parseUrl("/stacks/prod/investigations/inv_01KNR")).toEqual({
+      type: "investigation",
+      id: "inv_01KNR",
+      stackId: "prod",
+    });
+  });
+
+  it("parses legacy /investigations/:id with stackId='' sentinel for locate-and-redirect", () => {
+    // Pre-stack-scoped bookmarks (Slack links, email notifications, etc.)
+    // need to keep resolving. The empty stackId is the locate-pending
+    // sentinel — App.tsx hits /api/investigations/:id/locate, switches to
+    // the owning stack, and replaceState's to the canonical URL.
+    expect(parseUrl("/investigations/inv_01KNR")).toEqual({
+      type: "investigation",
+      id: "inv_01KNR",
+      stackId: "",
+    });
   });
 
   it("parses /patterns/:id", () => {
@@ -185,8 +201,20 @@ describe("viewToUrl", () => {
     expect(viewToUrl({ type: "dashboard" })).toBe("/");
   });
 
-  it("maps investigation to /investigations/:id", () => {
-    expect(viewToUrl({ type: "investigation", id: "inv_abc" })).toBe("/investigations/inv_abc");
+  it("maps investigation with stackId to /stacks/:stackId/investigations/:id", () => {
+    expect(viewToUrl({ type: "investigation", id: "inv_abc", stackId: "prod" })).toBe(
+      "/stacks/prod/investigations/inv_abc",
+    );
+  });
+
+  it("maps investigation with empty stackId to legacy /investigations/:id", () => {
+    // The serialize side honors the locate-pending sentinel: while the
+    // owning stack is unknown, emit the legacy URL so a navigate({...},
+    // { replace: true }) at locate-pending doesn't lock the URL into
+    // /stacks//investigations/inv_abc (broken).
+    expect(viewToUrl({ type: "investigation", id: "inv_abc", stackId: "" })).toBe(
+      "/investigations/inv_abc",
+    );
   });
 
   it("maps pattern to /patterns/:id", () => {
@@ -268,7 +296,7 @@ describe("roundtrip", () => {
   it("parseUrl(viewToUrl(view)) === view for all types", () => {
     const views = [
       { type: "dashboard" as const },
-      { type: "investigation" as const, id: "inv_123" },
+      { type: "investigation" as const, id: "inv_123", stackId: "prod" },
       { type: "pattern" as const, id: "pat_123" },
       { type: "activity" as const, tab: "investigations" as const, query: {} },
       { type: "activity" as const, tab: "scans" as const, query: {} },
@@ -331,7 +359,17 @@ describe("useRoute — sub-path deploy (BASE_URL='/dops/')", () => {
     const mod = await import("./useRoute");
 
     expect(mod.parseUrl("/dops/")).toEqual({ type: "dashboard" });
-    expect(mod.parseUrl("/dops/investigations/inv_123")).toEqual({ type: "investigation", id: "inv_123" });
+    expect(mod.parseUrl("/dops/stacks/prod/investigations/inv_123")).toEqual({
+      type: "investigation",
+      id: "inv_123",
+      stackId: "prod",
+    });
+    // Legacy URL still resolves under sub-path deploy (existing bookmarks).
+    expect(mod.parseUrl("/dops/investigations/inv_123")).toEqual({
+      type: "investigation",
+      id: "inv_123",
+      stackId: "",
+    });
     expect(mod.parseUrl("/dops/patterns/pat_123")).toEqual({ type: "pattern", id: "pat_123" });
     expect(mod.parseUrl("/dops/services/api")).toEqual({ type: "services", initialService: "api" });
     expect(mod.parseUrl("/dops/settings/providers")).toEqual({ type: "settings", initialTab: "providers" });
@@ -352,7 +390,9 @@ describe("useRoute — sub-path deploy (BASE_URL='/dops/')", () => {
     const mod = await import("./useRoute");
 
     expect(mod.viewToUrl({ type: "dashboard" })).toBe("/dops/");
-    expect(mod.viewToUrl({ type: "investigation", id: "inv_1" })).toBe("/dops/investigations/inv_1");
+    expect(mod.viewToUrl({ type: "investigation", id: "inv_1", stackId: "prod" })).toBe(
+      "/dops/stacks/prod/investigations/inv_1",
+    );
     expect(mod.viewToUrl({ type: "pattern", id: "pat_1" })).toBe("/dops/patterns/pat_1");
     expect(mod.viewToUrl({ type: "services" })).toBe("/dops/services");
     expect(mod.viewToUrl({ type: "services", initialService: "api" })).toBe("/dops/services/api");
@@ -365,7 +405,7 @@ describe("useRoute — sub-path deploy (BASE_URL='/dops/')", () => {
 
     const views = [
       { type: "dashboard" as const },
-      { type: "investigation" as const, id: "inv_123" },
+      { type: "investigation" as const, id: "inv_123", stackId: "prod" },
       { type: "pattern" as const, id: "pat_123" },
       { type: "services" as const, initialService: "api" },
       { type: "settings" as const, initialTab: "providers" as const },

@@ -743,6 +743,7 @@ function ExportMenu({
   const doCopyMarkdown = async () => {
     const summaryShape = {
       id: run.id,
+      stackId: run.stackId,
       trigger: run.trigger,
       status: run.status,
       startedAt: run.startedAt,
