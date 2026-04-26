@@ -1087,6 +1087,22 @@ export class Database {
     return row ? normalizeRow(row) : undefined;
   }
 
+  /**
+   * Look up which stack owns a given investigation id, ignoring the active
+   * stack scope. Used by the legacy /investigations/:id deep-link redirect:
+   * the URL omits the stack, the SPA calls this to discover the canonical
+   * stack-scoped URL and then replaceState's the user there.
+   *
+   * Investigation ids are ULIDs and globally unique — at most one stack can
+   * own a given id, so the lookup is safe.
+   */
+  findInvestigationStack(id: string): string | undefined {
+    const row = this.db.prepare(
+      "SELECT stack_id FROM investigations WHERE id = ?"
+    ).get(id) as { stack_id: string } | undefined;
+    return row?.stack_id;
+  }
+
   listInvestigations(stackId: string, filters: InvestigationFilters = {}): InvestigationRow[] {
     // Internal safety cap at 10k — the HTTP layer has its own stricter 100-row
     // cap (see parseInvestigationFilters). Non-HTTP callers like rca-eval need

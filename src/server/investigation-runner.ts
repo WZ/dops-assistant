@@ -164,7 +164,7 @@ export class InvestigationRunner {
       summary: `investigation started · ${service.name}`,
       stackId,
       service: service.name,
-      href: `/investigations/${invId}`,
+      href: stackId ? `/stacks/${encodeURIComponent(stackId)}/investigations/${encodeURIComponent(invId)}` : `/investigations/${encodeURIComponent(invId)}`,
     });
 
     // 2. Search for matching skills — pass both string (for planning step) and Skill[] (for evidence steps)
@@ -326,7 +326,7 @@ export class InvestigationRunner {
           : `investigation complete · ${service.name}`,
         stackId,
         service: service.name,
-        href: `/investigations/${invId}`,
+        href: stackId ? `/stacks/${encodeURIComponent(stackId)}/investigations/${encodeURIComponent(invId)}` : `/investigations/${encodeURIComponent(invId)}`,
       });
 
       callbacks?.onTotalUsage?.(invId, totalTokens.inputTokens, totalTokens.outputTokens, totalDurationMs);
@@ -352,7 +352,7 @@ export class InvestigationRunner {
         summary: `investigation failed · ${service.name} · ${errorMsg}`,
         stackId,
         service: service.name,
-        href: `/investigations/${invId}`,
+        href: stackId ? `/stacks/${encodeURIComponent(stackId)}/investigations/${encodeURIComponent(invId)}` : `/investigations/${encodeURIComponent(invId)}`,
       });
       callbacks?.onFailed?.(invId, errorMsg);
       throw err;

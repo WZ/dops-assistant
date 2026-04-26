@@ -36,7 +36,7 @@ export function InvestigationsPage({
   onUpdateQuery,
   onViewInvestigation,
 }: InvestigationsPageProps) {
-  const { stackFetch } = useStackContext();
+  const { stackFetch, activeStackId } = useStackContext();
   const [rows, setRows] = useState<InvestigationSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [hasMore, setHasMore] = useState(false);
@@ -216,6 +216,7 @@ export function InvestigationsPage({
                 key={inv.id}
                 investigation={inv}
                 onClick={onViewInvestigation}
+                stackId={activeStackId}
               />
             ))}
           </div>
