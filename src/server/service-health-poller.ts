@@ -27,6 +27,7 @@ import type { MastraProvider } from "../mcp/provider.js";
 import type { ServiceRegistryStore } from "../services/registry.js";
 import type { Database } from "./db.js";
 import { getToolsByRole } from "../mcp/provider.js";
+import { eventLog } from "./event-log.js";
 
 const logger = createLogger();
 
@@ -233,6 +234,15 @@ export function matchResultsToServices(
   return result;
 }
 
+function severityForStatus(status: HealthStatus): "info" | "warn" | "error" | "success" {
+  switch (status) {
+    case "down": return "error";
+    case "degraded": return "warn";
+    case "healthy": return "success";
+    case "unknown": return "info";
+  }
+}
+
 export class ServiceHealthPoller {
   private readonly resolveProviders: () => MastraProvider[];
   private readonly registryStore: ServiceRegistryStore;
@@ -399,7 +409,7 @@ export class ServiceHealthPoller {
 
       const checkedAt = new Date().toISOString();
 
-      // Detect transitions and persist
+      // Detect transitions, log to event store, fire callback, persist.
       for (const [service, status] of newHealth) {
         const previous = this.cachedHealth.get(service);
         // Fire transition when status changes. On first poll (previous=undefined),
@@ -411,11 +421,23 @@ export class ServiceHealthPoller {
         const isTransition = previous !== undefined
           ? previous !== status
           : ((status === "down" && downViaUp.has(service)) || status === "degraded");
-        if (isTransition && this.onTransition) {
-          try {
-            this.onTransition(service, previous ?? "unknown", status);
-          } catch (err) {
-            logger.warn({ err, service }, "ServiceHealthPoller: onTransition callback threw");
+        if (isTransition) {
+          const from = previous ?? "unknown";
+          eventLog.append({
+            kind: "service_health_changed",
+            severity: severityForStatus(status),
+            summary: `service ${service}: ${from} → ${status}`,
+            stackId: this.stackId || undefined,
+            service,
+            href: `/services/${encodeURIComponent(service)}`,
+            meta: { from, to: status },
+          });
+          if (this.onTransition) {
+            try {
+              this.onTransition(service, from, status);
+            } catch (err) {
+              logger.warn({ err, service }, "ServiceHealthPoller: onTransition callback threw");
+            }
           }
         }
         this.persistHealthCheck(service, status, checkedAt);

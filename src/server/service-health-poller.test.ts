@@ -9,6 +9,7 @@ import {
 import type { MastraProvider } from "../mcp/provider.js";
 import type { ServiceRegistryStore } from "../services/registry.js";
 import type { Database } from "./db.js";
+import { eventLog } from "./event-log.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -853,5 +854,95 @@ describe("ServiceHealthPoller", () => {
       expect(summary.degraded).toBe(0);
       expect(summary.total).toBe(4);
     });
+  });
+});
+
+// ── event-log emission ───────────────────────────────────────────────────────
+
+/**
+ * Build a poller whose query results change across polls. `pollResults` is a
+ * list of {expr → entries} maps; the Nth poll reads from the Nth entry,
+ * defaulting to the last entry once exhausted (so a single-element list means
+ * "always return this").
+ */
+function makeMultiPollPoller(opts: {
+  services: string[];
+  stackId?: string;
+  onTransition?: (svc: string, from: HealthStatus, to: HealthStatus) => void;
+  pollResults: Array<Record<string, object[]>>;
+}): { poller: ServiceHealthPoller; advance: () => void } {
+  let pollIndex = 0;
+  const advance = () => { pollIndex += 1; };
+
+  const queryTool = {
+    execute: vi.fn(async (args: unknown) => {
+      const { expr } = args as { expr: string };
+      const slice = opts.pollResults[Math.min(pollIndex, opts.pollResults.length - 1)] ?? {};
+      return { data: { result: slice[expr] ?? [] } };
+    }),
+  };
+  const listDatasourcesTool = {
+    execute: vi.fn(async () => ({
+      content: [{ type: "text", text: JSON.stringify({ datasources: [{ uid: "prometheus", name: "Prometheus", type: "prometheus" }] }) }],
+    })),
+  };
+  const provider = makeProvider("prom", { prom_query_prometheus: queryTool, prom_list_datasources: listDatasourcesTool });
+  (provider.client.listTools as ReturnType<typeof vi.fn>).mockResolvedValue({
+    prom_query_prometheus: queryTool,
+    prom_list_datasources: listDatasourcesTool,
+  });
+
+  const poller = new ServiceHealthPoller({
+    providers: [provider],
+    registryStore: makeRegistryStore(opts.services),
+    db: makeDb(),
+    stackId: opts.stackId ?? "",
+    intervalMs: 999_999,
+    onTransition: opts.onTransition,
+  });
+
+  return { poller, advance };
+}
+
+describe("event-log emission", () => {
+  beforeEach(() => {
+    eventLog.reset();
+  });
+
+  it("emits service_health_changed on healthy → down with severity=error", async () => {
+    const { poller, advance } = makeMultiPollPoller({
+      services: ["api"],
+      stackId: "stack-test",
+      pollResults: [
+        // Poll 1: healthy.
+        {
+          kube_deployment_status_replicas: [makePrometheusEntry({ deployment: "api" }, "1")],
+          up: [makePrometheusEntry({ job: "api" }, "1")],
+        },
+        // Poll 2: up=0 → DOWN via downViaUp. Replicas batch is empty so the
+        // healthy-from-replicas merge doesn't shadow the up-batch DOWN verdict.
+        {
+          up: [makePrometheusEntry({ job: "api" }, "0")],
+        },
+      ],
+    });
+
+    await poller.poll();   // healthy
+    advance();
+    eventLog.reset();      // discard first-poll noise (we're testing the transition only)
+    await poller.poll();   // down
+
+    const { events } = eventLog.recent(10);
+    expect(events).toHaveLength(1);
+    const ev = events[0]!;
+    expect(ev.kind).toBe("service_health_changed");
+    expect(ev.severity).toBe("error");
+    expect(ev.summary).toContain("api");
+    expect(ev.summary).toContain("healthy");
+    expect(ev.summary).toContain("down");
+    expect(ev.stackId).toBe("stack-test");
+    expect(ev.service).toBe("api");
+    expect(ev.href).toBe("/services/api");
+    expect(ev.meta).toEqual({ from: "healthy", to: "down" });
   });
 });
