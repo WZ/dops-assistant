@@ -8,6 +8,37 @@ import type { RcaReport } from "../types/rca-types.js";
 
 const logger = createLogger();
 
+/** One-time warn flag — operators get a single nudge per process when
+ *  Slack is configured but the app base URL isn't, instead of a warning per
+ *  notification. Module-level so all paths (notifySlack and the scan-run
+ *  helpers) share the same dedup, and so future callers can't accidentally
+ *  re-introduce different policies (the prior design defaulted half the
+ *  paths to `localhost:3000`, which produced misleading-but-clickable
+ *  links). Tests can call `__resetAppBaseUrlWarn()` to reset between cases. */
+let warnedMissingAppBaseUrl = false;
+
+/** Test hook — reset the one-time warn flag so test cases that exercise
+ *  the missing-config branch don't depend on execution order. Not part of
+ *  the public API. */
+export function __resetAppBaseUrlWarn(): void {
+  warnedMissingAppBaseUrl = false;
+}
+
+/** Centralizes the "Slack configured but appBaseUrl unset" policy: warn
+ *  once, then return undefined so the caller omits the link. Every Slack
+ *  path (investigation-complete, scan-run auto, scan-run manual) goes
+ *  through this so the policy stays consistent. */
+function resolveAppBaseUrl(appBaseUrl: string | undefined): string | undefined {
+  if (appBaseUrl) return appBaseUrl.replace(/\/$/, "");
+  if (!warnedMissingAppBaseUrl) {
+    warnedMissingAppBaseUrl = true;
+    logger.warn(
+      "Slack notifications enabled but notifications.email.appBaseUrl is unset — links will be omitted from Slack posts. Set this field to surface clickable links.",
+    );
+  }
+  return undefined;
+}
+
 export interface SlackNotifierOptions {
   /** Slack incoming webhook URL */
   slackWebhookUrl: string;
@@ -79,8 +110,8 @@ export async function notifySlack(
     });
   }
 
-  if (appBaseUrl) {
-    const base = appBaseUrl.replace(/\/$/, "");
+  const base = resolveAppBaseUrl(appBaseUrl);
+  if (base) {
     const path = stackId
       ? `/stacks/${encodeURIComponent(stackId)}/investigations/${encodeURIComponent(investigationId)}`
       : `/investigations/${encodeURIComponent(investigationId)}`;
@@ -117,8 +148,12 @@ export async function notifySlack(
 export interface NotifySlackScanRunOptions {
   /** Slack incoming webhook URL */
   slackWebhookUrl: string;
-  /** App base URL for building the /scan/runs/:id deep link */
-  appBaseUrl: string;
+  /** Base URL of the dops-assistant SPA, used to build the
+   *  /scan/runs/:id deep link. Optional — when unset, the scan-run post
+   *  drops the "View run" hyperlink and just shows the metrics in the
+   *  context block. Matches the policy used by the investigation-complete
+   *  path (notifySlack); see resolveAppBaseUrl above. */
+  appBaseUrl?: string;
 }
 
 export interface ScanRunSummary {
@@ -144,7 +179,7 @@ export async function sendSlackScanRunPost(
   opts: NotifySlackScanRunOptions,
   summary: ScanRunSummary,
 ): Promise<void> {
-  const runLink = `${opts.appBaseUrl}/scan/runs/${summary.runId}`;
+  const base = resolveAppBaseUrl(opts.appBaseUrl);
   const emoji = summary.hitsDispatched > 0 ? ":mag:" : ":white_check_mark:";
   const pluralS = summary.hitsDispatched === 1 ? "" : "s";
   const text = summary.hitsDispatched > 0
@@ -160,10 +195,17 @@ export async function sendSlackScanRunPost(
       text: { type: "mrkdwn", text: "*Flagged:*\n" + summary.dispatchedServices.map(s => `• ${s}`).join("\n") },
     });
   }
+  // Drop the "View run" hyperlink when appBaseUrl isn't configured rather
+  // than emit a localhost:3000 link the operator can't actually click.
+  // The metrics tail (probed count + duration) stays either way.
+  const metricsTail = `${summary.servicesProbed} probed · ${Math.round(summary.durationMs)}ms`;
+  const contextText = base
+    ? `<${base}/scan/runs/${encodeURIComponent(summary.runId)}|View run> · ${metricsTail}`
+    : metricsTail;
   blocks.push({
     type: "context",
     elements: [
-      { type: "mrkdwn", text: `<${runLink}|View run> · ${summary.servicesProbed} probed · ${Math.round(summary.durationMs)}ms` },
+      { type: "mrkdwn", text: contextText },
     ],
   });
 

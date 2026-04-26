@@ -28,6 +28,12 @@ interface TestCtx {
 interface MakeAppOptions {
   stacks?: string[];
   scanScheduler?: unknown;
+  /** Sets `config.notifications.email.appBaseUrl` so the Slack scan-run
+   *  post emits a clickable "View run" hyperlink. Without this, the
+   *  notifier (correctly) omits the link to avoid pointing operators at a
+   *  default localhost URL they can't reach. Tests that assert on the
+   *  link contents need to opt in. */
+  appBaseUrl?: string;
 }
 
 function makeApp(optsOrStacks: string[] | MakeAppOptions = ["stack-a"]): TestCtx {
@@ -66,7 +72,12 @@ function makeApp(optsOrStacks: string[] | MakeAppOptions = ["stack-a"]): TestCtx
   registerRoutes(app, {
     db,
     stackManager: mockStackManager,
-    config: { notifications: {}, webhook: {} } as any,
+    config: {
+      notifications: opts.appBaseUrl
+        ? { email: { appBaseUrl: opts.appBaseUrl } }
+        : {},
+      webhook: {},
+    } as any,
     skillStore: {} as any,
     sharedDedup: {} as any,
     llmModel: {} as any,
@@ -451,8 +462,12 @@ describe("POST /api/notifications/scan-run/send", () => {
     expect(res.body.error).toMatch(/webhook/i);
   });
 
-  it("returns 200 on success", async () => {
-    ctx = makeApp(["stack-a"]);
+  it("returns 200 on success and includes the View run link when appBaseUrl is configured", async () => {
+    // Production-realistic: operator has email config (+ appBaseUrl) set,
+    // so the Slack post carries a clickable run link. Without appBaseUrl
+    // the link is intentionally omitted (see slack-notifier.test.ts) to
+    // avoid pointing the operator at an unreachable default URL.
+    ctx = makeApp({ stacks: ["stack-a"], appBaseUrl: "https://dops.example.com" });
     ctx.db.insertScanRun({ id: "r1", stackId: "stack-a", trigger: "manual", startedAt: Date.now() });
     ctx.db.setSetting("notifications.slack.webhookUrl", "https://hooks.slack.com/test");
     // Mock global fetch to capture the Slack post
@@ -465,7 +480,7 @@ describe("POST /api/notifications/scan-run/send", () => {
       expect(res.body.ok).toBe(true);
       expect(fetchMock).toHaveBeenCalledOnce();
       const body = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string);
-      expect(JSON.stringify(body)).toContain("/scan/runs/r1");
+      expect(JSON.stringify(body)).toContain("https://dops.example.com/scan/runs/r1");
     } finally {
       global.fetch = origFetch;
     }
