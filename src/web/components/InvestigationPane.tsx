@@ -167,6 +167,7 @@ export function InvestigationPane({
   const [providers, setProviders] = useState<Array<{ role: string; webUrl: string; datasource?: string }>>([]);
   const [phaseSwoop, setPhaseSwoop] = useState(false);
   const [investigationStatus, setInvestigationStatus] = useState<"running" | "complete" | "failed" | null>(null);
+  const [failureMessage, setFailureMessage] = useState<string | null>(null);
   const prevRunningRef = useRef(false);
   const processedCount = useRef(0);
   const reportRef = useRef<HTMLDivElement>(null);
@@ -423,6 +424,9 @@ export function InvestigationPane({
       }
       if (msg.type === "investigation:failed" && msg.id === investigationId) {
         setInvestigationStatus("failed");
+        if (typeof msg.error === "string" && msg.error.trim().length > 0) {
+          setFailureMessage(msg.error);
+        }
       }
       if (msg.type === "investigation:complete" && msg.id === investigationId) {
         setInvestigationStatus("complete");
@@ -668,7 +672,8 @@ export function InvestigationPane({
                   <div className="flex-1">
                     <p className="text-sm font-body font-semibold text-destructive mb-1">Investigation could not run</p>
                     <p className="text-[12px] font-body text-destructive/80 leading-relaxed">
-                      The LLM API was unreachable for this run. No root cause analysis was produced.
+                      {failureMessage ?? "The LLM API was unreachable for this run."}
+                      {" "}No root cause analysis was produced.
                       Check Settings &gt; Health, then click Re-investigate to try again.
                     </p>
                   </div>

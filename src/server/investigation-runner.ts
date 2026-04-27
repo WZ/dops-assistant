@@ -85,13 +85,13 @@ export function friendlyError(err: unknown): string {
   // 503, etc.) rather than the wrapper's "LLM unavailable after retries" string.
   const target = err instanceof LlmUnavailableError ? err.cause : err;
   const raw = target instanceof Error ? target.message : String(target);
-  if (/ECONNREFUSED|ENOTFOUND|ENETUNREACH|EHOSTUNREACH|ECONNRESET|Cannot connect to API|connect.*refused/i.test(raw))
+  if (/ECONNREFUSED|ENOTFOUND|ENETUNREACH|EHOSTUNREACH|ECONNRESET|EAI_AGAIN|fetch failed|Cannot connect to API|connect.*refused/i.test(raw))
     return "LLM API is unreachable. Check network connectivity.";
-  if (/bad gateway|service unavailable|502|503/i.test(raw))
+  if (/bad gateway|service unavailable|\b502\b|\b503\b|\b504\b/i.test(raw))
     return "LLM API is currently unavailable. Please try again later.";
   if (/timeout|timed out|ETIMEDOUT/i.test(raw))
     return "LLM API request timed out. Please try again.";
-  if (/rate limit|429/i.test(raw))
+  if (/rate limit|\b429\b/i.test(raw))
     return "LLM API rate limit reached. Please wait and try again.";
   return raw;
 }
