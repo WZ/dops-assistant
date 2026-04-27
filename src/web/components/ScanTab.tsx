@@ -20,7 +20,9 @@ type Source = "gui" | "config";
 interface K8sStackStatus {
   stackId: string;
   name: string;
-  /** null = poller is OK on this stack; string = the specific reason it can't run */
+  /** ISO timestamp; null when the poller has never completed a poll (disabled or just-started). */
+  lastTickAt: string | null;
+  /** null with lastTickAt set = poll succeeded. Non-null = the specific reason it can't run. */
   degradedReason: string | null;
 }
 
@@ -39,23 +41,33 @@ interface ScanSettings {
   k8sEvents: K8sEventsSettings;
 }
 
+type K8sStatusTone = "ok" | "warn" | "neutral";
+
 /**
- * Friendly label for a K8sEventPoller.getDegradedReason() value. Mirrors the
- * three-state union in src/server/k8s-event-poller.ts. Unknown reasons render
- * as the raw string so future additions still surface (just without polish).
+ * Three-state status for a stack's K8sEventPoller. The UI distinguishes:
+ *   - neutral: poller has never actually polled (toggle off or just-started).
+ *     We can't claim "OK" because we haven't checked. Honest.
+ *   - ok: last poll succeeded, k8s tools resolved.
+ *   - warn: last poll surfaced a degraded reason; toggle won't take effect
+ *     on this stack until that's fixed.
  */
-function k8sStatusLabel(reason: string | null): { ok: boolean; label: string } {
-  if (reason === null) return { ok: true, label: "k8s provider detected" };
-  if (reason === "infrastructure-role-not-resolved") {
-    return { ok: false, label: "no infra MCP wired — toggle has no effect" };
+function k8sStatusLabel(s: K8sStackStatus): { tone: K8sStatusTone; label: string } {
+  if (s.lastTickAt === null) {
+    return { tone: "neutral", label: "not yet polled — flip toggle on to check" };
   }
-  if (reason === "infrastructure-not-kubernetes") {
-    return { ok: false, label: "infra MCP isn't kubernetes — toggle has no effect" };
+  if (s.degradedReason === null) {
+    return { tone: "ok", label: "k8s provider detected" };
   }
-  if (reason === "infrastructure-call-failed") {
-    return { ok: false, label: "k8s tool call failed last poll — check MCP" };
+  if (s.degradedReason === "infrastructure-role-not-resolved") {
+    return { tone: "warn", label: "no infra MCP wired — toggle has no effect" };
   }
-  return { ok: false, label: reason };
+  if (s.degradedReason === "infrastructure-not-kubernetes") {
+    return { tone: "warn", label: "infra MCP isn't kubernetes — toggle has no effect" };
+  }
+  if (s.degradedReason === "infrastructure-call-failed") {
+    return { tone: "warn", label: "k8s tool call failed last poll — check MCP" };
+  }
+  return { tone: "warn", label: s.degradedReason };
 }
 
 interface ValidationDetail {
@@ -388,7 +400,11 @@ export function ScanTab() {
               </p>
               <ul className="space-y-1.5">
                 {settings.k8sEvents.stacks.map((s) => {
-                  const status = k8sStatusLabel(s.degradedReason);
+                  const status = k8sStatusLabel(s);
+                  const dotClass =
+                    status.tone === "ok" ? "bg-emerald-500"
+                    : status.tone === "warn" ? "bg-amber-500"
+                    : "bg-muted-foreground/40";
                   return (
                     <li
                       key={s.stackId}
@@ -396,11 +412,7 @@ export function ScanTab() {
                     >
                       <span className="font-mono text-xs text-foreground">{s.name}</span>
                       <span className="flex items-center gap-2">
-                        <span
-                          className={`inline-block w-1.5 h-1.5 rounded-full ${
-                            status.ok ? "bg-emerald-500" : "bg-amber-500"
-                          }`}
-                        />
+                        <span className={`inline-block w-1.5 h-1.5 rounded-full ${dotClass}`} />
                         <span className="font-mono text-[11px] text-muted-foreground">
                           {status.label}
                         </span>

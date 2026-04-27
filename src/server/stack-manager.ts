@@ -611,15 +611,31 @@ export class StackManager {
 
   /**
    * Per-stack K8sEventPoller status snapshot. Used by GET /api/scan/settings
-   * so the UI can show "k8s provider detected" or the specific reason why
-   * the toggle has no effect on each stack.
+   * so the UI can render the right state per row:
+   *   - lastTickAt === null     → poller hasn't completed a poll yet (disabled
+   *                                or just-started). UI should NOT show "OK"
+   *                                because we haven't actually checked.
+   *   - lastTickAt !== null +
+   *     degradedReason === null → poll succeeded, k8s tools resolved, OK.
+   *   - lastTickAt !== null +
+   *     degradedReason !== null → poll ran but the k8s capability check or
+   *                                tool call failed; degradedReason names why.
    */
-  getK8sEventPollerStatuses(): Array<{ stackId: string; name: string; degradedReason: string | null }> {
-    return Array.from(this.stacks.values()).map((ctx) => ({
-      stackId: ctx.id,
-      name: ctx.name,
-      degradedReason: ctx.k8sEventPoller.getDegradedReason(),
-    }));
+  getK8sEventPollerStatuses(): Array<{
+    stackId: string;
+    name: string;
+    lastTickAt: string | null;
+    degradedReason: string | null;
+  }> {
+    return Array.from(this.stacks.values()).map((ctx) => {
+      const ts = ctx.k8sEventPoller.getLastTickAt();
+      return {
+        stackId: ctx.id,
+        name: ctx.name,
+        lastTickAt: ts ? ts.toISOString() : null,
+        degradedReason: ctx.k8sEventPoller.getDegradedReason(),
+      };
+    });
   }
 
   /**
