@@ -1004,7 +1004,8 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     const rows = db.listInvestigations(req.stackId, parsed.filters);
     const total = db.countInvestigations(req.stackId, parsed.filters);
     const offset = parsed.filters.offset ?? 0;
-    res.json({ rows, total, hasMore: offset + rows.length < total });
+    const services = db.listInvestigationServices(req.stackId);
+    res.json({ rows, total, hasMore: offset + rows.length < total, services });
   });
 
   // Severity histogram for the /investigations breakdown strip. Re-uses the
