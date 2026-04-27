@@ -15,7 +15,7 @@ import { safeJsonParse } from "../../agents/shared/processors.js";
 import { createSynthesisAgent } from "../../agents/synthesis.js";
 import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
 import { formatPatterns } from "../../agents/shared/patterns.js";
-import { withLlmRetry } from "../../agents/shared/llm-retry.js";
+import { withLlmRetry, safeAgentRetryConfig } from "../../agents/shared/llm-retry.js";
 import { LlmUnavailableError } from "../../agents/shared/llm-errors.js";
 
 /**
@@ -138,7 +138,7 @@ export function buildSynthesisStep(config: WorkflowConfig) {
       try {
         agentResult = await withLlmRetry(
           () => agent.generate(prompt),
-          config.llmRetry ?? { maxAttempts: 1 },
+          safeAgentRetryConfig(config.llmRetry, config.readOnlyTools),
         );
         if (agentResult.usage && config.onTokenUsage) {
           config.onTokenUsage({

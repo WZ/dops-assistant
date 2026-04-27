@@ -9,7 +9,7 @@ import { ProbeMetricRuleSchema } from "../../config/schema.js";
 import type { OnToolCallEnriched, OnIteration } from "../../types/agent-interfaces.js";
 import type { Skill } from "../../skills/store.js";
 import type { LlmRetryConfig } from "../../agents/shared/llm-retry.js";
-import { withLlmRetry } from "../../agents/shared/llm-retry.js";
+import { withLlmRetry, safeAgentRetryConfig } from "../../agents/shared/llm-retry.js";
 import { LlmUnavailableError } from "../../agents/shared/llm-errors.js";
 import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
 import { logLlmCall, logLlmCallStart, logToolCall, newCallId, type ToolCallEvent } from "../../server/llm-logger.js";
@@ -364,7 +364,11 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
           }
         },
       } as any),
-        config.llmRetry ?? { maxAttempts: 1 },
+        // Discovery's tool surface is read-only by convention (Prometheus
+        // metric/label queries), so enable retry. If a write tool gets added
+        // here, add a `readOnlyTools` flag to DiscoverStepConfig and route it
+        // through safeAgentRetryConfig.
+        safeAgentRetryConfig(config.llmRetry, true),
       );
 
       const usage = (result as any).totalUsage ?? (result as any).usage;

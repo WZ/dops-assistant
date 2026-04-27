@@ -1,6 +1,26 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { withLlmRetry } from "./llm-retry.js";
+import { withLlmRetry, safeAgentRetryConfig } from "./llm-retry.js";
 import { LlmUnavailableError } from "./llm-errors.js";
+
+describe("safeAgentRetryConfig", () => {
+  const configured = { maxAttempts: 5, initialDelayMs: 1000 };
+
+  it("returns no-retry when readOnlyTools is false", () => {
+    expect(safeAgentRetryConfig(configured, false)).toEqual({ maxAttempts: 1 });
+  });
+
+  it("returns no-retry when readOnlyTools is undefined", () => {
+    expect(safeAgentRetryConfig(configured, undefined)).toEqual({ maxAttempts: 1 });
+  });
+
+  it("returns the configured retry when readOnlyTools is true", () => {
+    expect(safeAgentRetryConfig(configured, true)).toBe(configured);
+  });
+
+  it("returns no-retry when readOnlyTools is true but no config is supplied", () => {
+    expect(safeAgentRetryConfig(undefined, true)).toEqual({ maxAttempts: 1 });
+  });
+});
 
 describe("withLlmRetry", () => {
   beforeEach(() => {

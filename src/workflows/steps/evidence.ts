@@ -34,7 +34,7 @@ import { createInfraAgent } from "../../agents/infra.js";
 import { createChangesAgent } from "../../agents/changes.js";
 import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
 import { createLogger } from "../../logger.js";
-import { withLlmRetry } from "../../agents/shared/llm-retry.js";
+import { withLlmRetry, safeAgentRetryConfig } from "../../agents/shared/llm-retry.js";
 import { isLlmUnavailable, LlmUnavailableError } from "../../agents/shared/llm-errors.js";
 
 const logger = createLogger("evidence");
@@ -198,7 +198,7 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
             }
           },
         }),
-          workflowConfig.llmRetry ?? { maxAttempts: 1 },
+          safeAgentRetryConfig(workflowConfig.llmRetry, workflowConfig.readOnlyTools),
         );
       } catch (err) {
         if (err instanceof LlmUnavailableError) throw err;

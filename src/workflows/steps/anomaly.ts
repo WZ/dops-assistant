@@ -18,7 +18,7 @@ import { safeJsonParse } from "../../agents/shared/processors.js";
 import { createAnomalyDetectorAgent } from "../../agents/anomaly-detector.js";
 import { extractTimeRange, resolveTimeRangeToAbsolute } from "../helpers.js";
 import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
-import { withLlmRetry } from "../../agents/shared/llm-retry.js";
+import { withLlmRetry, safeAgentRetryConfig } from "../../agents/shared/llm-retry.js";
 import { LlmUnavailableError } from "../../agents/shared/llm-errors.js";
 
 /**
@@ -101,7 +101,7 @@ export function buildAnomalyStep(config: WorkflowConfig) {
               }
             },
           }),
-            config.llmRetry ?? { maxAttempts: 1 },
+            safeAgentRetryConfig(config.llmRetry, config.readOnlyTools),
           );
         } catch (err) {
           if (err instanceof LlmUnavailableError) throw err;
