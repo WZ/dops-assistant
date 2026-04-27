@@ -938,9 +938,7 @@ describe("event-log emission", () => {
     const ev = events[0]!;
     expect(ev.kind).toBe("service_health_changed");
     expect(ev.severity).toBe("error");
-    expect(ev.summary).toContain("api");
-    expect(ev.summary).toContain("healthy");
-    expect(ev.summary).toContain("down");
+    expect(ev.summary).toBe("service api: healthy → down");
     expect(ev.stackId).toBe("stack-test");
     expect(ev.service).toBe("api");
     expect(ev.href).toBe("/services/api");
