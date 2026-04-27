@@ -26,6 +26,7 @@ const SOURCE_HELP: Record<Source, string> = {
   scan: "Proactive scan (per-service)",
   "scan-run": "Scan run summary (per tick)",
   poller: "Health poller",
+  "k8s-event-poller": "K8s event poller (transient pod crashes)",
   manual: "Manual investigation",
 };
 

@@ -116,6 +116,7 @@ Every tick creates a durable `ScanRun` record at `/scan/runs/:id` — copy the l
 | Operator | High (natural language + time refs) | Configurable | Nothing extra |
 | Alert webhook | Medium (alert labels + service config) | Per-severity template | Alertmanager config |
 | Health poller | Medium (transition info + service config) | Quick | Prometheus provider |
+| K8s event poller | Medium (pod restart + reason + service config) | Standard | Infrastructure (k8s) MCP provider |
 | Proactive scan | Medium (rule trigger + service config) | Configurable per rule | `scan.enabled: true` |
 
 ## Investigations

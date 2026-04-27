@@ -59,6 +59,7 @@ npx tsc --noEmit         # Type check
 | Alert webhook | `src/server/webhook-handler.ts` — Alertmanager payloads → headless investigations |
 | Health monitor | `src/server/health-monitor.ts` — background MCP/DB probes, `GET /api/health` |
 | Service health poller | `src/server/service-health-poller.ts` — Prometheus polling, auto-investigate on transitions |
+| K8s event poller | `src/server/k8s-event-poller.ts` — k8s API polling for transient pod-crash events, 5min cadence |
 | Prometheus queries | `src/server/prometheus-query.ts` — shared PromQL execution via MCP, used by metrics API |
 | Service detail page | `src/web/components/ServiceDetail.tsx` — tabbed service view (metrics, history, dependencies) |
 | Service metadata | `src/server/routes.ts` — GET/PUT `/api/services/:name/metadata`, alias, tags endpoints |

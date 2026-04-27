@@ -14,7 +14,7 @@ describe("severityRank", () => {
     }
   });
 
-  it("ALL_SOURCES contains exactly the five sources", () => {
-    expect([...ALL_SOURCES].sort()).toEqual(["manual", "poller", "scan", "scan-run", "webhook"]);
+  it("ALL_SOURCES contains exactly the six sources", () => {
+    expect([...ALL_SOURCES].sort()).toEqual(["k8s-event-poller", "manual", "poller", "scan", "scan-run", "webhook"]);
   });
 });
