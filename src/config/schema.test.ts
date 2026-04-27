@@ -465,6 +465,41 @@ describe("ConfigSchema – per-service probeRules", () => {
   });
 });
 
+describe("K8sEventsSchema", () => {
+  it("applies defaults when omitted", () => {
+    const cfg = ConfigSchema.parse({ llm, providers: [grafanaProvider] });
+    expect(cfg.k8sEvents.enabled).toBe(false);
+    expect(cfg.k8sEvents.intervalSeconds).toBe(300);
+    expect(cfg.k8sEvents.badReasons).toEqual([
+      "OOMKilled", "CrashLoopBackOff", "Error",
+      "ImagePullBackOff", "ErrImagePull", "Unhealthy", "Failed",
+    ]);
+    expect(cfg.k8sEvents.ignoreReasons).toEqual(["Completed"]);
+    expect(cfg.k8sEvents.maxEventsPerTick).toBe(50);
+    expect(cfg.k8sEvents.queryTimeoutMs).toBe(15_000);
+  });
+
+  it("rejects negative intervalSeconds", () => {
+    expect(() =>
+      ConfigSchema.parse({ llm, k8sEvents: { intervalSeconds: -1 } }),
+    ).toThrow();
+  });
+
+  it("preserves operator-supplied bad-reason list", () => {
+    const cfg = ConfigSchema.parse({
+      llm,
+      k8sEvents: { badReasons: ["OOMKilled"] },
+    });
+    expect(cfg.k8sEvents.badReasons).toEqual(["OOMKilled"]);
+  });
+
+  it("rejects intervalSeconds below 60", () => {
+    expect(() =>
+      ConfigSchema.parse({ llm, k8sEvents: { intervalSeconds: 30 } }),
+    ).toThrow();
+  });
+});
+
 describe("ConfigSchema — notifications.email", () => {
   const base = {
     llm,

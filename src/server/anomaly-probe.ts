@@ -270,7 +270,7 @@ async function mapWithConcurrency<T, R>(
  * ignoring the abort). Each track's executor parses the returned raw value
  * into its own scalar.
  */
-async function withTimeoutAndAbort(
+export async function withTimeoutAndAbort(
   tool: ToolExecutor,
   args: unknown,
   signal: AbortSignal | undefined,

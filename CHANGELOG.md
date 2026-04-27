@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## [0.3.6.0] - 2026-04-26
+## [0.3.7.0] - 2026-04-26
 
 ### Added
 - **Investigations now ride out short LLM blips instead of failing on the first transient error.** A new retry wrapper sits in front of every model call and waits-then-tries-again on connection-level errors (`ECONNREFUSED`, `ETIMEDOUT`, `fetch failed`, etc.) and HTTP 408/409/429/5xx responses from the provider. Tunable via the new `llm.retry` config block: `maxAttempts` (default 8, range 1–15), `initialDelayMs` (default 2000, capped at 60s), `maxDelayMs` (default 60000), and `jitterPercent` (default 0.3 — 30% added jitter). Backoff is exponential with the cap and jitter applied per attempt.
@@ -15,6 +15,17 @@ All notable changes to this project will be documented in this file.
 - **Transient-error classification is now LLM-API-specific.** The first cut matched any error whose message contained substrings like `timeout` or `503`, which would have mislabeled Prometheus/Loki/MCP tool errors as LLM outages and triggered useless retry storms. The classifier now only fires on AI SDK `APICallError` instances (with the SDK's own `isRetryable` flag, covering 408/409/429/5xx) or bare connection-level errors walked up the cause chain (depth ≤ 5).
 - **Tool-replay safety on retry.** `withLlmRetry` re-runs its callback from scratch on transient failure, which would replay any tool the agent had already invoked. The new `safeAgentRetryConfig` helper gates tool-using agent paths (anomaly, evidence, planning, synthesis) so retries only engage when `readOnlyTools` is true. Read-only call sites (intent routing, discovery's read-only tool set) keep the full retry budget.
 - **Investigation runner unwraps `LlmUnavailableError.cause` before mapping to a friendly message.** Users now see the underlying network/HTTP reason instead of "LLM unavailable after retries". The friendly-error regex was also widened to match `EAI_AGAIN`, `fetch failed`, and HTTP 504 — patterns the retry classifier already recognised but the user-facing copy missed.
+
+## [0.3.6.0] - 2026-04-26
+
+### Added
+- **Transient pod crashes now trigger investigations (opt-in).** A new `K8sEventPoller` runs every 5 minutes per stack and reads pod restart events directly from the Kubernetes API via the `infrastructure` MCP role. When a pod crashes with a bad reason (OOMKilled, CrashLoopBackOff, ImagePullBackOff, ErrImagePull, Unhealthy, Error, Failed) — or its `restartCount` increments between polls — the poller dispatches an investigation. Catches the gap where crash + restart within ~60s would slip past the existing 60s health poller and 4h scan scheduler entirely. Off by default to match the `scan.enabled` opt-in pattern; flip `k8sEvents.enabled: true` in config to enable. Configurable bad-reason list, ignore list, max events per tick, and query timeout via the same `k8sEvents` block. Reuses the shared dedup so one investigation fires per service per 5min regardless of which detector tripped.
+- **Detections appear in the Activity > Events feed.** Each k8s-poller hit emits a `k8s_event_detected` audit event with severity `warn`, the bad-reason, source (`event` vs `restart-count`), pod UID, and restart count. Fires for every detection, including ones the dispatcher suppresses via dedup, so operators see "we noticed this" even when no investigation starts.
+- **Three-state degraded reason on the new poller.** `getDegradedReason()` returns `infrastructure-role-not-resolved` (no infra MCP wired), `infrastructure-not-kubernetes` (infra wired but lacks `list_pods`+`list_events` — the ECS / Nomad / generic-VM case, logged at info, not warn), or `infrastructure-call-failed` (k8s tool threw or timed out). Operators see the right log level for each failure mode, and stacks running non-k8s infra silently self-disable instead of warn-spamming.
+- **`k8s-event-poller` is now a notification source.** Email recipients can subscribe to it via the existing source filter. Investigations dispatched by this poller surface in templates as "K8s event poller (transient pod crashes)".
+
+### Changed
+- **`withTimeoutAndAbort` is exported from `anomaly-probe.ts`** so the new poller and any future detector can reuse the same timeout-bounded MCP call wrapper without duplicating the AbortController + chained-signal plumbing.
 
 ## [0.3.5.2] - 2026-04-25
 

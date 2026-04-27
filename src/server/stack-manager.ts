@@ -29,6 +29,7 @@ import { ProviderRegistry } from "../mcp/provider-registry.js";
 import { ConversationMemory } from "../memory/conversation.js";
 import { ServiceRegistryStore } from "../services/registry.js";
 import { ServiceHealthPoller, type HealthStatus } from "./service-health-poller.js";
+import { K8sEventPoller, type K8sEventHit } from "./k8s-event-poller.js";
 import { ScanScheduler, type ScanAnomaliesEvent } from "./scan-scheduler.js";
 import { getEffectiveScanConfig } from "./scan-settings.js";
 import type { Database } from "./db.js";
@@ -51,6 +52,7 @@ export interface StackContext {
   conversationMemory: ConversationMemory;
   serviceRegistry: ServiceRegistryStore;
   healthPoller: ServiceHealthPoller;
+  k8sEventPoller: K8sEventPoller;
   scanScheduler: ScanScheduler;
 }
 
@@ -181,6 +183,18 @@ export class StackManager {
       getPrometheusDatasourceUid: getDatasourceUid,
     });
 
+    // K8sEventPoller: per-stack background poller that detects transient pod
+    // crashes via the `infrastructure` MCP role. Self-disables on non-k8s
+    // infra providers via the tool-shape capability check inside the poller.
+    const k8sEventPoller = new K8sEventPoller({
+      providers: () => providerRegistry.getProviders(),
+      registryStore: serviceRegistry,
+      stackId: row.id,
+      config: this.config.k8sEvents,
+      onK8sEvent: (hit) => { this.onK8sEvent?.(row.id, hit); },
+      getHiddenServices: () => this.db.getHiddenServices(row.id),
+    });
+
     // ScanScheduler: per-stack. Emits onAnomaliesDetected — the actual
     // dispatch to InvestigationRunner is wired in index.ts (lazy runner
     // construction matches the existing onHealthTransition pattern).
@@ -208,6 +222,7 @@ export class StackManager {
       conversationMemory,
       serviceRegistry,
       healthPoller,
+      k8sEventPoller,
       scanScheduler,
     };
 
@@ -241,6 +256,7 @@ export class StackManager {
       "StackManager: starting previously-skipped health poller + scan scheduler — viable metrics provider became available",
     );
     ctx.healthPoller.start();
+    ctx.k8sEventPoller.start();
     ctx.scanScheduler.start();
   }
 
@@ -346,6 +362,7 @@ export class StackManager {
     // don't immediately start spamming "metric query tool not found" logs.
     if (ctx.providerRegistry.hasViableMetricsProvider()) {
       ctx.healthPoller.start();
+      ctx.k8sEventPoller.start();
       ctx.scanScheduler.start();
     } else {
       this.skippedPollers.add(ctx.id);
@@ -374,6 +391,7 @@ export class StackManager {
 
     // Stop health poller + scan scheduler
     ctx.healthPoller.stop();
+    ctx.k8sEventPoller.stop();
     ctx.scanScheduler.stop();
 
     // Destroy conversation memory (clears eviction interval)
@@ -476,6 +494,7 @@ export class StackManager {
       for (const [stackId, ctx] of Array.from(this.stacks.entries())) {
         if (!liveIds.has(stackId) && stackId !== this.defaultStackId) {
           try { ctx.healthPoller.stop(); } catch { /* ignore */ }
+          try { ctx.k8sEventPoller.stop(); } catch { /* ignore */ }
           try { ctx.scanScheduler.stop(); } catch { /* ignore */ }
           try { ctx.conversationMemory.destroy(); } catch { /* ignore */ }
           this.stacks.delete(stackId);
@@ -528,6 +547,10 @@ export class StackManager {
       }
       const pollerDelay = Math.floor(Math.random() * 30_000);
       setTimeout(() => ctx.healthPoller.start(), pollerDelay);
+      // K8s event poller — same 0-30s jitter as health poller; self-disables
+      // on non-k8s infra providers via tool-shape capability check.
+      const k8sDelay = Math.floor(Math.random() * 30_000);
+      setTimeout(() => ctx.k8sEventPoller.start(), k8sDelay);
       // Scan scheduler uses a wider 0-60s jitter (design decision #5) to reduce
       // cross-stack cron collision when multiple stacks share "0 */4 * * *".
       const scanDelay = Math.floor(Math.random() * 60_000);
@@ -541,6 +564,7 @@ export class StackManager {
   stopAllPollers(): void {
     for (const ctx of this.stacks.values()) {
       ctx.healthPoller.stop();
+      ctx.k8sEventPoller.stop();
       ctx.scanScheduler.stop();
     }
   }
@@ -620,6 +644,9 @@ export class StackManager {
    * transitions between health states during polling.
    */
   onHealthTransition?: (stackId: string, service: string, from: string, to: string) => void;
+
+  /** Wired by index.ts — called once per K8sEventPoller emission. */
+  onK8sEvent?: (stackId: string, hit: K8sEventHit) => void;
 
   /**
    * Optional callback fired when the scan scheduler detects anomalies that
