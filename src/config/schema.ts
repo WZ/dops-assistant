@@ -285,7 +285,11 @@ const ScanSchema = z.object({
 });
 
 const K8sEventsSchema = z.object({
-  enabled: z.boolean().default(true),
+  // Opt-in by default to match the existing `scan.enabled` pattern. New
+  // auto-investigators ship OFF so operators consciously turn them on after
+  // verifying their stack has a k8s infra MCP wired and they want the
+  // additional dispatch volume.
+  enabled: z.boolean().default(false),
   intervalSeconds: z.number().int().min(60).default(300),
   badReasons: z.array(z.string()).default([
     "OOMKilled",

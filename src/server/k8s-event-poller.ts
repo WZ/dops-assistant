@@ -20,6 +20,7 @@ import { createLogger } from "../logger.js";
 import type { MastraProvider } from "../mcp/provider.js";
 import { getToolsByRole } from "../mcp/provider.js";
 import { withTimeoutAndAbort } from "./anomaly-probe.js";
+import { eventLog } from "./event-log.js";
 import type { ServiceRegistryStore } from "../services/registry.js";
 import type { K8sEventsConfig, ServiceConfig } from "../config/schema.js";
 
@@ -367,6 +368,24 @@ export class K8sEventPoller {
     for (const hit of allHits) {
       this.recentHits.push(hit);
       if (this.recentHits.length > RECENT_HITS_CAP) this.recentHits.shift();
+      // Audit-trail event: fires BEFORE the onK8sEvent dispatch handler runs
+      // sharedDedup, so the activity feed shows every detection (including
+      // ones that the dispatcher will suppress as duplicates of an in-flight
+      // investigation). Operators can see "we noticed this" even when no
+      // investigation is started.
+      eventLog.append({
+        kind: "k8s_event_detected",
+        severity: "warn",
+        summary: `k8s · ${hit.reason} · ${hit.service}`,
+        stackId: this.stackId,
+        service: hit.service,
+        meta: {
+          reason: hit.reason,
+          source: hit.source,
+          podUid: hit.podUid,
+          ...(hit.restartCount !== undefined ? { restartCount: hit.restartCount } : {}),
+        },
+      });
       try {
         this.onK8sEvent?.(hit);
       } catch (err) {

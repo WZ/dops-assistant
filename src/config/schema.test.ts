@@ -468,7 +468,7 @@ describe("ConfigSchema – per-service probeRules", () => {
 describe("K8sEventsSchema", () => {
   it("applies defaults when omitted", () => {
     const cfg = ConfigSchema.parse({ llm, providers: [grafanaProvider] });
-    expect(cfg.k8sEvents.enabled).toBe(true);
+    expect(cfg.k8sEvents.enabled).toBe(false);
     expect(cfg.k8sEvents.intervalSeconds).toBe(300);
     expect(cfg.k8sEvents.badReasons).toEqual([
       "OOMKilled", "CrashLoopBackOff", "Error",

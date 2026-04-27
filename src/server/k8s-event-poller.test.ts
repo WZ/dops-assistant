@@ -345,6 +345,47 @@ describe("K8sEventPoller.poll orchestration", () => {
     await poller.poll();
     expect(poller.getDegradedReason()).toBe("infrastructure-call-failed");
   });
+
+  it("emits an audit-trail event for every hit (visible in Activity > Events)", async () => {
+    const { eventLog } = await import("./event-log.js");
+    eventLog.reset();
+    const eventsExecute = vi.fn().mockResolvedValue(makeContentToolResult({
+      items: [{
+        reason: "OOMKilled",
+        message: "killed",
+        lastTimestamp: "2026-04-26T12:00:00Z",
+        involvedObject: { kind: "Pod", name: "svcA-abc-xyz", uid: "u-audit-1" },
+        type: "Warning",
+      }],
+    }));
+    const podsExecute = vi.fn().mockResolvedValue(makeContentToolResult({ items: [] }));
+    const provider = makeProvider({
+      list_events: { execute: eventsExecute },
+      list_pods: { execute: podsExecute },
+    });
+    const poller = new K8sEventPoller(makeDeps({
+      stackId: "stack-x",
+      providers: [provider],
+      registryStore: makeRegistryStore([{ name: "svcA", logLabels: { namespace: "ns1" } }]),
+    }));
+    await poller.poll();
+    const { events } = eventLog.recent(10);
+    const auditEvent = events.find((e) => e.kind === "k8s_event_detected");
+    expect(auditEvent).toBeDefined();
+    expect(auditEvent).toMatchObject({
+      kind: "k8s_event_detected",
+      severity: "warn",
+      service: "svcA",
+      stackId: "stack-x",
+    });
+    expect(auditEvent?.summary).toContain("OOMKilled");
+    expect(auditEvent?.summary).toContain("svcA");
+    expect(auditEvent?.meta).toMatchObject({
+      reason: "OOMKilled",
+      source: "event",
+      podUid: "u-audit-1",
+    });
+  });
 });
 
 describe("extractNamespace", () => {
