@@ -213,18 +213,20 @@ async function main() {
     investigationId: string,
     service: string,
     report: import("../types/rca-types.js").RcaReport,
+    stackId: string | undefined,
     source: import("../types/notifications.js").NotificationSource,
   ) => {
     // ── Slack (existing) ────────────────────────────────────────────
     const slackUrl = db.getSetting("notifications.slack.webhookUrl") ?? config.webhook.slackWebhookUrl;
     const slackEnabled = db.getSetting("notifications.slack.enabled");
     if (slackUrl && slackEnabled !== "false") {
-      const defaultCtx = stackManager.getDefaultContext();
-      const dashProvider = defaultCtx.providerRegistry.getAll().find(
-        (p: { config: { roles: string[]; webUrl?: string } }) => p.config.roles.includes("dashboards") && p.config.webUrl,
-      );
+      // The slack-notifier's resolveAppBaseUrl handles the missing-config
+      // case (warns once per process, omits the link) for every Slack
+      // path. Don't re-implement the dedup here — leave the policy in
+      // one place so future callers stay consistent.
+      const appBaseUrl = config.notifications?.email?.appBaseUrl;
       notifySlack(
-        { slackWebhookUrl: slackUrl, grafanaUrl: dashProvider?.config.webUrl },
+        { slackWebhookUrl: slackUrl, appBaseUrl, stackId },
         investigationId,
         service,
         report,

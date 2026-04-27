@@ -1,6 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { notifySlack, notifySlackOnScanComplete } from "./slack-notifier.js";
+import { notifySlack, notifySlackOnScanComplete, __resetAppBaseUrlWarn } from "./slack-notifier.js";
 import type { RcaReport } from "../types/rca-types.js";
+
+// The "warn once" flag is module-level state — reset between tests so the
+// missing-appBaseUrl branch can be exercised independently of execution
+// order. Without this, only the first test that hits the missing-config
+// path would observe the warn; later tests would see no log because the
+// flag stayed flipped.
+beforeEach(() => { __resetAppBaseUrlWarn(); });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -80,9 +87,13 @@ describe("notifySlack", () => {
     expect(confidenceField.text).toContain("92%");
   });
 
-  it("includes a View Investigation button when grafanaUrl is provided", async () => {
+  it("includes a View Investigation button with the canonical stack-scoped URL", async () => {
+    // Regression: previously emitted `${grafanaUrl}/#/investigations/:id`
+    // which used hash routing on a pushState SPA — the hash got ignored,
+    // landing the user on the Grafana homepage. Now uses the SPA's
+    // /stacks/:stackId/investigations/:id form.
     await notifySlack(
-      { slackWebhookUrl: "https://hooks.slack.com/test", grafanaUrl: "https://grafana.example.com" },
+      { slackWebhookUrl: "https://hooks.slack.com/test", appBaseUrl: "https://dops.example.com", stackId: "prod" },
       "inv_abc",
       "payments-api",
       makeReport(),
@@ -91,10 +102,55 @@ describe("notifySlack", () => {
     const body = JSON.parse(fetchSpy.mock.calls[0]![1].body);
     const actionsBlock = body.blocks.find((b: any) => b.type === "actions");
     expect(actionsBlock).toBeDefined();
-    expect(actionsBlock.elements[0].url).toBe("https://grafana.example.com/#/investigations/inv_abc");
+    expect(actionsBlock.elements[0].url).toBe("https://dops.example.com/stacks/prod/investigations/inv_abc");
   });
 
-  it("omits actions block when grafanaUrl is not provided", async () => {
+  it("falls back to the legacy /investigations/:id form when stackId is unknown", async () => {
+    // Test-notification path doesn't have a real stackId. Locate-and-redirect
+    // on the SPA side handles the legacy form, so the link still works.
+    await notifySlack(
+      { slackWebhookUrl: "https://hooks.slack.com/test", appBaseUrl: "https://dops.example.com" },
+      "inv_abc",
+      "payments-api",
+      makeReport(),
+    );
+
+    const body = JSON.parse(fetchSpy.mock.calls[0]![1].body);
+    const actionsBlock = body.blocks.find((b: any) => b.type === "actions");
+    expect(actionsBlock.elements[0].url).toBe("https://dops.example.com/investigations/inv_abc");
+  });
+
+  it("strips a trailing slash on appBaseUrl so the URL doesn't double-slash", async () => {
+    await notifySlack(
+      { slackWebhookUrl: "https://hooks.slack.com/test", appBaseUrl: "https://dops.example.com/", stackId: "prod" },
+      "inv_abc",
+      "payments-api",
+      makeReport(),
+    );
+
+    const body = JSON.parse(fetchSpy.mock.calls[0]![1].body);
+    const actionsBlock = body.blocks.find((b: any) => b.type === "actions");
+    expect(actionsBlock.elements[0].url).toBe("https://dops.example.com/stacks/prod/investigations/inv_abc");
+  });
+
+  it("encodes URL segments so the link survives a future schema broadening", async () => {
+    // ULIDs are alphanumeric so this isn't a hot path today; defensive
+    // against any future widening of the stack-id charset (slugs, etc.).
+    await notifySlack(
+      { slackWebhookUrl: "https://hooks.slack.com/test", appBaseUrl: "https://dops.example.com", stackId: "stack/with slash" },
+      "inv with space",
+      "payments-api",
+      makeReport(),
+    );
+
+    const body = JSON.parse(fetchSpy.mock.calls[0]![1].body);
+    const actionsBlock = body.blocks.find((b: any) => b.type === "actions");
+    expect(actionsBlock.elements[0].url).toBe(
+      "https://dops.example.com/stacks/stack%2Fwith%20slash/investigations/inv%20with%20space",
+    );
+  });
+
+  it("omits actions block when appBaseUrl is not provided", async () => {
     await notifySlack(
       { slackWebhookUrl: "https://hooks.slack.com/test" },
       "inv_abc",
@@ -198,5 +254,69 @@ describe("notifySlackOnScanComplete", () => {
     const body = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string);
     expect(JSON.stringify(body)).toContain("1 service ");
     expect(JSON.stringify(body)).not.toContain("1 services");
+  });
+
+  it("omits the 'View run' hyperlink when appBaseUrl is missing — keeps the metrics tail", async () => {
+    // Regression: previously every caller defaulted to "http://localhost:3000"
+    // when notifications.email.appBaseUrl was unset, so the "View run"
+    // link in production Slack posts was a localhost URL the operator
+    // couldn't actually click. Now the link is omitted and the metrics
+    // tail (probed count + duration) renders standalone.
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    await notifySlackOnScanComplete(
+      { slackWebhookUrl: "https://hooks.slack.com/test" },
+      { runId: "r1", stackId: "s1", trigger: "manual", startedAt: 0, durationMs: 1234, servicesProbed: 50, hitsDispatched: 0, dispatchedServices: [] },
+    );
+    const bodyStr = JSON.stringify(JSON.parse(fetchMock.mock.calls[0]![1]!.body as string));
+    expect(bodyStr).not.toContain("View run");
+    expect(bodyStr).not.toContain("localhost");
+    expect(bodyStr).not.toContain("scan/runs/r1");
+    // metrics still rendered
+    expect(bodyStr).toContain("50 probed");
+    expect(bodyStr).toContain("1234ms");
+  });
+
+  it("strips a trailing slash on appBaseUrl in the run link", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    await notifySlackOnScanComplete(
+      { slackWebhookUrl: "https://hooks.slack.com/test", appBaseUrl: "https://dops.example.com/" },
+      { runId: "r1", stackId: "s1", trigger: "manual", startedAt: 0, durationMs: 0, servicesProbed: 10, hitsDispatched: 0, dispatchedServices: [] },
+    );
+    const bodyStr = JSON.stringify(JSON.parse(fetchMock.mock.calls[0]![1]!.body as string));
+    expect(bodyStr).toContain("https://dops.example.com/scan/runs/r1");
+    expect(bodyStr).not.toContain("example.com//");
+  });
+
+  it("treats empty / whitespace-only appBaseUrl as missing — guards against cleared GUI inputs", async () => {
+    // db.getSetting can return "" from a cleared notification field if the
+    // operator wipes it in the GUI. Without the trim, the resolver would
+    // accept the empty string and emit `/scan/runs/r1` with no origin — a
+    // useless relative-path link in a Slack message.
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    for (const empty of ["", "   ", "\t\n"]) {
+      __resetAppBaseUrlWarn();
+      fetchMock.mockClear();
+      await notifySlackOnScanComplete(
+        { slackWebhookUrl: "https://hooks.slack.com/test", appBaseUrl: empty },
+        { runId: "r1", stackId: "s1", trigger: "manual", startedAt: 0, durationMs: 0, servicesProbed: 1, hitsDispatched: 0, dispatchedServices: [] },
+      );
+      const bodyStr = JSON.stringify(JSON.parse(fetchMock.mock.calls[0]![1]!.body as string));
+      expect(bodyStr).not.toContain("View run");
+      expect(bodyStr).not.toContain("/scan/runs/");
+    }
+  });
+
+  it("encodes runId so a future schema broadening doesn't corrupt the link", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    await notifySlackOnScanComplete(
+      { slackWebhookUrl: "https://hooks.slack.com/test", appBaseUrl: "https://x" },
+      { runId: "r 1", stackId: "s1", trigger: "manual", startedAt: 0, durationMs: 0, servicesProbed: 10, hitsDispatched: 0, dispatchedServices: [] },
+    );
+    const bodyStr = JSON.stringify(JSON.parse(fetchMock.mock.calls[0]![1]!.body as string));
+    expect(bodyStr).toContain("/scan/runs/r%201");
   });
 });

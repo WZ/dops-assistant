@@ -3,9 +3,18 @@ import express, { type Express } from "express";
 import request from "supertest";
 import { registerRoutes } from "./routes.js";
 import { Database } from "./db.js";
+import { __resetAppBaseUrlWarn } from "./slack-notifier.js";
 import { unlinkSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
+
+// The slack-notifier holds a module-level "warn once per process" flag so
+// operators don't get spammed when notifications.email.appBaseUrl is unset.
+// Vitest's default forks-per-file isolation means the flag doesn't actually
+// leak between this file and slack-notifier.test.ts today — the reset is
+// defensive against a future test in this file that asserts on the
+// missing-config branch and would otherwise be order-dependent.
+beforeEach(() => { __resetAppBaseUrlWarn(); });
 
 /**
  * Route tests for GET /api/scan/runs.
@@ -28,6 +37,12 @@ interface TestCtx {
 interface MakeAppOptions {
   stacks?: string[];
   scanScheduler?: unknown;
+  /** Sets `config.notifications.email.appBaseUrl` so the Slack scan-run
+   *  post emits a clickable "View run" hyperlink. Without this, the
+   *  notifier (correctly) omits the link to avoid pointing operators at a
+   *  default localhost URL they can't reach. Tests that assert on the
+   *  link contents need to opt in. */
+  appBaseUrl?: string;
 }
 
 function makeApp(optsOrStacks: string[] | MakeAppOptions = ["stack-a"]): TestCtx {
@@ -66,7 +81,12 @@ function makeApp(optsOrStacks: string[] | MakeAppOptions = ["stack-a"]): TestCtx
   registerRoutes(app, {
     db,
     stackManager: mockStackManager,
-    config: { notifications: {}, webhook: {} } as any,
+    config: {
+      notifications: opts.appBaseUrl
+        ? { email: { appBaseUrl: opts.appBaseUrl } }
+        : {},
+      webhook: {},
+    } as any,
     skillStore: {} as any,
     sharedDedup: {} as any,
     llmModel: {} as any,
@@ -451,8 +471,12 @@ describe("POST /api/notifications/scan-run/send", () => {
     expect(res.body.error).toMatch(/webhook/i);
   });
 
-  it("returns 200 on success", async () => {
-    ctx = makeApp(["stack-a"]);
+  it("returns 200 on success and includes the View run link when appBaseUrl is configured", async () => {
+    // Production-realistic: operator has email config (+ appBaseUrl) set,
+    // so the Slack post carries a clickable run link. Without appBaseUrl
+    // the link is intentionally omitted (see slack-notifier.test.ts) to
+    // avoid pointing the operator at an unreachable default URL.
+    ctx = makeApp({ stacks: ["stack-a"], appBaseUrl: "https://dops.example.com" });
     ctx.db.insertScanRun({ id: "r1", stackId: "stack-a", trigger: "manual", startedAt: Date.now() });
     ctx.db.setSetting("notifications.slack.webhookUrl", "https://hooks.slack.com/test");
     // Mock global fetch to capture the Slack post
@@ -465,7 +489,7 @@ describe("POST /api/notifications/scan-run/send", () => {
       expect(res.body.ok).toBe(true);
       expect(fetchMock).toHaveBeenCalledOnce();
       const body = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string);
-      expect(JSON.stringify(body)).toContain("/scan/runs/r1");
+      expect(JSON.stringify(body)).toContain("https://dops.example.com/scan/runs/r1");
     } finally {
       global.fetch = origFetch;
     }

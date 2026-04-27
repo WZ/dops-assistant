@@ -2037,8 +2037,17 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     }
     try {
       const { notifySlack } = await import("./slack-notifier.js");
+      // Pass appBaseUrl so the operator can verify the "View Investigation"
+      // button shape end-to-end. The button URL points at a synthetic id
+      // that 404s in the SPA — the user is testing the wiring, not the
+      // landing page, so a not-found pane is the honest outcome.
+      const appBaseUrl = config.notifications?.email?.appBaseUrl;
+      // Use the active stack so the test post emits the canonical
+      // /stacks/:stackId/investigations/:id form — operators verifying
+      // wiring should see the same URL shape as production traffic, even
+      // though the synthetic id will 404 in the SPA.
       await notifySlack(
-        { slackWebhookUrl: slackUrl },
+        { slackWebhookUrl: slackUrl, appBaseUrl, stackId: req.stackId },
         "test_notification",
         "Test Service",
         {
@@ -2094,7 +2103,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       return;
     }
     const investigations = db.getScanRunInvestigations(body.runId);
-    const appBaseUrl = config.notifications?.email?.appBaseUrl ?? "http://localhost:3000";
+    const appBaseUrl = config.notifications?.email?.appBaseUrl;
     try {
       await sendSlackScanRunPost(
         { slackWebhookUrl: url, appBaseUrl },
