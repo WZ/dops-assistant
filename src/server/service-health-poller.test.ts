@@ -3,12 +3,14 @@ import {
   ServiceHealthPoller,
   parsePrometheusResult,
   matchResultsToServices,
+  severityForStatus,
   type HealthStatus,
   type ServiceHealthPollerDeps,
 } from "./service-health-poller.js";
 import type { MastraProvider } from "../mcp/provider.js";
 import type { ServiceRegistryStore } from "../services/registry.js";
 import type { Database } from "./db.js";
+import { eventLog } from "./event-log.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -853,5 +855,208 @@ describe("ServiceHealthPoller", () => {
       expect(summary.degraded).toBe(0);
       expect(summary.total).toBe(4);
     });
+  });
+});
+
+// ── event-log emission ───────────────────────────────────────────────────────
+
+/**
+ * Build a poller whose query results change across polls. `pollResults` is a
+ * list of {expr → entries} maps; the Nth poll reads from the Nth entry,
+ * defaulting to the last entry once exhausted (so a single-element list means
+ * "always return this").
+ */
+function makeMultiPollPoller(opts: {
+  services: string[];
+  stackId?: string;
+  onTransition?: (svc: string, from: HealthStatus, to: HealthStatus) => void;
+  pollResults: Array<Record<string, object[]>>;
+}): { poller: ServiceHealthPoller; advance: () => void } {
+  let pollIndex = 0;
+  const advance = () => { pollIndex += 1; };
+
+  const queryTool = {
+    execute: vi.fn(async (args: unknown) => {
+      const { expr } = args as { expr: string };
+      const slice = opts.pollResults[Math.min(pollIndex, opts.pollResults.length - 1)] ?? {};
+      return { data: { result: slice[expr] ?? [] } };
+    }),
+  };
+  const listDatasourcesTool = {
+    execute: vi.fn(async () => ({
+      content: [{ type: "text", text: JSON.stringify({ datasources: [{ uid: "prometheus", name: "Prometheus", type: "prometheus" }] }) }],
+    })),
+  };
+  const provider = makeProvider("prom", { prom_query_prometheus: queryTool, prom_list_datasources: listDatasourcesTool });
+  (provider.client.listTools as ReturnType<typeof vi.fn>).mockResolvedValue({
+    prom_query_prometheus: queryTool,
+    prom_list_datasources: listDatasourcesTool,
+  });
+
+  const poller = new ServiceHealthPoller({
+    providers: [provider],
+    registryStore: makeRegistryStore(opts.services),
+    db: makeDb(),
+    stackId: opts.stackId ?? "",
+    intervalMs: 999_999,
+    onTransition: opts.onTransition,
+  });
+
+  return { poller, advance };
+}
+
+describe("event-log emission", () => {
+  beforeEach(() => {
+    eventLog.reset();
+  });
+
+  it("emits service_health_changed on healthy → down with severity=error", async () => {
+    const { poller, advance } = makeMultiPollPoller({
+      services: ["api"],
+      stackId: "stack-test",
+      pollResults: [
+        // Poll 1: healthy.
+        {
+          kube_deployment_status_replicas: [makePrometheusEntry({ deployment: "api" }, "1")],
+          up: [makePrometheusEntry({ job: "api" }, "1")],
+        },
+        // Poll 2: up=0 → DOWN via downViaUp. Replicas batch is empty so the
+        // healthy-from-replicas merge doesn't shadow the up-batch DOWN verdict.
+        {
+          up: [makePrometheusEntry({ job: "api" }, "0")],
+        },
+      ],
+    });
+
+    await poller.poll();   // healthy
+    advance();
+    eventLog.reset();      // discard first-poll noise (we're testing the transition only)
+    await poller.poll();   // down
+
+    const { events } = eventLog.recent(10);
+    expect(events).toHaveLength(1);
+    const ev = events[0]!;
+    expect(ev.kind).toBe("service_health_changed");
+    expect(ev.severity).toBe("error");
+    expect(ev.summary).toBe("api: healthy → down");
+    expect(ev.stackId).toBe("stack-test");
+    expect(ev.service).toBe("api");
+    expect(ev.href).toBe("/services/api");
+    expect(ev.meta).toEqual({ from: "healthy", to: "down" });
+  });
+
+  it("emits service_health_changed on down → healthy with severity=success", async () => {
+    const { poller, advance } = makeMultiPollPoller({
+      services: ["api"],
+      stackId: "stack-test",
+      pollResults: [
+        // Poll 1: down via up=0. Replicas batch empty so healthy-from-replicas
+        // doesn't shadow the up-batch DOWN verdict.
+        {
+          up: [makePrometheusEntry({ job: "api" }, "0")],
+        },
+        // Poll 2: healthy.
+        {
+          kube_deployment_status_replicas: [makePrometheusEntry({ deployment: "api" }, "1")],
+          up: [makePrometheusEntry({ job: "api" }, "1")],
+        },
+      ],
+    });
+
+    await poller.poll();   // first poll: down (via up=0)
+    advance();
+    eventLog.reset();
+    await poller.poll();   // second poll: healthy
+
+    const { events } = eventLog.recent(10);
+    expect(events).toHaveLength(1);
+    expect(events[0]!.severity).toBe("success");
+    expect(events[0]!.meta).toEqual({ from: "down", to: "healthy" });
+  });
+
+  it("does NOT emit on first-poll when only signal is replicas=0 (scaled-down workload)", async () => {
+    const { poller } = makeMultiPollPoller({
+      services: ["api"],
+      stackId: "stack-test",
+      pollResults: [
+        {
+          kube_deployment_status_replicas: [makePrometheusEntry({ deployment: "api" }, "0")],
+        },
+      ],
+    });
+
+    await poller.poll();
+
+    const { events } = eventLog.recent(10);
+    expect(events).toHaveLength(0);
+  });
+
+  it("emits on first-poll when up=0 (real scrape failure, in downViaUp)", async () => {
+    const { poller } = makeMultiPollPoller({
+      services: ["api"],
+      stackId: "stack-test",
+      pollResults: [
+        {
+          up: [makePrometheusEntry({ job: "api" }, "0")],
+        },
+      ],
+    });
+
+    await poller.poll();
+
+    const { events } = eventLog.recent(10);
+    expect(events).toHaveLength(1);
+    expect(events[0]!.kind).toBe("service_health_changed");
+    expect(events[0]!.severity).toBe("error");
+    expect(events[0]!.meta).toEqual({ from: "unknown", to: "down" });
+  });
+
+  it("does not emit when status is unchanged across polls", async () => {
+    const { poller } = makeMultiPollPoller({
+      services: ["api"],
+      stackId: "stack-test",
+      pollResults: [
+        // Single entry: same result for both polls (helper repeats the last entry).
+        {
+          kube_deployment_status_replicas: [makePrometheusEntry({ deployment: "api" }, "1")],
+          up: [makePrometheusEntry({ job: "api" }, "1")],
+        },
+      ],
+    });
+
+    await poller.poll();
+    eventLog.reset();
+    await poller.poll();
+
+    const { events } = eventLog.recent(10);
+    expect(events).toHaveLength(0);
+  });
+
+  it("emits the event even when onTransition throws", async () => {
+    const { poller } = makeMultiPollPoller({
+      services: ["api"],
+      stackId: "stack-test",
+      onTransition: () => { throw new Error("boom"); },
+      pollResults: [
+        {
+          up: [makePrometheusEntry({ job: "api" }, "0")],
+        },
+      ],
+    });
+
+    await poller.poll();
+
+    const { events } = eventLog.recent(10);
+    expect(events).toHaveLength(1);
+    expect(events[0]!.kind).toBe("service_health_changed");
+  });
+});
+
+describe("severityForStatus", () => {
+  it("maps each health status to the correct severity", () => {
+    expect(severityForStatus("down")).toBe("error");
+    expect(severityForStatus("degraded")).toBe("warn");
+    expect(severityForStatus("healthy")).toBe("success");
+    expect(severityForStatus("unknown")).toBe("info");
   });
 });
