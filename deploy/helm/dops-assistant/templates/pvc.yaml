@@ -5,10 +5,14 @@ metadata:
   name: {{ include "dops-assistant.pvcName" . }}
   labels:
     {{- include "dops-assistant.labels" . | nindent 4 }}
-  {{- with .Values.persistence.annotations }}
   annotations:
+    # Survive `helm uninstall` and atomic-rollback purges so SQLite state,
+    # services.yaml, and operator-added providers.yaml are not wiped on
+    # release teardown. Override per-deploy via persistence.annotations.
+    helm.sh/resource-policy: keep
+    {{- with .Values.persistence.annotations }}
     {{- toYaml . | nindent 4 }}
-  {{- end }}
+    {{- end }}
 spec:
   accessModes:
     {{- range .Values.persistence.accessModes }}
