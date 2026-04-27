@@ -4,6 +4,19 @@ llm:
   apiKey: "${OPENAI_API_KEY}"
   # baseURL: "https://your-compatible-endpoint/v1"  # Optional: override for gpt-oss-120b etc.
 
+  # Optional: retry policy for transient LLM-call failures (network errors,
+  # HTTP 408/409/429/5xx flagged retryable by the provider). Tool errors are
+  # NOT retried — only the LLM API itself. Tool-using agent paths (anomaly,
+  # evidence, planning, synthesis) only retry when the investigation forces
+  # readOnlyTools (e.g. webhook-triggered runs). Manual investigations that
+  # allow write tools effectively get maxAttempts=1 to avoid replaying tool
+  # calls. See docs/runbook.md for the full picture.
+  # retry:
+  #   maxAttempts: 8         # 1..15, default 8
+  #   initialDelayMs: 2000   # first backoff, default 2s
+  #   maxDelayMs: 60000      # cap on exponential growth, default 60s
+  #   jitterPercent: 0.3     # 0..2, fraction of base delay added as jitter
+
 # Optional bearer token required for mutating (non-GET) API requests.
 # apiKey: "${DOPS_API_KEY}"
 
