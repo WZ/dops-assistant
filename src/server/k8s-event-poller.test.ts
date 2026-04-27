@@ -428,3 +428,46 @@ describe("K8sEventPoller dedup interaction", () => {
     vi.useRealTimers();
   });
 });
+
+describe("K8sEventPoller.reload", () => {
+  function makeConfigWith(enabled: boolean) {
+    return {
+      enabled,
+      intervalSeconds: 300,
+      badReasons: ["OOMKilled"],
+      ignoreReasons: [],
+      maxEventsPerTick: 50,
+      queryTimeoutMs: 15_000,
+    };
+  }
+  function getInternalHandle(p: K8sEventPoller): unknown {
+    return (p as unknown as { intervalHandle: unknown }).intervalHandle;
+  }
+
+  it("flips enabled false → true and starts the interval", () => {
+    const poller = new K8sEventPoller(makeDeps({ config: makeConfigWith(false) }));
+    poller.start();
+    expect(getInternalHandle(poller)).toBeUndefined();   // disabled — no interval
+    poller.reload(makeConfigWith(true));
+    expect(getInternalHandle(poller)).toBeDefined();
+    poller.stop();
+  });
+
+  it("flips enabled true → false and stops the interval", () => {
+    const poller = new K8sEventPoller(makeDeps({ config: makeConfigWith(true) }));
+    poller.start();
+    expect(getInternalHandle(poller)).toBeDefined();
+    poller.reload(makeConfigWith(false));
+    expect(getInternalHandle(poller)).toBeUndefined();
+  });
+
+  it("preserves the in-memory restart cache across reload", () => {
+    const poller = new K8sEventPoller(makeDeps({ config: makeConfigWith(true) }));
+    const cache = (poller as unknown as { restartCache: Map<string, number> }).restartCache;
+    cache.set("u1:main", 3);
+    poller.start();
+    poller.reload(makeConfigWith(true));
+    expect(cache.get("u1:main")).toBe(3);
+    poller.stop();
+  });
+});

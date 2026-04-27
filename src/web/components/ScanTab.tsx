@@ -17,12 +17,57 @@ import type { RuleDraft } from "./scan/types";
 
 type Source = "gui" | "config";
 
+interface K8sStackStatus {
+  stackId: string;
+  name: string;
+  /** ISO timestamp; null when the poller has never completed a poll (disabled or just-started). */
+  lastTickAt: string | null;
+  /** null with lastTickAt set = poll succeeded. Non-null = the specific reason it can't run. */
+  degradedReason: string | null;
+}
+
+interface K8sEventsSettings {
+  enabled: boolean;
+  source: { enabled: Source };
+  stacks: K8sStackStatus[];
+}
+
 interface ScanSettings {
   enabled: boolean;
   cron: string;
   timezone: string;
   rules: RuleDraft[];
   source: { enabled: Source; cron: Source; timezone: Source; rules: Source };
+  k8sEvents: K8sEventsSettings;
+}
+
+type K8sStatusTone = "ok" | "warn" | "neutral";
+
+/**
+ * Three-state status for a stack's K8sEventPoller. The UI distinguishes:
+ *   - neutral: poller has never actually polled (toggle off or just-started).
+ *     We can't claim "OK" because we haven't checked. Honest.
+ *   - ok: last poll succeeded, k8s tools resolved.
+ *   - warn: last poll surfaced a degraded reason; toggle won't take effect
+ *     on this stack until that's fixed.
+ */
+function k8sStatusLabel(s: K8sStackStatus): { tone: K8sStatusTone; label: string } {
+  if (s.lastTickAt === null) {
+    return { tone: "neutral", label: "not yet polled — flip toggle on to check" };
+  }
+  if (s.degradedReason === null) {
+    return { tone: "ok", label: "k8s provider detected" };
+  }
+  if (s.degradedReason === "infrastructure-role-not-resolved") {
+    return { tone: "warn", label: "no infra MCP wired — toggle has no effect" };
+  }
+  if (s.degradedReason === "infrastructure-not-kubernetes") {
+    return { tone: "warn", label: "infra MCP isn't kubernetes — toggle has no effect" };
+  }
+  if (s.degradedReason === "infrastructure-call-failed") {
+    return { tone: "warn", label: "k8s tool call failed last poll — check MCP" };
+  }
+  return { tone: "warn", label: s.degradedReason };
 }
 
 interface ValidationDetail {
@@ -69,6 +114,7 @@ export function ScanTab() {
   const [cronInput, setCronInput] = useState("");
   const [timezoneInput, setTimezoneInput] = useState("");
   const [rulesInput, setRulesInput] = useState<RuleDraft[]>([]);
+  const [k8sEnabledInput, setK8sEnabledInput] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [ruleErrors, setRuleErrors] = useState<ValidationDetail[]>([]);
 
@@ -93,6 +139,7 @@ export function ScanTab() {
           setTimezoneInput(settingsData.timezone);
         }
         setRulesInput(settingsData.rules);
+        setK8sEnabledInput(settingsData.k8sEvents.enabled);
       }
     } catch {
       /* network blip; leave prior state */
@@ -117,6 +164,7 @@ export function ScanTab() {
           cron: cronInput,
           timezone: timezoneInput,
           rules: rulesInput,
+          k8sEvents: { enabled: k8sEnabledInput },
         }),
       });
       if (!res.ok) {
@@ -271,21 +319,91 @@ export function ScanTab() {
               Defaults to your browser's timezone. Accepts any IANA name like <span className="font-mono text-[11px]">America/New_York</span> or <span className="font-mono text-[11px]">UTC</span>.
             </p>
           </div>
+        </div>
+      </section>
 
-          {/* Actions */}
-          <div className="flex items-center gap-2 pt-1">
-            <Button
-              onClick={handleSave}
-              disabled={saving || !dirty}
-              className="font-mono text-xs font-medium h-9 rounded-lg px-4"
+      {/* Section: K8S EVENT POLLER */}
+      <section aria-label="K8s event poller" className="mb-6">
+        <div className="flex items-center gap-2 mb-3">
+          <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
+          <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
+            K8s Event Poller
+          </h2>
+          {settings?.k8sEvents.source.enabled === "config" && (
+            <span className="font-mono text-[9px] text-muted-foreground/40 ml-1">
+              (from config.yaml)
+            </span>
+          )}
+        </div>
+
+        <p className="text-sm text-muted-foreground/70 mb-4 max-w-2xl">
+          Catch transient pod crashes the proactive scan misses. Polls the k8s
+          API every 5 minutes for bad-reason events (OOMKilled, CrashLoopBackOff,
+          ImagePullBackOff, etc.) and pod restart-count increments. Requires an
+          infrastructure MCP that exposes <span className="font-mono text-[11px]">list_pods</span> + <span className="font-mono text-[11px]">list_events</span>.
+        </p>
+
+        <div className="rounded-lg border border-border/40 bg-card/50 p-4 space-y-4">
+          {/* Enable toggle */}
+          <div className="flex items-center justify-between">
+            <div>
+              <label className={LABEL_CLASS}>Enabled</label>
+              <p className="text-xs text-muted-foreground/60 mt-0.5">
+                Off by default. Flip on after wiring a k8s infrastructure MCP.
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={k8sEnabledInput}
+              aria-label="Enable k8s event poller"
+              onClick={() => {
+                setK8sEnabledInput(!k8sEnabledInput);
+                setDirty(true);
+              }}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                k8sEnabledInput ? "bg-primary" : "bg-muted-foreground/20"
+              }`}
             >
-              {saving ? "Saving..." : "Save"}
-            </Button>
+              <span
+                className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
+                  k8sEnabledInput ? "translate-x-6" : "translate-x-1"
+                }`}
+              />
+            </button>
           </div>
 
-          {saveError && (
-            <div className="text-xs font-mono px-3 py-2 rounded-md bg-destructive/10 text-destructive">
-              {saveError}
+          {/* Per-stack live status */}
+          {settings && settings.k8sEvents.stacks.length > 0 && (
+            <div>
+              <label className={LABEL_CLASS}>Per-stack status</label>
+              <p className="text-xs text-muted-foreground/60 mt-0.5 mb-2">
+                Live state from each stack&apos;s last poll. The toggle only
+                takes effect on stacks with a working k8s provider.
+              </p>
+              <ul className="space-y-1.5">
+                {settings.k8sEvents.stacks.map((s) => {
+                  const status = k8sStatusLabel(s);
+                  const dotClass =
+                    status.tone === "ok" ? "bg-emerald-500"
+                    : status.tone === "warn" ? "bg-amber-500"
+                    : "bg-muted-foreground/40";
+                  return (
+                    <li
+                      key={s.stackId}
+                      className="flex items-center justify-between rounded-md border border-border/30 bg-card/30 px-3 py-2"
+                    >
+                      <span className="font-mono text-xs text-foreground">{s.name}</span>
+                      <span className="flex items-center gap-2">
+                        <span className={`inline-block w-1.5 h-1.5 rounded-full ${dotClass}`} />
+                        <span className="font-mono text-[11px] text-muted-foreground">
+                          {status.label}
+                        </span>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
             </div>
           )}
         </div>
@@ -334,6 +452,21 @@ export function ScanTab() {
         )}
       </section>
 
+      {/* Form-wide save action — saves all sections above (scan, k8s events, rules). */}
+      <div className="flex items-center gap-3 pt-2">
+        <Button
+          onClick={handleSave}
+          disabled={saving || !dirty}
+          className="font-mono text-xs font-medium h-9 rounded-lg px-4"
+        >
+          {saving ? "Saving..." : "Save"}
+        </Button>
+        {saveError && (
+          <div className="text-xs font-mono px-3 py-2 rounded-md bg-destructive/10 text-destructive">
+            {saveError}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

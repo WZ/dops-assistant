@@ -4,7 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## [0.3.7.0] - 2026-04-26
+## [0.3.7.1] - 2026-04-27
+
+### Added
+- **Toggle the K8s event poller on/off from the GUI.** New "K8s Event Poller" section in Settings → Scan, sitting between Proactive Scan and Probe rules. Stores the override in the same key/value table that backs the existing scan settings, so flipping the switch survives restart. PUT to `/api/scan/settings` with `{k8sEvents: {enabled: true|false|null}}` — `null` clears the override and reverts to `config.yaml`.
+- **Live per-stack status next to the toggle.** Each stack shows a colored dot and a one-line label drawn from the poller's actual last poll: green ("k8s provider detected"), amber with the specific reason it can't run on that stack (no infra MCP wired, infra MCP isn't kubernetes, last call failed), or gray ("not yet polled — flip toggle on to check"). Operators see exactly what they need to fix before the toggle does anything.
+- **Hot reload, no server restart.** Flipping the toggle calls each stack's `K8sEventPoller.reload()`, which stops the running interval, swaps the config, and starts again. The in-memory restart-count cache survives the reload so a no-op toggle doesn't trip false hits on the next poll.
+
+
 
 ### Added
 - **Investigations now ride out short LLM blips instead of failing on the first transient error.** A new retry wrapper sits in front of every model call and waits-then-tries-again on connection-level errors (`ECONNREFUSED`, `ETIMEDOUT`, `fetch failed`, etc.) and HTTP 408/409/429/5xx responses from the provider. Tunable via the new `llm.retry` config block: `maxAttempts` (default 8, range 1–15), `initialDelayMs` (default 2000, capped at 60s), `maxDelayMs` (default 60000), and `jitterPercent` (default 0.3 — 30% added jitter). Backoff is exponential with the cap and jitter applied per attempt.

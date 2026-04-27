@@ -22,6 +22,7 @@ import { SkillInputSchema } from "./sanitize.js";
 import { Cron } from "croner";
 import { z } from "zod";
 import { getScanSettingsView, SCAN_SETTING_KEYS } from "./scan-settings.js";
+import { getK8sEventsSettingsView, K8S_EVENTS_SETTING_KEYS } from "./k8s-events-settings.js";
 import { validateRules } from "./scan-rule-validator.js";
 import { validateOverride, parseOverride } from "./scan-service-override.js";
 import { getToolsByRole } from "../mcp/provider.js";
@@ -55,6 +56,13 @@ const ScanSettingsUpdateSchema = z.object({
   // null (clear override, revert to config.yaml), or absent (leave untouched).
   // We don't shape-validate here — validateRules does that with richer errors.
   rules: z.union([z.array(z.unknown()), z.null()]).optional(),
+  // K8sEventPoller settings — sibling auto-investigator. Only `enabled` is
+  // GUI-editable in v1; every other knob (intervalSeconds, badReasons, etc.)
+  // stays config.yaml-only. `null` clears the override and reverts to
+  // config.yaml; absent leaves the existing override untouched.
+  k8sEvents: z.object({
+    enabled: z.union([z.boolean(), z.null()]).optional(),
+  }).strict().optional(),
 }).strict();
 
 export interface DependencyNode {
@@ -319,7 +327,19 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
    * "from config.yaml" badge.
    */
   app.get("/api/scan/settings", (_req: Request, res: Response) => {
-    res.json(getScanSettingsView(db, config));
+    res.json({
+      ...getScanSettingsView(db, config),
+      // Sibling auto-investigator settings — folded into the same endpoint
+      // because operators think of them as the same thing ("automated
+      // investigation toggles"). Each stack's K8sEventPoller has a live
+      // `degradedReason` that tells the UI whether the toggle will actually
+      // do anything (e.g. "infrastructure-not-kubernetes" means no k8s MCP
+      // is wired so flipping enabled has no effect on that stack).
+      k8sEvents: {
+        ...getK8sEventsSettingsView(db, config),
+        stacks: stackManager.getK8sEventPollerStatuses(),
+      },
+    });
   });
 
   /**
@@ -617,13 +637,29 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
       if (validatedRulesJson === null) db.deleteSetting(SCAN_SETTING_KEYS.probeMetrics);
       else if (typeof validatedRulesJson === "string") db.setSetting(SCAN_SETTING_KEYS.probeMetrics, validatedRulesJson);
+
+      // K8sEventPoller settings (sibling auto-investigator). Only `enabled`
+      // is currently GUI-editable.
+      if (body.k8sEvents !== undefined) {
+        if (body.k8sEvents.enabled === null) db.deleteSetting(K8S_EVENTS_SETTING_KEYS.enabled);
+        else if (typeof body.k8sEvents.enabled === "boolean") db.setSetting(K8S_EVENTS_SETTING_KEYS.enabled, String(body.k8sEvents.enabled));
+      }
     });
 
     // Propagate to every running scheduler. Idempotent — reload() no-ops
     // when nothing changed.
     stackManager.reloadAllScanSchedulers();
+    if (body.k8sEvents !== undefined) {
+      stackManager.reloadAllK8sEventPollers();
+    }
 
-    res.json(getScanSettingsView(db, config));
+    res.json({
+      ...getScanSettingsView(db, config),
+      k8sEvents: {
+        ...getK8sEventsSettingsView(db, config),
+        stacks: stackManager.getK8sEventPollerStatuses(),
+      },
+    });
   });
 
   /**
