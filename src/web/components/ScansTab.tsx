@@ -220,8 +220,9 @@ export function ScansTab({ query, onUpdateQuery, onOpenScanRun }: ScansTabProps)
         </div>
 
         {/* Filter bar — chips for multi-select filters + range presets +
-            sort dropdown. Layout follows InvestigationFilters spacing so
-            both tabs feel like the same family. */}
+            sort dropdown. Same FilterGroup/Chip layout as PatternsTab,
+            EventsTab, and InvestigationsPage so all activity views feel
+            like the same family. */}
         <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
           <FilterGroup label="Status">
             {STATUS_OPTIONS.map((o) => (
