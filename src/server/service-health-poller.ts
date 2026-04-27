@@ -234,7 +234,7 @@ export function matchResultsToServices(
   return result;
 }
 
-function severityForStatus(status: HealthStatus): "info" | "warn" | "error" | "success" {
+export function severityForStatus(status: HealthStatus): "info" | "warn" | "error" | "success" {
   switch (status) {
     case "down": return "error";
     case "degraded": return "warn";

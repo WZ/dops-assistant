@@ -3,6 +3,7 @@ import {
   ServiceHealthPoller,
   parsePrometheusResult,
   matchResultsToServices,
+  severityForStatus,
   type HealthStatus,
   type ServiceHealthPollerDeps,
 } from "./service-health-poller.js";
@@ -1050,5 +1051,14 @@ describe("event-log emission", () => {
     const { events } = eventLog.recent(10);
     expect(events).toHaveLength(1);
     expect(events[0]!.kind).toBe("service_health_changed");
+  });
+});
+
+describe("severityForStatus", () => {
+  it("maps each health status to the correct severity", () => {
+    expect(severityForStatus("down")).toBe("error");
+    expect(severityForStatus("degraded")).toBe("warn");
+    expect(severityForStatus("healthy")).toBe("success");
+    expect(severityForStatus("unknown")).toBe("info");
   });
 });
