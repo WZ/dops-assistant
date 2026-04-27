@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import { useStackContext } from "../contexts/StackContext";
 import { InvestigationRow } from "./dashboard/InvestigationRow";
-import { SeverityBreakdown } from "./investigations/SeverityBreakdown";
-import { InvestigationFilters } from "./investigations/InvestigationFilters";
 import type {
   InvestigationSummary,
   InvestigationListResponse,
 } from "../lib/dashboard-utils";
-import type { InvestigationsQuery, Severity } from "../lib/investigations-query";
+import type {
+  InvestigationsQuery,
+  Severity,
+  Status,
+  Sort,
+  DateRange,
+} from "../lib/investigations-query";
 import {
   resolveRangeToSince,
   stringifyInvestigationsQuery,
@@ -21,16 +25,27 @@ interface InvestigationsPageProps {
   onViewInvestigation: (id: string) => void;
 }
 
-/**
- * Dedicated /investigations list page. PR 2 ships the shell only:
- * data fetch + pagination driven by URL state, no filter UI. PR 3 adds
- * the filter bar + severity breakdown strip. PR 4 adds polish.
- *
- * Query is owned by the parent (App.tsx) so URL ↔ state sync lives in
- * one place (useRoute). This component just renders the current query's
- * data and fires onUpdateQuery for user-driven changes (pagination today,
- * filter inputs in PR 3).
- */
+const SEVERITY_OPTIONS: { id: Severity; label: string; tone: string }[] = [
+  { id: "critical", label: "Critical", tone: "text-destructive" },
+  { id: "high",     label: "High",     tone: "text-warning" },
+  { id: "medium",   label: "Medium",   tone: "text-foreground/70" },
+  { id: "low",      label: "Low",      tone: "text-muted-foreground/70" },
+];
+const STATUS_OPTIONS: { id: Status; label: string }[] = [
+  { id: "running",  label: "Running" },
+  { id: "complete", label: "Complete" },
+  { id: "failed",   label: "Failed" },
+];
+const RANGE_OPTIONS: { id: DateRange; label: string }[] = [
+  { id: "24h", label: "24h" },
+  { id: "7d",  label: "7d" },
+  { id: "30d", label: "30d" },
+];
+const SORT_OPTIONS: { id: Sort; label: string }[] = [
+  { id: "created_at", label: "Most recent" },
+  { id: "confidence", label: "Highest confidence" },
+];
+
 export function InvestigationsPage({
   query,
   onUpdateQuery,
@@ -38,24 +53,17 @@ export function InvestigationsPage({
 }: InvestigationsPageProps) {
   const { stackFetch, activeStackId } = useStackContext();
   const [rows, setRows] = useState<InvestigationSummary[]>([]);
+  const [services, setServices] = useState<string[]>([]);
   const [total, setTotal] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Avoid showing stale data from a prior fetch if the user paginates
-  // faster than the network responds. Each fetch bumps a sequence number;
-  // only the latest wins.
   const fetchSeqRef = useRef(0);
 
   const limit = query.limit ?? DEFAULT_LIMIT;
   const offset = query.offset ?? 0;
 
-  // Resolve `range` → absolute `since` at fetch time and serialize to a stable
-  // string so the effect below depends on content, not object identity. Parent
-  // re-renders that produce a new `query` reference with identical content no
-  // longer retrigger the fetch (was wasting one request per WS-driven App
-  // re-render before this memo).
   const fetchUrl = useMemo(() => {
     const resolved = resolveRangeToSince({ ...query, limit, offset });
     const qs = stringifyInvestigationsQuery(resolved);
@@ -77,15 +85,11 @@ export function InvestigationsPage({
         return res.json() as Promise<InvestigationListResponse>;
       })
       .then((data) => {
-        if (seq !== fetchSeqRef.current) return; // stale — a newer fetch already won
+        if (seq !== fetchSeqRef.current) return;
         setRows(data.rows);
+        setServices(data.services ?? []);
         setTotal(data.total);
         setHasMore(data.hasMore);
-        // Auto-correct when a bookmarked / narrowed filter set lands the user
-        // past the last page (e.g. bookmarked `?offset=50` but the filter now
-        // returns 18 rows). Drop offset so the refetched page shows row 1.
-        // Guarded on `rows.length === 0 && total > 0 && offset > 0` so we
-        // don't loop when there are genuinely no results at all.
         if (data.rows.length === 0 && data.total > 0 && offset > 0) {
           const next: InvestigationsQuery = { ...query };
           delete next.offset;
@@ -96,6 +100,7 @@ export function InvestigationsPage({
         if (err.name === "AbortError" || seq !== fetchSeqRef.current) return;
         setError(err.message || "Failed to load investigations");
         setRows([]);
+        setServices([]);
         setTotal(0);
         setHasMore(false);
       })
@@ -115,19 +120,83 @@ export function InvestigationsPage({
     onUpdateQuery({ ...query, offset: offset + limit });
   }, [offset, limit, query, onUpdateQuery]);
 
-  const toggleSeverity = useCallback(
-    (sev: Severity) => {
-      const current = new Set(query.severity ?? []);
-      if (current.has(sev)) current.delete(sev);
-      else current.add(sev);
-      const next: InvestigationsQuery = { ...query };
-      delete next.offset; // severity change resets pagination
-      if (current.size === 0) delete next.severity;
-      else next.severity = Array.from(current);
-      onUpdateQuery(next);
-    },
-    [query, onUpdateQuery],
-  );
+  // Search committed on Enter / blur (matches PatternsTab).
+  const [qDraft, setQDraft] = useState(query.q ?? "");
+  useEffect(() => { setQDraft(query.q ?? ""); }, [query.q]);
+
+  // Every chip/select handler routes through this so any pending qDraft is
+  // folded into the same update. Without it, typing in search → clicking a
+  // chip silently drops the pending text: blur and click race for the same
+  // setState batch and the chip handler closes over a `query` that hasn't
+  // seen the q commit yet.
+  function withPendingSearch(): InvestigationsQuery {
+    const trimmed = qDraft.trim();
+    const base: InvestigationsQuery = { ...query };
+    if (trimmed) base.q = trimmed;
+    else delete base.q;
+    return base;
+  }
+
+  function toggleSeverity(value: Severity) {
+    const current = new Set(query.severity ?? []);
+    if (current.has(value)) current.delete(value);
+    else current.add(value);
+    const next = withPendingSearch();
+    delete next.offset;
+    if (current.size === 0) delete next.severity;
+    else next.severity = Array.from(current);
+    onUpdateQuery(next);
+  }
+
+  function toggleStatus(value: Status) {
+    const current = new Set(query.status ?? []);
+    if (current.has(value)) current.delete(value);
+    else current.add(value);
+    const next = withPendingSearch();
+    delete next.offset;
+    if (current.size === 0) delete next.status;
+    else next.status = Array.from(current);
+    onUpdateQuery(next);
+  }
+
+  function setRange(range: DateRange | undefined) {
+    const next = withPendingSearch();
+    delete next.offset;
+    // Switching presets implies dropping any custom since/until window so the
+    // active chip and the actual filter agree (mirrors the old segmented
+    // control's behavior).
+    delete next.since;
+    delete next.until;
+    if (range) next.range = range;
+    else delete next.range;
+    onUpdateQuery(next);
+  }
+
+  function setService(service: string | undefined) {
+    const next = withPendingSearch();
+    delete next.offset;
+    if (service) next.service = service;
+    else delete next.service;
+    onUpdateQuery(next);
+  }
+
+  function setSort(sort: Sort) {
+    const next = withPendingSearch();
+    delete next.offset;
+    if (sort === "created_at") delete next.sort;
+    else next.sort = sort;
+    onUpdateQuery(next);
+  }
+
+  function commitQ() {
+    const trimmed = qDraft.trim();
+    if (trimmed === (query.q ?? "")) return;
+    const next: InvestigationsQuery = { ...query };
+    delete next.offset;
+    if (trimmed) next.q = trimmed;
+    else delete next.q;
+    onUpdateQuery(next);
+  }
 
   const pageStart = total === 0 ? 0 : offset + 1;
   const pageEnd = Math.min(offset + rows.length, total);
@@ -135,20 +204,21 @@ export function InvestigationsPage({
     (query.severity && query.severity.length > 0) ||
       (query.status && query.status.length > 0) ||
       query.service ||
+      query.range ||
       query.since ||
       query.until ||
-      query.q,
+      query.q ||
+      query.sort,
   );
+  // "All" range chip is active only when no range AND no custom window —
+  // matches the previous segmented control's "no preset glows when a custom
+  // since is set" behavior.
+  const allRangeActive = !query.range && !query.since && !query.until;
+  const activeSort = query.sort ?? "created_at";
 
   return (
-    // Match ServicesPage + SettingsPage exactly: full-width container with
-    // px-4 py-5. The previous max-w-[1100px] mx-auto centering made the
-    // title indent further right than Operations Desk's title did, so the
-    // three top-level pages looked like they belonged to different apps.
     <div className="h-full overflow-y-auto px-4 py-5">
       <div>
-        {/* Page title — matches ServicesPage / SettingsPage style. No back
-            link; the sidebar is the global nav. */}
         <div className="mb-6 animate-fade-up">
           <h1 className="font-display text-2xl font-extrabold tracking-tight text-foreground/90">
             Investigations
@@ -166,8 +236,87 @@ export function InvestigationsPage({
           </p>
         </div>
 
-        <SeverityBreakdown query={query} onToggleSeverity={toggleSeverity} />
-        <InvestigationFilters query={query} onUpdateQuery={onUpdateQuery} />
+        <div
+          role="search"
+          aria-label="Filter investigations"
+          className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs"
+        >
+          <FilterGroup label="Severity">
+            {SEVERITY_OPTIONS.map((o) => (
+              <Chip
+                key={o.id}
+                active={(query.severity ?? []).includes(o.id)}
+                onClick={() => toggleSeverity(o.id)}
+                tone={o.tone}
+              >
+                {o.label}
+              </Chip>
+            ))}
+          </FilterGroup>
+          <FilterGroup label="Status">
+            {STATUS_OPTIONS.map((o) => (
+              <Chip
+                key={o.id}
+                active={(query.status ?? []).includes(o.id)}
+                onClick={() => toggleStatus(o.id)}
+              >
+                {o.label}
+              </Chip>
+            ))}
+          </FilterGroup>
+          <FilterGroup label="Range">
+            {RANGE_OPTIONS.map((o) => (
+              <Chip
+                key={o.id}
+                active={query.range === o.id}
+                onClick={() => setRange(query.range === o.id ? undefined : o.id)}
+              >
+                {o.label}
+              </Chip>
+            ))}
+            <Chip active={allRangeActive} onClick={() => setRange(undefined)}>All</Chip>
+          </FilterGroup>
+          <FilterGroup label="Service">
+            <select
+              value={query.service ?? ""}
+              onChange={(e) => setService(e.target.value || undefined)}
+              className="font-mono text-[10px] uppercase tracking-[0.12em] px-2 h-7 rounded-md border border-border/40 bg-card/30 text-foreground/80 max-w-[12rem] truncate"
+              data-testid="investigations-service-select"
+              aria-label="Filter by service"
+            >
+              <option value="">All services</option>
+              {services.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </FilterGroup>
+          <FilterGroup label="Search">
+            <input
+              type="search"
+              value={qDraft}
+              onChange={(e) => setQDraft(e.target.value)}
+              onBlur={commitQ}
+              onKeyDown={(e) => { if (e.key === "Enter") commitQ(); }}
+              placeholder="symptom or root cause…"
+              className="font-mono text-[11px] px-2 h-7 rounded-md border border-border/40 bg-card/30 text-foreground/80 placeholder:text-muted-foreground/40 w-56"
+              data-testid="investigations-search-input"
+              aria-label="Search investigations"
+            />
+          </FilterGroup>
+          <div className="ml-auto flex items-center gap-1.5">
+            <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/60">Sort</span>
+            <select
+              value={activeSort}
+              onChange={(e) => setSort(e.target.value as Sort)}
+              className="font-mono text-[10px] uppercase tracking-[0.12em] px-2 h-7 rounded-md border border-border/40 bg-card/30 text-foreground/80"
+              aria-label="Sort by"
+            >
+              {SORT_OPTIONS.map((o) => (
+                <option key={o.id} value={o.id}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
 
         {error && (
           <div
@@ -247,5 +396,43 @@ export function InvestigationsPage({
         )}
       </div>
     </div>
+  );
+}
+
+function FilterGroup({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/60">
+        {label}
+      </span>
+      <div className="flex items-center gap-1">{children}</div>
+    </div>
+  );
+}
+
+function Chip({
+  active,
+  onClick,
+  children,
+  tone,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+  tone?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`font-mono text-[10px] uppercase tracking-[0.12em] px-2 h-7 rounded-md border transition-colors ${
+        active
+          ? "border-primary/60 bg-primary/10 text-primary"
+          : `border-border/40 ${tone ?? "text-foreground/70"} hover:bg-card/70 hover:text-foreground`
+      }`}
+    >
+      {children}
+    </button>
   );
 }
