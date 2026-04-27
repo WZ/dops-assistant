@@ -680,6 +680,25 @@ describe("Database", () => {
     });
   });
 
+  // ── listInvestigationServices ─────────────────────────────────────────
+
+  describe("listInvestigationServices", () => {
+    it("returns distinct service names alphabetically, scoped to stack, dropping null/empty", () => {
+      db.createInvestigation(S,        { id: "inv_1", service: "zeta",         query: "q", status: "complete" });
+      db.createInvestigation(S,        { id: "inv_2", service: "alpha",        query: "q", status: "complete" });
+      db.createInvestigation(S,        { id: "inv_3", service: "alpha",        query: "q", status: "complete" });
+      db.createInvestigation(S,        { id: "inv_4", service: "mu",           query: "q", status: "complete" });
+      db.createInvestigation(S,        { id: "inv_5", service: "",             query: "q", status: "complete" });
+      db.createInvestigation("other-stack", { id: "inv_6", service: "leak-me", query: "q", status: "complete" });
+
+      expect(db.listInvestigationServices(S)).toEqual(["alpha", "mu", "zeta"]);
+    });
+
+    it("returns empty array when the stack has no investigations", () => {
+      expect(db.listInvestigationServices(S)).toEqual([]);
+    });
+  });
+
   // ── Stack CRUD ────────────────────────────────────────────────────────
 
   describe("stack CRUD", () => {

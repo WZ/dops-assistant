@@ -898,6 +898,7 @@ export class Database {
     // Indexes
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_inv_stack ON investigations (stack_id);
+      CREATE INDEX IF NOT EXISTS idx_inv_stack_service ON investigations (stack_id, service);
       CREATE INDEX IF NOT EXISTS idx_msg_stack ON messages (stack_id);
       CREATE INDEX IF NOT EXISTS idx_shc_stack ON service_health_checks (stack_id, service, checked_at);
     `);
@@ -1461,6 +1462,16 @@ export class Database {
   listPatternServices(stackId: string): string[] {
     return (this.db.prepare(
       "SELECT DISTINCT service FROM incident_patterns WHERE stack_id = ? ORDER BY service ASC"
+    ).all(stackId) as Array<{ service: string }>).map((r) => r.service);
+  }
+
+  /**
+   * Distinct service names that have at least one investigation in this stack.
+   * Powers the /investigations page's service-filter dropdown.
+   */
+  listInvestigationServices(stackId: string): string[] {
+    return (this.db.prepare(
+      "SELECT DISTINCT service FROM investigations WHERE stack_id = ? AND service IS NOT NULL AND service != '' ORDER BY service ASC"
     ).all(stackId) as Array<{ service: string }>).map((r) => r.service);
   }
 

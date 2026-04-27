@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.8.0] - 2026-04-27
+
+### Changed
+- **Investigations table now uses the same filter row as Patterns and Events.** Severity, Status, Range, Service dropdown, Search, Sort — all chip/dropdown controls with the same labels, sizing, and behavior as the rest of the activity views. The earlier severity-with-counts strip and segmented date control are gone in favor of a single consistent chip layout.
+- **Service dropdown on `/investigations` is populated from the API.** `GET /api/investigations` now returns `services: string[]` — the distinct services with at least one investigation in the current stack — so the dropdown renders without a second round-trip.
+
+### Fixed
+- **Search text is no longer dropped when you click a chip without pressing Enter first.** Every chip and select handler now folds the pending search draft into its update, so typing "redis" then clicking Critical sends `?q=redis&severity=critical` instead of silently overwriting the query.
+- **Service dropdown clears on fetch error** so a 400 after switching stacks can't leave the previous stack's service names visible in the new context.
+- **New covering index `(stack_id, service)` on investigations** keeps the per-request distinct-service scan cheap as the table grows.
+
 ## [0.3.7.1] - 2026-04-27
 
 ### Added

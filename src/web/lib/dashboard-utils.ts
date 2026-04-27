@@ -49,6 +49,8 @@ export interface InvestigationListResponse {
   rows: InvestigationSummary[];
   total: number;
   hasMore: boolean;
+  /** Distinct service names with at least one investigation in this stack — populates the service-filter dropdown. Optional for legacy callers (Dashboard) that don't render filters. */
+  services?: string[];
 }
 
 /** Shape returned by GET /api/stats/kpi */
