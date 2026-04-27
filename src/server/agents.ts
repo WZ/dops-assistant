@@ -40,6 +40,8 @@ import { getAllTools } from "../mcp/provider.js";
 import { coerceLokiArgs } from "../workflows/tool-utils.js";
 import type { ServiceRegistryStore } from "../services/registry.js";
 import type { LanguageModel } from "ai";
+import type { LlmRetryConfig } from "../agents/shared/llm-retry.js";
+import { LlmUnavailableError } from "../agents/shared/llm-errors.js";
 
 type MastraChatAgent = ReturnType<typeof createChatAgent>;
 type MastraStreamInput = Parameters<MastraChatAgent["stream"]>[0];
@@ -359,6 +361,20 @@ export class MastraInvestigationAdapter {
 
     if (runResult.status === "success") {
       output = runResult.result as typeof output;
+    } else {
+      // Workflow failed — Mastra absorbs step throws into runResult.steps.<id>.error.
+      // If any step failed with LlmUnavailableError, propagate it so the runner's
+      // catch marks the investigation `failed` instead of persisting an empty RCA.
+      const stepErrors: unknown[] = [];
+      const result = runResult as { error?: unknown; steps?: Record<string, { error?: unknown; status?: string }> };
+      if (result.error) stepErrors.push(result.error);
+      for (const stepResult of Object.values(result.steps ?? {})) {
+        if (stepResult?.status === "failed" && stepResult.error) {
+          stepErrors.push(stepResult.error);
+        }
+      }
+      const llmUnavailable = stepErrors.find((e) => e instanceof LlmUnavailableError);
+      if (llmUnavailable) throw llmUnavailable;
     }
 
     // Map the workflow output to the RcaReport shape the server/CLI expect
@@ -393,6 +409,8 @@ export interface MastraDiscoverAdapterDeps {
   providers: MastraProvider[];
   discoveryConfig: DiscoveryConfig;
   registryStore: ServiceRegistryStore;
+  /** Retry config for transient LLM-call failures. */
+  llmRetry?: LlmRetryConfig;
 }
 
 export class MastraDiscoverAdapter implements IDiscoverAgent {
@@ -421,6 +439,7 @@ export class MastraDiscoverAdapter implements IDiscoverAgent {
       onTokenUsage,
       skills,
       onRetry,
+      llmRetry: this.deps.llmRetry,
     });
   }
 
@@ -538,6 +557,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
     getSimilarPatterns: db && stackId
       ? (service, limit = 5) => db.findSimilarPatterns(stackId, service, limit)
       : undefined,
+    llmRetry: config.llm.retry,
   };
 
   const investigationAgent = new MastraInvestigationAdapter(workflowConfig);
@@ -548,6 +568,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
         providers,
         discoveryConfig: config.discovery,
         registryStore: deps.registryStore,
+        llmRetry: config.llm.retry,
       })
     : undefined;
 

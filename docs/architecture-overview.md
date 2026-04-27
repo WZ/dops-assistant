@@ -186,6 +186,14 @@ Each agent gets only the tools relevant to its role. Providing all 50+ tools cau
 
 The runner owns: workflow construction (template-aware), DB persistence (`investigations` + `investigation_phases` + `investigation_events`), event dispatch, error wrapping (`friendlyError()`), and graceful shutdown on cancellation.
 
+### LLM retry & graceful failure
+
+Every model call is wrapped in `withLlmRetry` (`src/agents/shared/llm-retry.ts`) with exponential backoff and jitter. Transient failures (HTTP 408/409/429/5xx flagged retryable by the AI SDK, or connection-level errors like `ECONNREFUSED`/`ETIMEDOUT`) trigger retries up to `llm.retry.maxAttempts` (default 8). Permanent errors (4xx, schema errors, context-length issues) bypass retry. Tool errors are intentionally NOT classified as LLM outages — see `isLlmUnavailable` in `src/agents/shared/llm-errors.ts`.
+
+When retries are exhausted, the wrapper throws `LlmUnavailableError` carrying the original cause. The runner's top-level catch persists `status: "failed"`, fires the `onFailed` callback with a friendly message, and emits `investigation:failed` over WS. Mastra absorbs step throws into `runResult.steps[].error`; `MastraInvestigationAdapter` (`src/server/agents.ts`) scans those and rethrows so the runner sees the error.
+
+Tool-using agent paths (anomaly, evidence, planning, synthesis) gate retry behind `safeAgentRetryConfig(config.llmRetry, config.readOnlyTools)`. Retries only engage when `readOnlyTools: true` to avoid replaying write-capable tool calls. Read-only call sites (intent routing, discovery) keep the full retry budget.
+
 ---
 
 ## MCP Providers

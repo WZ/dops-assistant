@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.7.0] - 2026-04-26
+
+### Added
+- **Investigations now ride out short LLM blips instead of failing on the first transient error.** A new retry wrapper sits in front of every model call and waits-then-tries-again on connection-level errors (`ECONNREFUSED`, `ETIMEDOUT`, `fetch failed`, etc.) and HTTP 408/409/429/5xx responses from the provider. Tunable via the new `llm.retry` config block: `maxAttempts` (default 8, range 1–15), `initialDelayMs` (default 2000, capped at 60s), `maxDelayMs` (default 60000), and `jitterPercent` (default 0.3 — 30% added jitter). Backoff is exponential with the cap and jitter applied per attempt.
+- **Explicit failure card in the investigation panel when the LLM stays unreachable.** The right pane used to spin forever when the provider was down. It now shows a destructive banner with the actual reason — "LLM API rate limit reached", "LLM API is currently unavailable", "LLM API is unreachable", etc. — pulled from the WebSocket `investigation:failed` event so users can tell rate-limit from network outage at a glance and decide whether to retry or fix Settings → Health.
+- **Chat replies surface the same friendly failure copy when intent routing or chat exhausts retries.** Previously a persistent LLM outage during chat returned a generic "Internal error". Now the WS handler converts `LlmUnavailableError` into the same human-readable string the investigation panel uses.
+
+### Changed
+- **Transient-error classification is now LLM-API-specific.** The first cut matched any error whose message contained substrings like `timeout` or `503`, which would have mislabeled Prometheus/Loki/MCP tool errors as LLM outages and triggered useless retry storms. The classifier now only fires on AI SDK `APICallError` instances (with the SDK's own `isRetryable` flag, covering 408/409/429/5xx) or bare connection-level errors walked up the cause chain (depth ≤ 5).
+- **Tool-replay safety on retry.** `withLlmRetry` re-runs its callback from scratch on transient failure, which would replay any tool the agent had already invoked. The new `safeAgentRetryConfig` helper gates tool-using agent paths (anomaly, evidence, planning, synthesis) so retries only engage when `readOnlyTools` is true. Read-only call sites (intent routing, discovery's read-only tool set) keep the full retry budget.
+- **Investigation runner unwraps `LlmUnavailableError.cause` before mapping to a friendly message.** Users now see the underlying network/HTTP reason instead of "LLM unavailable after retries". The friendly-error regex was also widened to match `EAI_AGAIN`, `fetch failed`, and HTTP 504 — patterns the retry classifier already recognised but the user-facing copy missed.
+
 ## [0.3.6.0] - 2026-04-26
 
 ### Added

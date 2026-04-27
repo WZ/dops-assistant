@@ -13,6 +13,8 @@ import { debug } from "../tool-utils.js";
 import { safeJsonParse } from "../../agents/shared/processors.js";
 import { createPlannerAgent } from "../../agents/planner.js";
 import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
+import { withLlmRetry, safeAgentRetryConfig } from "../../agents/shared/llm-retry.js";
+import { LlmUnavailableError } from "../../agents/shared/llm-errors.js";
 import { formatPatterns } from "../../agents/shared/patterns.js";
 
 /**
@@ -84,14 +86,18 @@ export function buildPlanningStep(config: WorkflowConfig) {
 
       let agentResult: { text: string; usage?: any } = { text: "" };
       try {
-        agentResult = await agent.generate(prompt);
+        agentResult = await withLlmRetry(
+          () => agent.generate(prompt),
+          safeAgentRetryConfig(config.llmRetry, config.readOnlyTools),
+        );
         if (agentResult.usage && config.onTokenUsage) {
           config.onTokenUsage({
             inputTokens: agentResult.usage.inputTokens ?? 0,
             outputTokens: agentResult.usage.outputTokens ?? 0,
           });
         }
-      } catch {
+      } catch (err) {
+        if (err instanceof LlmUnavailableError) throw err;
         // Fall through to defaults
       }
 

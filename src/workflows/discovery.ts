@@ -6,6 +6,7 @@ import type { MastraProvider } from "../mcp/provider.js";
 import type { DiscoveryConfig } from "../config/schema.js";
 import type { OnToolCallEnriched, OnIteration, DiscoveryResult } from "../types/agent-interfaces.js";
 import type { Skill } from "../skills/store.js";
+import type { LlmRetryConfig } from "../agents/shared/llm-retry.js";
 
 const logger = createLogger("discover");
 
@@ -32,6 +33,8 @@ export interface DiscoveryWorkflowConfig {
   onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
   onRetry?: (attempt: number, maxRetries: number, reason: string) => void;
   skills?: Skill[];
+  /** Retry config for transient LLM-call failures. Falls back to no-retry when omitted. */
+  llmRetry?: LlmRetryConfig;
 }
 
 export async function runDiscovery(config: DiscoveryWorkflowConfig): Promise<DiscoveryResult> {
@@ -52,6 +55,7 @@ export async function runDiscovery(config: DiscoveryWorkflowConfig): Promise<Dis
       onTokenUsage: config.onTokenUsage,
       onRetry: config.onRetry,
       skills: config.skills,
+      llmRetry: config.llmRetry,
     });
 
     if (discovered.services.length === 0) {

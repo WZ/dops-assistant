@@ -72,6 +72,7 @@ npx tsc --noEmit         # Type check
 | Investigation export helpers | `src/web/lib/exportInvestigation.ts` — `downloadPng` (html-to-image + font preload), `downloadMarkdown`, `copyMarkdown` |
 | RCA eval harness | `src/eval/rca-eval.ts` — scores RCA reports on 5 quality dimensions, baselines in `src/eval/baselines/` |
 | LLM quirk workarounds | `src/agents/shared/prepare-step.ts` (`prepareStep` hook) |
+| LLM retry & graceful failure | `src/agents/shared/llm-retry.ts` (`withLlmRetry`, `safeAgentRetryConfig`), `src/agents/shared/llm-errors.ts` (`LlmUnavailableError`, `isLlmUnavailable`). Tool-using agent paths only retry when `readOnlyTools: true` to avoid replaying write tool calls |
 | Shared types | `src/types/` — RCA report, agent interfaces, LLM types, WebSocket protocol |
 | Mastra wiring | `src/mastra/index.ts` — agent/workflow registration |
 
@@ -106,6 +107,7 @@ npx tsc --noEmit         # Type check
 - **Discovery → services.yaml**: `npm run discover` uses AI to find services via Prometheus metrics, writes `services.yaml` (per-service `probeRules` + top-level `globalProbeRules`). Static overrides in `config.yaml` take precedence. LLM-emitted rules are Zod-validated before persistence; malformed entries are dropped with a warn log.
 - **Four-track scan probe**: `src/server/anomaly-probe.ts` evaluates rules in four tracks — (1) discovery-written globals (`globalProbeRules`), (2) per-service `probeRules` with `source: metric`, (3) per-service `probeRules` with `source: log` (Loki `count_over_time` via `queryType: "metric"`), (4) hardcoded `config.yaml` defaults as fallback. A `logs` fallback auto-generates LogQL from `logLabels` when discovery didn't write a log rule.
 - **`prepareStep` hook**: Intercepts every LLM call to handle truncation, quirk workarounds, and tool filtering. Lives in `src/agents/shared/prepare-step.ts`.
+- **LLM retry safety**: `withLlmRetry` wraps every model call with exponential backoff + jitter. Classifier (`isLlmUnavailable`) only matches AI SDK `APICallError.isRetryable` or connection-level errors — tool errors never trigger LLM retry storms. Tool-using agent paths route through `safeAgentRetryConfig(config.llmRetry, config.readOnlyTools)` so retries only engage in read-only contexts (write tools could replay otherwise). Retries exhausted → `LlmUnavailableError` → runner fails the investigation with a friendly message instead of spinning forever.
 - **Investigation templates**: `quick` (metrics only), `standard` (metrics+logs), `full` (all phases + changes). Configured via `config.yaml` webhook section or GUI. See `src/workflows/investigation.ts`.
 - **Alert webhook**: `POST /api/webhook/alert` receives Alertmanager payloads, validates bearer token, dedup window, and runs headless investigations. See `src/server/webhook-handler.ts`.
 - **Changes evidence**: GitLab MCP provider with `"changes"` role feeds a 4th parallel evidence stream (deployments, MRs, pipelines) into investigations. See `src/agents/changes.ts`.
