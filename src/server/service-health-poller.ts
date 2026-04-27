@@ -426,7 +426,7 @@ export class ServiceHealthPoller {
           eventLog.append({
             kind: "service_health_changed",
             severity: severityForStatus(status),
-            summary: `service ${service}: ${from} → ${status}`,
+            summary: `${service}: ${from} → ${status}`,
             stackId: this.stackId || undefined,
             service,
             href: `/services/${encodeURIComponent(service)}`,
