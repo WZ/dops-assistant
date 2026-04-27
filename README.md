@@ -33,6 +33,7 @@ AI-powered incident response for DevOps teams. Connects to your monitoring stack
 - **Activity center** — unified `/activity` route with four tabs (Investigations, Scans, Patterns, Events). Shared filter-bar idiom, URL-driven state, paginated history, and a 30-day persistent event feed
 - **Multi-stack** — run prod, staging, and dev side-by-side in one deployment. Each stack has its own providers, services, probe rules, and investigation history
 - **Web UI + CLI** — real-time progress over WebSocket, or a terminal REPL (Ink) with tool call visibility
+- **LLM resilience** — every model call retries with exponential backoff on transient provider blips (HTTP 408/409/429/5xx, connection errors). When the LLM stays down, investigations fail loudly with the actual reason instead of spinning forever. Tunable via `llm.retry` in config
 - **Deploy anywhere** — single Docker image, Helm chart for Kubernetes, or run `npm run web` behind your own process manager
 
 ## Quick Start
