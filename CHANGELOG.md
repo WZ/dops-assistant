@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.8.1] - 2026-04-27
+
+### Fixed
+- **Pending search text is preserved when you click Next or Prev.** The pagination buttons now route through the same `withPendingSearch()` helper the chip handlers use — typing "redis" then clicking Next without pressing Enter sends `?q=redis&offset=25` instead of dropping the text. Same bug class as the v0.3.8.0 chip fix; pagination just hadn't been swept.
+- **"Clear all filters" now empties the search input too.** Previously the URL cleared but the input kept showing whatever you'd typed — visually inconsistent. Both the URL and the input draft reset together now.
+
 ## [0.3.8.0] - 2026-04-27
 
 ### Changed
