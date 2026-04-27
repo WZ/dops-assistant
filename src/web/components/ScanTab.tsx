@@ -17,12 +17,45 @@ import type { RuleDraft } from "./scan/types";
 
 type Source = "gui" | "config";
 
+interface K8sStackStatus {
+  stackId: string;
+  name: string;
+  /** null = poller is OK on this stack; string = the specific reason it can't run */
+  degradedReason: string | null;
+}
+
+interface K8sEventsSettings {
+  enabled: boolean;
+  source: { enabled: Source };
+  stacks: K8sStackStatus[];
+}
+
 interface ScanSettings {
   enabled: boolean;
   cron: string;
   timezone: string;
   rules: RuleDraft[];
   source: { enabled: Source; cron: Source; timezone: Source; rules: Source };
+  k8sEvents: K8sEventsSettings;
+}
+
+/**
+ * Friendly label for a K8sEventPoller.getDegradedReason() value. Mirrors the
+ * three-state union in src/server/k8s-event-poller.ts. Unknown reasons render
+ * as the raw string so future additions still surface (just without polish).
+ */
+function k8sStatusLabel(reason: string | null): { ok: boolean; label: string } {
+  if (reason === null) return { ok: true, label: "k8s provider detected" };
+  if (reason === "infrastructure-role-not-resolved") {
+    return { ok: false, label: "no infra MCP wired — toggle has no effect" };
+  }
+  if (reason === "infrastructure-not-kubernetes") {
+    return { ok: false, label: "infra MCP isn't kubernetes — toggle has no effect" };
+  }
+  if (reason === "infrastructure-call-failed") {
+    return { ok: false, label: "k8s tool call failed last poll — check MCP" };
+  }
+  return { ok: false, label: reason };
 }
 
 interface ValidationDetail {
@@ -69,6 +102,7 @@ export function ScanTab() {
   const [cronInput, setCronInput] = useState("");
   const [timezoneInput, setTimezoneInput] = useState("");
   const [rulesInput, setRulesInput] = useState<RuleDraft[]>([]);
+  const [k8sEnabledInput, setK8sEnabledInput] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [ruleErrors, setRuleErrors] = useState<ValidationDetail[]>([]);
 
@@ -93,6 +127,7 @@ export function ScanTab() {
           setTimezoneInput(settingsData.timezone);
         }
         setRulesInput(settingsData.rules);
+        setK8sEnabledInput(settingsData.k8sEvents.enabled);
       }
     } catch {
       /* network blip; leave prior state */
@@ -117,6 +152,7 @@ export function ScanTab() {
           cron: cronInput,
           timezone: timezoneInput,
           rules: rulesInput,
+          k8sEvents: { enabled: k8sEnabledInput },
         }),
       });
       if (!res.ok) {
@@ -286,6 +322,93 @@ export function ScanTab() {
           {saveError && (
             <div className="text-xs font-mono px-3 py-2 rounded-md bg-destructive/10 text-destructive">
               {saveError}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* Section: K8S EVENT POLLER */}
+      <section aria-label="K8s event poller" className="mb-6">
+        <div className="flex items-center gap-2 mb-3">
+          <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
+          <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
+            K8s Event Poller
+          </h2>
+          {settings?.k8sEvents.source.enabled === "config" && (
+            <span className="font-mono text-[9px] text-muted-foreground/40 ml-1">
+              (from config.yaml)
+            </span>
+          )}
+        </div>
+
+        <p className="text-sm text-muted-foreground/70 mb-4 max-w-2xl">
+          Catch transient pod crashes the proactive scan misses. Polls the k8s
+          API every 5 minutes for bad-reason events (OOMKilled, CrashLoopBackOff,
+          ImagePullBackOff, etc.) and pod restart-count increments. Requires an
+          infrastructure MCP that exposes <span className="font-mono text-[11px]">list_pods</span> + <span className="font-mono text-[11px]">list_events</span>.
+        </p>
+
+        <div className="rounded-lg border border-border/40 bg-card/50 p-4 space-y-4">
+          {/* Enable toggle */}
+          <div className="flex items-center justify-between">
+            <div>
+              <label className={LABEL_CLASS}>Enabled</label>
+              <p className="text-xs text-muted-foreground/60 mt-0.5">
+                Off by default. Flip on after wiring a k8s infrastructure MCP.
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={k8sEnabledInput}
+              aria-label="Enable k8s event poller"
+              onClick={() => {
+                setK8sEnabledInput(!k8sEnabledInput);
+                setDirty(true);
+              }}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                k8sEnabledInput ? "bg-primary" : "bg-muted-foreground/20"
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
+                  k8sEnabledInput ? "translate-x-6" : "translate-x-1"
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* Per-stack live status */}
+          {settings && settings.k8sEvents.stacks.length > 0 && (
+            <div>
+              <label className={LABEL_CLASS}>Per-stack status</label>
+              <p className="text-xs text-muted-foreground/60 mt-0.5 mb-2">
+                Live state from each stack&apos;s last poll. The toggle only
+                takes effect on stacks with a working k8s provider.
+              </p>
+              <ul className="space-y-1.5">
+                {settings.k8sEvents.stacks.map((s) => {
+                  const status = k8sStatusLabel(s.degradedReason);
+                  return (
+                    <li
+                      key={s.stackId}
+                      className="flex items-center justify-between rounded-md border border-border/30 bg-card/30 px-3 py-2"
+                    >
+                      <span className="font-mono text-xs text-foreground">{s.name}</span>
+                      <span className="flex items-center gap-2">
+                        <span
+                          className={`inline-block w-1.5 h-1.5 rounded-full ${
+                            status.ok ? "bg-emerald-500" : "bg-amber-500"
+                          }`}
+                        />
+                        <span className="font-mono text-[11px] text-muted-foreground">
+                          {status.label}
+                        </span>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
             </div>
           )}
         </div>

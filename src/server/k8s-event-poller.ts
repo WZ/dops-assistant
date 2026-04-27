@@ -241,7 +241,10 @@ export class K8sEventPoller {
   private readonly resolveProviders: () => MastraProvider[];
   private readonly registryStore: ServiceRegistryStore;
   private readonly stackId: string;
-  private readonly config: K8sEventsConfig;
+  // Mutable so reload() can swap in a new effective config (e.g. when the
+  // GUI flips `enabled` via PUT /api/scan/settings) without reconstructing
+  // the poller and losing the in-memory restart cache.
+  private config: K8sEventsConfig;
   private readonly onK8sEvent?: (hit: K8sEventHit) => void;
   private readonly getHiddenServices?: () => Set<string>;
 
@@ -282,6 +285,22 @@ export class K8sEventPoller {
     if (!this.intervalHandle) return;
     clearInterval(this.intervalHandle);
     this.intervalHandle = undefined;
+  }
+
+  /**
+   * Hot-reload effective config. Stops the running interval (if any), swaps
+   * the config, then start()s again. start() respects the new `enabled`
+   * flag so flipping it false → true (or vice versa) takes effect without
+   * reconstructing the poller. The in-memory restart cache survives the
+   * swap so we don't false-fire after a no-op reload.
+   *
+   * Idempotent: a reload with an unchanged config still stop/start cycles,
+   * which is harmless (one extra log line, fresh interval timer).
+   */
+  reload(newConfig: K8sEventsConfig): void {
+    this.stop();
+    this.config = newConfig;
+    this.start();
   }
 
   async poll(): Promise<void> {

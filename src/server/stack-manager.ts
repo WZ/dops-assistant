@@ -32,6 +32,7 @@ import { ServiceHealthPoller, type HealthStatus } from "./service-health-poller.
 import { K8sEventPoller, type K8sEventHit } from "./k8s-event-poller.js";
 import { ScanScheduler, type ScanAnomaliesEvent } from "./scan-scheduler.js";
 import { getEffectiveScanConfig } from "./scan-settings.js";
+import { getEffectiveK8sEventsConfig } from "./k8s-events-settings.js";
 import type { Database } from "./db.js";
 import type { StackRow, StackSummary, StackConfig } from "../types/stack-types.js";
 import { DEFAULT_STACK_SLUG } from "../types/stack-types.js";
@@ -190,7 +191,7 @@ export class StackManager {
       providers: () => providerRegistry.getProviders(),
       registryStore: serviceRegistry,
       stackId: row.id,
-      config: this.config.k8sEvents,
+      config: getEffectiveK8sEventsConfig(this.db, this.config),
       onK8sEvent: (hit) => { this.onK8sEvent?.(row.id, hit); },
       getHiddenServices: () => this.db.getHiddenServices(row.id),
     });
@@ -587,6 +588,38 @@ export class StackManager {
       if (!ctx.providerRegistry.hasViableMetricsProvider()) continue;
       ctx.scanScheduler.reload(effective);
     }
+  }
+
+  /**
+   * Apply the current effective k8sEvents config to every stack's
+   * K8sEventPoller. Called from PUT /api/scan/settings so flipping the
+   * `enabled` toggle takes effect without a server restart.
+   *
+   * Unlike reloadAllScanSchedulers, this does NOT gate on a viable metrics
+   * provider. The K8sEventPoller has its own three-state degraded check
+   * (`getDegradedReason()`) that handles "no infra MCP wired" and "infra
+   * MCP isn't kubernetes" silently. Letting reload go through means the
+   * GUI feedback is consistent: turn it on, the poller starts, and the
+   * UI shows whatever degraded state the poll resolved to.
+   */
+  reloadAllK8sEventPollers(): void {
+    const effective = getEffectiveK8sEventsConfig(this.db, this.config);
+    for (const ctx of this.stacks.values()) {
+      ctx.k8sEventPoller.reload(effective);
+    }
+  }
+
+  /**
+   * Per-stack K8sEventPoller status snapshot. Used by GET /api/scan/settings
+   * so the UI can show "k8s provider detected" or the specific reason why
+   * the toggle has no effect on each stack.
+   */
+  getK8sEventPollerStatuses(): Array<{ stackId: string; name: string; degradedReason: string | null }> {
+    return Array.from(this.stacks.values()).map((ctx) => ({
+      stackId: ctx.id,
+      name: ctx.name,
+      degradedReason: ctx.k8sEventPoller.getDegradedReason(),
+    }));
   }
 
   /**
