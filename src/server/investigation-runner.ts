@@ -21,6 +21,7 @@ import type { SkillStore } from "../skills/store.js";
 import type { PhaseStats, ServerMessage } from "../types/ws-types.js";
 import { eventLog } from "./event-log.js";
 import type { NotificationSource } from "../types/notifications.js";
+import { LlmUnavailableError } from "../agents/shared/llm-errors.js";
 import { isDemoMode } from "./demo-mode.js";
 
 
@@ -80,14 +81,17 @@ export function mapBackendPhase(backendPhase: string): string[] {
 
 /** Map raw LLM errors to user-friendly messages. */
 export function friendlyError(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err);
-  if (/ECONNREFUSED|ENOTFOUND|ENETUNREACH|EHOSTUNREACH|ECONNRESET|Cannot connect to API|connect.*refused/i.test(raw))
+  // Unwrap LlmUnavailableError so users see the underlying cause (ECONNREFUSED,
+  // 503, etc.) rather than the wrapper's "LLM unavailable after retries" string.
+  const target = err instanceof LlmUnavailableError ? err.cause : err;
+  const raw = target instanceof Error ? target.message : String(target);
+  if (/ECONNREFUSED|ENOTFOUND|ENETUNREACH|EHOSTUNREACH|ECONNRESET|EAI_AGAIN|fetch failed|Cannot connect to API|connect.*refused/i.test(raw))
     return "LLM API is unreachable. Check network connectivity.";
-  if (/bad gateway|service unavailable|502|503/i.test(raw))
+  if (/bad gateway|service unavailable|\b502\b|\b503\b|\b504\b/i.test(raw))
     return "LLM API is currently unavailable. Please try again later.";
   if (/timeout|timed out|ETIMEDOUT/i.test(raw))
     return "LLM API request timed out. Please try again.";
-  if (/rate limit|429/i.test(raw))
+  if (/rate limit|\b429\b/i.test(raw))
     return "LLM API rate limit reached. Please wait and try again.";
   return raw;
 }

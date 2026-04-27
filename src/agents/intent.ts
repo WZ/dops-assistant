@@ -3,6 +3,8 @@ import type { ServiceConfig } from "../config/schema.js";
 import type { InvestigationIntent } from "../types/rca-types.js";
 import { createLogger } from "../logger.js";
 import { wrapUntrusted } from "./shared/prompt-helpers.js";
+import { withLlmRetry, type LlmRetryConfig } from "./shared/llm-retry.js";
+import { LlmUnavailableError } from "./shared/llm-errors.js";
 
 const logger = createLogger();
 
@@ -270,9 +272,11 @@ export function resolveServiceFromHistory(
 
 export class IntentRouter {
   private readonly model: LanguageModel;
+  private readonly llmRetry: LlmRetryConfig;
 
-  constructor(model: LanguageModel) {
+  constructor(model: LanguageModel, llmRetry: LlmRetryConfig = { maxAttempts: 1 }) {
     this.model = model;
+    this.llmRetry = llmRetry;
   }
 
   async route(message: string, serviceNames?: string[]): Promise<InvestigationIntent> {
@@ -297,12 +301,15 @@ export class IntentRouter {
     }
 
     try {
-      const { text } = await generateText({
-        model: this.model,
-        system: buildIntentClassifierPrompt(serviceNames),
-        prompt: wrapUntrusted("user_message", message),
-        temperature: 0,
-      });
+      const { text } = await withLlmRetry(
+        () => generateText({
+          model: this.model,
+          system: buildIntentClassifierPrompt(serviceNames),
+          prompt: wrapUntrusted("user_message", message),
+          temperature: 0,
+        }),
+        this.llmRetry,
+      );
 
       const parsed = JSON.parse(text) as { intent: string; service: string };
       const result: InvestigationIntent = parsed.intent === "investigation"
@@ -312,6 +319,7 @@ export class IntentRouter {
       logger.debug({ message, intent: parsed.intent, service: parsed.service || null, routedTo: result.intent }, "Router: classified intent and routed to agent");
       return result;
     } catch (err) {
+      if (err instanceof LlmUnavailableError) throw err;
       logger.debug({ message, err }, "Router: classification failed, defaulting to question agent");
       return { intent: "question" };
     }

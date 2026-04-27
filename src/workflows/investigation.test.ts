@@ -319,8 +319,10 @@ describe("synthesis step degradation and defaults", () => {
 
   it("synthesis step degrades gracefully when agent.generate throws", async () => {
     const { createSynthesisAgent } = await import("../agents/synthesis.js");
+    // Use a non-transient (application-level) error so withLlmRetry rethrows
+    // immediately and existing graceful-degradation kicks in.
     vi.mocked(createSynthesisAgent).mockReturnValue({
-      generate: vi.fn().mockRejectedValue(new Error("Service unavailable")),
+      generate: vi.fn().mockRejectedValue(new SyntaxError("Unexpected token } in JSON")),
     } as any);
 
     const step = buildSynthesisStep({ model: fakeModel, providers: [], services: [] });

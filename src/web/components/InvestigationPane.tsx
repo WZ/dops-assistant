@@ -166,6 +166,8 @@ export function InvestigationPane({
   const [totalUsage, setTotalUsage] = useState<{ inputTokens: number; outputTokens: number; durationMs: number } | null>(null);
   const [providers, setProviders] = useState<Array<{ role: string; webUrl: string; datasource?: string }>>([]);
   const [phaseSwoop, setPhaseSwoop] = useState(false);
+  const [investigationStatus, setInvestigationStatus] = useState<"running" | "complete" | "failed" | null>(null);
+  const [failureMessage, setFailureMessage] = useState<string | null>(null);
   const prevRunningRef = useRef(false);
   const processedCount = useRef(0);
   const reportRef = useRef<HTMLDivElement>(null);
@@ -281,6 +283,8 @@ export function InvestigationPane({
             durationMs: data.investigation.total_duration_ms ?? 0,
           });
         }
+
+        setInvestigationStatus(data.investigation.status as "running" | "complete" | "failed");
 
         const phaseMap = new Map(data.phases.map((p) => [p.phase, p]));
         setPhases(DEFAULT_PHASES.map((dp) => {
@@ -418,7 +422,14 @@ export function InvestigationPane({
       if (msg.type === "investigation:total_usage" && msg.investigationId === investigationId) {
         setTotalUsage({ inputTokens: msg.inputTokens, outputTokens: msg.outputTokens, durationMs: msg.durationMs });
       }
+      if (msg.type === "investigation:failed" && msg.id === investigationId) {
+        setInvestigationStatus("failed");
+        if (typeof msg.error === "string" && msg.error.trim().length > 0) {
+          setFailureMessage(msg.error);
+        }
+      }
       if (msg.type === "investigation:complete" && msg.id === investigationId) {
+        setInvestigationStatus("complete");
         setReport(msg.report);
         const rpt = msg.report as Record<string, unknown> | null;
         if (rpt?.evidence) {
@@ -654,7 +665,21 @@ export function InvestigationPane({
               </section>
             )}
 
-            {report ? (
+            {investigationStatus === "failed" && !report ? (
+              <section className="rounded-lg border border-destructive/30 bg-destructive/5 px-5 py-4 animate-fade-up">
+                <div className="flex items-start gap-3">
+                  <span className="text-destructive text-base mt-0.5">✕</span>
+                  <div className="flex-1">
+                    <p className="text-sm font-body font-semibold text-destructive mb-1">Investigation could not run</p>
+                    <p className="text-[12px] font-body text-destructive/80 leading-relaxed">
+                      {failureMessage ?? "The LLM API was unreachable for this run."}
+                      {" "}No root cause analysis was produced.
+                      Check Settings &gt; Health, then click Re-investigate to try again.
+                    </p>
+                  </div>
+                </div>
+              </section>
+            ) : report ? (
               <section ref={reportRef} className="animate-fade-up">
                 <RcaReport report={report as any} hideOldDashboardLinks={providers.length > 0} />
                 {/* Feedback prompt — only visible once the report has rendered.

@@ -18,6 +18,8 @@ import { safeJsonParse } from "../../agents/shared/processors.js";
 import { createAnomalyDetectorAgent } from "../../agents/anomaly-detector.js";
 import { extractTimeRange, resolveTimeRangeToAbsolute } from "../helpers.js";
 import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
+import { withLlmRetry, safeAgentRetryConfig } from "../../agents/shared/llm-retry.js";
+import { LlmUnavailableError } from "../../agents/shared/llm-errors.js";
 
 /**
  * Build an anomaly detection step using the anomaly detector agent.
@@ -69,7 +71,8 @@ export function buildAnomalyStep(config: WorkflowConfig) {
         const anomalyToolData: string[] = [];
         let anomalyIterationCount = 0;
         try {
-          agentResult = await agent.generate(prompt, {
+          agentResult = await withLlmRetry(
+            () => agent.generate(prompt, {
             onStepFinish: (step: any) => {
               try {
                 debug("ANOMALY onStepFinish, toolResults sample:", JSON.stringify(step.toolResults?.[0] ?? {}).slice(0, 300));
@@ -97,8 +100,11 @@ export function buildAnomalyStep(config: WorkflowConfig) {
                 debug("ANOMALY onStepFinish error:", err);
               }
             },
-          });
+          }),
+            safeAgentRetryConfig(config.llmRetry, config.readOnlyTools),
+          );
         } catch (err) {
+          if (err instanceof LlmUnavailableError) throw err;
           debug("ANOMALY agent.generate error:", err);
         }
 

@@ -18,6 +18,7 @@ import type { MastraProvider } from "../mcp/provider.js";
 import type { ServiceConfig, InvestigationTemplate } from "../config/schema.js";
 import type { Skill } from "../skills/store.js";
 import type { IncidentPatternRow } from "../agents/shared/patterns.js";
+import type { LlmRetryConfig } from "../agents/shared/llm-retry.js";
 import { buildPrefetchStep } from "./steps/prefetch-step.js";
 import { buildAnomalyStep } from "./steps/anomaly.js";
 import { buildPlanningStep } from "./steps/planning.js";
@@ -59,6 +60,10 @@ export interface WorkflowConfig {
    * no DB), planning + synthesis simply skip the pattern injection.
    */
   getSimilarPatterns?: (service: string, limit?: number) => IncidentPatternRow[];
+  /** Retry config for transient LLM-call failures. Step builders fall back
+   *  to `{ maxAttempts: 1 }` (no retry) when omitted — production paths
+   *  always set it from `config.llm.retry`. */
+  llmRetry?: LlmRetryConfig;
 }
 
 // ── Workflow factory ──────────────────────────────────────────────────────────

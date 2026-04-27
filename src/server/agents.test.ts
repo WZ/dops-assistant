@@ -289,6 +289,109 @@ describe("MastraInvestigationAdapter", () => {
     expect(report.rootCause).toBe("Unable to determine root cause");
     expect(report.confidence).toBe("low");
   });
+
+  // Regression test for the bug surfaced by the 2026-04-26 manual smoke run:
+  // Mastra's workflow framework absorbs step-level throws into
+  // runResult.steps[id].error rather than re-raising them. Before the fix
+  // (commit a11db8a), a phase that threw LlmUnavailableError silently produced
+  // a default report and the runner persisted it as `complete`. The adapter
+  // now scans both top-level error and per-step errors, and rethrows
+  // LlmUnavailableError so the runner's catch can mark the investigation
+  // `failed` without persisting an empty RCA.
+  it("rethrows LlmUnavailableError when surfaced as the workflow's top-level error", async () => {
+    const { LlmUnavailableError } = await import("../agents/shared/llm-errors.js");
+    const cause = new Error("ECONNREFUSED");
+    mockRunStart.mockResolvedValueOnce({
+      status: "failed",
+      error: new LlmUnavailableError(cause),
+      steps: {},
+    });
+
+    const config: WorkflowConfig = {
+      model: {} as any,
+      providers: [],
+      services: [],
+      projectRoot: "/tmp/test",
+    };
+    const adapter = new MastraInvestigationAdapter(config);
+    await expect(
+      adapter.investigate(
+        { name: "vllm", metrics: [], logLabels: {} },
+        undefined,
+        undefined,
+        undefined,
+        "investigate",
+      ),
+    ).rejects.toBeInstanceOf(LlmUnavailableError);
+  });
+
+  it("rethrows LlmUnavailableError when absorbed into a step's error (Mastra default behavior)", async () => {
+    const { LlmUnavailableError } = await import("../agents/shared/llm-errors.js");
+    const cause = new Error("ECONNREFUSED");
+    // Mirrors the actual Mastra runResult shape captured during the smoke
+    // run: workflow status='failed', no top-level error, per-step error
+    // populated via Mastra's executeStepWithRetry path.
+    mockRunStart.mockResolvedValueOnce({
+      status: "failed",
+      result: null,
+      steps: {
+        "planning": {
+          status: "failed",
+          error: new LlmUnavailableError(cause),
+        },
+      },
+    });
+
+    const config: WorkflowConfig = {
+      model: {} as any,
+      providers: [],
+      services: [],
+      projectRoot: "/tmp/test",
+    };
+    const adapter = new MastraInvestigationAdapter(config);
+    await expect(
+      adapter.investigate(
+        { name: "vllm", metrics: [], logLabels: {} },
+        undefined,
+        undefined,
+        undefined,
+        "investigate",
+      ),
+    ).rejects.toBeInstanceOf(LlmUnavailableError);
+  });
+
+  it("does NOT rethrow non-LLM errors from step results — falls through to default report", async () => {
+    // Non-LLM step failures (parse errors, schema violations, etc.) should keep
+    // the existing graceful-degradation behavior: workflow returns a default
+    // report rather than aborting the entire investigation.
+    mockRunStart.mockResolvedValueOnce({
+      status: "failed",
+      result: null,
+      steps: {
+        "planning": {
+          status: "failed",
+          error: new SyntaxError("Unexpected token } in JSON"),
+        },
+      },
+    });
+
+    const config: WorkflowConfig = {
+      model: {} as any,
+      providers: [],
+      services: [],
+      projectRoot: "/tmp/test",
+    };
+    const adapter = new MastraInvestigationAdapter(config);
+    const report = await adapter.investigate(
+      { name: "ok-svc", metrics: [], logLabels: {} },
+      undefined,
+      undefined,
+      undefined,
+      "investigate",
+    );
+    expect(report.service).toBe("ok-svc");
+    expect(report.rootCause).toBe("Unable to determine root cause");
+  });
 });
 
 describe("MastraDiscoverAdapter", () => {

@@ -522,11 +522,38 @@ describe("IntentRouter", () => {
     expect(result.intent).toBe("question");
   });
 
-  it("falls back to question on LLM error", async () => {
-    mockLlmError(new Error("LLM timeout"));
+  it("falls back to question on application-level LLM error", async () => {
+    // Non-transient error (auth failure) — should NOT trigger retry, falls back gracefully.
+    mockLlmError(new Error("invalid api key"));
     const router = new IntentRouter(dummyModel);
-    const result = await router.route("show me the current dashboards");
+    // Use a message that bypasses keyword fast-paths so the LLM path runs.
+    const result = await router.route("payments-api errors are spiking");
     expect(result.intent).toBe("question");
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries transient LLM errors before succeeding", async () => {
+    let calls = 0;
+    mockGenerateText.mockImplementation(async () => {
+      calls += 1;
+      if (calls < 3) throw new Error("ECONNREFUSED");
+      return { text: JSON.stringify({ intent: "investigation", service: "payments-api" }) } as any;
+    });
+    const router = new IntentRouter(dummyModel, { maxAttempts: 5, initialDelayMs: 1, maxDelayMs: 5 });
+    const result = await router.route("payments-api errors are spiking");
+    expect(calls).toBe(3);
+    expect(result.intent).toBe("investigation");
+    if (result.intent === "investigation") {
+      expect(result.service).toBe("payments-api");
+    }
+  });
+
+  it("rethrows LlmUnavailableError when LLM is persistently down", async () => {
+    const { LlmUnavailableError } = await import("./shared/llm-errors.js");
+    mockGenerateText.mockRejectedValue(new Error("ECONNREFUSED"));
+    const router = new IntentRouter(dummyModel, { maxAttempts: 2, initialDelayMs: 1 });
+    await expect(router.route("payments-api errors are spiking"))
+      .rejects.toBeInstanceOf(LlmUnavailableError);
   });
 });
 

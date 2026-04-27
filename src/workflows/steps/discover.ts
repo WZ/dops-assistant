@@ -8,6 +8,9 @@ import type { ServiceConfig, DiscoveryConfig, DiscoveryRecipe, ProbeMetricRule }
 import { ProbeMetricRuleSchema } from "../../config/schema.js";
 import type { OnToolCallEnriched, OnIteration } from "../../types/agent-interfaces.js";
 import type { Skill } from "../../skills/store.js";
+import type { LlmRetryConfig } from "../../agents/shared/llm-retry.js";
+import { withLlmRetry, safeAgentRetryConfig } from "../../agents/shared/llm-retry.js";
+import { LlmUnavailableError } from "../../agents/shared/llm-errors.js";
 import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
 import { logLlmCall, logLlmCallStart, logToolCall, newCallId, type ToolCallEvent } from "../../server/llm-logger.js";
 import { createLogger } from "../../logger.js";
@@ -24,6 +27,8 @@ export interface DiscoverStepConfig {
   onRetry?: (attempt: number, maxRetries: number, reason: string) => void;
   skills?: Skill[];
   maxCharsPerSkill?: number;
+  /** Retry config for transient LLM-call failures. Falls back to no-retry when omitted. */
+  llmRetry?: LlmRetryConfig;
 }
 
 const MAX_RETRIES = 3;
@@ -328,7 +333,8 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
     });
 
     try {
-      const result = await agent.generate(discoverPrompt, {
+      const result = await withLlmRetry(
+        () => agent.generate(discoverPrompt, {
         providerOptions: { "openai-compatible": { max_tokens: 32768 } },
         onStepFinish: (step: any) => {
           if (!step.toolResults?.length) return;
@@ -357,7 +363,13 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
             }
           }
         },
-      } as any);
+      } as any),
+        // Discovery's tool surface is read-only by convention (Prometheus
+        // metric/label queries), so enable retry. If a write tool gets added
+        // here, add a `readOnlyTools` flag to DiscoverStepConfig and route it
+        // through safeAgentRetryConfig.
+        safeAgentRetryConfig(config.llmRetry, true),
+      );
 
       const usage = (result as any).totalUsage ?? (result as any).usage;
       const inTok = usage?.inputTokens ?? 0;
@@ -422,6 +434,10 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
         error: message,
       });
       logger.warn({ attempt, err: message }, "discovery attempt failed");
+      // LLM-unavailable already retried inside withLlmRetry — bypass the
+      // outer parse-retry loop (parse-retry is for malformed JSON, not
+      // for sustained network outages).
+      if (err instanceof LlmUnavailableError) throw err;
       if (attempt === MAX_RETRIES) throw err;
     }
   }

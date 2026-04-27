@@ -565,3 +565,36 @@ describe("ConfigSchema — notifications.email", () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe("llm.retry", () => {
+  const baseLlm = { apiKey: "test-key" };
+  const validBaseConfig = { llm: baseLlm, providers: [grafanaProvider] };
+
+  it("defaults llm.retry.maxAttempts to 8", () => {
+    const result = ConfigSchema.parse({
+      ...validBaseConfig,
+      llm: baseLlm,
+    });
+    expect(result.llm.retry.maxAttempts).toBe(8);
+  });
+
+  it("accepts explicit llm.retry.maxAttempts", () => {
+    const result = ConfigSchema.parse({
+      ...validBaseConfig,
+      llm: { ...baseLlm, retry: { maxAttempts: 3 } },
+    });
+    expect(result.llm.retry.maxAttempts).toBe(3);
+  });
+
+  it("rejects llm.retry.maxAttempts below 1", () => {
+    expect(() =>
+      ConfigSchema.parse({ ...validBaseConfig, llm: { ...baseLlm, retry: { maxAttempts: 0 } } })
+    ).toThrow();
+  });
+
+  it("rejects llm.retry.maxAttempts above 15", () => {
+    expect(() =>
+      ConfigSchema.parse({ ...validBaseConfig, llm: { ...baseLlm, retry: { maxAttempts: 16 } } })
+    ).toThrow();
+  });
+});
