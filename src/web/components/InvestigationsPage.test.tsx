@@ -380,6 +380,89 @@ describe("InvestigationsPage", () => {
   });
 
 
+  it("clicking Next while a search draft is pending preserves the search text", async () => {
+    // Regression: the chip-handler stale-closure fix didn't extend to the
+    // pagination buttons. Same bug class — typing in search and clicking
+    // Next without pressing Enter silently dropped the text.
+    const rows = Array.from({ length: 25 }, (_, i) => makeRow(`inv_${i}`));
+    globalThis.fetch = mockFetch({ rows, total: 100, hasMore: true });
+    const onUpdateQuery = vi.fn();
+    render(
+      <InvestigationsPage
+        query={{}}
+        onUpdateQuery={onUpdateQuery}
+        onViewInvestigation={vi.fn()}
+      />,
+      { wrapper: Wrapper },
+    );
+
+    const input = await waitFor(
+      () => screen.getByTestId("investigations-search-input") as HTMLInputElement,
+    );
+    fireEvent.change(input, { target: { value: "redis" } });
+    fireEvent.click(screen.getByText("Next →"));
+
+    expect(onUpdateQuery).toHaveBeenLastCalledWith({
+      q: "redis",
+      offset: 25,
+    });
+  });
+
+
+  it("clicking Prev while a search draft is pending preserves the search text", async () => {
+    const rows = Array.from({ length: 25 }, (_, i) => makeRow(`inv_${i}`));
+    globalThis.fetch = mockFetch({ rows, total: 100, hasMore: true });
+    const onUpdateQuery = vi.fn();
+    render(
+      <InvestigationsPage
+        query={{ offset: 50 }}
+        onUpdateQuery={onUpdateQuery}
+        onViewInvestigation={vi.fn()}
+      />,
+      { wrapper: Wrapper },
+    );
+
+    const input = await waitFor(
+      () => screen.getByTestId("investigations-search-input") as HTMLInputElement,
+    );
+    fireEvent.change(input, { target: { value: "redis" } });
+    fireEvent.click(screen.getByText("← Prev"));
+
+    expect(onUpdateQuery).toHaveBeenLastCalledWith({
+      q: "redis",
+      offset: 25,
+    });
+  });
+
+
+  it("Clear all filters resets the search input draft, not just the URL", async () => {
+    // Regression: clicking "Clear all filters" emptied query state but left
+    // the search input still displaying whatever the user had typed —
+    // visually inconsistent with the cleared URL.
+    globalThis.fetch = mockFetch({ rows: [], total: 0 });
+    const onUpdateQuery = vi.fn();
+    render(
+      <InvestigationsPage
+        query={{ severity: ["critical"] }}
+        onUpdateQuery={onUpdateQuery}
+        onViewInvestigation={vi.fn()}
+      />,
+      { wrapper: Wrapper },
+    );
+
+    const input = await waitFor(
+      () => screen.getByTestId("investigations-search-input") as HTMLInputElement,
+    );
+    fireEvent.change(input, { target: { value: "redis" } });
+    expect(input.value).toBe("redis");
+
+    fireEvent.click(screen.getByText("Clear all filters"));
+
+    expect(onUpdateQuery).toHaveBeenLastCalledWith({});
+    expect(input.value).toBe("");
+  });
+
+
   it("severity chip toggles on click and resets offset", async () => {
     globalThis.fetch = mockFetch({ rows: [], total: 0 });
     const onUpdateQuery = vi.fn();
