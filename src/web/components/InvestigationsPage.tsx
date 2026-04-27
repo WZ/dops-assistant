@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef, useCallback } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { useStackContext } from "../contexts/StackContext";
 import { InvestigationRow } from "./dashboard/InvestigationRow";
 import type {
@@ -111,30 +111,35 @@ export function InvestigationsPage({
     return () => controller.abort();
   }, [stackFetch, fetchUrl]);
 
-  const goPrev = useCallback(() => {
-    const nextOffset = Math.max(0, offset - limit);
-    onUpdateQuery({ ...query, offset: nextOffset === 0 ? undefined : nextOffset });
-  }, [offset, limit, query, onUpdateQuery]);
-
-  const goNext = useCallback(() => {
-    onUpdateQuery({ ...query, offset: offset + limit });
-  }, [offset, limit, query, onUpdateQuery]);
-
   // Search committed on Enter / blur (matches PatternsTab).
   const [qDraft, setQDraft] = useState(query.q ?? "");
   useEffect(() => { setQDraft(query.q ?? ""); }, [query.q]);
 
-  // Every chip/select handler routes through this so any pending qDraft is
-  // folded into the same update. Without it, typing in search → clicking a
-  // chip silently drops the pending text: blur and click race for the same
-  // setState batch and the chip handler closes over a `query` that hasn't
-  // seen the q commit yet.
+  // Every chip/select/pagination handler routes through this so any pending
+  // qDraft is folded into the same update. Without it, typing in search →
+  // clicking a chip OR a pagination button silently drops the pending text:
+  // blur and click race for the same setState batch and the handler closes
+  // over a `query` that hasn't seen the q commit yet.
   function withPendingSearch(): InvestigationsQuery {
     const trimmed = qDraft.trim();
     const base: InvestigationsQuery = { ...query };
     if (trimmed) base.q = trimmed;
     else delete base.q;
     return base;
+  }
+
+  function goPrev() {
+    const nextOffset = Math.max(0, offset - limit);
+    const next = withPendingSearch();
+    if (nextOffset === 0) delete next.offset;
+    else next.offset = nextOffset;
+    onUpdateQuery(next);
+  }
+
+  function goNext() {
+    const next = withPendingSearch();
+    next.offset = offset + limit;
+    onUpdateQuery(next);
   }
 
   function toggleSeverity(value: Severity) {
@@ -351,7 +356,7 @@ export function InvestigationsPage({
             {hasActiveFilters && (
               <button
                 type="button"
-                onClick={() => onUpdateQuery({})}
+                onClick={() => { setQDraft(""); onUpdateQuery({}); }}
                 className="mt-1 font-mono text-[10px] uppercase tracking-[0.12em] text-primary hover:text-primary/80"
               >
                 Clear all filters
