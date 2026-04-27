@@ -84,6 +84,9 @@ export type ProviderConfig = z.infer<typeof ProviderSchema>;
 
 const LlmRetrySchema = z.object({
   maxAttempts: z.number().int().min(1).max(15).default(8),
+  initialDelayMs: z.number().int().min(100).max(60_000).default(2000),
+  maxDelayMs: z.number().int().min(1000).max(600_000).default(60_000),
+  jitterPercent: z.number().min(0).max(2).default(0.3),
 }).default({});
 
 const LlmSchema = z.object({
