@@ -37,6 +37,20 @@ llm:
   # Optional: override the API endpoint for OpenAI-compatible providers.
   # baseURL: "https://your-provider.example.com/v1"
 
+  # Optional: retry policy for transient LLM-call failures (network errors,
+  # 408/409/429/5xx from the provider). Tool errors are NOT retried — only
+  # the LLM API itself.
+  retry:
+    maxAttempts: 8         # 1..15, default 8
+    initialDelayMs: 2000   # first backoff, default 2s
+    maxDelayMs: 60000      # cap on exponential growth, default 60s
+    jitterPercent: 0.3     # 0..2, fraction of base delay added as jitter
+  #
+  # Note: agent paths (anomaly/evidence/planning/synthesis) only retry when
+  # the investigation runs in read-only-tools mode (e.g. webhook-triggered).
+  # Manual investigations that allow write tools effectively get
+  # maxAttempts=1 to avoid replaying tool calls.
+
 # MCP providers. Each provider connects to an MCP server and declares
 # which roles it fulfills.
 # Available roles: metrics, logs, dashboards, dependencies, infrastructure, changes
