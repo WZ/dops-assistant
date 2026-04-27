@@ -319,23 +319,6 @@ export function ScanTab() {
               Defaults to your browser's timezone. Accepts any IANA name like <span className="font-mono text-[11px]">America/New_York</span> or <span className="font-mono text-[11px]">UTC</span>.
             </p>
           </div>
-
-          {/* Actions */}
-          <div className="flex items-center gap-2 pt-1">
-            <Button
-              onClick={handleSave}
-              disabled={saving || !dirty}
-              className="font-mono text-xs font-medium h-9 rounded-lg px-4"
-            >
-              {saving ? "Saving..." : "Save"}
-            </Button>
-          </div>
-
-          {saveError && (
-            <div className="text-xs font-mono px-3 py-2 rounded-md bg-destructive/10 text-destructive">
-              {saveError}
-            </div>
-          )}
         </div>
       </section>
 
@@ -469,6 +452,21 @@ export function ScanTab() {
         )}
       </section>
 
+      {/* Form-wide save action — saves all sections above (scan, k8s events, rules). */}
+      <div className="flex items-center gap-3 pt-2">
+        <Button
+          onClick={handleSave}
+          disabled={saving || !dirty}
+          className="font-mono text-xs font-medium h-9 rounded-lg px-4"
+        >
+          {saving ? "Saving..." : "Save"}
+        </Button>
+        {saveError && (
+          <div className="text-xs font-mono px-3 py-2 rounded-md bg-destructive/10 text-destructive">
+            {saveError}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
