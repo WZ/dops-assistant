@@ -139,6 +139,49 @@ describe("ScanRunDetail — back button", () => {
   });
 });
 
+describe("ScanRunDetail — Export menu", () => {
+  // Regression: ISSUE-001 — match ScanRun Export to Investigation Export verbatim
+  // Found by /qa on 2026-04-28
+  // Report: .gstack/qa-reports/qa-report-localhost-2026-04-28.md
+  beforeEach(() => {
+    cleanup();
+    globalThis.fetch = vi.fn();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("renders Export menu items with labels matching Investigation Export verbatim", async () => {
+    globalThis.fetch = mockFetch({ run: makeRun({ status: "complete" }) });
+    render(<ScanRunDetail runId="run_1" onBack={vi.fn()} />, { wrapper: Wrapper });
+    await waitFor(() => {
+      expect(screen.getByText(/Probe/)).toBeTruthy();
+    });
+
+    // Radix DropdownMenu opens on pointerDown, not click.
+    fireEvent.pointerDown(screen.getByRole("button", { name: /^Export$/ }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("menuitem", { name: /Copy link/ })).toBeTruthy();
+    });
+
+    // These four labels must match InvestigationPane's ExportMenu verbatim
+    // (where actions overlap). If a future PR renames "Copy markdown" to
+    // "Copy as Markdown" or "Download as PNG" to "Download PNG", this test
+    // will catch the drift.
+    expect(screen.getByRole("menuitem", { name: "Copy link" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Copy markdown" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Download as PNG" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Send to Slack" })).toBeTruthy();
+
+    // Anti-regression — these were the broken labels that shipped.
+    expect(screen.queryByRole("menuitem", { name: "Copy as Markdown" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Download PNG" })).toBeNull();
+  });
+});
+
 describe("ScanRunDetail — status dot", () => {
   beforeEach(() => {
     cleanup();
