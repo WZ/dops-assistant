@@ -9,6 +9,8 @@ import { ConfirmHideDialog } from "./ConfirmHideDialog";
 import { FirstRunBanner } from "./FirstRunBanner";
 import { ToastContainer } from "./dashboard/ToastContainer";
 import type { ToastItem } from "./dashboard/ToastContainer";
+import { Chip, FilterGroup } from "./ui/filter-group";
+import { useSlashFocus } from "../hooks/useSlashFocus";
 import { useStackContext } from "../contexts/StackContext";
 import type { useWebSocket } from "../hooks/useWebSocket";
 import type { ServiceConfig } from "../../config/schema.js";
@@ -109,6 +111,9 @@ export function ServicesPage({
 
   // ── UI state ──────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState("");
+  // Health filter chips. Multi-select: when any are active, only those groups
+  // render. When all are inactive, all groups render (default).
+  const [healthFilters, setHealthFilters] = useState<Set<"unhealthy" | "healthy" | "unknown" | "hidden">>(new Set());
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({
     unhealthy: false,
     healthy: false,
@@ -211,25 +216,26 @@ export function ServicesPage({
   }, [discoveryState.results]);
 
   // ── Keyboard shortcuts: / to focus search, Escape to clear ────────
+  useSlashFocus(searchRef);
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
-        if (e.key === "Escape" && e.target === searchRef.current) {
-          setSearchQuery("");
-          searchRef.current?.blur();
-          e.preventDefault();
-        }
-        return;
-      }
-      if (e.key === "/" && !e.metaKey && !e.ctrlKey) {
+      if (e.key === "Escape" && e.target === searchRef.current) {
+        setSearchQuery("");
+        searchRef.current?.blur();
         e.preventDefault();
-        searchRef.current?.focus();
       }
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, []);
+
+  const toggleHealthFilter = (g: "unhealthy" | "healthy" | "unknown" | "hidden") => {
+    setHealthFilters((prev) => {
+      const next = new Set(prev);
+      next.has(g) ? next.delete(g) : next.add(g);
+      return next;
+    });
+  };
 
   // ── Computed values ───────────────────────────────────────────────
 
@@ -555,32 +561,53 @@ export function ServicesPage({
         <div className="flex items-center gap-2 mb-3">
           <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
           <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">Services</h2>
-          <div className="flex-1" />
-          <div className="relative">
-            <input
-              ref={searchRef}
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Filter services..."
-              aria-label="Filter services"
-              className="font-mono text-[10px] text-muted-foreground/60 placeholder:text-muted-foreground/40 bg-card/50 border border-border/40 rounded px-2 py-1 h-7 w-40 focus:w-52 focus:border-primary/30 focus:outline-none transition-all"
-            />
-            {!searchQuery && (
-              <kbd className="absolute right-1.5 top-1/2 -translate-y-1/2 font-mono text-[8px] text-muted-foreground/30 border border-border/30 rounded px-1 py-0.5 pointer-events-none">/</kbd>
-            )}
-            {searchQuery && (
-              <button
-                onClick={() => { setSearchQuery(""); searchRef.current?.focus(); }}
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground/40 hover:text-muted-foreground/60 transition-colors"
-                aria-label="Clear search"
-              >
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                  <path d="M18 6 6 18M6 6l12 12"/>
-                </svg>
-              </button>
-            )}
-          </div>
+        </div>
+
+        {/* Filter bar — same shape as /activity/investigations */}
+        <div
+          role="search"
+          aria-label="Filter services"
+          className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs"
+        >
+          <FilterGroup label="Health">
+            <Chip active={healthFilters.has("unhealthy")} onClick={() => toggleHealthFilter("unhealthy")} tone="text-destructive/70">
+              Unhealthy
+            </Chip>
+            <Chip active={healthFilters.has("healthy")} onClick={() => toggleHealthFilter("healthy")} tone="text-success/70">
+              Healthy
+            </Chip>
+            <Chip active={healthFilters.has("unknown")} onClick={() => toggleHealthFilter("unknown")}>
+              Unknown
+            </Chip>
+            <Chip active={healthFilters.has("hidden")} onClick={() => toggleHealthFilter("hidden")}>
+              Hidden
+            </Chip>
+          </FilterGroup>
+          <FilterGroup label="Search">
+            <div className="relative">
+              <input
+                ref={searchRef}
+                type="search"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="service name…"
+                aria-label="Search services"
+                className="font-mono text-[11px] px-2 h-7 rounded-md border border-border/40 bg-card/30 text-foreground/80 placeholder:text-muted-foreground/40 w-56"
+              />
+              {!searchQuery && (
+                <kbd className="absolute right-1.5 top-1/2 -translate-y-1/2 font-mono text-[8px] text-muted-foreground/30 border border-border/30 rounded px-1 py-0.5 pointer-events-none">/</kbd>
+              )}
+            </div>
+          </FilterGroup>
+          {(healthFilters.size > 0 || searchQuery) && (
+            <button
+              type="button"
+              onClick={() => { setHealthFilters(new Set()); setSearchQuery(""); }}
+              className="ml-auto font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/60 hover:text-foreground transition-colors h-7 px-2"
+            >
+              Clear
+            </button>
+          )}
         </div>
 
         {loading ? (
@@ -618,13 +645,16 @@ export function ServicesPage({
               </div>
             )}
 
-            {/* Service groups */}
+            {/* Service groups (filtered by Health chips when any are active) */}
             {([
               { key: "unhealthy", label: "Unhealthy", services: serviceGroups.unhealthy, dotColor: "bg-destructive/70", textColor: "text-destructive/70", isHidden: false },
               { key: "healthy", label: "Healthy", services: serviceGroups.healthy, dotColor: "bg-success/70", textColor: "text-success/70", isHidden: false },
               { key: "unknown", label: "Unknown", services: serviceGroups.unknown, dotColor: "bg-muted-foreground/30", textColor: "text-muted-foreground/50", isHidden: false },
               ...(serviceGroups.hidden.length > 0 ? [{ key: "hidden" as const, label: "Hidden", services: serviceGroups.hidden, dotColor: "bg-muted-foreground/20", textColor: "text-muted-foreground/30", isHidden: true }] : []),
-            ]).filter(g => g.services.length > 0).map((group) => (
+            ])
+              .filter(g => g.services.length > 0)
+              .filter(g => healthFilters.size === 0 || healthFilters.has(g.key as "unhealthy" | "healthy" | "unknown" | "hidden"))
+              .map((group) => (
               <div key={group.key} className="mb-4">
                 <button
                   onClick={() => toggleGroup(group.key)}

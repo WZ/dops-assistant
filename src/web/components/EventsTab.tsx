@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useStackContext } from "../contexts/StackContext";
+import { Chip, FilterGroup } from "./ui/filter-group";
+import { useSlashFocus } from "../hooks/useSlashFocus";
 import {
   resolveRangeToSince,
   stringifyEventsQuery,
@@ -197,6 +199,8 @@ export function EventsTab({ query, onUpdateQuery, onNavigate }: EventsTabProps) 
   // Search committed on Enter / blur, not per-keystroke (matches PatternsTab).
   const [qDraft, setQDraft] = useState(query.q ?? "");
   useEffect(() => { setQDraft(query.q ?? ""); }, [query.q]);
+  const searchRef = useRef<HTMLInputElement>(null);
+  useSlashFocus(searchRef);
   function commitQ() {
     const trimmed = qDraft.trim();
     if (trimmed === (query.q ?? "")) return;
@@ -285,16 +289,22 @@ export function EventsTab({ query, onUpdateQuery, onNavigate }: EventsTabProps) 
             </select>
           </FilterGroup>
           <FilterGroup label="Search">
-            <input
-              type="search"
-              value={qDraft}
-              onChange={(e) => setQDraft(e.target.value)}
-              onBlur={commitQ}
-              onKeyDown={(e) => { if (e.key === "Enter") commitQ(); }}
-              placeholder="summary text…"
-              className="font-mono text-[11px] px-2 h-7 rounded-md border border-border/40 bg-card/30 text-foreground/80 placeholder:text-muted-foreground/40 w-56"
-              data-testid="events-search-input"
-            />
+            <div className="relative">
+              <input
+                ref={searchRef}
+                type="search"
+                value={qDraft}
+                onChange={(e) => setQDraft(e.target.value)}
+                onBlur={commitQ}
+                onKeyDown={(e) => { if (e.key === "Enter") commitQ(); }}
+                placeholder="summary text…"
+                className="font-mono text-[11px] px-2 h-7 rounded-md border border-border/40 bg-card/30 text-foreground/80 placeholder:text-muted-foreground/40 w-56"
+                data-testid="events-search-input"
+              />
+              {!qDraft && (
+                <kbd className="absolute right-1.5 top-1/2 -translate-y-1/2 font-mono text-[8px] text-muted-foreground/30 border border-border/30 rounded px-1 py-0.5 pointer-events-none">/</kbd>
+              )}
+            </div>
           </FilterGroup>
         </div>
 
@@ -372,44 +382,6 @@ export function EventsTab({ query, onUpdateQuery, onNavigate }: EventsTabProps) 
         )}
       </div>
     </div>
-  );
-}
-
-function FilterGroup({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-center gap-1.5">
-      <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/60">
-        {label}
-      </span>
-      <div className="flex items-center gap-1">{children}</div>
-    </div>
-  );
-}
-
-function Chip({
-  active,
-  onClick,
-  children,
-  tone,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-  tone?: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={`font-mono text-[10px] uppercase tracking-[0.12em] px-2 h-7 rounded-md border transition-colors ${
-        active
-          ? "border-primary/60 bg-primary/10 text-primary"
-          : `border-border/40 ${tone ?? "text-foreground/70"} hover:bg-card/70 hover:text-foreground`
-      }`}
-    >
-      {children}
-    </button>
   );
 }
 
