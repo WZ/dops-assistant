@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import { useStackContext } from "../contexts/StackContext";
 import { InvestigationRow } from "./dashboard/InvestigationRow";
+import { Chip, FilterGroup } from "./ui/filter-group";
+import { useSlashFocus } from "../hooks/useSlashFocus";
 import type {
   InvestigationSummary,
   InvestigationListResponse,
@@ -114,6 +116,8 @@ export function InvestigationsPage({
   // Search committed on Enter / blur (matches PatternsTab).
   const [qDraft, setQDraft] = useState(query.q ?? "");
   useEffect(() => { setQDraft(query.q ?? ""); }, [query.q]);
+  const searchRef = useRef<HTMLInputElement>(null);
+  useSlashFocus(searchRef);
 
   // Every chip/select/pagination handler routes through this so any pending
   // qDraft is folded into the same update. Without it, typing in search →
@@ -296,17 +300,23 @@ export function InvestigationsPage({
             </select>
           </FilterGroup>
           <FilterGroup label="Search">
-            <input
-              type="search"
-              value={qDraft}
-              onChange={(e) => setQDraft(e.target.value)}
-              onBlur={commitQ}
-              onKeyDown={(e) => { if (e.key === "Enter") commitQ(); }}
-              placeholder="symptom or root cause…"
-              className="font-mono text-[11px] px-2 h-7 rounded-md border border-border/40 bg-card/30 text-foreground/80 placeholder:text-muted-foreground/40 w-56"
-              data-testid="investigations-search-input"
-              aria-label="Search investigations"
-            />
+            <div className="relative">
+              <input
+                ref={searchRef}
+                type="search"
+                value={qDraft}
+                onChange={(e) => setQDraft(e.target.value)}
+                onBlur={commitQ}
+                onKeyDown={(e) => { if (e.key === "Enter") commitQ(); }}
+                placeholder="symptom or root cause…"
+                className="font-mono text-[11px] px-2 h-7 rounded-md border border-border/40 bg-card/30 text-foreground/80 placeholder:text-muted-foreground/40 w-56"
+                data-testid="investigations-search-input"
+                aria-label="Search investigations"
+              />
+              {!qDraft && (
+                <kbd className="absolute right-1.5 top-1/2 -translate-y-1/2 font-mono text-[8px] text-muted-foreground/30 border border-border/30 rounded px-1 py-0.5 pointer-events-none">/</kbd>
+              )}
+            </div>
           </FilterGroup>
           <div className="ml-auto flex items-center gap-1.5">
             <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/60">Sort</span>
@@ -404,40 +414,3 @@ export function InvestigationsPage({
   );
 }
 
-function FilterGroup({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-center gap-1.5">
-      <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/60">
-        {label}
-      </span>
-      <div className="flex items-center gap-1">{children}</div>
-    </div>
-  );
-}
-
-function Chip({
-  active,
-  onClick,
-  children,
-  tone,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-  tone?: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={`font-mono text-[10px] uppercase tracking-[0.12em] px-2 h-7 rounded-md border transition-colors ${
-        active
-          ? "border-primary/60 bg-primary/10 text-primary"
-          : `border-border/40 ${tone ?? "text-foreground/70"} hover:bg-card/70 hover:text-foreground`
-      }`}
-    >
-      {children}
-    </button>
-  );
-}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils.js";
 
@@ -13,6 +13,11 @@ export interface ProviderFormData {
   };
 }
 
+export interface ProviderFormHandle {
+  triggerSave: () => Promise<void>;
+  triggerTest: () => Promise<void>;
+}
+
 interface ProviderFormProps {
   onSave: (config: ProviderFormData) => Promise<void>;
   onCancel: () => void;
@@ -21,6 +26,7 @@ interface ProviderFormProps {
   ) => Promise<{ status: string; toolCount: number; error?: string }>;
   initialValues?: ProviderFormData;
   saving?: boolean;
+  hideActions?: boolean;
 }
 
 const AVAILABLE_ROLES = [
@@ -38,13 +44,14 @@ const LABEL_CLASS =
 const INPUT_CLASS =
   "w-full rounded-md border border-border/40 bg-card/50 px-3 py-2 font-mono text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/15";
 
-export function ProviderForm({
+export const ProviderForm = forwardRef<ProviderFormHandle, ProviderFormProps>(function ProviderForm({
   onSave,
   onCancel,
   onTest,
   initialValues,
   saving = false,
-}: ProviderFormProps) {
+  hideActions = false,
+}: ProviderFormProps, ref) {
   const [name, setName] = useState(initialValues?.name ?? "");
   const [url, setUrl] = useState(initialValues?.mcpServer.url ?? "");
   const [roles, setRoles] = useState<Set<string>>(
@@ -170,6 +177,11 @@ export function ProviderForm({
     await onSave(buildFormData());
   }
 
+  useImperativeHandle(ref, () => ({
+    triggerSave: handleSave,
+    triggerTest: handleTest,
+  }));
+
   return (
     <div className="space-y-4 p-4">
       {/* Name */}
@@ -285,35 +297,37 @@ export function ProviderForm({
       </div>
 
       {/* Actions */}
-      <div className="flex items-center gap-2 pt-1">
-        <Button
-          variant="ghost"
-          onClick={handleTest}
-          disabled={testing || saving}
-          className="text-[10px] font-mono text-primary/70 hover:text-primary hover:bg-transparent h-auto py-3 px-2 min-h-[44px]"
-        >
-          {testing ? "Testing..." : "Test Connection"}
-        </Button>
+      {!hideActions && (
+        <div className="flex items-center gap-2 pt-1">
+          <Button
+            variant="ghost"
+            onClick={handleTest}
+            disabled={testing || saving}
+            className="text-[10px] font-mono text-primary/70 hover:text-primary hover:bg-transparent h-auto py-3 px-2 min-h-[44px]"
+          >
+            {testing ? "Testing..." : "Test Connection"}
+          </Button>
 
-        <span className="flex-1" />
+          <span className="flex-1" />
 
-        <Button
-          variant="outline"
-          onClick={onCancel}
-          disabled={saving}
-          className="text-[10px] font-mono text-muted-foreground/70 hover:text-foreground h-auto py-3 px-2 min-h-[44px]"
-        >
-          Cancel
-        </Button>
+          <Button
+            variant="outline"
+            onClick={onCancel}
+            disabled={saving}
+            className="text-[10px] font-mono text-muted-foreground/70 hover:text-foreground h-auto py-3 px-2 min-h-[44px]"
+          >
+            Cancel
+          </Button>
 
-        <Button
-          onClick={handleSave}
-          disabled={saving}
-          className="font-mono text-xs font-medium min-h-[44px]"
-        >
-          {saving ? "Saving..." : "Save"}
-        </Button>
-      </div>
+          <Button
+            onClick={handleSave}
+            disabled={saving}
+            className="font-mono text-xs font-medium min-h-[44px]"
+          >
+            {saving ? "Saving..." : "Save"}
+          </Button>
+        </div>
+      )}
 
       {/* Test result */}
       {testResult && (
@@ -343,4 +357,4 @@ export function ProviderForm({
       )}
     </div>
   );
-}
+});

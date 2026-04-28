@@ -507,7 +507,7 @@ export function App() {
               stacks={stacks}
               activeStackId={activeStackId}
               onSwitch={switchStack}
-              onStackCreated={refetchStacks}
+              onNewStackRequested={() => setLeftPane({ type: "settings", initialTab: "stacks" })}
             />
           </div>
           <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-secondary/30">

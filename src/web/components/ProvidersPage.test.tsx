@@ -171,9 +171,9 @@ describe("ProvidersPage webUrl round-trip", () => {
       </Wrapper>,
     );
 
-    await waitFor(() => expect(screen.getByRole("button", { name: /\+ Add Provider/ })).toBeDefined());
+    await waitFor(() => expect(screen.getByRole("button", { name: /New Provider/ })).toBeDefined());
 
-    fireEvent.click(screen.getByRole("button", { name: /\+ Add Provider/ }));
+    fireEvent.click(screen.getByRole("button", { name: /New Provider/ }));
 
     fireEvent.change(screen.getByPlaceholderText("my-provider"), { target: { value: "new-one" } });
     fireEvent.change(screen.getByPlaceholderText("http://localhost:8080/mcp"), {
@@ -183,7 +183,7 @@ describe("ProvidersPage webUrl round-trip", () => {
       target: { value: "https://g.example.org/" },
     });
     fireEvent.click(screen.getByRole("checkbox", { name: "metrics" }));
-    fireEvent.click(screen.getByRole("button", { name: /^Save$/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Create$/ }));
 
     await waitFor(() => {
       const postCall = capturedRequests.find(r => r.init?.method === "POST" && r.url.endsWith("/api/providers"));

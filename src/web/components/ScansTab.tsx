@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useStackContext } from "../contexts/StackContext";
+import { Chip, FilterGroup } from "./ui/filter-group";
 import {
   resolveRangeToSince,
   stringifyScanRunsQuery,
@@ -357,44 +358,6 @@ export function ScansTab({ query, onUpdateQuery, onOpenScanRun }: ScansTabProps)
         )}
       </div>
     </div>
-  );
-}
-
-function FilterGroup({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-center gap-1.5">
-      <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/60">
-        {label}
-      </span>
-      <div className="flex items-center gap-1">{children}</div>
-    </div>
-  );
-}
-
-function Chip({
-  active,
-  onClick,
-  children,
-  tone,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-  tone?: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={`font-mono text-[10px] uppercase tracking-[0.12em] px-2 h-7 rounded-md border transition-colors ${
-        active
-          ? "border-primary/60 bg-primary/10 text-primary"
-          : `border-border/40 ${tone ?? "text-foreground/70"} hover:bg-card/70 hover:text-foreground`
-      }`}
-    >
-      {children}
-    </button>
   );
 }
 

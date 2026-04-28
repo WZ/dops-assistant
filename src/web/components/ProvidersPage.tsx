@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { CirclePlus } from "lucide-react";
+import { ArrowLeft, CirclePlus, Plus } from "lucide-react";
 import { ProviderCard, type TestResult } from "./providers/ProviderCard";
-import { ProviderForm, type ProviderFormData } from "./providers/ProviderForm";
+import { ProviderForm, type ProviderFormData, type ProviderFormHandle } from "./providers/ProviderForm";
 import { YamlModal } from "./providers/YamlModal";
 import { ConfirmActionDialog } from "./ConfirmActionDialog";
 import { useStackContext } from "../contexts/StackContext";
@@ -37,8 +37,9 @@ export function ProvidersPage({ onRunDiscovery, onProviderSaved }: ProvidersPage
   const [testingName, setTestingName] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({});
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
+  const [topBarTesting, setTopBarTesting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval>>(undefined);
-  const formSectionRef = useRef<HTMLElement | null>(null);
+  const formRef = useRef<ProviderFormHandle>(null);
 
   const fetchProviders = useCallback(async () => {
     try {
@@ -55,13 +56,6 @@ export function ProvidersPage({ onRunDiscovery, onProviderSaved }: ProvidersPage
     pollRef.current = setInterval(fetchProviders, 30_000);
     return () => clearInterval(pollRef.current);
   }, [fetchProviders]);
-
-  // Scroll the form into view when it opens — with many providers, the form
-  // can render below the fold and the user wouldn't notice it appeared.
-  useEffect(() => {
-    if (!showForm) return;
-    formSectionRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
-  }, [showForm, editingProvider]);
 
   // Add or update provider
   const handleSave = async (data: ProviderFormData) => {
@@ -168,14 +162,81 @@ export function ProvidersPage({ onRunDiscovery, onProviderSaved }: ProvidersPage
     setShowForm(true);
   };
 
+  // Full-page editor mode: replaces the listing view (matches SkillsPage pattern).
+  if (showForm) {
+    const handleTopBarTest = async () => {
+      setTopBarTesting(true);
+      try { await formRef.current?.triggerTest(); }
+      finally { setTopBarTesting(false); }
+    };
+    return (
+      <div className="h-full flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-border/40 shrink-0">
+          <Button
+            variant="ghost"
+            onClick={() => { setShowForm(false); setEditingProvider(null); }}
+            className="h-auto px-0 py-0 text-xs font-mono text-muted-foreground/60 hover:text-primary hover:bg-transparent transition-colors group"
+          >
+            <ArrowLeft size={12} className="!size-auto group-hover:-translate-x-0.5 transition-transform" />
+            back to providers
+          </Button>
+          <h2 className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/50">
+            {editingProvider ? "Edit Provider" : "New Provider"}
+          </h2>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => void handleTopBarTest()}
+              disabled={topBarTesting || saving}
+              className="px-3 py-1.5 h-auto text-[10px] font-mono disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              {topBarTesting ? "Testing…" : "Test"}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => void formRef.current?.triggerSave()}
+              disabled={saving}
+              className="px-3 py-1.5 h-auto text-[10px] font-mono bg-primary/10 border-primary/20 text-primary hover:bg-primary/15 hover:text-primary disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              {saving ? "Saving…" : editingProvider ? "Save" : "Create"}
+            </Button>
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          <div className="max-w-3xl mx-auto px-5 py-6">
+            <ProviderForm
+              ref={formRef}
+              onSave={handleSave}
+              onCancel={() => { setShowForm(false); setEditingProvider(null); }}
+              onTest={handleTestFromForm}
+              initialValues={editingProvider ?? undefined}
+              saving={saving}
+              hideActions
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full overflow-y-auto relative z-[2]">
       {/* Title */}
-      <div className="mb-6 animate-fade-up">
-        <h1 className="font-display text-2xl font-extrabold tracking-tight text-foreground/90">Providers</h1>
-        <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">
-          {providers.length} MCP provider{providers.length !== 1 ? "s" : ""} configured
-        </p>
+      <div className="mb-6 animate-fade-up flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-display text-2xl font-extrabold tracking-tight text-foreground/90">Providers</h1>
+          <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">
+            {providers.length} MCP provider{providers.length !== 1 ? "s" : ""} configured
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          onClick={() => { setEditingProvider(null); setShowForm(true); }}
+          className="h-9 px-4 text-[12px] font-mono bg-primary/10 border-primary/20 text-primary hover:bg-primary/15 hover:text-primary rounded-lg gap-1.5 shrink-0"
+        >
+          <Plus size={12} className="!size-auto" />
+          New Provider
+        </Button>
       </div>
 
       {/* Section: PROVIDERS */}
@@ -211,7 +272,7 @@ export function ProvidersPage({ onRunDiscovery, onProviderSaved }: ProvidersPage
               onClick={() => setShowForm(true)}
               className="mt-4 font-mono text-xs font-medium min-h-[44px]"
             >
-              Add First Provider
+              New Provider
             </Button>
           </div>
         ) : (
@@ -233,19 +294,9 @@ export function ProvidersPage({ onRunDiscovery, onProviderSaved }: ProvidersPage
         )}
       </section>
 
-      {/* Actions row */}
+      {/* Secondary actions row */}
       {!loading && (
         <div className="flex items-center gap-3 mb-6">
-          {!showForm && (
-            <Button
-              variant="ghost"
-              onClick={() => { setEditingProvider(null); setShowForm(true); }}
-              className="text-[10px] font-mono text-primary/70 hover:text-primary hover:bg-transparent py-3 px-2 h-auto min-h-[44px]"
-            >
-              + Add Provider
-            </Button>
-          )}
-          <span className="text-muted-foreground/20">&middot;</span>
           <Button
             variant="ghost"
             onClick={() => setShowYamlModal(true)}
@@ -268,26 +319,6 @@ export function ProvidersPage({ onRunDiscovery, onProviderSaved }: ProvidersPage
         </div>
       )}
 
-      {/* Inline form */}
-      {showForm && (
-        <section ref={formSectionRef} aria-label="Add Provider" className="mb-6 animate-fade-up scroll-mt-4">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
-            <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
-              {editingProvider ? "Edit Provider" : "Add Provider"}
-            </h2>
-          </div>
-          <div className="rounded-lg border border-border/40 bg-card/50 p-4">
-            <ProviderForm
-              onSave={handleSave}
-              onCancel={() => { setShowForm(false); setEditingProvider(null); }}
-              onTest={handleTestFromForm}
-              initialValues={editingProvider ?? undefined}
-              saving={saving}
-            />
-          </div>
-        </section>
-      )}
       <YamlModal
         open={showYamlModal}
         onOpenChange={setShowYamlModal}

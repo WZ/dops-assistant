@@ -21,8 +21,14 @@
  * silently swallows. Including it now keeps the Task 26 diff UI-free.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ChevronDown, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useStackContext } from "../contexts/StackContext";
 import { ScanRunPhaseStepper, type ScanPhaseState } from "./ScanRunPhaseStepper";
 import { copyLink, copyMarkdown, downloadPng } from "../lib/exportScanRun";
@@ -726,7 +732,6 @@ function ExportMenu({
   rootRef: RefObject<HTMLDivElement | null>;
 }) {
   const { stackFetch } = useStackContext();
-  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<{ kind: "ok" | "error"; message: string } | null>(null);
 
@@ -737,7 +742,6 @@ function ExportMenu({
 
   const doCopyLink = async () => {
     try { await copyLink(); } catch { /* ignore */ }
-    setOpen(false);
   };
 
   const doCopyMarkdown = async () => {
@@ -759,11 +763,10 @@ function ExportMenu({
       reportSummary: i.reportSummary,
     }));
     try { await copyMarkdown(summaryShape, invShape); } catch { /* ignore */ }
-    setOpen(false);
   };
 
   const doDownloadPng = async () => {
-    if (!rootRef.current) { setOpen(false); return; }
+    if (!rootRef.current) return;
     setBusy(true);
     try {
       await downloadPng(rootRef.current, run.id);
@@ -771,7 +774,6 @@ function ExportMenu({
       console.error("PNG export failed", err);
     } finally {
       setBusy(false);
-      setOpen(false);
     }
   };
 
@@ -797,63 +799,53 @@ function ExportMenu({
       flashToast("error", err instanceof Error ? err.message : "Slack send failed");
     } finally {
       setBusy(false);
-      setOpen(false);
     }
   };
 
   return (
     <div className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        disabled={busy}
-        className="h-9 rounded-lg border border-border/60 px-3 text-sm hover:bg-secondary/40 disabled:opacity-50"
-      >
-        {busy ? "Working\u2026" : "\u22ef Export"}
-      </button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="outline"
+            disabled={busy}
+            className="h-9 px-4 text-[12px] font-mono border-primary/30 text-primary/70 hover:bg-primary/8 hover:text-primary rounded-lg gap-1.5"
+            title="Export this scan run"
+          >
+            <Download size={12} className="!size-auto" />
+            {busy ? "Exporting\u2026" : "Export"}
+            <ChevronDown size={10} className="!size-auto opacity-50" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-[180px]">
+          <DropdownMenuItem onSelect={(e) => { e.preventDefault(); void doCopyLink(); }} className="font-mono text-[11px]">
+            Copy link
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={(e) => { e.preventDefault(); void doCopyMarkdown(); }} className="font-mono text-[11px]">
+            Copy as Markdown
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={(e) => { e.preventDefault(); void doDownloadPng(); }} className="font-mono text-[11px]">
+            Download PNG
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={(e) => { e.preventDefault(); void doSendToSlack(); }}
+            disabled={busy}
+            className="font-mono text-[11px]"
+          >
+            Send to Slack
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
       {toast && (
         <div
           role="status"
-          className={`absolute right-0 top-full z-20 mt-10 whitespace-nowrap rounded-lg border px-3 py-1.5 text-xs shadow-md ${
+          className={`absolute right-0 top-full z-20 mt-2 whitespace-nowrap rounded-lg border px-3 py-1.5 text-xs shadow-md ${
             toast.kind === "error"
               ? "border-destructive/60 bg-destructive/10 text-destructive"
               : "border-success/60 bg-success/10 text-success"
           }`}
         >
           {toast.message}
-        </div>
-      )}
-      {open && (
-        <div className="absolute right-0 z-10 mt-1 flex min-w-[180px] flex-col rounded-lg border border-border/60 bg-card p-1 text-sm shadow-md">
-          <button
-            type="button"
-            className="rounded px-3 py-1.5 text-left hover:bg-secondary/40"
-            onClick={doCopyLink}
-          >
-            Copy link
-          </button>
-          <button
-            type="button"
-            className="rounded px-3 py-1.5 text-left hover:bg-secondary/40"
-            onClick={doCopyMarkdown}
-          >
-            Copy as Markdown
-          </button>
-          <button
-            type="button"
-            className="rounded px-3 py-1.5 text-left hover:bg-secondary/40"
-            onClick={doDownloadPng}
-          >
-            Download PNG
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            className="rounded px-3 py-1.5 text-left hover:bg-secondary/40 disabled:opacity-50"
-            onClick={doSendToSlack}
-          >
-            Send to Slack
-          </button>
         </div>
       )}
     </div>

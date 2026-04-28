@@ -81,12 +81,12 @@ function ExportMenu({ report, service, reportRef, onSaveAsSkill }: ExportMenuPro
         <Button
           variant="outline"
           disabled={busy}
-          className="h-auto px-2.5 py-1 text-[10px] font-mono border-primary/30 text-primary/70 hover:bg-primary/8 hover:text-primary gap-1"
+          className="h-9 px-4 text-[12px] font-mono border-primary/30 text-primary/70 hover:bg-primary/8 hover:text-primary rounded-lg gap-1.5"
           title="Export this investigation"
         >
-          <Download size={10} className="!size-auto" />
+          <Download size={12} className="!size-auto" />
           {busy ? "Exporting…" : "Export"}
-          <ChevronDown size={8} className="!size-auto opacity-50" />
+          <ChevronDown size={10} className="!size-auto opacity-50" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-[200px]">
@@ -567,11 +567,11 @@ export function InvestigationPane({
                 <Button
                   variant="outline"
                   disabled={isRunning}
-                  className="h-auto px-2.5 py-1 text-[10px] font-mono border-primary/30 text-primary/70 hover:bg-primary/8 hover:text-primary gap-1"
+                  className="h-9 px-4 text-[12px] font-mono border-primary/30 text-primary/70 hover:bg-primary/8 hover:text-primary rounded-lg gap-1.5"
                 >
-                  <RotateCw size={10} className="!size-auto" />
+                  <RotateCw size={12} className="!size-auto" />
                   Re-investigate
-                  <ChevronDown size={8} className="!size-auto opacity-50" />
+                  <ChevronDown size={10} className="!size-auto opacity-50" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="min-w-[180px]">

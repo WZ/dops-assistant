@@ -244,16 +244,19 @@ function ToolsSection({ name, source, toolCount }: { name: string; source: "conf
     <div className="mt-2 pt-2 border-t border-border/20">
       <button
         onClick={handleExpand}
-        className="flex items-center gap-2 w-full text-left"
+        className="flex items-center gap-2 w-full text-left cursor-pointer group rounded-md px-2 -mx-2 py-1 -my-1 hover:bg-secondary/30 transition-colors"
         aria-expanded={expanded}
       >
         <div className="w-0.5 h-3 bg-primary rounded-full" />
-        <span className="text-[9px] font-mono font-semibold uppercase tracking-[0.12em] text-muted-foreground/50 flex-1">
-          Tools
+        <span className="text-[9px] font-mono font-semibold uppercase tracking-[0.12em] text-muted-foreground/50 group-hover:text-muted-foreground/80 flex-1 transition-colors">
+          Tools <span className="font-normal normal-case tracking-normal text-muted-foreground/40 group-hover:text-muted-foreground/60">({toolCount})</span>
+        </span>
+        <span className="text-[9px] font-mono text-muted-foreground/30 group-hover:text-muted-foreground/60 transition-colors">
+          {expanded ? "hide" : "show"}
         </span>
         <ChevronDown
           size={12}
-          className={`text-muted-foreground/40 transition-transform ${expanded ? "rotate-180" : ""}`}
+          className={`text-muted-foreground/40 group-hover:text-muted-foreground/70 transition-all ${expanded ? "rotate-180" : ""}`}
         />
       </button>
       {expanded && (

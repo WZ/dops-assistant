@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { ChevronDown, Plus } from "lucide-react";
 import {
   DropdownMenu,
@@ -7,14 +6,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { CreateStackDialog } from "./CreateStackDialog";
 import type { StackSummary } from "../../types/stack-types.js";
 
 interface StackSwitcherProps {
   stacks: StackSummary[];
   activeStackId: string;
   onSwitch: (stackId: string) => void;
-  onStackCreated: () => Promise<void>;
+  onNewStackRequested: () => void;
 }
 
 function healthDotColor(stack: StackSummary): string {
@@ -31,8 +29,7 @@ function healthDotColor(stack: StackSummary): string {
 // stack's context. Ideally we'd show a warning or block switching while an
 // investigation is running. The investigation status isn't easily accessible from
 // here without lifting state — deferring to v2.
-export function StackSwitcher({ stacks, activeStackId, onSwitch, onStackCreated }: StackSwitcherProps) {
-  const [createOpen, setCreateOpen] = useState(false);
+export function StackSwitcher({ stacks, activeStackId, onSwitch, onNewStackRequested }: StackSwitcherProps) {
   const activeStack = stacks.find((s) => s.id === activeStackId);
   const isSingleStack = stacks.length <= 1;
 
@@ -86,7 +83,7 @@ export function StackSwitcher({ stacks, activeStackId, onSwitch, onStackCreated 
           ))}
           <DropdownMenuSeparator />
           <DropdownMenuItem
-            onClick={() => setCreateOpen(true)}
+            onClick={onNewStackRequested}
             className="flex items-center gap-2 px-3 py-2 h-8 cursor-pointer text-primary"
           >
             <Plus size={12} />
@@ -96,16 +93,6 @@ export function StackSwitcher({ stacks, activeStackId, onSwitch, onStackCreated 
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-
-      <CreateStackDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        onCreated={async (newStack) => {
-          await onStackCreated();
-          onSwitch(newStack.id);
-          setCreateOpen(false);
-        }}
-      />
     </>
   );
 }
