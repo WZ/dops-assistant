@@ -48,6 +48,7 @@ export function NotificationsTab() {
     onScanComplete: "hits-only",
   });
   const [loading, setLoading] = useState(true);
+  const [togglingEnabled, setTogglingEnabled] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
   const [editorMode, setEditorMode] = useState<EditorMode>("none");
@@ -66,7 +67,9 @@ export function NotificationsTab() {
   useEffect(() => { fetchConfig(); }, [fetchConfig]);
 
   const toggleSlackEnabled = async () => {
+    if (togglingEnabled) return;
     const next = !slack.enabled;
+    setTogglingEnabled(true);
     try {
       const res = await stackFetch("/api/notifications", {
         method: "PUT",
@@ -86,6 +89,8 @@ export function NotificationsTab() {
       await fetchConfig();
     } catch (err) {
       setTestResult({ ok: false, error: err instanceof Error ? err.message : "Save failed" });
+    } finally {
+      setTogglingEnabled(false);
     }
   };
 
@@ -182,8 +187,9 @@ export function NotificationsTab() {
               type="button"
               role="switch"
               aria-checked={slack.enabled}
+              disabled={togglingEnabled}
               onClick={() => void toggleSlackEnabled()}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                 slack.enabled ? "bg-primary" : "bg-muted-foreground/20"
               }`}
             >

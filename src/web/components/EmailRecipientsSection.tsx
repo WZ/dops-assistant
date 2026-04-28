@@ -49,6 +49,7 @@ export const EmailRecipientsSection = forwardRef<EmailRecipientsSectionHandle, P
   const [cfg, setCfg] = useState<EmailConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [togglingGlobal, setTogglingGlobal] = useState(false);
   const [testingId, setTestingId] = useState<number | null>(null);
   const [testResult, setTestResult] = useState<{ id: number; ok: boolean; msg: string } | null>(null);
 
@@ -66,16 +67,22 @@ export const EmailRecipientsSection = forwardRef<EmailRecipientsSectionHandle, P
     }
   };
 
-  useImperativeHandle(ref, () => ({ refresh }), []);
+  useImperativeHandle(ref, () => ({ refresh }));
   useEffect(() => { void refresh(); }, []);
 
   const toggleGlobal = async (enabled: boolean) => {
-    const res = await stackFetch("/api/notifications/email", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled }),
-    });
-    if (res.ok) await refresh();
+    if (togglingGlobal) return;
+    setTogglingGlobal(true);
+    try {
+      const res = await stackFetch("/api/notifications/email", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      if (res.ok) await refresh();
+    } finally {
+      setTogglingGlobal(false);
+    }
   };
 
   const toggleRow = async (r: Recipient) => {
@@ -139,8 +146,9 @@ export const EmailRecipientsSection = forwardRef<EmailRecipientsSectionHandle, P
             type="button"
             role="switch"
             aria-checked={cfg.enabled}
+            disabled={togglingGlobal}
             onClick={() => void toggleGlobal(!cfg.enabled)}
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
               cfg.enabled ? "bg-primary" : "bg-muted-foreground/20"
             }`}
           >
