@@ -34,6 +34,10 @@ export function SlackEditor({ stackFetch, config, onClose, onSaved }: Props) {
   const save = async () => {
     setError(null);
     setTestResult(null);
+    if (urlInput && !/^https:\/\/hooks\.slack\.com\/services\/\S+/.test(urlInput)) {
+      setError("Webhook URL must look like https://hooks.slack.com/services/...");
+      return;
+    }
     setSaving(true);
     try {
       const res = await stackFetch("/api/notifications", {

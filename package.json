@@ -1,6 +1,6 @@
 {
   "name": "dops-assistant",
-  "version": "0.3.9.0",
+  "version": "0.3.9.1",
   "description": "Agentic infrastructure monitoring assistant — Grafana MCP + CLI",
   "type": "module",
   "main": "dist/index.js",
