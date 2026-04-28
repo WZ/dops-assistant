@@ -11,7 +11,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Loader2, Pencil, Trash2 } from "lucide-react";
+import { Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { CreateStackDialog } from "./CreateStackDialog";
 import { RenameStackDialog } from "./RenameStackDialog";
 import type { StackSummary } from "../../types/stack-types.js";
@@ -67,6 +67,21 @@ export function StacksManagePage({ stacks, activeStackId, onSwitchStack, onRefet
 
   return (
     <div>
+      {/* Header row: title + new stack action */}
+      <div className="flex items-center justify-between gap-4 mb-4">
+        <p className="text-xs font-mono text-muted-foreground/70 tracking-wide">
+          {stacks.length} stack{stacks.length !== 1 ? "s" : ""} configured
+        </p>
+        <Button
+          variant="outline"
+          onClick={() => setCreateOpen(true)}
+          className="h-9 px-4 text-[12px] font-mono bg-primary/10 border-primary/20 text-primary hover:bg-primary/15 hover:text-primary rounded-lg gap-1.5 shrink-0"
+        >
+          <Plus size={12} className="!size-auto" />
+          New Stack
+        </Button>
+      </div>
+
       {/* Stack cards */}
       <div className="space-y-2">
         {stacks.map((stack, i) => (
@@ -124,16 +139,6 @@ export function StacksManagePage({ stacks, activeStackId, onSwitchStack, onRefet
             </div>
           </div>
         ))}
-      </div>
-
-      {/* Add stack action */}
-      <div className="flex items-center gap-3 mt-3 pl-3">
-        <button
-          onClick={() => setCreateOpen(true)}
-          className="text-[10px] font-mono text-primary/70 hover:text-primary transition-colors py-3 px-2 min-h-[44px]"
-        >
-          + Create Stack
-        </button>
       </div>
 
       {/* Create dialog */}

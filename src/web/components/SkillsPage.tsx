@@ -176,9 +176,9 @@ export function SkillsPage() {
           <Button
             variant="outline"
             onClick={() => setShowTemplates(!showTemplates)}
-            className="px-3 py-1.5 h-auto text-xs font-mono bg-primary/10 border-primary/20 text-primary hover:bg-primary/15"
+            className="h-9 px-4 text-[12px] font-mono bg-primary/10 border-primary/20 text-primary hover:bg-primary/15 hover:text-primary rounded-lg gap-1.5"
           >
-            <Plus size={10} className="!size-auto" />
+            <Plus size={12} className="!size-auto" />
             New Skill
           </Button>
           {showTemplates && (

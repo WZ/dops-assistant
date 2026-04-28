@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { CirclePlus } from "lucide-react";
+import { CirclePlus, Plus } from "lucide-react";
 import { ProviderCard, type TestResult } from "./providers/ProviderCard";
 import { ProviderForm, type ProviderFormData } from "./providers/ProviderForm";
 import { YamlModal } from "./providers/YamlModal";
@@ -171,11 +171,23 @@ export function ProvidersPage({ onRunDiscovery, onProviderSaved }: ProvidersPage
   return (
     <div className="h-full overflow-y-auto relative z-[2]">
       {/* Title */}
-      <div className="mb-6 animate-fade-up">
-        <h1 className="font-display text-2xl font-extrabold tracking-tight text-foreground/90">Providers</h1>
-        <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">
-          {providers.length} MCP provider{providers.length !== 1 ? "s" : ""} configured
-        </p>
+      <div className="mb-6 animate-fade-up flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-display text-2xl font-extrabold tracking-tight text-foreground/90">Providers</h1>
+          <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">
+            {providers.length} MCP provider{providers.length !== 1 ? "s" : ""} configured
+          </p>
+        </div>
+        {!showForm && (
+          <Button
+            variant="outline"
+            onClick={() => { setEditingProvider(null); setShowForm(true); }}
+            className="h-9 px-4 text-[12px] font-mono bg-primary/10 border-primary/20 text-primary hover:bg-primary/15 hover:text-primary rounded-lg gap-1.5 shrink-0"
+          >
+            <Plus size={12} className="!size-auto" />
+            New Provider
+          </Button>
+        )}
       </div>
 
       {/* Section: PROVIDERS */}
@@ -211,7 +223,7 @@ export function ProvidersPage({ onRunDiscovery, onProviderSaved }: ProvidersPage
               onClick={() => setShowForm(true)}
               className="mt-4 font-mono text-xs font-medium min-h-[44px]"
             >
-              Add First Provider
+              New Provider
             </Button>
           </div>
         ) : (
@@ -233,19 +245,9 @@ export function ProvidersPage({ onRunDiscovery, onProviderSaved }: ProvidersPage
         )}
       </section>
 
-      {/* Actions row */}
+      {/* Secondary actions row */}
       {!loading && (
         <div className="flex items-center gap-3 mb-6">
-          {!showForm && (
-            <Button
-              variant="ghost"
-              onClick={() => { setEditingProvider(null); setShowForm(true); }}
-              className="text-[10px] font-mono text-primary/70 hover:text-primary hover:bg-transparent py-3 px-2 h-auto min-h-[44px]"
-            >
-              + Add Provider
-            </Button>
-          )}
-          <span className="text-muted-foreground/20">&middot;</span>
           <Button
             variant="ghost"
             onClick={() => setShowYamlModal(true)}
@@ -270,11 +272,11 @@ export function ProvidersPage({ onRunDiscovery, onProviderSaved }: ProvidersPage
 
       {/* Inline form */}
       {showForm && (
-        <section ref={formSectionRef} aria-label="Add Provider" className="mb-6 animate-fade-up scroll-mt-4">
+        <section ref={formSectionRef} aria-label="New Provider" className="mb-6 animate-fade-up scroll-mt-4">
           <div className="flex items-center gap-2 mb-3">
             <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
             <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
-              {editingProvider ? "Edit Provider" : "Add Provider"}
+              {editingProvider ? "Edit Provider" : "New Provider"}
             </h2>
           </div>
           <div className="rounded-lg border border-border/40 bg-card/50 p-4">
