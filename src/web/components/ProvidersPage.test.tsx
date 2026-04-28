@@ -183,7 +183,7 @@ describe("ProvidersPage webUrl round-trip", () => {
       target: { value: "https://g.example.org/" },
     });
     fireEvent.click(screen.getByRole("checkbox", { name: "metrics" }));
-    fireEvent.click(screen.getByRole("button", { name: /^Save$/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Create$/ }));
 
     await waitFor(() => {
       const postCall = capturedRequests.find(r => r.init?.method === "POST" && r.url.endsWith("/api/providers"));

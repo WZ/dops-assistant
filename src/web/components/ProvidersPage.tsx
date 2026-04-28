@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, CirclePlus, Plus } from "lucide-react";
 import { ProviderCard, type TestResult } from "./providers/ProviderCard";
-import { ProviderForm, type ProviderFormData } from "./providers/ProviderForm";
+import { ProviderForm, type ProviderFormData, type ProviderFormHandle } from "./providers/ProviderForm";
 import { YamlModal } from "./providers/YamlModal";
 import { ConfirmActionDialog } from "./ConfirmActionDialog";
 import { useStackContext } from "../contexts/StackContext";
@@ -37,7 +37,9 @@ export function ProvidersPage({ onRunDiscovery, onProviderSaved }: ProvidersPage
   const [testingName, setTestingName] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({});
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
+  const [topBarTesting, setTopBarTesting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval>>(undefined);
+  const formRef = useRef<ProviderFormHandle>(null);
 
   const fetchProviders = useCallback(async () => {
     try {
@@ -162,6 +164,11 @@ export function ProvidersPage({ onRunDiscovery, onProviderSaved }: ProvidersPage
 
   // Full-page editor mode: replaces the listing view (matches SkillsPage pattern).
   if (showForm) {
+    const handleTopBarTest = async () => {
+      setTopBarTesting(true);
+      try { await formRef.current?.triggerTest(); }
+      finally { setTopBarTesting(false); }
+    };
     return (
       <div className="h-full flex flex-col overflow-hidden">
         <div className="flex items-center justify-between px-5 py-3 border-b border-border/40 shrink-0">
@@ -176,15 +183,35 @@ export function ProvidersPage({ onRunDiscovery, onProviderSaved }: ProvidersPage
           <h2 className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/50">
             {editingProvider ? "Edit Provider" : "New Provider"}
           </h2>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => void handleTopBarTest()}
+              disabled={topBarTesting || saving}
+              className="px-3 py-1.5 h-auto text-[10px] font-mono disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              {topBarTesting ? "Testing…" : "Test"}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => void formRef.current?.triggerSave()}
+              disabled={saving}
+              className="px-3 py-1.5 h-auto text-[10px] font-mono bg-primary/10 border-primary/20 text-primary hover:bg-primary/15 hover:text-primary disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              {saving ? "Saving…" : editingProvider ? "Save" : "Create"}
+            </Button>
+          </div>
         </div>
         <div className="flex-1 overflow-y-auto">
           <div className="max-w-3xl mx-auto px-5 py-6">
             <ProviderForm
+              ref={formRef}
               onSave={handleSave}
               onCancel={() => { setShowForm(false); setEditingProvider(null); }}
               onTest={handleTestFromForm}
               initialValues={editingProvider ?? undefined}
               saving={saving}
+              hideActions
             />
           </div>
         </div>
