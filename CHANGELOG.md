@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.9.1] - 2026-04-28
+
+### Fixed
+- **Slack and Email enable toggles now ignore spam-clicks.** Both toggles disable themselves while a PUT is in flight. Previously, two clicks within the network round-trip could each read the same stale `enabled` state and end up sending the same flipped value, leaving the user with the wrong final on/off state.
+- **Slack webhook URL is validated inline before save.** Catches typos like `https//` or pasted Discord URLs at the form level instead of relying on the server to reject them silently.
+- **Email recipients section's imperative refresh handle drops its empty deps array.** The handle now recomputes per render, so if the underlying stack-fetch identity ever changes (e.g., switching stacks), the handle still calls the correct one. Latent bug, no observed user impact today.
+
 ## [0.3.9.0] - 2026-04-28
 
 ### Changed
