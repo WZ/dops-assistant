@@ -188,17 +188,15 @@ export function ScanTab() {
 
   if (loading) {
     return (
-      <div className="p-6">
-        <div
-          className="h-32 rounded-lg"
-          style={{
-            background:
-              "linear-gradient(90deg, hsl(var(--muted)) 25%, hsl(var(--secondary)) 50%, hsl(var(--muted)) 75%)",
-            backgroundSize: "200% 100%",
-            animation: "shimmer 1.6s infinite",
-          }}
-        />
-      </div>
+      <div
+        className="h-32 rounded-lg"
+        style={{
+          background:
+            "linear-gradient(90deg, hsl(var(--muted)) 25%, hsl(var(--secondary)) 50%, hsl(var(--muted)) 75%)",
+          backgroundSize: "200% 100%",
+          animation: "shimmer 1.6s infinite",
+        }}
+      />
     );
   }
 
@@ -208,7 +206,7 @@ export function ScanTab() {
     settings.source.timezone === "config";
 
   return (
-    <div className="p-6">
+    <div>
       {/* Title row: h1 + subtitle on the left, Save (and any error) on the right */}
       <div className="mb-6 animate-fade-up flex items-start justify-between gap-4">
         <div>

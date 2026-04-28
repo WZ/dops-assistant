@@ -138,36 +138,57 @@ export function StacksManagePage({ stacks, activeStackId, onSwitchStack, onRefet
       </div>
 
       {/* Stack cards */}
-      <div className="space-y-2">
-        {stacks.map((stack, i) => {
-          const isRenaming = renamingId === stack.id;
-          return (
-            <div
-              key={stack.id}
-              className={`flex items-center justify-between px-4 py-3 rounded-lg border border-border/40 bg-card/50 animate-fade-up delay-${Math.min(i + 1, 8)} ${
-                stack.id === activeStackId ? "ring-1 ring-primary/20" : ""
-              }`}
-            >
-              <div className="flex items-center gap-3 min-w-0 flex-1">
-                <span className={`w-2 h-2 rounded-full shrink-0 ${healthDotColor(stack)}`} />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
+      <div className="max-w-4xl">
+        <div className="grid gap-3 sm:grid-cols-2">
+          {stacks.map((stack, i) => {
+            const isRenaming = renamingId === stack.id;
+            const isActive = stack.id === activeStackId;
+            return (
+              <div
+                key={stack.id}
+                className={`relative rounded-xl border p-4 transition-all border-border/40 bg-card/30 hover:border-primary/30 hover:bg-card/60 animate-fade-up delay-${Math.min(i + 1, 8)} ${
+                  isActive ? "ring-1 ring-primary/20" : ""
+                }`}
+              >
+                <div className="flex items-start justify-between gap-2 mb-1.5">
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${healthDotColor(stack)}`} />
+                    {isRenaming ? (
+                      <input
+                        type="text"
+                        value={renameDraft}
+                        onChange={(e) => setRenameDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") { e.preventDefault(); void submitRename(stack); }
+                          if (e.key === "Escape") { e.preventDefault(); cancelRename(); }
+                        }}
+                        autoFocus
+                        maxLength={64}
+                        disabled={renameSaving}
+                        className="font-display text-sm font-semibold text-foreground bg-secondary/40 border border-primary/30 rounded px-2 py-0.5 focus:outline-none focus:ring-2 focus:ring-primary/30 min-w-0 flex-1"
+                        aria-label={`Rename ${stack.name}`}
+                      />
+                    ) : (
+                      <>
+                        <h3 className="text-sm font-display font-semibold text-foreground/80 truncate">
+                          {stack.name}
+                        </h3>
+                        {stack.isDefault && (
+                          <Badge className="text-[9px] font-mono font-semibold uppercase py-0 h-4 bg-primary/8 text-primary border-0 shrink-0">
+                            DEFAULT
+                          </Badge>
+                        )}
+                        {isActive && !stack.isDefault && (
+                          <Badge variant="secondary" className="text-[9px] font-mono py-0 h-4 shrink-0">
+                            ACTIVE
+                          </Badge>
+                        )}
+                      </>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
                     {isRenaming ? (
                       <>
-                        <input
-                          type="text"
-                          value={renameDraft}
-                          onChange={(e) => setRenameDraft(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") { e.preventDefault(); void submitRename(stack); }
-                            if (e.key === "Escape") { e.preventDefault(); cancelRename(); }
-                          }}
-                          autoFocus
-                          maxLength={64}
-                          disabled={renameSaving}
-                          className="font-display text-sm font-semibold text-foreground bg-secondary/40 border border-primary/30 rounded px-2 py-0.5 focus:outline-none focus:ring-2 focus:ring-primary/30 max-w-xs"
-                          aria-label={`Rename ${stack.name}`}
-                        />
                         <Button
                           variant="ghost"
                           size="sm"
@@ -188,63 +209,48 @@ export function StacksManagePage({ stacks, activeStackId, onSwitchStack, onRefet
                         >
                           <X size={12} />
                         </Button>
-                        {renameError && (
-                          <span className="font-mono text-[10px] text-destructive">{renameError}</span>
-                        )}
                       </>
                     ) : (
                       <>
-                        <span className="font-display text-sm font-semibold text-foreground truncate">
-                          {stack.name}
-                        </span>
-                        {stack.isDefault && (
-                          <Badge className="text-[9px] font-mono font-semibold uppercase py-0 h-4 bg-primary/8 text-primary border-0">
-                            DEFAULT
-                          </Badge>
-                        )}
-                        {stack.id === activeStackId && !stack.isDefault && (
-                          <Badge variant="secondary" className="text-[9px] font-mono py-0 h-4">
-                            ACTIVE
-                          </Badge>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => startRename(stack)}
+                          aria-label={`Rename ${stack.name}`}
+                          className="h-7 px-2 text-muted-foreground/60 hover:text-foreground hover:bg-muted/40"
+                        >
+                          <Pencil size={12} />
+                        </Button>
+                        {!stack.isDefault && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setDeleteTarget(stack)}
+                            aria-label={`Delete ${stack.name}`}
+                            className="h-7 px-2 text-destructive/60 hover:text-destructive hover:bg-destructive/8"
+                          >
+                            <Trash2 size={12} />
+                          </Button>
                         )}
                       </>
                     )}
                   </div>
-                  {!isRenaming && (
-                    <span className="font-mono text-[10px] text-muted-foreground/50">{stack.slug}</span>
-                  )}
                 </div>
+                {isRenaming && renameError && (
+                  <p className="font-mono text-[10px] text-destructive mt-1">{renameError}</p>
+                )}
+                {!isRenaming && (
+                  <div className="flex items-center justify-between gap-2 text-[10px] font-mono text-muted-foreground/50">
+                    <span className="truncate">{stack.slug}</span>
+                    <span className="shrink-0">
+                      {stack.providerCount} provider{stack.providerCount !== 1 ? "s" : ""}
+                    </span>
+                  </div>
+                )}
               </div>
-              {!isRenaming && (
-                <div className="flex items-center gap-3 shrink-0">
-                  <span className="font-mono text-[10px] text-muted-foreground/50">
-                    {stack.providerCount} provider{stack.providerCount !== 1 ? "s" : ""}
-                  </span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => startRename(stack)}
-                    aria-label={`Rename ${stack.name}`}
-                    className="h-7 px-2 text-muted-foreground/60 hover:text-foreground hover:bg-muted/40"
-                  >
-                    <Pencil size={12} />
-                  </Button>
-                  {!stack.isDefault && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setDeleteTarget(stack)}
-                      aria-label={`Delete ${stack.name}`}
-                      className="h-7 px-2 text-destructive/60 hover:text-destructive hover:bg-destructive/8"
-                    >
-                      <Trash2 size={12} />
-                    </Button>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
 
       {/* Delete confirmation dialog */}
