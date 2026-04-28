@@ -234,8 +234,8 @@ export function ScanTab() {
       </div>
 
       {/* Section: SCAN */}
-      <section aria-label="Proactive scan" className="mb-6">
-        <div className="flex items-center gap-2 mb-3">
+      <section aria-label="Proactive scan" className="mb-8">
+        <div className="flex items-center gap-2 mb-2">
           <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
           <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
             Proactive Scan
@@ -247,13 +247,11 @@ export function ScanTab() {
           )}
         </div>
 
-        <p className="text-sm text-muted-foreground/70 mb-4 max-w-2xl">
-          Automatically check every service on a schedule. When a service crosses
-          a threshold for several scans in a row, a full investigation starts
-          without anyone needing to click.
+        <p className="text-xs text-muted-foreground/60 mb-3 max-w-2xl">
+          Check every service on a schedule. Services that breach a threshold for several scans in a row trigger a full investigation automatically.
         </p>
 
-        <div className="rounded-lg border border-border/40 bg-card/50 p-4 space-y-4">
+        <div className="rounded-lg border border-border/40 bg-card/50 p-4 space-y-3">
           {/* Enable toggle */}
           <div className="flex items-center justify-between">
             <div>
@@ -299,8 +297,8 @@ export function ScanTab() {
                     }}
                     className={
                       active
-                        ? "px-2.5 py-1 text-[11px] font-mono rounded-md border border-primary/60 bg-primary/15 text-foreground"
-                        : "px-2.5 py-1 text-[11px] font-mono rounded-md border border-border/40 bg-card/40 text-muted-foreground hover:border-border hover:text-foreground transition-colors"
+                        ? "px-3 py-1 text-[11px] font-mono rounded-md border border-primary/30 bg-primary/10 text-primary"
+                        : "px-3 py-1 text-[11px] font-mono rounded-md border border-border/40 bg-card/40 text-muted-foreground hover:border-border hover:text-foreground transition-colors"
                     }
                     title={p.value}
                   >
@@ -347,8 +345,8 @@ export function ScanTab() {
       </section>
 
       {/* Section: K8S EVENT POLLER */}
-      <section aria-label="K8s event poller" className="mb-6">
-        <div className="flex items-center gap-2 mb-3">
+      <section aria-label="K8s event poller" className="mb-8">
+        <div className="flex items-center gap-2 mb-2">
           <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
           <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
             K8s Event Poller
@@ -360,14 +358,11 @@ export function ScanTab() {
           )}
         </div>
 
-        <p className="text-sm text-muted-foreground/70 mb-4 max-w-2xl">
-          Catch transient pod crashes the proactive scan misses. Polls the k8s
-          API every 5 minutes for bad-reason events (OOMKilled, CrashLoopBackOff,
-          ImagePullBackOff, etc.) and pod restart-count increments. Requires an
-          infrastructure MCP that exposes <span className="font-mono text-[11px]">list_pods</span> + <span className="font-mono text-[11px]">list_events</span>.
+        <p className="text-xs text-muted-foreground/60 mb-3 max-w-2xl">
+          Catches transient pod crashes the scheduled scan misses (OOMKilled, CrashLoopBackOff, restart bumps). Polls the k8s API every 5 minutes; requires an infrastructure MCP exposing <span className="font-mono text-[11px]">list_pods</span> and <span className="font-mono text-[11px]">list_events</span>.
         </p>
 
-        <div className="rounded-lg border border-border/40 bg-card/50 p-4 space-y-4">
+        <div className="rounded-lg border border-border/40 bg-card/50 p-4 space-y-3">
           {/* Enable toggle */}
           <div className="flex items-center justify-between">
             <div>
@@ -405,7 +400,7 @@ export function ScanTab() {
                 Live state from each stack&apos;s last poll. The toggle only
                 takes effect on stacks with a working k8s provider.
               </p>
-              <ul className="space-y-1.5">
+              <ul className="rounded-md border border-border/40 divide-y divide-border/40 overflow-hidden">
                 {settings.k8sEvents.stacks.map((s) => {
                   const status = k8sStatusLabel(s);
                   const dotClass =
@@ -415,12 +410,12 @@ export function ScanTab() {
                   return (
                     <li
                       key={s.stackId}
-                      className="flex items-center justify-between rounded-md border border-border/30 bg-card/30 px-3 py-2"
+                      className="flex items-center justify-between px-3 py-2 text-xs bg-background/40"
                     >
-                      <span className="font-mono text-xs text-foreground">{s.name}</span>
-                      <span className="flex items-center gap-2">
+                      <span className="font-mono text-foreground truncate">{s.name}</span>
+                      <span className="flex items-center gap-2 shrink-0">
                         <span className={`inline-block w-1.5 h-1.5 rounded-full ${dotClass}`} />
-                        <span className="font-mono text-[11px] text-muted-foreground">
+                        <span className="font-mono text-muted-foreground">
                           {status.label}
                         </span>
                       </span>
@@ -434,8 +429,8 @@ export function ScanTab() {
       </section>
 
       {/* Section: RULES */}
-      <section aria-label="Probe rules" className="mb-6">
-        <div className="flex items-center gap-2 mb-3">
+      <section aria-label="Probe rules" className="mb-8">
+        <div className="flex items-center gap-2 mb-2">
           <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
           <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
             Probe rules
@@ -447,11 +442,8 @@ export function ScanTab() {
           )}
         </div>
 
-        <p className="text-sm text-muted-foreground/70 mb-4 max-w-2xl">
-          Every scheduled scan runs these checks against each service. A check
-          triggers when the query result crosses its threshold for the set
-          number of scans in a row. Use <span className="text-foreground/80">Test</span> to try a check against live
-          data before saving.
+        <p className="text-xs text-muted-foreground/60 mb-3 max-w-2xl">
+          Each scan runs these checks against every service. A check fires when the result crosses its threshold for the set number of scans in a row. <span className="text-foreground/80">Test</span> dry-runs against live data before save.
         </p>
 
         <RuleList

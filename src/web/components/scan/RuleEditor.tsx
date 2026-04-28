@@ -178,7 +178,7 @@ export function RuleEditor({ rule, index, totalCount, onChange, onRemove, onMove
           variant="outline"
           onClick={handleTest}
           disabled={testing || !rule.query.includes("{service}")}
-          className="font-mono text-xs font-medium h-8 rounded-lg px-3"
+          className="font-mono text-xs font-medium h-9 rounded-lg px-4"
           title={!rule.query.includes("{service}") ? "Add {service} placeholder to enable testing" : "Run this rule against a live service"}
         >
           {testing ? "Testing..." : "Test rule"}
