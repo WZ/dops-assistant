@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ALL_SOURCES, type NotificationSource, type SeverityLevel } from "../../types/notifications.js";
 
@@ -83,100 +84,99 @@ export function EmailRecipientEditor({ stackFetch, existing, onClose, onSaved }:
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
-      onClick={onClose}
-      role="dialog"
-      aria-modal="true"
-      aria-label={existing ? "Edit recipient" : "Add recipient"}
-    >
-      <div
-        className="relative w-full max-w-md mx-4 rounded-lg border border-border/40 bg-card shadow-xl p-6"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-2 mb-4">
-          <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
-          <h3 className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
-            {existing ? "Edit recipient" : "Add recipient"}
-          </h3>
-        </div>
+    <div className="h-full flex flex-col overflow-hidden" aria-label={existing ? "Edit recipient" : "Add recipient"}>
+      <div className="flex items-center justify-between px-5 py-3 border-b border-border/40 shrink-0">
+        <Button
+          variant="ghost"
+          onClick={onClose}
+          className="h-auto px-0 py-0 text-xs font-mono text-muted-foreground/60 hover:text-primary hover:bg-transparent transition-colors group"
+        >
+          <ArrowLeft size={12} className="!size-auto group-hover:-translate-x-0.5 transition-transform" />
+          back to notifications
+        </Button>
+        <h2 className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/50">
+          {existing ? "Edit recipient" : "New Recipient"}
+        </h2>
+        <Button
+          variant="outline"
+          onClick={() => void save()}
+          disabled={saving}
+          className="px-3 py-1.5 h-auto text-[10px] font-mono bg-primary/10 border-primary/20 text-primary hover:bg-primary/15 hover:text-primary disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          {saving ? "Saving…" : existing ? "Save" : "Create"}
+        </Button>
+      </div>
 
-        <label className={LABEL_CLASS}>Email address</label>
-        <input
-          type="email"
-          value={address}
-          onChange={(e) => setAddress(e.target.value)}
-          placeholder="channel-name@org.onmicrosoft.com"
-          className={`${INPUT_CLASS} mb-3`}
-        />
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-3xl mx-auto px-5 py-6 space-y-5">
+          <div>
+            <label className={LABEL_CLASS}>Email address</label>
+            <input
+              type="email"
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              placeholder="channel-name@org.onmicrosoft.com"
+              className={INPUT_CLASS}
+            />
+          </div>
 
-        <label className={LABEL_CLASS}>Label (optional)</label>
-        <input
-          type="text"
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          placeholder="#sre-alerts"
-          className={`${INPUT_CLASS} mb-3`}
-        />
+          <div>
+            <label className={LABEL_CLASS}>Label (optional)</label>
+            <input
+              type="text"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="#sre-alerts"
+              className={INPUT_CLASS}
+            />
+          </div>
 
-        <label className={LABEL_CLASS}>Minimum severity</label>
-        <div className="flex gap-4 mb-3 text-xs text-foreground">
-          {(["low", "medium", "high", "critical"] as Severity[]).map((s) => (
-            <label key={s} className="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="radio"
-                name="sev"
-                checked={minSeverity === s}
-                onChange={() => setMinSeverity(s)}
-                className="accent-primary"
-              />
-              {s}
-            </label>
-          ))}
-        </div>
+          <div>
+            <label className={LABEL_CLASS}>Minimum severity</label>
+            <div className="flex gap-4 text-xs text-foreground">
+              {(["low", "medium", "high", "critical"] as Severity[]).map((s) => (
+                <label key={s} className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="sev"
+                    checked={minSeverity === s}
+                    onChange={() => setMinSeverity(s)}
+                    className="accent-primary"
+                  />
+                  {s}
+                </label>
+              ))}
+            </div>
+          </div>
 
-        <label className={LABEL_CLASS}>Trigger sources</label>
-        <div className="grid grid-cols-2 gap-2 mb-3 text-xs text-foreground">
-          {ALL_SOURCES.map((s) => (
-            <label key={s} className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={sources.has(s)}
-                onChange={() => toggleSource(s)}
-                className="accent-primary"
-              />
-              {SOURCE_HELP[s]}
-            </label>
-          ))}
-        </div>
+          <div>
+            <label className={LABEL_CLASS}>Trigger sources</label>
+            <div className="grid grid-cols-2 gap-2 text-xs text-foreground">
+              {ALL_SOURCES.map((s) => (
+                <label key={s} className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={sources.has(s)}
+                    onChange={() => toggleSource(s)}
+                    className="accent-primary"
+                  />
+                  {SOURCE_HELP[s]}
+                </label>
+              ))}
+            </div>
+          </div>
 
-        <label className="flex items-center gap-2 text-xs text-foreground mb-4 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={(e) => setEnabled(e.target.checked)}
-            className="accent-primary"
-          />
-          Enabled
-        </label>
+          <label className="flex items-center gap-2 text-xs text-foreground cursor-pointer">
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(e) => setEnabled(e.target.checked)}
+              className="accent-primary"
+            />
+            Enabled
+          </label>
 
-        {error && <p className="font-mono text-xs text-destructive mb-3">{error}</p>}
-
-        <div className="flex justify-end gap-2">
-          <Button
-            variant="outline"
-            onClick={onClose}
-            className="font-mono text-xs font-medium h-9 rounded-lg px-3"
-          >
-            Cancel
-          </Button>
-          <Button
-            onClick={() => void save()}
-            disabled={saving}
-            className="font-mono text-xs font-medium h-9 rounded-lg px-3"
-          >
-            {saving ? "Saving…" : "Save"}
-          </Button>
+          {error && <p className="font-mono text-xs text-destructive">{error}</p>}
         </div>
       </div>
     </div>

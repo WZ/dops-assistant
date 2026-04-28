@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useStackContext } from "../contexts/StackContext";
-import { EmailRecipientsSection } from "./EmailRecipientsSection.js";
+import { EmailRecipientsSection, type EmailRecipientsSectionHandle, type Recipient } from "./EmailRecipientsSection.js";
+import { EmailRecipientEditor } from "./EmailRecipientEditor.js";
+import { SlackEditor } from "./SlackEditor.js";
 
 type OnScanCompleteMode = "always" | "hits-only" | "off";
 
@@ -15,8 +17,27 @@ interface SlackConfig {
 const LABEL_CLASS =
   "font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/60";
 
-const INPUT_CLASS =
-  "w-full rounded-md border border-border/40 bg-card/50 px-3 py-2 font-mono text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/15";
+const SCAN_MODE_LABEL: Record<OnScanCompleteMode, string> = {
+  always: "always",
+  "hits-only": "hits only",
+  off: "off",
+};
+
+function maskWebhook(url: string | null): string {
+  if (!url) return "Not configured";
+  // Slack webhook URLs are like https://hooks.slack.com/services/T.../B.../xxxx
+  // Show host + first segment, mask the rest.
+  try {
+    const u = new URL(url);
+    const segments = u.pathname.split("/").filter(Boolean);
+    const visible = segments[0] ? `/${segments[0]}/…` : "";
+    return `${u.host}${visible}`;
+  } catch {
+    return url.length > 32 ? `${url.slice(0, 32)}…` : url;
+  }
+}
+
+type EditorMode = "none" | "slack" | "email";
 
 export function NotificationsTab() {
   const { stackFetch } = useStackContext();
@@ -27,54 +48,45 @@ export function NotificationsTab() {
     onScanComplete: "hits-only",
   });
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
-  const [urlInput, setUrlInput] = useState("");
-  const [enabledInput, setEnabledInput] = useState(false);
-  const [onScanCompleteInput, setOnScanCompleteInput] = useState<OnScanCompleteMode>("hits-only");
-  const [showUrl, setShowUrl] = useState(false);
-  const [dirty, setDirty] = useState(false);
+  const [editorMode, setEditorMode] = useState<EditorMode>("none");
+  const [editingRecipient, setEditingRecipient] = useState<Recipient | null>(null);
+  const recipientsRef = useRef<EmailRecipientsSectionHandle>(null);
 
   const fetchConfig = useCallback(async () => {
     try {
       const res = await stackFetch("/api/notifications");
       const data = await res.json();
       setSlack(data.slack);
-      setUrlInput(data.slack.webhookUrl ?? "");
-      setEnabledInput(data.slack.enabled);
-      setOnScanCompleteInput(data.slack.onScanComplete ?? "hits-only");
     } catch { /* ignore */ }
     setLoading(false);
   }, [stackFetch]);
 
   useEffect(() => { fetchConfig(); }, [fetchConfig]);
 
-  const handleSave = async () => {
-    setSaving(true);
-    setTestResult(null);
+  const toggleSlackEnabled = async () => {
+    const next = !slack.enabled;
     try {
       const res = await stackFetch("/api/notifications", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           slack: {
-            webhookUrl: urlInput || null,
-            enabled: enabledInput,
-            onScanComplete: onScanCompleteInput,
+            webhookUrl: slack.webhookUrl,
+            enabled: next,
+            onScanComplete: slack.onScanComplete,
           },
         }),
       });
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Failed to save");
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? "Failed to update");
       }
-      setDirty(false);
       await fetchConfig();
     } catch (err) {
       setTestResult({ ok: false, error: err instanceof Error ? err.message : "Save failed" });
     }
-    setSaving(false);
   };
 
   const handleTest = async () => {
@@ -84,14 +96,10 @@ export function NotificationsTab() {
       const res = await stackFetch("/api/notifications/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ webhookUrl: urlInput || undefined }),
+        body: JSON.stringify({}),
       });
-      const data = await res.json();
-      if (res.ok) {
-        setTestResult({ ok: true });
-      } else {
-        setTestResult({ ok: false, error: data.error || "Test failed" });
-      }
+      const data = await res.json().catch(() => ({}));
+      setTestResult(res.ok ? { ok: true } : { ok: false, error: data.error ?? "Test failed" });
     } catch {
       setTestResult({ ok: false, error: "Network error" });
     }
@@ -100,18 +108,55 @@ export function NotificationsTab() {
 
   if (loading) {
     return (
-      <div className="p-6">
-        <div className="h-32 rounded-lg" style={{
-          background: "linear-gradient(90deg, hsl(var(--muted)) 25%, hsl(var(--secondary)) 50%, hsl(var(--muted)) 75%)",
-          backgroundSize: "200% 100%",
-          animation: "shimmer 1.6s infinite",
-        }} />
-      </div>
+      <div className="h-32 rounded-lg" style={{
+        background: "linear-gradient(90deg, hsl(var(--muted)) 25%, hsl(var(--secondary)) 50%, hsl(var(--muted)) 75%)",
+        backgroundSize: "200% 100%",
+        animation: "shimmer 1.6s infinite",
+      }} />
     );
   }
 
+  if (editorMode === "slack") {
+    return (
+      <SlackEditor
+        stackFetch={stackFetch}
+        config={slack}
+        onClose={() => setEditorMode("none")}
+        onSaved={() => {
+          setEditorMode("none");
+          void fetchConfig();
+        }}
+      />
+    );
+  }
+
+  if (editorMode === "email") {
+    return (
+      <EmailRecipientEditor
+        stackFetch={stackFetch}
+        existing={editingRecipient}
+        onClose={() => { setEditorMode("none"); setEditingRecipient(null); }}
+        onSaved={() => {
+          setEditorMode("none");
+          setEditingRecipient(null);
+          void recipientsRef.current?.refresh();
+        }}
+      />
+    );
+  }
+
+  const slackConfigured = !!slack.webhookUrl;
+
   return (
-    <div className="p-6">
+    <div>
+      {/* Title row */}
+      <div className="mb-6 animate-fade-up">
+        <h1 className="font-display text-2xl font-extrabold tracking-tight text-foreground/90">Notifications</h1>
+        <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">
+          Where to send investigation results and scan summaries
+        </p>
+      </div>
+
       {/* Section: SLACK */}
       <section aria-label="Slack notifications" className="mb-6">
         <div className="flex items-center gap-2 mb-3">
@@ -136,84 +181,64 @@ export function NotificationsTab() {
             <button
               type="button"
               role="switch"
-              aria-checked={enabledInput}
-              onClick={() => { setEnabledInput(!enabledInput); setDirty(true); }}
+              aria-checked={slack.enabled}
+              onClick={() => void toggleSlackEnabled()}
               className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                enabledInput ? "bg-primary" : "bg-muted-foreground/20"
+                slack.enabled ? "bg-primary" : "bg-muted-foreground/20"
               }`}
             >
               <span className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
-                enabledInput ? "translate-x-6" : "translate-x-1"
+                slack.enabled ? "translate-x-6" : "translate-x-1"
               }`} />
             </button>
           </div>
 
-          {/* Webhook URL */}
+          {/* Webhook row — mirrors Email recipients list */}
           <div>
-            <label className={LABEL_CLASS}>Webhook URL</label>
-            <div className="relative mt-1">
-              <input
-                type={showUrl ? "text" : "password"}
-                value={urlInput}
-                onChange={(e) => { setUrlInput(e.target.value); setDirty(true); }}
-                placeholder="https://hooks.slack.com/services/..."
-                className={INPUT_CLASS}
-              />
-              <button
-                type="button"
-                onClick={() => setShowUrl(!showUrl)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 font-mono text-[10px] text-muted-foreground/50 hover:text-muted-foreground"
+            <div className="flex items-center justify-between mb-2">
+              <label className={LABEL_CLASS}>Webhook</label>
+              <Button
+                variant="outline"
+                onClick={() => setEditorMode("slack")}
+                className="font-mono text-xs font-medium h-9 rounded-lg px-3"
               >
-                {showUrl ? "hide" : "show"}
-              </button>
+                {slackConfigured ? "Edit webhook" : "+ Add webhook"}
+              </Button>
             </div>
-            <p className="text-[10px] text-muted-foreground/40 mt-1 font-mono">
-              Create at slack.com → Apps → Incoming Webhooks
-            </p>
+
+            {!slackConfigured ? (
+              <div className="rounded-md border border-border/40 bg-background/40 px-4 py-6 font-mono text-xs text-muted-foreground/60 text-center">
+                No webhook configured
+              </div>
+            ) : (
+              <ul className="rounded-md border border-border/40 divide-y divide-border/40 overflow-hidden">
+                <li
+                  className="flex items-center gap-3 px-3 py-2 text-xs bg-background/40 hover:bg-background/60 transition-colors cursor-pointer"
+                  onClick={() => setEditorMode("slack")}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => { if (e.key === "Enter") setEditorMode("slack"); }}
+                  aria-label="Edit Slack webhook"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="font-mono text-foreground truncate">{maskWebhook(slack.webhookUrl)}</div>
+                  </div>
+                  <span className="font-mono px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground text-[10px]">
+                    scan: {SCAN_MODE_LABEL[slack.onScanComplete]}
+                  </span>
+                  <Button
+                    variant="outline"
+                    onClick={(e) => { e.stopPropagation(); void handleTest(); }}
+                    disabled={testing}
+                    className="font-mono text-xs font-medium h-9 rounded-lg px-4"
+                  >
+                    {testing ? "…" : "Test"}
+                  </Button>
+                </li>
+              </ul>
+            )}
           </div>
 
-          {/* Scan run summary mode */}
-          <div>
-            <label className={LABEL_CLASS}>Scan run summary</label>
-            <div className="flex gap-4 mt-2">
-              {(["always", "hits-only", "off"] as const).map(mode => (
-                <label key={mode} className="flex items-center gap-2 text-xs font-mono text-foreground">
-                  <input
-                    type="radio"
-                    name="slack-scan-run-mode"
-                    value={mode}
-                    checked={onScanCompleteInput === mode}
-                    onChange={() => { setOnScanCompleteInput(mode); setDirty(true); }}
-                  />
-                  {mode === "always" ? "Always" : mode === "hits-only" ? "Hits only" : "Off"}
-                </label>
-              ))}
-            </div>
-            <p className="text-[10px] text-muted-foreground/40 mt-1 font-mono">
-              When to post a scan run summary to Slack. "Hits only" posts when the scan flagged services.
-            </p>
-          </div>
-
-          {/* Actions */}
-          <div className="flex items-center gap-2 pt-1">
-            <Button
-              onClick={handleSave}
-              disabled={saving || !dirty}
-              className="font-mono text-xs font-medium h-9 rounded-lg px-4"
-            >
-              {saving ? "Saving..." : "Save"}
-            </Button>
-            <Button
-              variant="outline"
-              onClick={handleTest}
-              disabled={testing || !urlInput}
-              className="font-mono text-xs font-medium h-9 rounded-lg px-4"
-            >
-              {testing ? "Sending..." : "Test"}
-            </Button>
-          </div>
-
-          {/* Test result */}
           {testResult && (
             <div className={`text-xs font-mono px-3 py-2 rounded-md ${
               testResult.ok
@@ -226,7 +251,11 @@ export function NotificationsTab() {
         </div>
       </section>
 
-      <EmailRecipientsSection stackFetch={stackFetch} />
+      <EmailRecipientsSection
+        ref={recipientsRef}
+        stackFetch={stackFetch}
+        onOpenEditor={(r) => { setEditingRecipient(r); setEditorMode("email"); }}
+      />
     </div>
   );
 }

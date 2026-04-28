@@ -24,7 +24,7 @@ export function SettingsPage({ onRunDiscovery, initialTab = "providers", stacks,
         Settings
       </h1>
       <p className="text-xs font-mono text-muted-foreground/70 tracking-wide mb-5">
-        Providers, skills, and configuration
+        Providers, skills, stacks, scans, and notifications
       </p>
 
       <Tabs defaultValue={initialTab}>

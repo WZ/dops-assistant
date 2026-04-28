@@ -169,10 +169,16 @@ export function SkillsPage() {
   }
 
   return (
-    <div className="h-full flex flex-col overflow-hidden">
-      <div className="px-5 py-3 border-b border-border/40 flex items-center justify-between shrink-0">
-        <h2 className="font-display text-sm font-bold tracking-wide uppercase text-foreground/80">Skills</h2>
-        <div className="relative">
+    <div className="h-full overflow-y-auto relative z-[2]">
+      {/* Title row */}
+      <div className="mb-6 animate-fade-up flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-display text-2xl font-extrabold tracking-tight text-foreground/90">Skills</h1>
+          <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">
+            {skills.length} skill{skills.length !== 1 ? "s" : ""} defined
+          </p>
+        </div>
+        <div className="relative shrink-0">
           <Button
             variant="outline"
             onClick={() => setShowTemplates(!showTemplates)}
@@ -198,8 +204,7 @@ export function SkillsPage() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto px-5 py-6">
+      <div className="max-w-4xl">
           {skills.length === 0 ? (
             <div className="text-center py-12 animate-fade-in">
               <div className="w-12 h-12 rounded-xl bg-primary/8 border border-primary/15 flex items-center justify-center mx-auto mb-3">
@@ -271,7 +276,6 @@ export function SkillsPage() {
               })}
             </div>
           )}
-        </div>
       </div>
     </div>
   );
