@@ -112,6 +112,14 @@ export function NotificationsTab() {
 
   return (
     <div className="p-6">
+      {/* Title row */}
+      <div className="mb-6 animate-fade-up">
+        <h1 className="font-display text-2xl font-extrabold tracking-tight text-foreground/90">Notifications</h1>
+        <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">
+          Where to send investigation results and scan summaries
+        </p>
+      </div>
+
       {/* Section: SLACK */}
       <section aria-label="Slack notifications" className="mb-6">
         <div className="flex items-center gap-2 mb-3">

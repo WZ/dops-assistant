@@ -209,20 +209,28 @@ export function ScanTab() {
 
   return (
     <div className="p-6">
-      {/* Top action bar — Save lives here so it's reachable without scrolling past the rule list. */}
-      <div className="flex items-center justify-end gap-3 mb-5">
-        {saveError && (
-          <div className="text-xs font-mono px-3 py-2 rounded-md bg-destructive/10 text-destructive">
-            {saveError}
-          </div>
-        )}
-        <Button
-          onClick={handleSave}
-          disabled={saving || !dirty}
-          className="font-mono text-xs font-medium h-9 rounded-lg px-4"
-        >
-          {saving ? "Saving..." : "Save"}
-        </Button>
+      {/* Title row: h1 + subtitle on the left, Save (and any error) on the right */}
+      <div className="mb-6 animate-fade-up flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-display text-2xl font-extrabold tracking-tight text-foreground/90">Scan</h1>
+          <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">
+            Scheduled probes and Kubernetes event polling
+          </p>
+        </div>
+        <div className="flex items-center gap-3 shrink-0">
+          {saveError && (
+            <div className="text-xs font-mono px-3 py-2 rounded-md bg-destructive/10 text-destructive">
+              {saveError}
+            </div>
+          )}
+          <Button
+            onClick={handleSave}
+            disabled={saving || !dirty}
+            className="font-mono text-xs font-medium h-9 rounded-lg px-4"
+          >
+            {saving ? "Saving..." : "Save"}
+          </Button>
+        </div>
       </div>
 
       {/* Section: SCAN */}

@@ -66,12 +66,15 @@ export function StacksManagePage({ stacks, activeStackId, onSwitchStack, onRefet
   };
 
   return (
-    <div>
-      {/* Header row: title + new stack action */}
-      <div className="flex items-center justify-between gap-4 mb-4">
-        <p className="text-xs font-mono text-muted-foreground/70 tracking-wide">
-          {stacks.length} stack{stacks.length !== 1 ? "s" : ""} configured
-        </p>
+    <div className="h-full overflow-y-auto relative z-[2]">
+      {/* Title row */}
+      <div className="mb-6 animate-fade-up flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-display text-2xl font-extrabold tracking-tight text-foreground/90">Stacks</h1>
+          <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">
+            {stacks.length} stack{stacks.length !== 1 ? "s" : ""} configured
+          </p>
+        </div>
         <Button
           variant="outline"
           onClick={() => setCreateOpen(true)}
