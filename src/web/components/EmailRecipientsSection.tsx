@@ -1,13 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, forwardRef, useImperativeHandle } from "react";
+import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { EmailRecipientEditor } from "./EmailRecipientEditor.js";
+import type { NotificationSource, SeverityLevel } from "../../types/notifications.js";
 
-interface Recipient {
+export interface Recipient {
   id: number;
   address: string;
   label?: string;
-  minSeverity: "low" | "medium" | "high" | "critical";
-  allowedSources: Array<"webhook" | "scan" | "poller" | "manual">;
+  minSeverity: SeverityLevel;
+  allowedSources: NotificationSource[];
   enabled: boolean;
 }
 
@@ -16,14 +17,21 @@ interface EmailConfig {
   recipients: Recipient[];
 }
 
-interface Props {
-  stackFetch: (path: string, init?: RequestInit) => Promise<Response>;
+export interface EmailRecipientsSectionHandle {
+  refresh: () => Promise<void>;
 }
 
-const SOURCE_LABELS: Record<Recipient["allowedSources"][number], string> = {
+interface Props {
+  stackFetch: (path: string, init?: RequestInit) => Promise<Response>;
+  onOpenEditor: (recipient: Recipient | null) => void;
+}
+
+const SOURCE_LABELS: Record<NotificationSource, string> = {
   webhook: "webhook",
   scan: "scan",
+  "scan-run": "scan-run",
   poller: "poller",
+  "k8s-event-poller": "k8s-events",
   manual: "manual",
 };
 
@@ -37,12 +45,10 @@ const SEVERITY_LABELS: Record<Recipient["minSeverity"], string> = {
 const LABEL_CLASS =
   "font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/60";
 
-export function EmailRecipientsSection({ stackFetch }: Props) {
+export const EmailRecipientsSection = forwardRef<EmailRecipientsSectionHandle, Props>(function EmailRecipientsSection({ stackFetch, onOpenEditor }, ref) {
   const [cfg, setCfg] = useState<EmailConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [editing, setEditing] = useState<Recipient | null>(null);
   const [testingId, setTestingId] = useState<number | null>(null);
   const [testResult, setTestResult] = useState<{ id: number; ok: boolean; msg: string } | null>(null);
 
@@ -60,6 +66,7 @@ export function EmailRecipientsSection({ stackFetch }: Props) {
     }
   };
 
+  useImperativeHandle(ref, () => ({ refresh }), []);
   useEffect(() => { void refresh(); }, []);
 
   const toggleGlobal = async (enabled: boolean) => {
@@ -103,9 +110,6 @@ export function EmailRecipientsSection({ stackFetch }: Props) {
       setTestingId(null);
     }
   };
-
-  const openAdd = () => { setEditing(null); setEditorOpen(true); };
-  const openEdit = (r: Recipient) => { setEditing(r); setEditorOpen(true); };
 
   if (loading && !cfg) {
     return <div className="font-mono text-xs text-muted-foreground/60">Loading email settings…</div>;
@@ -152,7 +156,7 @@ export function EmailRecipientsSection({ stackFetch }: Props) {
             <label className={LABEL_CLASS}>Recipients</label>
             <Button
               variant="outline"
-              onClick={openAdd}
+              onClick={() => onOpenEditor(null)}
               className="font-mono text-xs font-medium h-9 rounded-lg px-3"
             >
               + Add recipient
@@ -166,7 +170,15 @@ export function EmailRecipientsSection({ stackFetch }: Props) {
           ) : (
             <ul className="rounded-md border border-border/40 divide-y divide-border/40 overflow-hidden">
               {cfg.recipients.map((r) => (
-                <li key={r.id} className="flex items-center gap-3 px-3 py-2 text-xs bg-background/40">
+                <li
+                  key={r.id}
+                  className="flex items-center gap-3 px-3 py-2 text-xs bg-background/40 hover:bg-background/60 transition-colors cursor-pointer group"
+                  onClick={() => onOpenEditor(r)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => { if (e.key === "Enter") onOpenEditor(r); }}
+                  aria-label={`Edit ${r.label ?? r.address}`}
+                >
                   <div className="flex-1 min-w-0">
                     <div className="font-mono text-foreground truncate">{r.label ?? r.address}</div>
                     {r.label && <div className="font-mono text-muted-foreground/60 truncate">{r.address}</div>}
@@ -186,30 +198,26 @@ export function EmailRecipientsSection({ stackFetch }: Props) {
                     type="checkbox"
                     checked={r.enabled}
                     onChange={() => void toggleRow(r)}
+                    onClick={(e) => e.stopPropagation()}
                     className="accent-primary"
                     aria-label={`Enable ${r.label ?? r.address}`}
                   />
                   <Button
                     variant="outline"
-                    onClick={() => void testSend(r)}
+                    onClick={(e) => { e.stopPropagation(); void testSend(r); }}
                     disabled={testingId === r.id}
-                    className="font-mono text-xs font-medium h-9 rounded-lg px-2"
+                    className="font-mono text-xs font-medium h-9 rounded-lg px-4"
                   >
                     {testingId === r.id ? "…" : "Test"}
                   </Button>
                   <Button
-                    variant="outline"
-                    onClick={() => openEdit(r)}
-                    className="font-mono text-xs font-medium h-9 rounded-lg px-2"
+                    variant="ghost"
+                    size="sm"
+                    onClick={(e) => { e.stopPropagation(); void deleteRow(r); }}
+                    aria-label={`Delete ${r.label ?? r.address}`}
+                    className="h-7 px-2 text-destructive/60 hover:text-destructive hover:bg-destructive/8"
                   >
-                    Edit
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => void deleteRow(r)}
-                    className="font-mono text-xs font-medium h-9 rounded-lg px-2 border-destructive/40 text-destructive hover:bg-destructive/10"
-                  >
-                    Delete
+                    <Trash2 size={12} />
                   </Button>
                 </li>
               ))}
@@ -227,15 +235,6 @@ export function EmailRecipientsSection({ stackFetch }: Props) {
           </div>
         )}
       </div>
-
-      {editorOpen && (
-        <EmailRecipientEditor
-          stackFetch={stackFetch}
-          existing={editing}
-          onClose={() => setEditorOpen(false)}
-          onSaved={() => { setEditorOpen(false); void refresh(); }}
-        />
-      )}
     </section>
   );
-}
+});

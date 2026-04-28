@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useStackContext } from "../contexts/StackContext";
-import { EmailRecipientsSection } from "./EmailRecipientsSection.js";
+import { EmailRecipientsSection, type EmailRecipientsSectionHandle, type Recipient } from "./EmailRecipientsSection.js";
+import { EmailRecipientEditor } from "./EmailRecipientEditor.js";
 
 type OnScanCompleteMode = "always" | "hits-only" | "off";
 
@@ -35,6 +36,11 @@ export function NotificationsTab() {
   const [onScanCompleteInput, setOnScanCompleteInput] = useState<OnScanCompleteMode>("hits-only");
   const [showUrl, setShowUrl] = useState(false);
   const [dirty, setDirty] = useState(false);
+  // Email recipient editor state lives here so the editor can replace the
+  // entire Notifications body (full-page panel, matching SkillEditor).
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editingRecipient, setEditingRecipient] = useState<Recipient | null>(null);
+  const recipientsRef = useRef<EmailRecipientsSectionHandle>(null);
 
   const fetchConfig = useCallback(async () => {
     try {
@@ -107,6 +113,22 @@ export function NotificationsTab() {
           animation: "shimmer 1.6s infinite",
         }} />
       </div>
+    );
+  }
+
+  // Full-page editor mode: replaces the Slack + Email sections (matches Skills pattern).
+  if (editorOpen) {
+    return (
+      <EmailRecipientEditor
+        stackFetch={stackFetch}
+        existing={editingRecipient}
+        onClose={() => { setEditorOpen(false); setEditingRecipient(null); }}
+        onSaved={() => {
+          setEditorOpen(false);
+          setEditingRecipient(null);
+          void recipientsRef.current?.refresh();
+        }}
+      />
     );
   }
 
@@ -234,7 +256,11 @@ export function NotificationsTab() {
         </div>
       </section>
 
-      <EmailRecipientsSection stackFetch={stackFetch} />
+      <EmailRecipientsSection
+        ref={recipientsRef}
+        stackFetch={stackFetch}
+        onOpenEditor={(r) => { setEditingRecipient(r); setEditorOpen(true); }}
+      />
     </div>
   );
 }
