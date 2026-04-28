@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.9.0] - 2026-04-28
+
+### Changed
+- **Settings tabs all share the same chrome.** Every tab now has an `h1` + subtitle + top-right primary action (Skills / Stacks / Scan / Notifications / Providers). Parent subtitle updated to "Providers, skills, stacks, scans, and notifications" to match the actual tab set.
+- **Stacks view is a 2-column card grid** matching Skills, replacing the wide single-column rows. Inline rename (pencil → editable input) replaces the modal; `CreateStackDialog` and `RenameStackDialog` are removed.
+- **Provider, Stack, Email, and Slack edits are full-page panels** — same chrome as the Skills editor (back link + small primary-tinted Save in the top bar). Modals are gone; ProviderForm exposes `triggerSave`/`triggerTest` so the Save button can live in the top bar with `Test` next to it.
+- **Slack notifications mirror Email's row pattern.** Enable toggle on top, then a row showing the masked webhook URL + scan-run mode + Test button. Click the row or "Edit webhook" to open the new SlackEditor.
+- **TOOLS section on provider cards is obviously expandable** — full-row hover, group-hover affordances, tool count appended to the label, cursor pointer.
+- **Services view has the same filter bar as Activities.** Health chips + Tags select + Search + Sort, with `FilterGroup` and `Chip` extracted to `src/web/components/ui/filter-group.tsx` and shared with Investigations / Patterns / Events / Scans.
+- **`/` focuses the search input on every search-bearing page.** Investigations, Patterns, Events, Services share `useSlashFocus` from `src/web/hooks/`.
+- **Scan tab tightened** — section gaps, cron preset chip styling, per-stack status rows now match the rest of the Settings density. Save lives in the title row with the h1.
+- **ScanRun Export button** now matches the Investigation Export styling (outline + DropdownMenu wrapper).
+
+### Removed
+- `CreateStackDialog.tsx` and `RenameStackDialog.tsx` — replaced by inline rename and full-page `StackEditor`.
+
 ## [0.3.8.1] - 2026-04-27
 
 ### Fixed
