@@ -21,12 +21,13 @@
  * silently swallows. Including it now keeps the Task 26 diff UI-free.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { ArrowLeft, ChevronDown, Download } from "lucide-react";
+import { ArrowLeft, ChevronDown, Check, ClipboardCopy, Download, Image as ImageIcon, Link2, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useStackContext } from "../contexts/StackContext";
@@ -734,14 +735,23 @@ function ExportMenu({
   const { stackFetch } = useStackContext();
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<{ kind: "ok" | "error"; message: string } | null>(null);
+  const [copiedKey, setCopiedKey] = useState<"link" | "md" | null>(null);
 
   const flashToast = (kind: "ok" | "error", message: string) => {
     setToast({ kind, message });
     setTimeout(() => setToast((t) => (t?.message === message ? null : t)), 4000);
   };
 
+  const flashCopied = (key: "link" | "md") => {
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1200);
+  };
+
   const doCopyLink = async () => {
-    try { await copyLink(); } catch { /* ignore */ }
+    try {
+      await copyLink();
+      flashCopied("link");
+    } catch { /* ignore */ }
   };
 
   const doCopyMarkdown = async () => {
@@ -762,7 +772,10 @@ function ExportMenu({
       status: i.status,
       reportSummary: i.reportSummary,
     }));
-    try { await copyMarkdown(summaryShape, invShape); } catch { /* ignore */ }
+    try {
+      await copyMarkdown(summaryShape, invShape);
+      flashCopied("md");
+    } catch { /* ignore */ }
   };
 
   const doDownloadPng = async () => {
@@ -817,21 +830,44 @@ function ExportMenu({
             <ChevronDown size={10} className="!size-auto opacity-50" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="min-w-[180px]">
-          <DropdownMenuItem onSelect={(e) => { e.preventDefault(); void doCopyLink(); }} className="font-mono text-[11px]">
-            Copy link
+        <DropdownMenuContent align="end" className="min-w-[200px]">
+          <DropdownMenuItem
+            onSelect={(e) => { e.preventDefault(); void doCopyLink(); }}
+            className="font-mono text-[11px] gap-2"
+          >
+            {copiedKey === "link" ? (
+              <Check size={11} className="!size-auto text-success" />
+            ) : (
+              <Link2 size={11} className="!size-auto" />
+            )}
+            {copiedKey === "link" ? "Copied" : "Copy link"}
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={(e) => { e.preventDefault(); void doCopyMarkdown(); }} className="font-mono text-[11px]">
-            Copy as Markdown
+          <DropdownMenuItem
+            onSelect={(e) => { e.preventDefault(); void doCopyMarkdown(); }}
+            className="font-mono text-[11px] gap-2"
+          >
+            {copiedKey === "md" ? (
+              <Check size={11} className="!size-auto text-success" />
+            ) : (
+              <ClipboardCopy size={11} className="!size-auto" />
+            )}
+            {copiedKey === "md" ? "Copied" : "Copy markdown"}
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={(e) => { e.preventDefault(); void doDownloadPng(); }} className="font-mono text-[11px]">
-            Download PNG
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onSelect={(e) => { e.preventDefault(); void doDownloadPng(); }}
+            className="font-mono text-[11px] gap-2"
+          >
+            <ImageIcon size={11} className="!size-auto" />
+            Download as PNG
           </DropdownMenuItem>
+          <DropdownMenuSeparator />
           <DropdownMenuItem
             onSelect={(e) => { e.preventDefault(); void doSendToSlack(); }}
             disabled={busy}
-            className="font-mono text-[11px]"
+            className="font-mono text-[11px] gap-2"
           >
+            <Send size={11} className="!size-auto" />
             Send to Slack
           </DropdownMenuItem>
         </DropdownMenuContent>
