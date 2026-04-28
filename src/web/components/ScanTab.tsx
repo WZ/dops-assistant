@@ -209,6 +209,22 @@ export function ScanTab() {
 
   return (
     <div className="p-6">
+      {/* Top action bar — Save lives here so it's reachable without scrolling past the rule list. */}
+      <div className="flex items-center justify-end gap-3 mb-5">
+        {saveError && (
+          <div className="text-xs font-mono px-3 py-2 rounded-md bg-destructive/10 text-destructive">
+            {saveError}
+          </div>
+        )}
+        <Button
+          onClick={handleSave}
+          disabled={saving || !dirty}
+          className="font-mono text-xs font-medium h-9 rounded-lg px-4"
+        >
+          {saving ? "Saving..." : "Save"}
+        </Button>
+      </div>
+
       {/* Section: SCAN */}
       <section aria-label="Proactive scan" className="mb-6">
         <div className="flex items-center gap-2 mb-3">
@@ -452,21 +468,6 @@ export function ScanTab() {
         )}
       </section>
 
-      {/* Form-wide save action — saves all sections above (scan, k8s events, rules). */}
-      <div className="flex items-center gap-3 pt-2">
-        <Button
-          onClick={handleSave}
-          disabled={saving || !dirty}
-          className="font-mono text-xs font-medium h-9 rounded-lg px-4"
-        >
-          {saving ? "Saving..." : "Save"}
-        </Button>
-        {saveError && (
-          <div className="text-xs font-mono px-3 py-2 rounded-md bg-destructive/10 text-destructive">
-            {saveError}
-          </div>
-        )}
-      </div>
     </div>
   );
 }
