@@ -11,7 +11,10 @@ test.describe("Bootstrap flow", () => {
   test("Settings page shows 'New Provider' button", async ({ page }) => {
     await page.goto("/settings");
     await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "New Provider" })).toBeVisible();
+    // When the stack has no providers configured, both the header button and
+    // the empty-state CTA render with the same accessible name. Either is fine
+    // for asserting the entry point exists, so pick the first.
+    await expect(page.getByRole("button", { name: "New Provider" }).first()).toBeVisible();
   });
 
   test("New Provider form exposes Name, URL, Roles, Region", async ({ page }) => {
