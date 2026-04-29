@@ -8,20 +8,15 @@ import { test, expect } from "@playwright/test";
  * discovery.spec.ts via mocked WS events.
  */
 test.describe("Bootstrap flow", () => {
-  test("empty-state shows 'Add First Provider' CTA", async ({ page }) => {
+  test("Settings page shows 'New Provider' button", async ({ page }) => {
     await page.goto("/settings");
     await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
-    // If the stack has providers, this test's assertion is a smoke check — otherwise
-    // the CTA is present. Both outcomes are acceptable.
-    const hasCta = await page.getByRole("button", { name: "Add First Provider" }).isVisible().catch(() => false);
-    const hasAdd = await page.getByRole("button", { name: "+ Add Provider" }).isVisible().catch(() => false);
-    expect(hasCta || hasAdd).toBeTruthy();
+    await expect(page.getByRole("button", { name: "New Provider" })).toBeVisible();
   });
 
-  test("Add Provider form exposes Name, URL, Roles, Region, Save", async ({ page }) => {
+  test("New Provider form exposes Name, URL, Roles, Region", async ({ page }) => {
     await page.goto("/settings");
-    const addBtn = page.getByRole("button", { name: /Add First Provider|\+ Add Provider/ });
-    await addBtn.first().click();
+    await page.getByRole("button", { name: "New Provider" }).first().click();
 
     await expect(page.getByRole("textbox", { name: /Name/i }).or(page.getByPlaceholder("my-provider"))).toBeVisible();
     await expect(page.getByPlaceholder("http://localhost:8080/mcp")).toBeVisible();
@@ -34,15 +29,13 @@ test.describe("Bootstrap flow", () => {
 
   test("form includes dependencies role (Batch A addition)", async ({ page }) => {
     await page.goto("/settings");
-    const addBtn = page.getByRole("button", { name: /Add First Provider|\+ Add Provider/ });
-    await addBtn.first().click();
+    await page.getByRole("button", { name: "New Provider" }).first().click();
     await expect(page.getByRole("checkbox", { name: "dependencies" })).toBeVisible();
   });
 
   test("form includes webUrl input (Batch A addition)", async ({ page }) => {
     await page.goto("/settings");
-    const addBtn = page.getByRole("button", { name: /Add First Provider|\+ Add Provider/ });
-    await addBtn.first().click();
+    await page.getByRole("button", { name: "New Provider" }).first().click();
     await expect(page.getByLabel(/web URL|webUrl/i).or(page.getByPlaceholder(/grafana\.example|https:\/\//i))).toBeVisible();
   });
 });
