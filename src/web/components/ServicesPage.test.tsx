@@ -101,7 +101,9 @@ describe("ServicesPage header counter", () => {
     renderPage();
 
     const counter = await screen.findByTestId("services-counter");
-    expect(counter.textContent).toBe("3 services");
+    await waitFor(() => {
+      expect(counter.textContent).toBe("3 services");
+    });
   });
 
   it("shows 'N of M services shown' when some are hidden", async () => {
@@ -128,7 +130,9 @@ describe("ServicesPage header counter", () => {
     renderPage();
 
     const counter = await screen.findByTestId("services-counter");
-    expect(counter.textContent).toBe("1 service");
+    await waitFor(() => {
+      expect(counter.textContent).toBe("1 service");
+    });
   });
 });
 
