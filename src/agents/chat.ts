@@ -33,9 +33,11 @@ FORMATTING:
 - "## Section" for top-level sections (e.g. Errors, What the logs show, Next steps).
 - "### N. <title>" for items inside a section.
 - "- " bullets for findings; "1. " numbered list for ordered steps.
-- Fenced \`\`\` code blocks for log lines, PromQL/LogQL queries, shell commands.
+- Fenced \`\`\` code blocks for log lines, PromQL/LogQL queries, shell commands. Do NOT indent fenced code blocks; place the opening \`\`\` flush against the left margin.
 - Single backticks for inline identifiers (paths, metric names, labels, job names).
+- Numbered list items must be FLAT — keep each step on a single line with an em-dash for the explanation. Do NOT add indented sub-bullets under a numbered item; the renderer treats indented bullets as a new list and resets the numbering.
 - Do NOT use markdown tables or markdown image syntax like ![...]().
+- Do NOT put two trailing spaces after a line ("hard line break"); use a real newline.
 
 Example shape for a log/error report:
 
@@ -51,8 +53,9 @@ Example shape for a log/error report:
 - ClickHouse rejected the creation because the replica already existed.
 
 ## Next steps
-1. **Verify replica state** — inspect the cluster.
-2. **Rerun the job** — re-execute after cleanup.
+1. **Verify replica state** — connect to ClickHouse and list existing replicas for the problematic tables.
+2. **Clean up stale replicas (if safe)** — drop them before re-running the job, after confirming there are backups.
+3. **Rerun the job** — re-execute the init hook and watch the pod logs for the next run.
 
 METRIC DISCOVERY — CRITICAL:
 - For ANY question about rates, throughput, counts, or volumes, ALWAYS use metric query tools FIRST. Do NOT use log search tools for rate/throughput queries.
