@@ -184,3 +184,63 @@ describe("PeriodicDiscoveryScheduler — addition consensus", () => {
     expect(store.findByStackKindName("s", "addition", "svc-a")).not.toBeNull();
   });
 });
+
+describe("PeriodicDiscoveryScheduler — removal consensus", () => {
+  const registryWithSvcX = () => ({
+    loadAll: () => ({
+      services: [{ name: "svc-x", metrics: [{ query: "up{service=\"svc-x\"}", description: "" }], logLabels: {}, probeRules: [] }],
+      globalProbeRules: [],
+    }),
+    listVersions: () => [{ id: "vReg-1" }],
+    load: () => [{ name: "svc-x", metrics: [{ query: "up{service=\"svc-x\"}", description: "" }], logLabels: {}, probeRules: [] }],
+    save: () => "",
+  } as any);
+
+  it("removal candidate without Prom corroboration does not advance consensus", async () => {
+    const sched = new PeriodicDiscoveryScheduler({
+      ...baseDeps(),
+      providers: () => [{} as any],
+      registryStore: registryWithSvcX(),
+      runDiscovery: vi.fn().mockResolvedValue({ services: [], globalProbeRules: [] }),
+      sanityProbe: vi.fn().mockResolvedValue({ kind: "ok", value: 1 }),
+      removalCorroborationProbe: vi.fn().mockResolvedValue({ kind: "ok", value: 1 }),
+      settings: { enabled: true, cron: "0 0 * * *", timezone: "UTC", consensusRuns: 2, consensusRunsForRemovals: 3 },
+    });
+    await sched.tickOnce();
+    expect(store.findByStackKindName("s", "removal", "svc-x")).toBeNull();
+  });
+
+  it("corroborated removal qualifies after consensusRunsForRemovals consecutive runs", async () => {
+    const sched = new PeriodicDiscoveryScheduler({
+      ...baseDeps(),
+      providers: () => [{} as any],
+      registryStore: registryWithSvcX(),
+      runDiscovery: vi.fn().mockResolvedValue({ services: [], globalProbeRules: [] }),
+      sanityProbe: vi.fn().mockResolvedValue({ kind: "ok", value: 1 }),
+      removalCorroborationProbe: vi.fn().mockResolvedValue({ kind: "empty", value: NaN }),
+      settings: { enabled: true, cron: "0 0 * * *", timezone: "UTC", consensusRuns: 2, consensusRunsForRemovals: 3 },
+    });
+    await sched.tickOnce(); await sched.tickOnce(); await sched.tickOnce();
+    const row = store.findByStackKindName("s", "removal", "svc-x")!;
+    expect(row.seenCount).toBe(3);
+    expect(row.qualifiedAt).not.toBeNull();
+  });
+
+  it("recovery: when svc-x reappears in discovery, its removal row is deleted", async () => {
+    const sched = new PeriodicDiscoveryScheduler({
+      ...baseDeps(),
+      providers: () => [{} as any],
+      registryStore: registryWithSvcX(),
+      runDiscovery: vi.fn()
+        .mockResolvedValueOnce({ services: [], globalProbeRules: [] })
+        .mockResolvedValueOnce({ services: [verifiedSvc("svc-x")], globalProbeRules: [] }),
+      sanityProbe: vi.fn().mockResolvedValue({ kind: "ok", value: 1 }),
+      removalCorroborationProbe: vi.fn().mockResolvedValue({ kind: "empty", value: NaN }),
+      settings: { enabled: true, cron: "0 0 * * *", timezone: "UTC", consensusRuns: 2, consensusRunsForRemovals: 3 },
+    });
+    await sched.tickOnce();
+    expect(store.findByStackKindName("s", "removal", "svc-x")).not.toBeNull();
+    await sched.tickOnce();
+    expect(store.findByStackKindName("s", "removal", "svc-x")).toBeNull();
+  });
+});

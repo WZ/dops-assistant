@@ -7,7 +7,7 @@ import type { PendingDiscoveryStore } from "./pending-discovery-store.js";
 import type { DiscoveryResult } from "../types/agent-interfaces.js";
 import type { LlmRetryConfig } from "../agents/shared/llm-retry.js";
 import type { InstantResult } from "./instant-query.js";
-import { computeAdditionMutations } from "./discovery-consensus.js";
+import { computeAdditionMutations, computeRemovalMutations } from "./discovery-consensus.js";
 
 const logger = createLogger("periodic-discovery-scheduler");
 
@@ -223,6 +223,60 @@ export class PeriodicDiscoveryScheduler {
         for (const r of additionMutations.resets) this.deps.store.resetSeenCount(r.id, r.runId);
         for (const id of additionMutations.deletes) this.deps.store.deleteById(id);
         for (const q of additionMutations.qualifications) this.deps.store.markQualified(q.id, q.registryVersion);
+
+        // ── Removal candidates: registered \ discovered ────────────────
+        const removalCandidateServices = registry.services
+          .filter((s) => !discoveredByName.has(s.name))
+          .filter((s) => !dismissedRemovalNames.has(s.name));
+
+        // ── Corroboration probe ─────────────────────────────────────────
+        const corroboratedNames = new Set<string>();
+        const removalProbe = this.deps.removalCorroborationProbe;
+        if (removalProbe && removalCandidateServices.length > 0) {
+          const probeTasks = removalCandidateServices.map((svc) => async () => {
+            const q = svc.metrics?.[0]?.query;
+            if (!q) return;
+            try {
+              const r = await removalProbe(q);
+              if (r.kind === "empty" || (r.kind === "ok" && r.value === 0)) {
+                corroboratedNames.add(svc.name);
+              }
+            } catch {
+              // not corroborated
+            }
+          });
+          await runWithConcurrency(probeTasks, 10);
+        }
+
+        const removalCandidates = removalCandidateServices.map((s) => ({
+          name: s.name,
+          corroborated: corroboratedNames.has(s.name),
+        }));
+
+        const pendingRemovalRows = this.deps.store.listPending(this.deps.stackId, "removal")
+          .map((r) => ({ id: r.id, serviceName: r.serviceName, seenCount: r.seenCount, lastSeenRunId: r.lastSeenRunId, qualifiedAt: r.qualifiedAt }));
+
+        const removalMutations = computeRemovalMutations({
+          stackId: this.deps.stackId,
+          thisRunId: runId,
+          previousSuccessfulRunId,
+          consensusRuns: this.deps.settings.consensusRuns,
+          consensusRunsForRemovals: this.deps.settings.consensusRunsForRemovals,
+          registeredNames,
+          dismissedAdditionNames,
+          dismissedRemovalNames,
+          pendingAdditionRows: [],
+          pendingRemovalRows,
+          registryVersion,
+          additionCandidates: [],
+          removalCandidates,
+        });
+        for (const c of removalMutations.upsertRemovals) {
+          this.deps.store.upsertRemoval({ stackId: this.deps.stackId, serviceName: c.name, runId });
+        }
+        for (const r of removalMutations.resets) this.deps.store.resetSeenCount(r.id, r.runId);
+        for (const id of removalMutations.deletes) this.deps.store.deleteById(id);
+        for (const q of removalMutations.qualifications) this.deps.store.markQualified(q.id, q.registryVersion);
 
         this.deps.store.finishRun(runId, {
           status: "success",
