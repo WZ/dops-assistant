@@ -244,3 +244,44 @@ describe("PeriodicDiscoveryScheduler — removal consensus", () => {
     expect(store.findByStackKindName("s", "removal", "svc-x")).toBeNull();
   });
 });
+
+describe("PeriodicDiscoveryScheduler — notifications", () => {
+  it("fires Slack and Email exactly once across two ticks when both succeed", async () => {
+    const slack = vi.fn().mockResolvedValue({ ok: true });
+    const email = vi.fn().mockResolvedValue({ ok: true });
+    const sched = new PeriodicDiscoveryScheduler({
+      ...baseDeps(),
+      providers: () => [{} as any],
+      runDiscovery: vi.fn().mockResolvedValue({ services: [verifiedSvc("svc-a")], globalProbeRules: [] }),
+      sanityProbe: vi.fn().mockResolvedValue({ kind: "ok", value: 1 }),
+      notifySlack: slack,
+      notifyEmail: email,
+      settings: { enabled: true, cron: "0 0 * * *", timezone: "UTC", consensusRuns: 2, consensusRunsForRemovals: 3 },
+    });
+    await sched.tickOnce();
+    await sched.tickOnce();
+    await sched.tickOnce();
+    expect(slack).toHaveBeenCalledTimes(1);
+    expect(email).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries only the failed channel on next tick", async () => {
+    const slack = vi.fn().mockResolvedValueOnce({ ok: false, error: "5xx" }).mockResolvedValueOnce({ ok: true });
+    const email = vi.fn().mockResolvedValue({ ok: true });
+    const sched = new PeriodicDiscoveryScheduler({
+      ...baseDeps(),
+      providers: () => [{} as any],
+      runDiscovery: vi.fn().mockResolvedValue({ services: [verifiedSvc("svc-a")], globalProbeRules: [] }),
+      sanityProbe: vi.fn().mockResolvedValue({ kind: "ok", value: 1 }),
+      notifySlack: slack,
+      notifyEmail: email,
+      settings: { enabled: true, cron: "0 0 * * *", timezone: "UTC", consensusRuns: 2, consensusRunsForRemovals: 3 },
+    });
+    await sched.tickOnce(); await sched.tickOnce();
+    expect(slack).toHaveBeenCalledTimes(1);
+    expect(email).toHaveBeenCalledTimes(1);
+    await sched.tickOnce();
+    expect(slack).toHaveBeenCalledTimes(2);
+    expect(email).toHaveBeenCalledTimes(1);
+  });
+});

@@ -278,6 +278,37 @@ export class PeriodicDiscoveryScheduler {
         for (const id of removalMutations.deletes) this.deps.store.deleteById(id);
         for (const q of removalMutations.qualifications) this.deps.store.markQualified(q.id, q.registryVersion);
 
+        // ── Notifications (per-channel idempotent) ────────────────────
+        const newlyQualified = [
+          ...this.deps.store.listQualified(this.deps.stackId, "addition"),
+          ...this.deps.store.listQualified(this.deps.stackId, "removal"),
+        ].filter((row) =>
+          !this.deps.store.hasSuccessfulNotification(row.id, "slack") ||
+          !this.deps.store.hasSuccessfulNotification(row.id, "email")
+        );
+
+        for (const row of newlyQualified) {
+          const msg = `Discovery ${row.changeKind === "addition" ? "found a new service" : "suggests removing a service"}: ${row.serviceName} (stack ${this.deps.stackId})`;
+          if (!this.deps.store.hasSuccessfulNotification(row.id, "slack")) {
+            try {
+              const r = await this.deps.notifySlack(msg);
+              this.deps.store.recordNotificationAttempt(row.id, "slack", r.ok ? "success" : "failed", r.error ?? null);
+              if (r.ok) this.deps.store.markNotifiedNow(row.id);
+            } catch (err) {
+              this.deps.store.recordNotificationAttempt(row.id, "slack", "failed", err instanceof Error ? err.message : String(err));
+            }
+          }
+          if (!this.deps.store.hasSuccessfulNotification(row.id, "email")) {
+            try {
+              const r = await this.deps.notifyEmail(msg);
+              this.deps.store.recordNotificationAttempt(row.id, "email", r.ok ? "success" : "failed", r.error ?? null);
+              if (r.ok) this.deps.store.markNotifiedNow(row.id);
+            } catch (err) {
+              this.deps.store.recordNotificationAttempt(row.id, "email", "failed", err instanceof Error ? err.message : String(err));
+            }
+          }
+        }
+
         this.deps.store.finishRun(runId, {
           status: "success",
           serviceCount: sanityProbedServices.length,
