@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.0.1] - 2026-05-01
+
+### Fixed
+- **Malformed markdown tables in chat replies** — Console chat replies that contained tabular data sometimes rendered as broken paragraphs littered with stray `|` characters. Two compounding bugs: (1) the chat agent's prompt forbade tables but offered no alternative, so the model emitted them anyway with missing trailing pipes or no separator row; (2) the renderer's `normalizeBlocks` matched across newlines, splitting properly-formed multi-row tables mid-row. The renderer now walks line-by-line and accepts malformed tables (clusters of 2+ pipe-leading rows, with or without a separator row) by rendering them as a real `<table>` with padded columns. The chat agent prompt now suggests bulleted rows with em-dash field separators as the canonical alternative.
+
 ## [0.4.0.0] - 2026-05-01
 
 ### Added
