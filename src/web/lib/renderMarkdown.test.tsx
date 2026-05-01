@@ -56,4 +56,47 @@ describe("renderMarkdown", () => {
     expect(html).toMatch(/First/);
     expect(html).toMatch(/Second/);
   });
+
+  it("renders a well-formed markdown table", () => {
+    const md = [
+      "| Time | Pod | Message |",
+      "| --- | --- | --- |",
+      "| 12:15 | pod-a | error one |",
+      "| 12:16 | pod-b | error two |",
+    ].join("\n");
+    const html = renderToHtml(md);
+    expect(html).toMatch(/<table/);
+    expect(html).toMatch(/<thead/);
+    expect(html).toMatch(/Pod/);
+    expect(html).toMatch(/error one/);
+    expect(html).toMatch(/error two/);
+  });
+
+  it("renders a malformed table (no separator row) as a real table, not stray paragraphs", () => {
+    // Regression: LLMs sometimes emit a "table" without the separator row
+    // and without trailing pipes. Previously this fell through to the
+    // paragraph path and produced lines like `| Time | Pod | Message` with
+    // visible pipe characters. The reader couldn't tell what was a column
+    // and what was data.
+    const md = [
+      "| Time (UTC) | Pod / Instance | Message",
+      "| 12:15 | pod-a | err one",
+      "| 12:16 | pod-b | err two",
+    ].join("\n");
+    const html = renderToHtml(md);
+    expect(html).toMatch(/<table/);
+    expect(html).toMatch(/<thead/);
+    // No stray pipe characters left as plain text in paragraphs.
+    expect(html).not.toMatch(/<p[^>]*>\|/);
+    expect(html).toMatch(/err one/);
+    expect(html).toMatch(/err two/);
+  });
+
+  it("a single lone '|' line falls back to plain paragraph (not a 1-row table)", () => {
+    const md = "| just a stray pipe with text";
+    const html = renderToHtml(md);
+    // Single line that looks tabular but has no peer row → plain paragraph,
+    // not a one-row table that would look weird.
+    expect(html).not.toMatch(/<table/);
+  });
 });

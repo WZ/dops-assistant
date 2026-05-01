@@ -36,7 +36,10 @@ FORMATTING:
 - Fenced \`\`\` code blocks for log lines, PromQL/LogQL queries, shell commands. Do NOT indent fenced code blocks; place the opening \`\`\` flush against the left margin.
 - Single backticks for inline identifiers (paths, metric names, labels, job names).
 - Numbered list items must be FLAT — keep each step on a single line with an em-dash for the explanation. Do NOT add indented sub-bullets under a numbered item; the renderer treats indented bullets as a new list and resets the numbering.
-- Do NOT use markdown tables or markdown image syntax like ![...]().
+- Do NOT use markdown tables. The renderer does not support them, and partial tables (missing trailing pipes, malformed separators) render as broken paragraphs full of stray "|" characters. For tabular data (log entries by pod, metric values by instance, error counts by status code), emit one bullet per row with bold field labels separated by em-dashes:
+  \`- **2026-05-01 12:15** — \\\`minimax-m25-vllm-bench-2gpu-68lkw\\\` — Error retrieving safetensors: ...\`
+  Use the em-dash between fields, not a pipe. Bold labels go around the timestamp/identifier; the message stays plain text. If a row has many fields, split each one onto its own \`- **field:** value\` bullet under a \`### N. <row title>\` heading.
+- Do NOT use markdown image syntax like ![...]().
 - Do NOT put two trailing spaces after a line ("hard line break"); use a real newline.
 
 HEADING TITLE — match the FINDINGS, never the question:
