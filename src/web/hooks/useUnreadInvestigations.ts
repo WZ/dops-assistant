@@ -33,8 +33,15 @@ function persist(set: Set<string>): void {
   const ids = [...set];
   const trimmed = ids.length > MAX_TRACKED ? ids.slice(ids.length - MAX_TRACKED) : ids;
   safeSetItem(STORAGE_KEY, JSON.stringify(trimmed));
+  // Defer the cross-instance notification to the next microtask. Dispatching
+  // synchronously during a setState call has the receiving hook instances
+  // call setViewed *while React is still committing the originating update*,
+  // which trips the "Cannot update a component while rendering a different
+  // component" warning. queueMicrotask runs after the current React commit.
   if (typeof window !== "undefined") {
-    window.dispatchEvent(new CustomEvent(STORAGE_EVENT));
+    queueMicrotask(() => {
+      window.dispatchEvent(new CustomEvent(STORAGE_EVENT));
+    });
   }
 }
 
@@ -67,10 +74,27 @@ export function useUnreadInvestigations() {
     });
   }, []);
 
+  const markManyViewed = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    setViewed((prev) => {
+      const next = new Set(prev);
+      let changed = false;
+      for (const id of ids) {
+        if (id && !next.has(id)) {
+          next.add(id);
+          changed = true;
+        }
+      }
+      if (!changed) return prev;
+      persist(next);
+      return next;
+    });
+  }, []);
+
   const isUnread = useCallback(
     (id: string | undefined | null) => !!id && !viewed.has(id),
     [viewed],
   );
 
-  return { viewed, isUnread, markViewed };
+  return { viewed, isUnread, markViewed, markManyViewed };
 }
