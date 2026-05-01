@@ -160,11 +160,23 @@ const DiscoveryRecipeSchema = z.object({
   labelKeys: z.array(z.string()).default([]),
 });
 
+const PeriodicDiscoverySchema = z.object({
+  enabled:                  z.boolean().default(false),
+  cron:                     z.string().default(""),
+  timezone:                 z.string().default("UTC"),
+  consensusRuns:            z.number().int().min(1).max(10).default(2),
+  consensusRunsForRemovals: z.number().int().min(1).max(10).default(3),
+}).refine(
+  (c) => !c.enabled || c.cron.length > 0,
+  { message: "cron must be non-empty when enabled is true", path: ["cron"] },
+);
+
 const DiscoverySchema = z.object({
   autoRefresh: z.boolean().default(false),
   excludeServices: z.array(z.string()).default([]),
   maxIterations: z.number().default(40),
   discoveryRecipes: z.array(DiscoveryRecipeSchema).optional().default([]),
+  periodic: PeriodicDiscoverySchema.optional().default({}),
 });
 
 export const InvestigationTemplateSchema = z.enum(["quick", "standard", "full"]);
@@ -392,6 +404,8 @@ export type RetryConfig = z.infer<typeof RetrySchema>;
 export type ObservabilityConfig = z.infer<typeof ObservabilitySchema>;
 export type DiscoveryConfig = z.infer<typeof DiscoverySchema>;
 export type DiscoveryRecipe = z.infer<typeof DiscoveryRecipeSchema>;
+export type PeriodicDiscoveryConfig = z.infer<typeof PeriodicDiscoverySchema>;
+export { PeriodicDiscoverySchema };
 export type WebhookConfig = z.infer<typeof WebhookSchema>;
 export type BrandingConfig = z.infer<typeof BrandingSchema>;
 export type NotificationsConfig = z.infer<typeof NotificationsSchema>;

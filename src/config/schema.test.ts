@@ -598,3 +598,45 @@ describe("llm.retry", () => {
     ).toThrow();
   });
 });
+
+describe("PeriodicDiscoverySchema", () => {
+  const base = { llm, providers: [grafanaProvider] };
+
+  it("accepts defaults (disabled, empty cron, consensusRuns=2, removals=3)", () => {
+    const parsed = ConfigSchema.parse({ ...base });
+    expect(parsed.discovery.periodic).toEqual({
+      enabled: false,
+      cron: "",
+      timezone: "UTC",
+      consensusRuns: 2,
+      consensusRunsForRemovals: 3,
+    });
+  });
+
+  it("rejects enabled=true with empty cron", () => {
+    expect(() =>
+      ConfigSchema.parse({
+        ...base,
+        discovery: { periodic: { enabled: true, cron: "" } },
+      }),
+    ).toThrow(/cron.*non-empty.*enabled/i);
+  });
+
+  it("accepts enabled=true with a valid cron string", () => {
+    const parsed = ConfigSchema.parse({
+      ...base,
+      discovery: { periodic: { enabled: true, cron: "0 3 * * *", timezone: "America/New_York" } },
+    });
+    expect(parsed.discovery.periodic.cron).toBe("0 3 * * *");
+    expect(parsed.discovery.periodic.timezone).toBe("America/New_York");
+  });
+
+  it("clamps consensusRuns to 1..10", () => {
+    expect(() =>
+      ConfigSchema.parse({ ...base, discovery: { periodic: { consensusRuns: 0 } } }),
+    ).toThrow();
+    expect(() =>
+      ConfigSchema.parse({ ...base, discovery: { periodic: { consensusRuns: 11 } } }),
+    ).toThrow();
+  });
+});
