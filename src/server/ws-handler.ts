@@ -334,6 +334,10 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
 
     ws.on("close", () => {
       clearInterval(heartbeat);
+      for (const controller of pendingDispatches.values()) {
+        controller.abort();
+      }
+      pendingDispatches.clear();
       wsRateLimiter.destroy(threadId);
       logger.info({ threadId, stackId }, "WebSocket client disconnected");
     });

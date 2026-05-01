@@ -290,6 +290,41 @@ describe("ChatPane in-reply 'Run full investigation' pill", () => {
     });
   });
 
+  it("only sends one /investigate command on rapid pill double-click", async () => {
+    const send = vi.fn();
+    render(
+      <ChatPane
+        ws={{
+          send,
+          messages: [
+            { type: "chat:stream_start" },
+            {
+              type: "chat:stream_end",
+              content: "Kafka brokers are down — 3/5 replicas unavailable.",
+              id: "msg_rapid",
+              createdAt: new Date().toISOString(),
+              serviceContext: "kafka-brokers",
+            },
+          ],
+          status: "connected",
+        } as any}
+        onInvestigationStarted={vi.fn()}
+        onViewInvestigation={vi.fn()}
+      />,
+      { wrapper: Wrapper },
+    );
+
+    const pill = await screen.findByRole("button", { name: /Run full investigation on/ });
+    fireEvent.click(pill);
+    fireEvent.click(pill);
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith({
+      type: "chat",
+      message: "/investigate kafka-brokers",
+    });
+  });
+
   it("does NOT render the pill when serviceContext is absent", async () => {
     render(
       <ChatPane

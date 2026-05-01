@@ -155,6 +155,8 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
   // (timer fired and runner kicked off), `investigation:dispatch_cancelled`
   // (user clicked Cancel), or when the user explicitly cancels.
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmDispatch | null>(null);
+  const dispatchPendingRef = useRef(false);
+  const [dispatchPending, setDispatchPending] = useState(false);
   // Render-time tick: updates every 100ms while a confirm is pending so the
   // countdown text + progress bar advance smoothly. Stored as a number to
   // force re-renders without churning the pendingConfirm reference.
@@ -260,7 +262,9 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
   // in those states so the user can't keep clicking through them.
   const dispatchSlashInvestigate = (service: string) => {
     if (status !== "connected") return;
-    if (pendingConfirm || chatLoading || streamingMessage) return;
+    if (dispatchPendingRef.current || pendingConfirm || chatLoading || streamingMessage) return;
+    dispatchPendingRef.current = true;
+    setDispatchPending(true);
     send({ type: "chat", message: `/investigate ${service}` });
   };
 
@@ -489,10 +493,14 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
         setChatLoading(false);
         setActiveTool(null);
         setStreamingMessage(null);
+        dispatchPendingRef.current = false;
+        setDispatchPending(false);
         setPendingConfirm((prev) => (prev && prev.id === msg.id ? null : prev));
       }
       if (msg.type === "investigation:confirm_dispatch") {
         const startedAt = Date.now();
+        dispatchPendingRef.current = false;
+        setDispatchPending(false);
         setPendingConfirm({
           id: msg.id,
           service: msg.service,
@@ -502,6 +510,8 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
         });
       }
       if (msg.type === "investigation:dispatch_cancelled") {
+        dispatchPendingRef.current = false;
+        setDispatchPending(false);
         setPendingConfirm((prev) => (prev && prev.id === msg.id ? null : prev));
       }
       if (msg.type === "session_cleared") {
@@ -747,7 +757,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                 <Button
                   variant="outline"
                   onClick={() => dispatchSlashInvestigate(msg.serviceContext!)}
-                  disabled={!!pendingConfirm || chatLoading || !!streamingMessage}
+                  disabled={dispatchPending || !!pendingConfirm || chatLoading || !!streamingMessage}
                   className="h-9 px-4 text-[11px] font-mono bg-primary/10 border-primary/25 text-primary hover:bg-primary/15 hover:text-primary rounded-md gap-1.5 mt-1 disabled:opacity-40 disabled:pointer-events-none"
                 >
                   <Zap size={12} className="!size-auto" />

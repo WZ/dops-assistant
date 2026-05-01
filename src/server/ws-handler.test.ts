@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
-import { handleClientMessage } from "./ws-handler.js";
+import { createServer } from "node:http";
+import WebSocket from "ws";
+import { handleClientMessage, setupWebSocket } from "./ws-handler.js";
 import type { WsDeps } from "./ws-handler.js";
 import type { ServerMessage } from "../types/ws-types.js";
 import type { StackContext } from "./stack-manager.js";
@@ -343,6 +345,43 @@ describe("handleClientMessage", () => {
 
     // No errors, no chat messages emitted
     expect(messages).toEqual([]);
+  });
+
+  it("aborts pending confirm-dispatch investigations when the socket closes", async () => {
+    const deps = mockDeps();
+    deps.chatDispatchConfirmMs = 50;
+    (deps.matchServiceFromText as ReturnType<typeof vi.fn>).mockReturnValue({ name: "payments-api", metrics: [], logLabels: {} });
+
+    const server = createServer();
+    setupWebSocket(server, deps);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test server did not bind to a port");
+
+    const client = new WebSocket(`ws://127.0.0.1:${address.port}/ws?stackId=${S}`);
+    const messages: ServerMessage[] = [];
+    client.on("message", (raw) => {
+      messages.push(JSON.parse(raw.toString()) as ServerMessage);
+    });
+
+    await new Promise<void>((resolve) => client.on("open", resolve));
+    client.send(JSON.stringify({ type: "chat", message: "/investigate payments-api" }));
+
+    await new Promise<void>((resolve) => {
+      const check = () => {
+        if (messages.some((m) => m.type === "investigation:confirm_dispatch")) resolve();
+        else setTimeout(check, 5);
+      };
+      check();
+    });
+
+    client.close();
+    await new Promise((resolve) => setTimeout(resolve, 90));
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+
+    expect(messages.some((m) => m.type === "investigation:started")).toBe(false);
+    expect(deps.db.createInvestigation).not.toHaveBeenCalled();
   });
 });
 
