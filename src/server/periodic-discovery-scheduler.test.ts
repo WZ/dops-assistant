@@ -98,3 +98,89 @@ describe("PeriodicDiscoveryScheduler — runDiscovery error handling", () => {
     expect(runs[0]!.error).toContain("LLM timeout");
   });
 });
+
+const verifiedSvc = (name: string) => ({
+  name,
+  metrics: [{ query: `up{service="${name}"}`, description: "up" }],
+  logLabels: { container: name },
+  probeRules: [],
+  confidence: "verified",
+});
+
+describe("PeriodicDiscoveryScheduler — addition consensus", () => {
+  it("first run with one verified candidate: row created, not qualified", async () => {
+    const probe = vi.fn().mockResolvedValue({ kind: "ok", value: 1 });
+    const sched = new PeriodicDiscoveryScheduler({
+      ...baseDeps(),
+      providers: () => [{} as any],
+      runDiscovery: vi.fn().mockResolvedValue({ services: [verifiedSvc("svc-a")], globalProbeRules: [] }),
+      sanityProbe: probe,
+      settings: { enabled: true, cron: "0 0 * * *", timezone: "UTC", consensusRuns: 2, consensusRunsForRemovals: 3 },
+    });
+    await sched.tickOnce();
+    const row = store.findByStackKindName("s", "addition", "svc-a");
+    expect(row).not.toBeNull();
+    expect(row!.seenCount).toBe(1);
+    expect(row!.qualifiedAt).toBeNull();
+    expect(probe).toHaveBeenCalledTimes(1);
+  });
+
+  it("second consecutive run qualifies the candidate", async () => {
+    const sched = new PeriodicDiscoveryScheduler({
+      ...baseDeps(),
+      providers: () => [{} as any],
+      runDiscovery: vi.fn().mockResolvedValue({ services: [verifiedSvc("svc-a")], globalProbeRules: [] }),
+      sanityProbe: vi.fn().mockResolvedValue({ kind: "ok", value: 1 }),
+      settings: { enabled: true, cron: "0 0 * * *", timezone: "UTC", consensusRuns: 2, consensusRunsForRemovals: 3 },
+    });
+    await sched.tickOnce();
+    await sched.tickOnce();
+    const row = store.findByStackKindName("s", "addition", "svc-a")!;
+    expect(row.seenCount).toBe(2);
+    expect(row.qualifiedAt).not.toBeNull();
+  });
+
+  it("drops non-verified candidates", async () => {
+    const sched = new PeriodicDiscoveryScheduler({
+      ...baseDeps(),
+      providers: () => [{} as any],
+      runDiscovery: vi.fn().mockResolvedValue({
+        services: [{ ...verifiedSvc("svc-a"), confidence: "partial" }],
+        globalProbeRules: [],
+      }),
+      sanityProbe: vi.fn().mockResolvedValue({ kind: "ok", value: 1 }),
+      settings: { enabled: true, cron: "0 0 * * *", timezone: "UTC", consensusRuns: 2, consensusRunsForRemovals: 3 },
+    });
+    await sched.tickOnce();
+    expect(store.findByStackKindName("s", "addition", "svc-a")).toBeNull();
+  });
+
+  it("drops candidates whose sanity probe returns empty", async () => {
+    const sched = new PeriodicDiscoveryScheduler({
+      ...baseDeps(),
+      providers: () => [{} as any],
+      runDiscovery: vi.fn().mockResolvedValue({ services: [verifiedSvc("svc-a")], globalProbeRules: [] }),
+      sanityProbe: vi.fn().mockResolvedValue({ kind: "empty", value: NaN }),
+      settings: { enabled: true, cron: "0 0 * * *", timezone: "UTC", consensusRuns: 2, consensusRunsForRemovals: 3 },
+    });
+    await sched.tickOnce();
+    expect(store.findByStackKindName("s", "addition", "svc-a")).toBeNull();
+  });
+
+  it("services with empty metrics array skip the sanity probe and proceed to consensus", async () => {
+    const probe = vi.fn();
+    const sched = new PeriodicDiscoveryScheduler({
+      ...baseDeps(),
+      providers: () => [{} as any],
+      runDiscovery: vi.fn().mockResolvedValue({
+        services: [{ ...verifiedSvc("svc-a"), metrics: [] }],
+        globalProbeRules: [],
+      }),
+      sanityProbe: probe,
+      settings: { enabled: true, cron: "0 0 * * *", timezone: "UTC", consensusRuns: 2, consensusRunsForRemovals: 3 },
+    });
+    await sched.tickOnce();
+    expect(probe).not.toHaveBeenCalled();
+    expect(store.findByStackKindName("s", "addition", "svc-a")).not.toBeNull();
+  });
+});
