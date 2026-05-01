@@ -165,8 +165,22 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
   const [showMigrationToast, setShowMigrationToast] = useState(false);
 
   // Slash-command autocomplete popover. Visible while the input starts with
-  // "/" and the user hasn't yet typed enough to disambiguate.
+  // "/" and the user hasn't yet typed enough to disambiguate. `slashIndex`
+  // tracks the highlighted row so Enter / Tab autocomplete the selection
+  // instead of submitting the form with the partial slash.
   const [showSlashPopover, setShowSlashPopover] = useState(false);
+  const [slashIndex, setSlashIndex] = useState(0);
+  const SLASH_COMMANDS: Array<{ command: string; placeholder: string; hint: string }> = [
+    { command: "/investigate", placeholder: "<service>", hint: "Run full RCA" },
+    { command: "/rca", placeholder: "<incident>", hint: "Same as above" },
+  ];
+  const acceptSlashCommand = (index: number) => {
+    const choice = SLASH_COMMANDS[index];
+    if (!choice) return;
+    setInput(`${choice.command} `);
+    setShowSlashPopover(false);
+    setSlashIndex(0);
+  };
 
   // Ref-based accumulator for high-frequency delta batching
   const streamRef = useRef<{ content: string; reasoning: string }>({ content: "", reasoning: "" });
@@ -1060,33 +1074,32 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
           {!isDeepMode && showSlashPopover && (
             <div
               data-testid="slash-popover"
+              role="listbox"
+              aria-label="Slash command suggestions"
               className="absolute left-0 right-0 bottom-full mb-2 rounded-md bg-card border border-border/60 shadow-lg overflow-hidden z-10"
             >
-              <button
-                type="button"
-                data-testid="slash-popover-investigate"
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  setInput("/investigate ");
-                  setShowSlashPopover(false);
-                }}
-                className="w-full flex items-baseline justify-between px-3 py-2 text-left bg-primary/10 hover:bg-primary/15 transition-colors"
-              >
-                <span className="font-mono text-[12px] text-primary font-medium">/investigate &lt;service&gt;</span>
-                <span className="font-body text-[11px] text-muted-foreground/80">Run full RCA</span>
-              </button>
-              <button
-                type="button"
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  setInput("/rca ");
-                  setShowSlashPopover(false);
-                }}
-                className="w-full flex items-baseline justify-between px-3 py-2 text-left hover:bg-secondary/50 transition-colors border-t border-border/30"
-              >
-                <span className="font-mono text-[12px] text-primary/85">/rca &lt;incident&gt;</span>
-                <span className="font-body text-[11px] text-muted-foreground/80">Same as above</span>
-              </button>
+              {SLASH_COMMANDS.map((cmd, idx) => {
+                const active = idx === slashIndex;
+                return (
+                  <button
+                    key={cmd.command}
+                    type="button"
+                    role="option"
+                    aria-selected={active}
+                    data-testid={`slash-popover-${cmd.command.slice(1)}`}
+                    onMouseDown={(e) => { e.preventDefault(); acceptSlashCommand(idx); }}
+                    onMouseEnter={() => setSlashIndex(idx)}
+                    className={`w-full flex items-baseline justify-between px-3 py-2 text-left transition-colors ${
+                      active ? "bg-primary/15" : "hover:bg-secondary/50"
+                    } ${idx > 0 ? "border-t border-border/30" : ""}`}
+                  >
+                    <span className={`font-mono text-[12px] ${active ? "text-primary font-medium" : "text-primary/85"}`}>
+                      {cmd.command} <span className="text-muted-foreground/60">{cmd.placeholder}</span>
+                    </span>
+                    <span className="font-body text-[11px] text-muted-foreground/80">{cmd.hint}</span>
+                  </button>
+                );
+              })}
             </div>
           )}
           <input
@@ -1097,11 +1110,43 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
               // Show popover when in Console mode and the input begins with "/"
               // and the user hasn't typed past the command name + a space yet.
               if (!isDeepMode) {
-                setShowSlashPopover(v.startsWith("/") && !/^\s*\/(?:investigate|rca)\s+\S/.test(v));
+                const open = v.startsWith("/") && !/^\s*\/(?:investigate|rca)\s+\S/.test(v);
+                setShowSlashPopover(open);
+                if (open) setSlashIndex(0);
               }
             }}
-            onBlur={() => setShowSlashPopover(false)}
-            onKeyDown={(e) => { if (e.key === "Escape") setShowSlashPopover(false); }}
+            // 200ms blur defers the popover close so an onMouseDown on a popover
+            // row still gets to call acceptSlashCommand (the row uses
+            // preventDefault to keep the input focused, but defensive in case
+            // a future row doesn't).
+            onBlur={() => setTimeout(() => setShowSlashPopover(false), 150)}
+            onKeyDown={(e) => {
+              if (!showSlashPopover) return;
+              // Popover is open — keys take precedence over form submit.
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setShowSlashPopover(false);
+                return;
+              }
+              if (e.key === "Enter" || e.key === "Tab") {
+                // Autocomplete the highlighted row instead of submitting the
+                // form. Without this, Enter on "/inves" submits "/inves" as
+                // a chat message — the user's exact bug report.
+                e.preventDefault();
+                acceptSlashCommand(slashIndex);
+                return;
+              }
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setSlashIndex((i) => (i + 1) % SLASH_COMMANDS.length);
+                return;
+              }
+              if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setSlashIndex((i) => (i - 1 + SLASH_COMMANDS.length) % SLASH_COMMANDS.length);
+                return;
+              }
+            }}
             className={`w-full px-4 py-2.5 pr-10 rounded-lg border text-sm font-body text-foreground/85 placeholder:text-muted-foreground/60 focus:outline-none transition-all disabled:opacity-25 ${isDeepMode ? "bg-accent/4 border-accent/20 focus:border-accent/40" : "bg-secondary/30 border-border/40 focus:border-primary/35"}`}
             placeholder={
               status !== "connected" ? "Reconnecting..." :
