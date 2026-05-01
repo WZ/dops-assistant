@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.0.0] - 2026-05-01
+
 ### Added
 - **Periodic discovery loop** — scheduled, suggest-only service discovery on top of the existing manual flow. The cron runs `runDiscovery()` per stack, applies a four-layer noise filter (validator confidence + multi-run consensus + Prometheus sanity probe + corroboration for removals), and writes qualifying suggestions to a per-stack inbox. The cron never modifies `services.yaml` directly; only the explicit accept route mutates the registry.
   - Config: `discovery.periodic { enabled, cron, timezone, consensusRuns, consensusRunsForRemovals }`. Disabled by default. Defaults: additions consensus = 2, removals = 3 (one higher because LLM prompt drift can silently zero out a service).
