@@ -44,6 +44,38 @@ interface RawPendingRow {
   viewed_at: string | null;
 }
 
+export interface RunRow {
+  id: string;
+  stackId: string;
+  startedAt: string;
+  finishedAt: string | null;
+  status: "running" | "success" | "failed" | "skipped";
+  serviceCount: number | null;
+  tokensInput: number | null;
+  tokensOutput: number | null;
+  error: string | null;
+}
+
+interface RawRunRow {
+  id: string;
+  stack_id: string;
+  started_at: string;
+  finished_at: string | null;
+  status: "running" | "success" | "failed" | "skipped";
+  service_count: number | null;
+  tokens_input: number | null;
+  tokens_output: number | null;
+  error: string | null;
+}
+
+function toRunRow(r: RawRunRow): RunRow {
+  return {
+    id: r.id, stackId: r.stack_id, startedAt: r.started_at, finishedAt: r.finished_at,
+    status: r.status, serviceCount: r.service_count,
+    tokensInput: r.tokens_input, tokensOutput: r.tokens_output, error: r.error,
+  };
+}
+
 function toPendingRow(r: RawPendingRow): PendingRow {
   return {
     id: r.id,
@@ -202,5 +234,105 @@ export class PendingDiscoveryStore {
 
   restoreDismissed(dismissedId: string): void {
     this.db.prepare("DELETE FROM dismissed_discoveries WHERE id = ?").run(dismissedId);
+  }
+
+  // ── Notifications ────────────────────────────────────────────────────────
+
+  recordNotificationAttempt(
+    pendingId: string,
+    channel: "slack" | "email" | "badge",
+    status: "success" | "failed",
+    error: string | null = null,
+  ): void {
+    this.db.prepare(
+      "INSERT INTO discovery_notifications (id, pending_id, channel, attempted_at, status, error) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(pending_id, channel) DO UPDATE SET attempted_at = excluded.attempted_at, status = excluded.status, error = excluded.error",
+    ).run(ulid(), pendingId, channel, new Date().toISOString(), status, error);
+  }
+
+  hasSuccessfulNotification(pendingId: string, channel: "slack" | "email" | "badge"): boolean {
+    const r = this.db.prepare(
+      "SELECT 1 FROM discovery_notifications WHERE pending_id = ? AND channel = ? AND status = 'success'",
+    ).get(pendingId, channel);
+    return r !== undefined;
+  }
+
+  markNotifiedNow(pendingId: string): void {
+    this.db.prepare(
+      "UPDATE pending_discoveries SET notified_at = ? WHERE id = ?",
+    ).run(new Date().toISOString(), pendingId);
+  }
+
+  markViewed(pendingIds: string[]): void {
+    if (pendingIds.length === 0) return;
+    const now = new Date().toISOString();
+    const stmt = this.db.prepare("UPDATE pending_discoveries SET viewed_at = ? WHERE id = ?");
+    const tx = this.db.transaction((ids: string[]) => { for (const id of ids) stmt.run(now, id); });
+    tx(pendingIds);
+  }
+
+  countUnviewed(stackId: string): number {
+    const r = this.db.prepare(
+      "SELECT COUNT(*) AS n FROM pending_discoveries WHERE stack_id = ? AND qualified_at IS NOT NULL AND viewed_at IS NULL",
+    ).get(stackId) as { n: number };
+    return r.n;
+  }
+
+  // ── Runs ─────────────────────────────────────────────────────────────────
+
+  startRun(stackId: string): string {
+    const id = ulid();
+    this.db.prepare(
+      "INSERT INTO periodic_discovery_runs (id, stack_id, started_at, status) VALUES (?, ?, ?, 'running')",
+    ).run(id, stackId, new Date().toISOString());
+    return id;
+  }
+
+  finishRun(runId: string, args: {
+    status: "success" | "failed" | "skipped";
+    serviceCount?: number | null;
+    tokensInput?: number | null;
+    tokensOutput?: number | null;
+    error?: string | null;
+  }): void {
+    this.db.prepare(
+      "UPDATE periodic_discovery_runs SET finished_at = ?, status = ?, service_count = ?, tokens_input = ?, tokens_output = ?, error = ? WHERE id = ?",
+    ).run(
+      new Date().toISOString(),
+      args.status,
+      args.serviceCount ?? null,
+      args.tokensInput ?? null,
+      args.tokensOutput ?? null,
+      args.error ?? null,
+      runId,
+    );
+  }
+
+  getRun(runId: string): RunRow | null {
+    const row = this.db.prepare("SELECT * FROM periodic_discovery_runs WHERE id = ?").get(runId) as RawRunRow | undefined;
+    return row ? toRunRow(row) : null;
+  }
+
+  listRuns(stackId: string, limit = 10): RunRow[] {
+    const rows = this.db.prepare(
+      "SELECT * FROM periodic_discovery_runs WHERE stack_id = ? ORDER BY started_at DESC LIMIT ?",
+    ).all(stackId, limit) as RawRunRow[];
+    return rows.map(toRunRow);
+  }
+
+  getPreviousSuccessfulRunId(stackId: string, beforeRunId: string): string | null {
+    const before = this.db.prepare("SELECT started_at FROM periodic_discovery_runs WHERE id = ?").get(beforeRunId) as { started_at: string } | undefined;
+    if (!before) return null;
+    // ULIDs are lexicographically time-sortable, so (started_at, id) is a stable
+    // ordering even when ISO timestamps tie at the millisecond boundary.
+    const r = this.db.prepare(
+      "SELECT id FROM periodic_discovery_runs WHERE stack_id = ? AND status = 'success' AND (started_at < ? OR (started_at = ? AND id < ?)) ORDER BY started_at DESC, id DESC LIMIT 1",
+    ).get(stackId, before.started_at, before.started_at, beforeRunId) as { id: string } | undefined;
+    return r?.id ?? null;
+  }
+
+  resetOrphanedRunningRuns(): void {
+    this.db.prepare(
+      "UPDATE periodic_discovery_runs SET status = 'failed', error = 'interrupted', finished_at = ? WHERE status = 'running'",
+    ).run(new Date().toISOString());
   }
 }

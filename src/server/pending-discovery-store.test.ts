@@ -101,3 +101,63 @@ describe("PendingDiscoveryStore — dismissed/restore", () => {
     expect(store.isDismissed(STACK, "svc-a", "addition")).toBe(false);
   });
 });
+
+describe("PendingDiscoveryStore — notifications + badge", () => {
+  it("recordNotificationAttempt is idempotent on (pending_id, channel)", () => {
+    const id = store.upsertAddition({ stackId: STACK, serviceName: "svc-a", payload: sampleService(), globalsSnapshot: [], runId: "run-1" });
+    store.markQualified(id, "v1");
+    store.recordNotificationAttempt(id, "slack", "success");
+    store.recordNotificationAttempt(id, "slack", "success");
+    expect(store.hasSuccessfulNotification(id, "slack")).toBe(true);
+    expect(store.hasSuccessfulNotification(id, "email")).toBe(false);
+  });
+
+  it("badge count uses viewed_at, not notified_at", () => {
+    const id = store.upsertAddition({ stackId: STACK, serviceName: "svc-a", payload: sampleService(), globalsSnapshot: [], runId: "run-1" });
+    store.markQualified(id, "v1");
+    expect(store.countUnviewed(STACK)).toBe(1);
+    store.markNotifiedNow(id);
+    expect(store.countUnviewed(STACK)).toBe(1);
+    store.markViewed([id]);
+    expect(store.countUnviewed(STACK)).toBe(0);
+  });
+
+  it("cascades: deleting a pending row removes its notification rows", () => {
+    const id = store.upsertAddition({ stackId: STACK, serviceName: "svc-a", payload: sampleService(), globalsSnapshot: [], runId: "run-1" });
+    store.recordNotificationAttempt(id, "slack", "success");
+    store.deleteById(id);
+    const left = db.raw().prepare("SELECT COUNT(*) AS n FROM discovery_notifications WHERE pending_id = ?").get(id) as { n: number };
+    expect(left.n).toBe(0);
+  });
+});
+
+describe("PendingDiscoveryStore — runs", () => {
+  it("startRun + finishRun records lifecycle and tokens", () => {
+    const runId = store.startRun(STACK);
+    expect(store.getRun(runId)?.status).toBe("running");
+    store.finishRun(runId, { status: "success", serviceCount: 3, tokensInput: 10, tokensOutput: 20 });
+    const r = store.getRun(runId)!;
+    expect(r.status).toBe("success");
+    expect(r.serviceCount).toBe(3);
+    expect(r.tokensInput).toBe(10);
+    expect(r.tokensOutput).toBe(20);
+    expect(r.finishedAt).not.toBeNull();
+  });
+
+  it("getPreviousSuccessfulRunId returns the run before the given one", () => {
+    const a = store.startRun(STACK);
+    store.finishRun(a, { status: "success", serviceCount: 0 });
+    const b = store.startRun(STACK);
+    store.finishRun(b, { status: "skipped", serviceCount: null, error: "no-mcp" });
+    const c = store.startRun(STACK);
+    expect(store.getPreviousSuccessfulRunId(STACK, c)).toBe(a);
+  });
+
+  it("resetOrphanedRunningRuns flips 'running' to 'failed' on startup", () => {
+    const id = store.startRun(STACK);
+    expect(store.getRun(id)?.status).toBe("running");
+    store.resetOrphanedRunningRuns();
+    expect(store.getRun(id)?.status).toBe("failed");
+    expect(store.getRun(id)?.error).toBe("interrupted");
+  });
+});
