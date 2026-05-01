@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
 import { InvestigationsPage } from "./InvestigationsPage";
 import { StackProvider } from "../contexts/StackContext";
+import { __resetUnreadInvestigationsForTest } from "../hooks/useUnreadInvestigations";
 import type { ReactNode } from "react";
 
 
@@ -66,6 +67,8 @@ describe("InvestigationsPage", () => {
   beforeEach(() => {
     cleanup();
     globalThis.fetch = vi.fn();
+    // Drop the module-level unread-set cache so each test starts clean.
+    __resetUnreadInvestigationsForTest();
   });
 
 
@@ -652,5 +655,66 @@ describe("InvestigationsPage", () => {
     );
     expect(call).toBeDefined();
     expect((call![0] as { offset?: number }).offset).toBeUndefined();
+  });
+
+  it("'Mark all as read' clears the unread badge on completed/failed rows", async () => {
+    // Stub localStorage with a real in-memory map so `safeSetItem` can actually
+    // persist the viewed-set; the default jsdom env only stubs getItem.
+    const store: Record<string, string> = {};
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: {
+        getItem: (k: string) => store[k] ?? null,
+        setItem: (k: string, v: string) => { store[k] = v; },
+        removeItem: (k: string) => { delete store[k]; },
+        clear: () => { for (const k of Object.keys(store)) delete store[k]; },
+        key: (i: number) => Object.keys(store)[i] ?? null,
+        get length() { return Object.keys(store).length; },
+      },
+    });
+
+    const rows = [
+      makeRow("inv_a", { status: "complete" }),
+      makeRow("inv_b", { status: "failed" }),
+      makeRow("inv_c", { status: "running" }),
+    ];
+    globalThis.fetch = mockFetch({ rows, total: rows.length });
+    render(
+      <InvestigationsPage
+        query={{}}
+        onUpdateQuery={vi.fn()}
+        onViewInvestigation={vi.fn()}
+      />,
+      { wrapper: Wrapper },
+    );
+
+    // Two terminal rows are unread → button is visible with count "2 new".
+    const button = await waitFor(() => screen.getByTestId("mark-all-read"));
+    expect(screen.getByText(/2 new/i)).not.toBeNull();
+
+    fireEvent.click(button);
+
+    // Button disappears (no unread left) and the running row stays untouched.
+    await waitFor(() => expect(screen.queryByTestId("mark-all-read")).toBeNull());
+    const stored = JSON.parse(store["dops:viewed-investigations"] ?? "[]") as string[];
+    expect(stored).toEqual(expect.arrayContaining(["inv_a", "inv_b"]));
+    expect(stored).not.toContain("inv_c");
+  });
+
+  it("hides 'Mark all as read' when there are no unread terminal rows", async () => {
+    // All rows are still running — none are eligible to be marked read.
+    const rows = [makeRow("inv_x", { status: "running" })];
+    globalThis.fetch = mockFetch({ rows, total: 1 });
+    render(
+      <InvestigationsPage
+        query={{}}
+        onUpdateQuery={vi.fn()}
+        onViewInvestigation={vi.fn()}
+      />,
+      { wrapper: Wrapper },
+    );
+
+    await waitFor(() => screen.getByText(/1 total/i));
+    expect(screen.queryByTestId("mark-all-read")).toBeNull();
   });
 });

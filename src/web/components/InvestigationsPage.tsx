@@ -3,6 +3,9 @@ import { useStackContext } from "../contexts/StackContext";
 import { InvestigationRow } from "./dashboard/InvestigationRow";
 import { Chip, FilterGroup } from "./ui/filter-group";
 import { useSlashFocus } from "../hooks/useSlashFocus";
+import { useUnreadInvestigations } from "../hooks/useUnreadInvestigations";
+import { Button } from "@/components/ui/button";
+import { CheckCheck } from "lucide-react";
 import type {
   InvestigationSummary,
   InvestigationListResponse,
@@ -54,6 +57,7 @@ export function InvestigationsPage({
   onViewInvestigation,
 }: InvestigationsPageProps) {
   const { stackFetch, activeStackId } = useStackContext();
+  const { isUnread, markManyViewed } = useUnreadInvestigations();
   const [rows, setRows] = useState<InvestigationSummary[]>([]);
   const [services, setServices] = useState<string[]>([]);
   const [total, setTotal] = useState(0);
@@ -225,24 +229,57 @@ export function InvestigationsPage({
   const allRangeActive = !query.range && !query.since && !query.until;
   const activeSort = query.sort ?? "created_at";
 
+  // IDs in the currently-loaded page that are terminal-state (complete /
+  // failed) AND haven't been opened yet. "Mark all as read" only applies to
+  // these — running rows aren't unread, and rows past the page boundary
+  // would be marked silently with no UI feedback.
+  const unreadIds = useMemo(
+    () =>
+      rows
+        .filter((r) => (r.status === "complete" || r.status === "failed") && isUnread(r.id))
+        .map((r) => r.id),
+    [rows, isUnread],
+  );
+  const unreadCount = unreadIds.length;
+
   return (
     <div className="h-full overflow-y-auto px-4 py-5">
       <div>
-        <div className="mb-6 animate-fade-up">
-          <h1 className="font-display text-2xl font-extrabold tracking-tight text-foreground/90">
-            Investigations
-          </h1>
-          <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">
-            {loading && rows.length === 0
-              ? "…"
-              : `${total.toLocaleString()} total`}
-            {hasActiveFilters && (
-              <>
-                <span className="text-muted-foreground/40 mx-1.5">&middot;</span>
-                <span className="text-primary/70 uppercase">filtered</span>
-              </>
-            )}
-          </p>
+        <div className="mb-6 animate-fade-up flex items-start justify-between gap-3">
+          <div>
+            <h1 className="font-display text-2xl font-extrabold tracking-tight text-foreground/90">
+              Investigations
+            </h1>
+            <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">
+              {loading && rows.length === 0
+                ? "…"
+                : `${total.toLocaleString()} total`}
+              {unreadCount > 0 && (
+                <>
+                  <span className="text-muted-foreground/40 mx-1.5">&middot;</span>
+                  <span className="text-accent/80 uppercase">{unreadCount} new</span>
+                </>
+              )}
+              {hasActiveFilters && (
+                <>
+                  <span className="text-muted-foreground/40 mx-1.5">&middot;</span>
+                  <span className="text-primary/70 uppercase">filtered</span>
+                </>
+              )}
+            </p>
+          </div>
+          {unreadCount > 0 && (
+            <Button
+              variant="outline"
+              onClick={() => markManyViewed(unreadIds)}
+              data-testid="mark-all-read"
+              className="h-9 px-3 text-[11px] font-mono rounded-lg border-accent/30 text-accent hover:bg-accent/10 hover:text-accent gap-1.5 shrink-0"
+              aria-label={`Mark ${unreadCount} new investigations as read`}
+            >
+              <CheckCheck size={13} className="!size-auto" />
+              Mark all as read
+            </Button>
+          )}
         </div>
 
         <div

@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useAutoScroll } from "../hooks/useAutoScroll.js";
+import { useUnreadInvestigations } from "../hooks/useUnreadInvestigations.js";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Search, SearchCode, MessageSquare, Plus, FileText, ChevronRight, Send, Trash2 } from "lucide-react";
+import { Search, SearchCode, MessageSquare, Plus, FileText, ChevronRight, Send, Trash2, X, ArrowRight, Zap } from "lucide-react";
 import { renderInline } from "../lib/renderInline";
 import { renderMarkdown } from "../lib/renderMarkdown";
 import { formatTokens } from "../lib/formatTokens.js";
@@ -34,7 +35,20 @@ interface ChatMessage {
   chartData?: ChartSeries[];
   skillsUsed?: string[];
   tokenUsage?: { inputTokens: number; outputTokens: number; durationMs: number };
+  // Server-resolved service for chat-agent replies. When present, the reply
+  // renders the "Run full investigation on <service>" pill button.
+  serviceContext?: string;
 }
+
+interface PendingConfirmDispatch {
+  id: string;
+  service: string;
+  query: string;
+  startedAt: number; // ms epoch
+  expiresAt: number; // ms epoch
+}
+
+const MIGRATION_TOAST_KEY = "consoleFeed:migrationToastSeen";
 
 interface ChatPaneProps {
   ws: ReturnType<typeof useWebSocket>;
@@ -121,6 +135,7 @@ function UnreadMarker() {
 export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, activeInvestigationId, serviceContext }: ChatPaneProps) {
   const { stackFetch, activeStackId } = useStackContext();
   const { status, messages: wsMessages, send } = ws;
+  const { isUnread, markViewed } = useUnreadInvestigations();
   const [input, setInput] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [deepMessages, setDeepMessages] = useState<ChatMessage[]>([]);
@@ -136,11 +151,62 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
     showReasoning: boolean;
   } | null>(null);
 
+  // Pre-dispatch confirmation banner state. Cleared on `investigation:started`
+  // (timer fired and runner kicked off), `investigation:dispatch_cancelled`
+  // (user clicked Cancel), or when the user explicitly cancels.
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmDispatch | null>(null);
+  const dispatchPendingRef = useRef(false);
+  const [dispatchPending, setDispatchPending] = useState(false);
+  // Render-time tick: updates every 100ms while a confirm is pending so the
+  // countdown text + progress bar advance smoothly. Stored as a number to
+  // force re-renders without churning the pendingConfirm reference.
+  const [confirmTick, setConfirmTick] = useState(0);
+
+  // First-load migration toast — fires once per browser to teach the new
+  // chat-default + /investigate UX. Suppressed via localStorage flag.
+  const [showMigrationToast, setShowMigrationToast] = useState(false);
+
+  // Slash-command autocomplete popover. Visible while the input starts with
+  // "/" and the user hasn't yet typed enough to disambiguate. `slashIndex`
+  // tracks the highlighted row so Enter / Tab autocomplete the selection
+  // instead of submitting the form with the partial slash.
+  const [showSlashPopover, setShowSlashPopover] = useState(false);
+  const [slashIndex, setSlashIndex] = useState(0);
+  const SLASH_COMMANDS: Array<{ command: string; placeholder: string; hint: string }> = [
+    { command: "/investigate", placeholder: "<service>", hint: "Run full RCA" },
+    { command: "/rca", placeholder: "<incident>", hint: "Same as above" },
+  ];
+  const acceptSlashCommand = (index: number) => {
+    const choice = SLASH_COMMANDS[index];
+    if (!choice) return;
+    setInput(`${choice.command} `);
+    setShowSlashPopover(false);
+    setSlashIndex(0);
+  };
+
   // Ref-based accumulator for high-frequency delta batching
   const streamRef = useRef<{ content: string; reasoning: string }>({ content: "", reasoning: "" });
   const rafRef = useRef<number | null>(null);
 
-  const scrollRef = useAutoScroll([chatMessages, deepMessages, chatLoading, deepLoading, !!streamingMessage]);
+  // Track streaming content length so auto-scroll re-fires as the assistant's
+  // bubble grows during streaming. Watching just `!!streamingMessage` (a
+  // boolean) only fires once at start; the bubble can then grow past the
+  // viewport without follow-up scroll updates.
+  const streamingContentLen = streamingMessage?.content.length ?? 0;
+  const streamingReasoningLen = streamingMessage?.reasoning.length ?? 0;
+  const scrollRef = useAutoScroll([
+    chatMessages,
+    deepMessages,
+    chatLoading,
+    deepLoading,
+    !!streamingMessage,
+    streamingContentLen,
+    streamingReasoningLen,
+    // The DISPATCHING confirmation banner is a chat-stream sibling — when it
+    // appears we want the same scroll-to-bottom behavior as a new message,
+    // so the [Cancel] pill is reachable without scrolling.
+    pendingConfirm?.id,
+  ]);
   const processedCount = useRef(0);
   const historyLoaded = useRef(false);
   const initialScrollDone = useRef(false);
@@ -151,6 +217,56 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
   const isDeepMode = !!activeInvestigationId;
   const messages = isDeepMode ? deepMessages : chatMessages;
   const isLoading = isDeepMode ? deepLoading : chatLoading;
+
+  // First-load migration toast: show once to teach the new chat-default + /investigate UX
+  useEffect(() => {
+    if (isDeepMode) return;
+    if (safeGetItem(MIGRATION_TOAST_KEY)) return;
+    setShowMigrationToast(true);
+    const timer = setTimeout(() => {
+      setShowMigrationToast(false);
+      safeSetItem(MIGRATION_TOAST_KEY, "1");
+    }, 12_000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: only fires once on first mount of Console mode
+  }, []);
+
+  const dismissMigrationToast = () => {
+    setShowMigrationToast(false);
+    safeSetItem(MIGRATION_TOAST_KEY, "1");
+  };
+
+  // Tick the countdown while a confirm-dispatch is pending. 100ms cadence keeps
+  // the progress bar smooth without churning unrelated re-renders.
+  useEffect(() => {
+    if (!pendingConfirm) return;
+    const interval = setInterval(() => {
+      setConfirmTick((t) => t + 1);
+      if (Date.now() >= pendingConfirm.expiresAt) {
+        clearInterval(interval);
+      }
+    }, 100);
+    return () => clearInterval(interval);
+  }, [pendingConfirm]);
+
+  const cancelPendingDispatch = () => {
+    if (!pendingConfirm) return;
+    send({ type: "investigation:cancel_dispatch", id: pendingConfirm.id });
+    // Optimistic clear — the server will also send `dispatch_cancelled`.
+    setPendingConfirm(null);
+  };
+
+  // Send a slash-command "/investigate <service>" — used by the in-reply pill button.
+  // Guarded against double-dispatch: a confirm-dispatch banner is already in flight,
+  // or a chat round-trip is already in progress. The pill is also visually disabled
+  // in those states so the user can't keep clicking through them.
+  const dispatchSlashInvestigate = (service: string) => {
+    if (status !== "connected") return;
+    if (dispatchPendingRef.current || pendingConfirm || chatLoading || streamingMessage) return;
+    dispatchPendingRef.current = true;
+    setDispatchPending(true);
+    send({ type: "chat", message: `/investigate ${service}` });
+  };
 
   // Load lastVisitedAt from localStorage on mount
   useEffect(() => {
@@ -335,6 +451,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
           ...(msg.createdAt ? { createdAt: msg.createdAt } : {}),
           ...(msg.chartData ? { chartData: msg.chartData } : {}),
           ...(msg.skillsUsed ? { skillsUsed: msg.skillsUsed } : {}),
+          ...(msg.serviceContext ? { serviceContext: msg.serviceContext } : {}),
         };
         if (isDeepMode) {
           setDeepMessages((prev) => [...prev, finalMsg]);
@@ -376,6 +493,26 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
         setChatLoading(false);
         setActiveTool(null);
         setStreamingMessage(null);
+        dispatchPendingRef.current = false;
+        setDispatchPending(false);
+        setPendingConfirm((prev) => (prev && prev.id === msg.id ? null : prev));
+      }
+      if (msg.type === "investigation:confirm_dispatch") {
+        const startedAt = Date.now();
+        dispatchPendingRef.current = false;
+        setDispatchPending(false);
+        setPendingConfirm({
+          id: msg.id,
+          service: msg.service,
+          query: msg.query,
+          startedAt,
+          expiresAt: startedAt + msg.timerMs,
+        });
+      }
+      if (msg.type === "investigation:dispatch_cancelled") {
+        dispatchPendingRef.current = false;
+        setDispatchPending(false);
+        setPendingConfirm((prev) => (prev && prev.id === msg.id ? null : prev));
       }
       if (msg.type === "session_cleared") {
         setChatMessages([]);
@@ -420,6 +557,20 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
       setActiveTool(null);
     }
     setInput("");
+    // Force-scroll to bottom on submit. useAutoScroll uses behavior:"smooth"
+    // and only scrolls when the user was already near the bottom. When the
+    // user types into a partially-scrolled chat, the smooth animation can
+    // leave the new bubble + thinking indicator partially hidden behind the
+    // input. Snap immediately, twice (now + after layout) to cover the
+    // streaming bubble appearing on the next paint.
+    requestAnimationFrame(() => {
+      const el = scrollRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+      requestAnimationFrame(() => {
+        const el2 = scrollRef.current;
+        if (el2) el2.scrollTop = el2.scrollHeight;
+      });
+    });
   };
 
   const handleDeleteMessage = useCallback(async (msgId: string) => {
@@ -505,12 +656,17 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
               {msg.content}
             </div>
           ) : msg.report && msg.investigationId ? (
+            (() => {
+              const unread = isUnread(msg.investigationId);
+              return (
             <div className="max-w-[92%] w-full flex flex-col gap-0.5">
               <button
-                onClick={() => onViewInvestigation(msg.investigationId!)}
+                onClick={() => { markViewed(msg.investigationId!); onViewInvestigation(msg.investigationId!); }}
                 className="w-full text-left group"
               >
                 <div className={`rca-reveal rca-reveal-glow rounded-xl border bg-card/50 overflow-hidden transition-all group-hover:border-primary/40 group-hover:shadow-md ${
+                  unread ? "rca-unread-pulse" : ""
+                } ${
                   msg.report.severity === "critical" ? "border-destructive/30 glow-red rca-reveal-glow-red" :
                   msg.report.severity === "high" ? "border-accent/25 glow-coral rca-reveal-glow-coral" :
                   "border-primary/20 glow-teal rca-reveal-glow-teal"
@@ -523,9 +679,16 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                   }`} />
                   <div className="px-3.5 py-2.5 border-b border-border/20 rca-section-1">
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-[11px] font-mono font-semibold uppercase tracking-[0.1em] text-foreground/85">
-                        Root Cause Analysis
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] font-mono font-semibold uppercase tracking-[0.1em] text-foreground/85">
+                          Root Cause Analysis
+                        </span>
+                        {unread && (
+                          <span className="font-mono text-[9px] uppercase tracking-[0.12em] px-1.5 py-px rounded-sm bg-accent text-accent-foreground animate-status-pulse">
+                            New
+                          </span>
+                        )}
+                      </div>
                       <div className="flex items-center gap-1.5">
                         <Badge variant={msg.report.severity === "critical" ? "destructive" : "secondary"} className="text-[8px] uppercase tracking-[0.1em]">
                           {msg.report.severity}
@@ -562,6 +725,8 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                 </span>
               )}
             </div>
+              );
+            })()
           ) : (
             <div className="max-w-[85%] space-y-2">
               {msg.skillsUsed && msg.skillsUsed.length > 0 && (
@@ -583,6 +748,23 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                     <MetricChart key={ci} series={toTimeSeries(c)} />
                   ))}
                 </div>
+              )}
+              {/* "Run full investigation" pill — only when chat agent resolved
+                  a service AND we're not already inside a deep investigation
+                  context. Click sends a /investigate slash command which goes
+                  through the explicit-opt-in path on the server. */}
+              {!isDeepMode && msg.serviceContext && status === "connected" && (
+                <Button
+                  variant="outline"
+                  onClick={() => dispatchSlashInvestigate(msg.serviceContext!)}
+                  disabled={dispatchPending || !!pendingConfirm || chatLoading || !!streamingMessage}
+                  className="h-9 px-4 text-[11px] font-mono bg-primary/10 border-primary/25 text-primary hover:bg-primary/15 hover:text-primary rounded-md gap-1.5 mt-1 disabled:opacity-40 disabled:pointer-events-none"
+                >
+                  <Zap size={12} className="!size-auto" />
+                  Run full investigation on
+                  <code className="font-mono text-[11px] text-primary">{msg.serviceContext}</code>
+                  <ArrowRight size={12} className="!size-auto" />
+                </Button>
               )}
               {msg.tokenUsage && (
                 <div className="text-[10px] font-mono text-muted-foreground/70 mt-1">
@@ -647,6 +829,26 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
         <div className="px-4 py-2 bg-accent/4 border-b border-accent/12 text-[10px] font-mono text-accent/60 flex items-center gap-2">
           <div className="w-1 h-1 rounded-full bg-accent/50" />
           Ask follow-up questions — has full MCP access for live queries
+        </div>
+      )}
+
+      {/* First-load migration toast — teaches the new chat-default + /investigate UX */}
+      {showMigrationToast && !isDeepMode && (
+        <div
+          data-testid="migration-toast"
+          className="px-4 py-2 bg-primary/8 border-b border-primary/15 text-[11px] font-mono text-primary/80 flex items-center justify-between gap-3 animate-fade-in"
+        >
+          <span className="flex-1">
+            Investigation is now opt-in. Type <code className="px-1.5 py-0.5 rounded bg-primary/10 text-primary">/investigate &lt;service&gt;</code> for a full RCA. Chat answers stay fast and tool-driven.
+          </span>
+          <Button
+            variant="ghost"
+            onClick={dismissMigrationToast}
+            className="h-auto px-1.5 py-0.5 rounded text-primary/60 hover:text-primary hover:bg-primary/10"
+            aria-label="Dismiss migration tip"
+          >
+            <X size={11} className="!size-auto" />
+          </Button>
         </div>
       )}
 
@@ -738,6 +940,52 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
             </p>
           )}
           {!historyLoading && renderMessages()}
+          {/* Pre-dispatch confirmation banner — chat-originated investigations
+              get a 5-second cancellable window before the multi-agent runner
+              kicks off. confirmTick keeps the countdown ticking. */}
+          {pendingConfirm && (() => {
+            const total = Math.max(1, pendingConfirm.expiresAt - pendingConfirm.startedAt);
+            const remaining = Math.max(0, pendingConfirm.expiresAt - Date.now());
+            const elapsed = total - remaining;
+            const pct = Math.min(100, Math.round((elapsed / total) * 100));
+            const seconds = Math.max(0, Math.ceil(remaining / 1000));
+            return (
+              <div
+                key={pendingConfirm.id}
+                data-testid="confirm-dispatch-banner"
+                data-confirm-id={pendingConfirm.id}
+                data-confirm-tick={confirmTick}
+                className="rounded-md bg-accent/10 border border-accent/20 border-l-2 border-l-accent px-3 py-2 my-1 animate-fade-in"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-accent flex items-center gap-2 min-w-0">
+                    <span>DISPATCHING</span>
+                    <span className="text-accent/40">·</span>
+                    <code className="px-1.5 py-0.5 rounded bg-accent/15 text-accent font-mono text-[11px] truncate">
+                      {pendingConfirm.service}
+                    </code>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="font-mono text-[11px] text-muted-foreground/70">{seconds}s</span>
+                    <Button
+                      variant="outline"
+                      onClick={cancelPendingDispatch}
+                      data-testid="confirm-dispatch-cancel"
+                      className="h-auto px-2.5 py-1 text-[10px] font-mono rounded border-accent/40 text-accent hover:bg-accent/15"
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+                <div className="h-[2px] bg-accent/15 rounded-sm overflow-hidden mt-2">
+                  <div
+                    className="h-full bg-accent transition-[width] duration-100 ease-linear"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })()}
           {streamingMessage && (
             <div className="flex justify-start animate-fade-in">
               <div className="max-w-[85%] space-y-2">
@@ -794,8 +1042,10 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
             </div>
           )}
         </div>
-        {/* Spacer so auto-scroll clears the shortcut chips overlay */}
-        {isDeepMode && <div className="h-12" />}
+        {/* Spacer so auto-scroll clears the shortcut chips overlay (deep mode)
+            or so the streaming bubble + thinking indicator have breathing
+            room above the input box (console mode). */}
+        {isDeepMode ? <div className="h-12" /> : <div className="h-3" />}
       </div>
 
       {/* Deep mode shortcut chips -- always visible */}
@@ -828,14 +1078,90 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
       {/* Input */}
       <div className={`p-3 border-t transition-colors ${isDeepMode ? "border-accent/15" : "border-border/30"}`}>
         <form onSubmit={(e) => { e.preventDefault(); handleSubmit(); }} className="relative">
+          {/* Slash-command autocomplete popover. Only shown in Console mode
+              (not Deep Investigation) when the input starts with "/". The
+              popover sits above the input with a soft shadow. */}
+          {!isDeepMode && showSlashPopover && (
+            <div
+              data-testid="slash-popover"
+              role="listbox"
+              aria-label="Slash command suggestions"
+              className="absolute left-0 right-0 bottom-full mb-2 rounded-md bg-card border border-border/60 shadow-lg overflow-hidden z-10"
+            >
+              {SLASH_COMMANDS.map((cmd, idx) => {
+                const active = idx === slashIndex;
+                return (
+                  <button
+                    key={cmd.command}
+                    type="button"
+                    role="option"
+                    aria-selected={active}
+                    data-testid={`slash-popover-${cmd.command.slice(1)}`}
+                    onMouseDown={(e) => { e.preventDefault(); acceptSlashCommand(idx); }}
+                    onMouseEnter={() => setSlashIndex(idx)}
+                    className={`w-full flex items-baseline justify-between px-3 py-2 text-left transition-colors ${
+                      active ? "bg-primary/15" : "hover:bg-secondary/50"
+                    } ${idx > 0 ? "border-t border-border/30" : ""}`}
+                  >
+                    <span className={`font-mono text-[12px] ${active ? "text-primary font-medium" : "text-primary/85"}`}>
+                      {cmd.command} <span className="text-muted-foreground/60">{cmd.placeholder}</span>
+                    </span>
+                    <span className="font-body text-[11px] text-muted-foreground/80">{cmd.hint}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
           <input
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              const v = e.target.value;
+              setInput(v);
+              // Show popover when in Console mode and the input begins with "/"
+              // and the user hasn't typed past the command name + a space yet.
+              if (!isDeepMode) {
+                const open = v.startsWith("/") && !/^\s*\/(?:investigate|rca)\s+\S/.test(v);
+                setShowSlashPopover(open);
+                if (open) setSlashIndex(0);
+              }
+            }}
+            // 200ms blur defers the popover close so an onMouseDown on a popover
+            // row still gets to call acceptSlashCommand (the row uses
+            // preventDefault to keep the input focused, but defensive in case
+            // a future row doesn't).
+            onBlur={() => setTimeout(() => setShowSlashPopover(false), 150)}
+            onKeyDown={(e) => {
+              if (!showSlashPopover) return;
+              // Popover is open — keys take precedence over form submit.
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setShowSlashPopover(false);
+                return;
+              }
+              if (e.key === "Enter" || e.key === "Tab") {
+                // Autocomplete the highlighted row instead of submitting the
+                // form. Without this, Enter on "/inves" submits "/inves" as
+                // a chat message — the user's exact bug report.
+                e.preventDefault();
+                acceptSlashCommand(slashIndex);
+                return;
+              }
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setSlashIndex((i) => (i + 1) % SLASH_COMMANDS.length);
+                return;
+              }
+              if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setSlashIndex((i) => (i - 1 + SLASH_COMMANDS.length) % SLASH_COMMANDS.length);
+                return;
+              }
+            }}
             className={`w-full px-4 py-2.5 pr-10 rounded-lg border text-sm font-body text-foreground/85 placeholder:text-muted-foreground/60 focus:outline-none transition-all disabled:opacity-25 ${isDeepMode ? "bg-accent/4 border-accent/20 focus:border-accent/40" : "bg-secondary/30 border-border/40 focus:border-primary/35"}`}
             placeholder={
               status !== "connected" ? "Reconnecting..." :
               isDeepMode ? "Ask a follow-up about this investigation..." :
-              "Type a message..."
+              "Ask anything... or /investigate <service> for full RCA"
             }
             disabled={status !== "connected" || isLoading}
           />
@@ -850,6 +1176,12 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
             <Send size={14} className="!size-auto" />
           </Button>
         </form>
+        {/* Persistent caption hint — only in Console mode */}
+        {!isDeepMode && (
+          <div className="mt-1.5 px-1 font-mono text-[10px] text-muted-foreground/50 tracking-wide">
+            Tip: type <code className="text-muted-foreground/80">/investigate &lt;service&gt;</code> for full RCA · press <code className="text-muted-foreground/80">/</code> to see commands
+          </div>
+        )}
       </div>
     </div>
   );

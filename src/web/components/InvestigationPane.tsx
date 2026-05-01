@@ -14,6 +14,7 @@ import { EvidenceTimeline } from "./EvidenceTimeline";
 import { RcaReport } from "./RcaReport";
 import { InvestigationFeedback } from "./InvestigationFeedback";
 import { useStackContext } from "../contexts/StackContext";
+import { useUnreadInvestigations } from "../hooks/useUnreadInvestigations";
 import type { TimelineEvent } from "./ActivityTimeline";
 import type { TimeSeriesData } from "./MetricChart";
 import type { ServerMessage } from "../../types/ws-types.js";
@@ -152,6 +153,7 @@ export function InvestigationPane({
   onWrongStack?: (correctStackId: string) => void;
 }) {
   const { stackFetch, activeStackId } = useStackContext();
+  const { markViewed } = useUnreadInvestigations();
   const [phases, setPhases] = useState<PhaseState[]>(DEFAULT_PHASES);
   const [evidence, setEvidence] = useState<Record<string, unknown>>({});
   const [report, setReport] = useState<unknown | null>(null);
@@ -194,6 +196,15 @@ export function InvestigationPane({
       reportRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }, [report]);
+
+  // Mark this investigation as viewed for the unread-tracking system. Fires on
+  // mount and again whenever the status transitions to a terminal state — that
+  // way an investigation the user kicked off from chat, watched live, and waited
+  // out won't keep glowing as NEW on the chat RCA card or the Investigation Log
+  // row in Operations Desk after they navigate away.
+  useEffect(() => {
+    markViewed(investigationId);
+  }, [investigationId, investigationStatus, markViewed]);
 
   // Trigger phase swoop animation on the running → complete transition.
   // Update prevRunningRef *before* the early return so the effect doesn't

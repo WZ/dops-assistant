@@ -347,10 +347,15 @@ describe("IntentRouter", () => {
     expect(result.intent).toBe("investigation");
   });
 
-  it("informational fast-path: 'how is X' with 'down' falls through to symptom check", async () => {
+  it("'how is X? it seems down' routes to question (chat agent uses tools)", async () => {
+    // After dropping the symptom+service fast-path, symptom-with-service prompts
+    // are LLM-classified. The conservative prompt routes them to "question" —
+    // the chat agent has Prometheus / Loki / k8s tools to answer with real data.
+    mockLlmResponse(JSON.stringify({ intent: "question", service: "payments-api" }));
     const router = new IntentRouter(dummyModel);
     const result = await router.route("how is payments-api? it seems down", ["payments-api"]);
-    expect(result.intent).toBe("investigation");
+    expect(result.intent).toBe("question");
+    expect(mockGenerateText).toHaveBeenCalled();
   });
 
   // --- Keyword fast-path tests (bypasses LLM) ---
@@ -397,45 +402,58 @@ describe("IntentRouter", () => {
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
-  // --- Symptom + service fast-path tests ---
+  // --- Symptom + service prompts (route to question via LLM) ---
+  //
+  // The symptom+service fast-path was removed — these prompts now route through
+  // the LLM classifier, which (per the conservative prompt) returns "question"
+  // for symptom reports. Chat agent answers via Prometheus / Loki / k8s tools.
 
-  it("symptom fast-path: 'dropped' + service token routes to investigation", async () => {
+  it("'<service> rate dropped' routes to question (chat agent answers)", async () => {
+    mockLlmResponse(JSON.stringify({ intent: "question", service: "ingestion-server" }));
     const router = new IntentRouter(dummyModel);
     const result = await router.route("ingestion rate dropped yesterday", ["ingestion-server", "payments-api"]);
-    expect(result.intent).toBe("investigation");
-    expect(mockGenerateText).not.toHaveBeenCalled();
-  });
-
-  it("symptom fast-path: 'slow' + service token routes to investigation", async () => {
-    const router = new IntentRouter(dummyModel);
-    const result = await router.route("payments-api is slow", ["ingestion-server", "payments-api"]);
-    expect(result.intent).toBe("investigation");
-    expect(mockGenerateText).not.toHaveBeenCalled();
-  });
-
-  it("symptom fast-path: 'errors' + alias routes to investigation", async () => {
-    const router = new IntentRouter(dummyModel);
-    const result = await router.route("kafka errors are spiking", ["some-other-service"]);
-    expect(result.intent).toBe("investigation");
-    expect(mockGenerateText).not.toHaveBeenCalled();
-  });
-
-  it("symptom fast-path: 'check' + alias routes to investigation", async () => {
-    const router = new IntentRouter(dummyModel);
-    const result = await router.route("check ClickHouse cluster health", ["ch-clickhouse", "ingestion-server"]);
-    expect(result.intent).toBe("investigation");
-    expect(mockGenerateText).not.toHaveBeenCalled();
-  });
-
-  it("symptom fast-path: 'check' does NOT fire without service mention", async () => {
-    mockLlmResponse(JSON.stringify({ intent: "question", service: "" }));
-    const router = new IntentRouter(dummyModel);
-    const result = await router.route("check what dashboards we have available", ["ingestion-server"]);
     expect(result.intent).toBe("question");
     expect(mockGenerateText).toHaveBeenCalled();
   });
 
-  it("symptom fast-path: does NOT fire without service mention", async () => {
+  it("'<service> is slow' routes to question (chat agent answers)", async () => {
+    mockLlmResponse(JSON.stringify({ intent: "question", service: "payments-api" }));
+    const router = new IntentRouter(dummyModel);
+    const result = await router.route("payments-api is slow", ["ingestion-server", "payments-api"]);
+    expect(result.intent).toBe("question");
+    expect(mockGenerateText).toHaveBeenCalled();
+  });
+
+  it("'kafka errors are spiking' routes to question (chat agent answers)", async () => {
+    mockLlmResponse(JSON.stringify({ intent: "question", service: "kafka" }));
+    const router = new IntentRouter(dummyModel);
+    const result = await router.route("kafka errors are spiking", ["some-other-service"]);
+    expect(result.intent).toBe("question");
+    expect(mockGenerateText).toHaveBeenCalled();
+  });
+
+  it("'check ClickHouse cluster health' routes to question (chat agent answers)", async () => {
+    mockLlmResponse(JSON.stringify({ intent: "question", service: "clickhouse" }));
+    const router = new IntentRouter(dummyModel);
+    const result = await router.route("check ClickHouse cluster health", ["ch-clickhouse", "ingestion-server"]);
+    expect(result.intent).toBe("question");
+    expect(mockGenerateText).toHaveBeenCalled();
+  });
+
+  it("'can you check errors in <job>' routes to question (regression: data-catalog-server-table-schema-check)", async () => {
+    // Real prompt that previously triggered a misrouted investigation against
+    // an MCP provider service. The "k8s" token used to overlap "k8s-mcp"; with
+    // platform tokens added to GENERIC_INFRA_TOKENS, that match is gone too.
+    mockLlmResponse(JSON.stringify({ intent: "question", service: "" }));
+    const router = new IntentRouter(dummyModel);
+    const result = await router.route(
+      "can you check errors in data-catalog-server-table-schema-check job. there is a init hook k8s job when provisioning data-catalog-server",
+      ["k8s-mcp", "data-catalog-server"],
+    );
+    expect(result.intent).toBe("question");
+  });
+
+  it("informational + symptom-without-service still routes to question", async () => {
     mockLlmResponse(JSON.stringify({ intent: "question", service: "" }));
     const router = new IntentRouter(dummyModel);
     const result = await router.route("what is the error rate?", ["ingestion-server"]);
@@ -443,10 +461,18 @@ describe("IntentRouter", () => {
     expect(mockGenerateText).toHaveBeenCalled();
   });
 
-  it("symptom fast-path: does NOT fire without serviceNames", async () => {
+  it("symptom prompt without serviceNames routes to question", async () => {
     mockLlmResponse(JSON.stringify({ intent: "question", service: "" }));
     const router = new IntentRouter(dummyModel);
     const result = await router.route("ingestion rate dropped yesterday");
+    expect(result.intent).toBe("question");
+    expect(mockGenerateText).toHaveBeenCalled();
+  });
+
+  it("'check what dashboards we have' routes to question (no service mention)", async () => {
+    mockLlmResponse(JSON.stringify({ intent: "question", service: "" }));
+    const router = new IntentRouter(dummyModel);
+    const result = await router.route("check what dashboards we have available", ["ingestion-server"]);
     expect(result.intent).toBe("question");
     expect(mockGenerateText).toHaveBeenCalled();
   });
@@ -477,13 +503,29 @@ describe("IntentRouter", () => {
     expect(mockGenerateText).toHaveBeenCalled();
   });
 
-  it("LLM prompt includes greeting examples", async () => {
+  it("LLM prompt biases toward question + lists explicit investigation verbs", async () => {
     mockLlmResponse(JSON.stringify({ intent: "question", service: "" }));
     const router = new IntentRouter(dummyModel);
     await router.route("hey there");
     const callArgs = mockGenerateText.mock.calls[0]![0] as any;
+    // Greeting example still present
     expect(callArgs.system).toContain('"hi" → question');
-    expect(callArgs.system).toContain("greeting");
+    // New conservative prompt: explicit investigation verbs only
+    expect(callArgs.system).toContain("investigate <service>");
+    expect(callArgs.system).toContain("diagnose");
+    expect(callArgs.system).toContain("RCA");
+    // New prompt explicitly tells the LLM the chat agent has tools
+    expect(callArgs.system).toContain("Prometheus");
+    expect(callArgs.system).toContain("Loki");
+    // Default-to-question rule
+    expect(callArgs.system.toLowerCase()).toContain("default to \"question\"");
+  });
+
+  it("matchServiceFromText drops 'k8s' platform token (regression: k8s-mcp false-match)", async () => {
+    // "k8s" used to token-overlap with "k8s-mcp" service tokens — adding it
+    // to GENERIC_INFRA_TOKENS prevents the overlap.
+    const result = matchServiceFromText("init hook k8s job", [{ name: "k8s-mcp" } as ServiceConfig]);
+    expect(result).toBeUndefined();
   });
 
   // --- LLM classification tests (no fast-path keywords) ---

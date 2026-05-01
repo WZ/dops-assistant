@@ -4,9 +4,7 @@ import { HealthStrip } from "./HealthStrip";
 import { StatCard } from "./dashboard/StatCard";
 import { InvestigationRow } from "./dashboard/InvestigationRow";
 import { OpsDeskSectionHeader } from "./dashboard/OpsDeskSectionHeader";
-import { ToastContainer } from "./dashboard/ToastContainer";
 import { EventStream } from "./dashboard/EventStream.js";
-import type { ToastItem } from "./dashboard/ToastContainer";
 import {
   formatDuration,
   severityVariant,
@@ -90,7 +88,6 @@ export function Dashboard({
   const [fetchError, setFetchError] = useState<string | null>(null);
   // refreshProgress state removed — replaced with CSS breathing animation
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [healthData, setHealthData] = useState<Record<string, HealthStatus>>(
     {},
   );
@@ -250,12 +247,7 @@ export function Dashboard({
       if (msg.type === "investigation:complete") {
         setActiveInvestigations((prev) => {
           const next = new Map(prev);
-          const service = next.get(msg.id)?.service ?? "Unknown";
           next.delete(msg.id);
-          setToasts((t) => [
-            ...t.slice(-9),
-            { id: msg.id, service, status: "complete", timestamp: Date.now() },
-          ]);
           return next;
         });
         shouldRefetch = true;
@@ -265,7 +257,6 @@ export function Dashboard({
         setActiveInvestigations((prev) => {
           const next = new Map(prev);
           const existing = next.get(msg.id);
-          const service = existing?.service ?? "Unknown";
           if (existing) {
             next.set(msg.id, {
               ...existing,
@@ -273,10 +264,6 @@ export function Dashboard({
               failedAt: Date.now(),
             });
           }
-          setToasts((t) => [
-            ...t.slice(-9),
-            { id: msg.id, service, status: "failed", timestamp: Date.now() },
-          ]);
           return next;
         });
         shouldRefetch = true;
@@ -405,10 +392,6 @@ export function Dashboard({
   const isStale = lastUpdated
     ? Date.now() - lastUpdated.getTime() > 2 * 60 * 1000
     : false;
-
-  const handleToastDismiss = (id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  };
 
   return (
     <div className="h-full overflow-y-auto px-4 py-5 relative z-[2] dashboard-container">
@@ -870,14 +853,6 @@ export function Dashboard({
         </>
       )}
 
-      <ToastContainer
-        toasts={toasts}
-        onDismiss={handleToastDismiss}
-        onClickToast={(id) => {
-          handleToastDismiss(id);
-          onInvestigationClick(id);
-        }}
-      />
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { formatTokens } from "@/lib/formatTokens";
 import { formatDuration, inferTriggerSource, normalizeConfidence, severityVariant, timeAgo } from "@/lib/dashboard-utils";
 import { withBase } from "@/lib/createStackFetch";
+import { useUnreadInvestigations } from "../../hooks/useUnreadInvestigations.js";
 import type { InvestigationSummary } from "@/lib/dashboard-utils";
 
 interface InvestigationRowProps {
@@ -24,6 +25,10 @@ export const InvestigationRow = memo(function InvestigationRow({
   stackId,
   className,
 }: InvestigationRowProps) {
+  const { isUnread, markViewed } = useUnreadInvestigations();
+  // Only terminal-state rows can be "unread" — a row that's still running
+  // updates in place, so flagging it as unread would be noise.
+  const unread = (inv.status === "complete" || inv.status === "failed") && isUnread(inv.id);
   // Severity and confidence both come from DB columns now (severity from the
   // real column, confidence_score computed via json_extract in the SELECT).
   // We only JSON.parse the report for rootCause, which isn't promoted yet.
@@ -76,9 +81,14 @@ export const InvestigationRow = memo(function InvestigationRow({
 
   const totalTokens = (inv.total_input_tokens ?? 0) + (inv.total_output_tokens ?? 0);
 
+  const handleClick = () => {
+    markViewed(inv.id);
+    onClick(inv.id);
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLAnchorElement>) => {
     if (e.key === "Enter") {
-      onClick(inv.id);
+      handleClick();
     }
   };
 
@@ -86,12 +96,13 @@ export const InvestigationRow = memo(function InvestigationRow({
     <a
       href={withBase(`/stacks/${encodeURIComponent(stackId)}/investigations/${encodeURIComponent(inv.id)}`)}
       tabIndex={0}
-      onClick={(e) => { e.preventDefault(); onClick(inv.id); }}
+      onClick={(e) => { e.preventDefault(); handleClick(); }}
       onKeyDown={handleKeyDown}
       className={cn(
         "group block cursor-pointer rounded-lg border border-border/40 border-l-[3px] hover:bg-card/70 hover:border-t-primary/25 hover:border-r-primary/25 hover:border-b-primary/25 px-4 py-3 transition-all card-lift no-underline",
         severityTint || "bg-card/40",
         severityBorder,
+        unread && "rca-unread-pulse",
         className,
       )}
     >
@@ -104,6 +115,11 @@ export const InvestigationRow = memo(function InvestigationRow({
           <span className="font-body text-sm font-medium text-foreground/90 group-hover:text-foreground transition-colors truncate">
             {inv.service}
           </span>
+          {unread && (
+            <span className="flex-shrink-0 font-mono text-[9px] uppercase tracking-[0.12em] px-1.5 h-4 leading-4 rounded-sm bg-accent text-accent-foreground animate-status-pulse">
+              New
+            </span>
+          )}
           {severity && (
             <Badge
               variant={severityVariant(severity)}

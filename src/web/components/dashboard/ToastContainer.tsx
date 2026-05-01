@@ -52,7 +52,7 @@ function Toast({ toast, onDismiss, onClick }: { toast: ToastItem; onDismiss: () 
         toast.status === "complete" ? "border-success/25 glow-green" :
         toast.status === "failed" ? "border-destructive/25 glow-red" :
         "border-border"
-      } ${exiting ? "opacity-0 translate-x-3" : "animate-slide-in-right"}`}
+      } ${exiting ? "opacity-0 -translate-y-3" : "animate-slide-in-down"}`}
       style={{
         boxShadow: toast.status === "complete" || toast.status === "failed"
           ? undefined  // glow classes handle shadow
@@ -111,7 +111,11 @@ export const ToastContainer = memo(function ToastContainer({ toasts, onDismiss, 
   if (visible.length === 0) return null;
 
   return (
-    <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2" role="log" aria-label="Notifications">
+    <div
+      className="fixed top-6 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2"
+      role="log"
+      aria-label="Notifications"
+    >
       {visible.map(toast => (
         <Toast
           key={toast.id}
