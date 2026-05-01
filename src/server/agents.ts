@@ -157,9 +157,11 @@ function selectChatAgent(agents: MastraChatAgentSet, task: ChatRequest): MastraC
  */
 export class MastraChatAgentAdapter {
   private mastraAgents: MastraChatAgentSet;
+  private llmCallMs?: number;
 
-  constructor(mastraAgents: MastraChatAgentSet) {
+  constructor(mastraAgents: MastraChatAgentSet, opts?: { llmCallMs?: number }) {
     this.mastraAgents = mastraAgents;
+    this.llmCallMs = opts?.llmCallMs;
   }
 
   async chat(task: ChatRequest): Promise<ChatResponse> {
@@ -167,6 +169,11 @@ export class MastraChatAgentAdapter {
     const prompt = buildHistoryContext(task);
     const streamInput = prompt as MastraStreamInput;
     const collectedImages: ImageAttachment[] = [];
+    // Per-call abort signal — the AI SDK has no idle timeout, so a stalled
+    // upstream stream hangs forever otherwise. Bound to config.timeouts.llmCallMs.
+    const abortSignal = this.llmCallMs && this.llmCallMs > 0
+      ? AbortSignal.timeout(this.llmCallMs)
+      : undefined;
 
     // Signal streaming start immediately so UI shows "Thinking..."
     task.onStreamStart?.();
@@ -181,7 +188,9 @@ export class MastraChatAgentAdapter {
     let chatError: string | undefined;
     logLlmCallStart({ callId: chatCallId, agent: "chat", promptChars: prompt.length, prompt });
     try {
-      const stream = await mastraAgent.stream(streamInput);
+      const stream = await (abortSignal
+        ? mastraAgent.stream(streamInput, { abortSignal })
+        : mastraAgent.stream(streamInput));
 
       for await (const chunk of stream.fullStream) {
         if (!firstChunkLogged) {
@@ -236,7 +245,14 @@ export class MastraChatAgentAdapter {
       logger.warn({ err: chatError }, "stream error");
       if (!responseText) {
         try {
-          const result = await mastraAgent.generate(prompt);
+          // Reuse a fresh timeout for the fallback — the original signal may
+          // have already fired (that's likely why we're in this catch block).
+          const fallbackSignal = this.llmCallMs && this.llmCallMs > 0
+            ? AbortSignal.timeout(this.llmCallMs)
+            : undefined;
+          const result = await (fallbackSignal
+            ? mastraAgent.generate(prompt, { abortSignal: fallbackSignal })
+            : mastraAgent.generate(prompt));
           responseText = result.text ?? "";
           task.onStreamDelta?.({ type: "content", content: responseText });
           chatError = undefined; // fallback succeeded
@@ -411,6 +427,8 @@ export interface MastraDiscoverAdapterDeps {
   registryStore: ServiceRegistryStore;
   /** Retry config for transient LLM-call failures. */
   llmRetry?: LlmRetryConfig;
+  /** Per-attempt LLM call timeout — bounds silent-stall hangs in the discover agent. */
+  llmCallMs?: number;
 }
 
 export class MastraDiscoverAdapter implements IDiscoverAgent {
@@ -440,6 +458,7 @@ export class MastraDiscoverAdapter implements IDiscoverAgent {
       skills,
       onRetry,
       llmRetry: this.deps.llmRetry,
+      llmCallMs: this.deps.llmCallMs,
     });
   }
 
@@ -543,6 +562,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
         supportsInlineCharts: false,
       }),
     },
+    { llmCallMs: config.timeouts?.llmCallMs },
   );
 
   const { db, stackId } = deps;
@@ -569,6 +589,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
         discoveryConfig: config.discovery,
         registryStore: deps.registryStore,
         llmRetry: config.llm.retry,
+        llmCallMs: config.timeouts?.llmCallMs,
       })
     : undefined;
 
