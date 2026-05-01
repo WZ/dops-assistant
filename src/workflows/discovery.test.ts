@@ -33,13 +33,37 @@ let mockDiscoverReturnsObjectForm = false;
 // the two switches above.
 let mockDiscoverReplyOverride: string | null = null;
 
+// Captures the most recent options passed to the discover agent's generate()
+// call, so abortSignal-plumbing tests can introspect it.
+const lastDiscoverGenerateOpts: { value: any } = { value: undefined };
+let mockDiscoverTimeoutFirstGenerate = false;
+const discoverGenerateSignals: AbortSignal[] = [];
+const discoverGenerateSignalStates: Array<{ sameAsFirst: boolean; abortedOnEntry: boolean }> = [];
+
 vi.mock("@mastra/core/agent", () => ({
   Agent: class MockAgent {
     id: string;
     name: string;
     constructor(opts: any) { this.id = opts.id; this.name = opts.name; }
-    async generate(prompt: string) {
+    async generate(prompt: string, opts?: any) {
       if (this.id === "discover") {
+        lastDiscoverGenerateOpts.value = opts;
+        if (mockDiscoverTimeoutFirstGenerate) {
+          const signal = opts?.abortSignal as AbortSignal | undefined;
+          if (signal) {
+            discoverGenerateSignalStates.push({
+              sameAsFirst: signal === discoverGenerateSignals[0],
+              abortedOnEntry: signal.aborted,
+            });
+            discoverGenerateSignals.push(signal);
+          }
+          if (discoverGenerateSignals.length === 1 && signal) {
+            await new Promise<void>((resolve) => {
+              signal.addEventListener("abort", () => resolve(), { once: true });
+            });
+            throw signal.reason;
+          }
+        }
         if (mockDiscoverReplyOverride !== null) return { text: mockDiscoverReplyOverride };
         if (mockDiscoverReturnsEmpty) return { text: "[]" };
         if (mockDiscoverReturnsObjectForm) {
@@ -193,6 +217,9 @@ describe("runDiscoverStep — adversarial-review fixes (2026-04-22)", () => {
 
   afterEach(() => {
     mockDiscoverReplyOverride = null;
+    mockDiscoverTimeoutFirstGenerate = false;
+    discoverGenerateSignals.length = 0;
+    discoverGenerateSignalStates.length = 0;
   });
 
   it("B — accepts object form when globalProbeRules is non-empty even if services is empty", async () => {
@@ -299,5 +326,38 @@ describe("runDiscoverStep — adversarial-review fixes (2026-04-22)", () => {
     const result = await runDiscovery(baseConfig);
     const availRules = (result.services[0]?.probeRules ?? []).filter((r) => r.name === "service_availability");
     expect(availRules).toHaveLength(1);
+  });
+
+  it("passes a non-aborted AbortSignal to discover agent.generate when llmCallMs is set", async () => {
+    lastDiscoverGenerateOpts.value = undefined;
+    await runDiscovery({ ...baseConfig, llmCallMs: 60_000 });
+    const opts = lastDiscoverGenerateOpts.value;
+    expect(opts).toBeDefined();
+    expect(opts.abortSignal).toBeInstanceOf(AbortSignal);
+    expect(opts.abortSignal.aborted).toBe(false);
+  });
+
+  it("omits abortSignal when llmCallMs is unset", async () => {
+    lastDiscoverGenerateOpts.value = undefined;
+    await runDiscovery(baseConfig);
+    const opts = lastDiscoverGenerateOpts.value;
+    expect(opts).toBeDefined();
+    expect(opts.abortSignal).toBeUndefined();
+  });
+
+  it("uses a fresh AbortSignal for the retry after a timeout", async () => {
+    mockDiscoverTimeoutFirstGenerate = true;
+    await runDiscovery({
+      ...baseConfig,
+      llmRetry: { maxAttempts: 2, initialDelayMs: 1, maxDelayMs: 1, jitterPercent: 0 },
+      llmCallMs: 1,
+    });
+
+    expect(discoverGenerateSignals).toHaveLength(2);
+    expect(discoverGenerateSignals[0]!.aborted).toBe(true);
+    expect(discoverGenerateSignalStates[1]).toEqual({
+      sameAsFirst: false,
+      abortedOnEntry: false,
+    });
   });
 });

@@ -35,6 +35,8 @@ export interface DiscoveryWorkflowConfig {
   skills?: Skill[];
   /** Retry config for transient LLM-call failures. Falls back to no-retry when omitted. */
   llmRetry?: LlmRetryConfig;
+  /** Per-attempt timeout for the discover agent's LLM call. See DiscoverStepConfig.llmCallMs. */
+  llmCallMs?: number;
 }
 
 export async function runDiscovery(config: DiscoveryWorkflowConfig): Promise<DiscoveryResult> {
@@ -56,6 +58,7 @@ export async function runDiscovery(config: DiscoveryWorkflowConfig): Promise<Dis
       onRetry: config.onRetry,
       skills: config.skills,
       llmRetry: config.llmRetry,
+      llmCallMs: config.llmCallMs,
     });
 
     if (discovered.services.length === 0) {
