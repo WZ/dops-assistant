@@ -107,6 +107,12 @@ export interface WsDeps {
   globalOnComplete?: RunnerDeps["globalOnComplete"];
   validateLlmServiceMatch: (llmService: string | undefined, userMessage: string, services: ServiceConfig[]) => ServiceConfig | undefined;
   matchServiceFromText: (text: string, services: ServiceConfig[]) => ServiceConfig | undefined;
+  /**
+   * Length of the cancellable confirm-dispatch window for chat-originated
+   * investigations. Default 5000ms. Tests override to a small value (or 0)
+   * to keep them fast.
+   */
+  chatDispatchConfirmMs?: number;
 }
 
 /** Lazily-created agents cache per stack */
@@ -199,6 +205,14 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
     // globalProbeRules (which the UI doesn't round-trip over the wire) and
     // save both via registryStore.saveAll() atomically.
     let pendingDiscovery: DiscoveryResult | null = null;
+
+    // Per-connection pending dispatches: investigations that have emitted
+    // `investigation:confirm_dispatch` but haven't yet entered the
+    // multi-agent runner. The client can send `investigation:cancel_dispatch`
+    // with a matching id to abort during the 5-second confirmation window.
+    // Once a dispatch begins running (or its window closes), the entry is
+    // removed — late cancels are silently ignored.
+    const pendingDispatches: Map<string, AbortController> = new Map();
 
     const send = (m: ServerMessage) => {
       if (ws.readyState === WebSocket.OPEN) {
@@ -301,6 +315,7 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
           () => pendingDiscovery,
           (result: DiscoveryResult) => { pendingDiscovery = result; },
           () => { pendingDiscovery = null; },
+          pendingDispatches,
         );
       } catch (err) {
         if (err instanceof LlmUnavailableError) {
@@ -598,12 +613,26 @@ export async function handleClientMessage(
   getPendingDiscovery: () => DiscoveryResult | null,
   setPendingDiscovery: (result: DiscoveryResult) => void,
   clearPendingDiscovery: () => void,
+  pendingDispatches: Map<string, AbortController> = new Map(),
 ): Promise<void> {
   const memory = ctx.conversationMemory;
 
   if (msg.type === "new_session") {
     memory.clear(threadId);
     send({ type: "session_cleared" });
+    return;
+  }
+
+  // Cancel a chat-originated investigation that's still in its 5-second
+  // confirm-dispatch window. Silently no-op for unknown ids — the dispatch
+  // either already started (window closed) or never existed.
+  if (msg.type === "investigation:cancel_dispatch") {
+    const controller = pendingDispatches.get(msg.id);
+    if (controller) {
+      controller.abort();
+      // The chat-handler's race resolver will remove the entry and emit
+      // `investigation:dispatch_cancelled` plus an inline assistant message.
+    }
     return;
   }
 
@@ -781,53 +810,133 @@ export async function handleClientMessage(
   const visibleServices = hidden.size > 0 ? services.filter(s => !hidden.has(s.name)) : services;
   const serviceNames = visibleServices.map((s) => s.name);
 
+  // Slash-command pre-route: if the user typed `/investigate <text>` or
+  // `/rca <text>` (or `/investigate` alone), strip the prefix and force
+  // investigation intent without calling the LLM router. This is the explicit
+  // opt-in path for the chat-default-by-design routing — the in-reply "Run
+  // full investigation" pill button also routes through here.
+  // The regex also matches a bare "/investigate" with no argument so we can
+  // reply with a help message instead of routing it to the chat agent.
+  const SLASH_INVESTIGATE_RE = /^\s*\/(?:investigate|rca)(?:\s+|$)/i;
+  const isSlashInvestigate = SLASH_INVESTIGATE_RE.test(msg.message);
+  const routedMessage = isSlashInvestigate ? msg.message.replace(SLASH_INVESTIGATE_RE, "").trim() : msg.message;
+
   // If a serviceContext is provided, resolve it authoritatively and skip text/LLM matching
   const pinnedService = serviceContext
     ? visibleServices.find(s => s.name === serviceContext)
     : undefined;
 
+  // Persist the user message AS TYPED — keep the slash prefix in the
+  // transcript so the user's intent is visible in chat history. All
+  // downstream consumers (matching, runner.run, chat agent) use
+  // routedMessage instead.
   db.createMessage(stackId, { id: `msg_${ulid()}`, role: "user", content: msg.message });
 
   // Context switch detection: compare service in current message vs conversation history
   // Skip when we have a pinned serviceContext — no ambiguity to detect
-  const mentionedService = pinnedService ?? deps.matchServiceFromText(msg.message, visibleServices);
+  const mentionedService = pinnedService ?? deps.matchServiceFromText(routedMessage, visibleServices);
   const contextService = resolveServiceFromHistory(memory.get(threadId), visibleServices);
   if (!pinnedService && mentionedService && contextService && mentionedService.name !== contextService.name) {
     send({ type: "context_switch", previousService: contextService.name, newService: mentionedService.name });
   }
 
-  const intent: { intent: string; service?: string } = await deps.router.route(msg.message, serviceNames);
+  let intent: { intent: string; service?: string };
+  if (isSlashInvestigate) {
+    logger.info({ routeSource: "slash", intent: "investigation" }, "Router: classified");
+    intent = { intent: "investigation", service: undefined };
+  } else {
+    intent = await deps.router.route(routedMessage, serviceNames);
+  }
 
   // Downgrade investigation → question when no service is identifiable from the message
   // AND the user didn't use explicit investigation keywords ("investigate", "diagnose", etc.).
-  // General questions like "What services are unhealthy?" contain symptom words but
-  // don't target a specific service. The chat agent can answer these using health data.
+  // After dropping fast-path 4, this guard rarely triggers — the LLM classifier defaults
+  // to "question" for symptom-only prompts. Kept as defense in depth for the rare case
+  // the LLM returns "investigation" without a resolvable service. Skipped on slash
+  // commands — those are explicit user intent and get the dedicated guard below instead.
   const STRONG_INVESTIGATION_WORDS = /\b(investigate|investigation|diagnose|diagnosis|troubleshoot|rca|root[\s-]*cause|postmortem|post[\s-]*mortem)\b/i;
-  if (intent.intent === "investigation" && !pinnedService && !STRONG_INVESTIGATION_WORDS.test(msg.message)) {
-    const fromMessage = deps.matchServiceFromText(msg.message, visibleServices);
-    const fromLlm = deps.validateLlmServiceMatch(intent.service, msg.message, visibleServices);
+  if (intent.intent === "investigation" && !isSlashInvestigate && !pinnedService && !STRONG_INVESTIGATION_WORDS.test(routedMessage)) {
+    const fromMessage = deps.matchServiceFromText(routedMessage, visibleServices);
+    const fromLlm = deps.validateLlmServiceMatch(intent.service, routedMessage, visibleServices);
     if (!fromMessage && !fromLlm && !intent.service) {
-      logger.info({ message: msg.message }, "Investigation intent but no service in message, downgrading to question");
+      logger.info({ message: routedMessage }, "Investigation intent but no service in message, downgrading to question");
       intent.intent = "question";
     }
   }
 
   if (intent.intent === "investigation") {
-    const service =
-      pinnedService ??
-      deps.matchServiceFromText(msg.message, visibleServices) ??
-      deps.validateLlmServiceMatch(intent.service, msg.message, visibleServices) ??
-      resolveServiceFromHistory(memory.get(threadId), visibleServices) ??
-      resolveServiceFromHistory(db.listRecentMessages(stackId, 10), visibleServices);
+    // Slash commands MUST resolve a service from the explicit message text or
+    // the pinned context. Falling back to history resolution would silently
+    // investigate the last-discussed service when the user typed e.g.
+    // "/investigate timeout spike" with no service named — almost certainly
+    // not what they meant. For non-slash investigations (STRONG_KEYWORD or
+    // LLM-classified), keep the full resolution chain including history.
+    const service = isSlashInvestigate
+      ? (
+          pinnedService ??
+          deps.matchServiceFromText(routedMessage, visibleServices) ??
+          deps.validateLlmServiceMatch(intent.service, routedMessage, visibleServices)
+        )
+      : (
+          pinnedService ??
+          deps.matchServiceFromText(routedMessage, visibleServices) ??
+          deps.validateLlmServiceMatch(intent.service, routedMessage, visibleServices) ??
+          resolveServiceFromHistory(memory.get(threadId), visibleServices) ??
+          resolveServiceFromHistory(db.listRecentMessages(stackId, 10), visibleServices)
+        );
 
     if (!service) {
-      send({ type: "chat", role: "assistant", content: "I couldn't identify which service to investigate. Could you specify the service name?" });
+      const help = isSlashInvestigate
+        ? "Which service should I investigate? Try `/investigate <service-name>`."
+        : "I couldn't identify which service to investigate. Could you specify the service name?";
+      send({ type: "chat", role: "assistant", content: help });
       return;
     }
 
     const invId = `inv_${ulid()}`;
     memory.append(threadId, { role: "user", content: msg.message });
-    send({ type: "investigation:started", id: invId, service: service.name, query: msg.message });
+
+    // Confirm-dispatch flow: chat-originated investigations get a (default 5s)
+    // cancellable window before the multi-agent runner kicks off. Webhook /
+    // scan / health-poller paths go straight to InvestigationRunner.run() and
+    // skip this flow entirely (alert-driven RCAs need no human consent).
+    const DISPATCH_CONFIRM_MS = deps.chatDispatchConfirmMs ?? 5000;
+    const cancelController = new AbortController();
+    pendingDispatches.set(invId, cancelController);
+    send({
+      type: "investigation:confirm_dispatch",
+      id: invId,
+      service: service.name,
+      query: routedMessage,
+      timerMs: DISPATCH_CONFIRM_MS,
+    });
+
+    const cancelled = DISPATCH_CONFIRM_MS <= 0
+      ? false
+      : await new Promise<boolean>((resolve) => {
+          const timer = setTimeout(() => {
+            cancelController.signal.removeEventListener("abort", onAbort);
+            resolve(false);
+          }, DISPATCH_CONFIRM_MS);
+          const onAbort = () => {
+            clearTimeout(timer);
+            resolve(true);
+          };
+          cancelController.signal.addEventListener("abort", onAbort, { once: true });
+        });
+    pendingDispatches.delete(invId);
+
+    if (cancelled) {
+      send({ type: "investigation:dispatch_cancelled", id: invId, service: service.name });
+      const cancelMsgId = `msg_${ulid()}`;
+      const cancelContent = `Investigation of \`${service.name}\` cancelled.`;
+      send({ type: "chat", role: "assistant", content: cancelContent, id: cancelMsgId, createdAt: new Date().toISOString() } as ServerMessage);
+      db.createMessage(stackId, { id: cancelMsgId, role: "assistant", content: cancelContent });
+      memory.append(threadId, { role: "assistant", content: cancelContent });
+      return;
+    }
+
+    send({ type: "investigation:started", id: invId, service: service.name, query: routedMessage });
     const ackContent = `Starting investigation of **${service.name}**...`;
     const ackMsgId = `msg_${ulid()}`;
     send({ type: "chat", role: "assistant", content: ackContent, id: ackMsgId, createdAt: new Date().toISOString() } as ServerMessage);
@@ -865,7 +974,7 @@ export async function handleClientMessage(
 
     const runner = new InvestigationRunner({ db, investigationAgent, skillStore: deps.skillStore, globalOnComplete: deps.globalOnComplete });
     try {
-      await runner.run({ service, message: msg.message, investigationId: invId, stackId, disabledSkillIds: deps.db.getDisabledSkills(stackId), callbacks: wsCallbacks, source: "manual" });
+      await runner.run({ service, message: routedMessage, investigationId: invId, stackId, disabledSkillIds: deps.db.getDisabledSkills(stackId), callbacks: wsCallbacks, source: "manual" });
     } catch {
       // Error already handled by runner's onFailed callback
     }
@@ -884,7 +993,7 @@ export async function handleClientMessage(
       const chatDisabledIds = deps.db.getDisabledSkills(stackId);
       const matched = deps.skillStore.searchEnabled({
         service: chatService?.name,
-        query: msg.message,
+        query: routedMessage,
         scope: "chat",
       }, chatDisabledIds);
       if (matched.length > 0) {
@@ -905,7 +1014,7 @@ export async function handleClientMessage(
     try {
       const result = await agent.chat({
         mode: "conversational",
-        message: msg.message,
+        message: routedMessage,
         history,
         serviceContext: services,
         skillContext: chatSkillContext,
@@ -949,6 +1058,9 @@ export async function handleClientMessage(
         ...(usedSkillNames?.length ? { skillsUsed: usedSkillNames } : {}),
         id: chatMsgId,
         createdAt: chatMsgTime,
+        // serviceContext lets the client render the "Run full investigation"
+        // pill button under chat-agent replies that resolved a service.
+        ...(chatService ? { serviceContext: chatService.name } : {}),
       });
       send({
         type: "chat:usage",

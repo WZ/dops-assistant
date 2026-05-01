@@ -10,43 +10,59 @@ const logger = createLogger();
 
 // ── Intent classifier prompt ────────────────────────────────────────────────
 
+/**
+ * Build the LLM intent-classifier prompt.
+ *
+ * The chat agent has direct Prometheus / Loki / k8s MCP tools — most messages
+ * (including symptom reports and log queries) are best answered by it directly.
+ * Investigation = the heavyweight multi-agent RCA workflow, and we only fire it
+ * on EXPLICIT cues. Reports of problems alone are NOT enough; the user must
+ * use an investigation verb (investigate / diagnose / troubleshoot / RCA /
+ * postmortem). Operators escalate by typing `/investigate <service>` or by
+ * clicking the "Run full investigation" pill the chat reply renders.
+ */
 function buildIntentClassifierPrompt(serviceNames?: string[]): string {
   const serviceList = serviceNames?.length
-    ? `\nFor reference, known services include: ${serviceNames.join(", ")}\nIf the user mentions a service or component, extract the key identifying term (e.g. "ingestion log rate drop" → "ingestion", "kudu tserver is slow" → "kudu-tserver"). Prefer using a known service name if it clearly matches, but you may also extract the user's own wording.`
+    ? `\nFor reference, known services include: ${serviceNames.join(", ")}\nIf the user mentions a service or component, extract the key identifying term. Prefer a known service name if it clearly matches; otherwise echo the user's own wording.`
     : "";
 
   return `You are classifying a user message as either an "investigation" request or a "question".
 
-CLASSIFY AS "investigation" when the user:
-- Reports a problem, symptom, or error (slow, down, failing, errors, spike, drop, timeout, OOM, crash)
-- Asks to investigate, diagnose, troubleshoot, or check a service/component
-- Describes an anomaly or unexpected behavior
-- Asks to check health, performance, or status of a specific service
-- Uses words like: investigate, check, diagnose, troubleshoot, look into, what's wrong, why is
+The chat agent has direct access to Prometheus, Loki, and Kubernetes MCP tools. It can query metrics, search logs, list pods, fetch dashboards, and answer technical questions with real data. Most user messages — including reports of problems and questions about service health — should be answered by the chat agent, not by spinning up a heavyweight multi-agent root cause investigation.
 
-CLASSIFY AS "question" when the user:
-- Sends a greeting or casual message ("hi", "hello", "hey", "thanks", "good morning")
-- Sends a short non-technical message with no mention of services, errors, or symptoms
-- Asks for information without implying a problem ("what dashboards do we have?", "list services")
-- Asks how something works ("how does ingestion work?")
-- Asks for general status without concern ("show me the current metrics")
+CLASSIFY AS "investigation" ONLY when the user EXPLICITLY asks for a formal investigation:
+- "investigate <service>"
+- "diagnose <service or symptom>"
+- "troubleshoot <issue>"
+- "RCA <incident>" or "root cause of <X>"
+- "run a postmortem on <X>"
+
+EVERYTHING ELSE is "question" — including:
+- Reports of problems ("the api is down", "kafka is crashing")
+- Symptom descriptions ("payments-api throws 503s", "ingestion rate dropped")
+- Health, status, or performance checks ("is data-server healthy?", "check CPU usage")
+- Log queries ("can you check errors in <job/log source>", "look at the logs for X")
+- Service-availability questions ("are there any issues with kafka?")
+- "Can you check X" or "look at Y" requests
+- Informational asks ("what dashboards do we have?", "how does ingestion work?")
+- Greetings and casual messages ("hi", "hello", "thanks")
 
 EXAMPLES:
-- "data-server queries are running slow" → investigation, service: "data-server"
-- "check ClickHouse cluster health" → investigation, service: "clickhouse"
-- "data-server is throwing ClickHouse connection errors" → investigation, service: "data-server"
-- "something seems off with the system, investigate" → investigation, service: ""
-- "are there any issues with the Kafka cluster?" → investigation, service: "kafka"
-- "check CPU usage across all nodes" → investigation, service: ""
+- "investigate kafka brokers" → investigation, service: "kafka"
+- "diagnose the timeout spike on data-server" → investigation, service: "data-server"
+- "RCA the outage from this morning" → investigation, service: ""
+- "data-server queries are running slow" → question, service: "data-server"
+- "kafka is throwing connection errors" → question, service: "kafka"
+- "the api is down" → question, service: "api"
+- "can you check errors in <job-name> job" → question, service: ""
+- "can you check the logs for X" → question, service: ""
+- "check ClickHouse cluster health" → question, service: "clickhouse"
+- "are there any issues with the Kafka cluster?" → question, service: "kafka"
+- "check CPU usage across all nodes" → question, service: ""
 - "what dashboards do we have available?" → question, service: ""
-- "how does the ingestion pipeline work?" → question, service: ""
 - "hi" → question, service: ""
-- "hello" → question, service: ""
-- "hey there" → question, service: ""
-- "thanks" → question, service: ""
-- "good morning" → question, service: ""
 
-Only classify as "investigation" when the message contains a clear technical concern — a symptom, error, or explicit request to investigate. Greetings, casual messages, and non-technical conversation should always be "question".
+Default to "question" unless the user used one of the explicit investigation verbs above. The user can always escalate by typing "/investigate <service>" if they want a full RCA after seeing the chat answer.
 ${serviceList}
 Extract the service name if mentioned. Respond with JSON: {"intent": "investigation"|"question", "service": "<name or empty>"}`;
 }
@@ -90,10 +106,16 @@ function normalizeHyphens(s: string): string {
   return s.replace(/[\u2010\u2011\u2012\u2013\u2014\u2212]/g, "-");
 }
 
+// Tokens that are common enough across services or generic enough as platform
+// references that they should NEVER count as service-identifying overlap.
+// "k8s"/"kubernetes"/"docker"/"helm" etc. are platforms, not workloads —
+// without this guard, a sentence about "a k8s job" would token-match an MCP
+// provider service named "k8s-mcp" and silently route an investigation to it.
 const GENERIC_INFRA_TOKENS = new Set([
   "server", "service", "cluster", "proxy",
   "headless", "master", "worker", "node",
   "metrics", "monitor", "agent",
+  "k8s", "kubernetes", "docker", "helm", "linux",
 ]);
 
 const DEFAULT_SERVICE_ALIASES: Record<string, string[]> = {
@@ -281,24 +303,24 @@ export class IntentRouter {
 
   async route(message: string, serviceNames?: string[]): Promise<InvestigationIntent> {
     if (DISPLAY_REQUEST_RE.test(message) && !SYMPTOM_RE.test(message)) {
-      logger.debug({ message }, "Router: display-request fast-path → question");
+      logger.info({ routeSource: "fast-display", intent: "question" }, "Router: classified");
       return { intent: "question" };
     }
 
     if (INFORMATIONAL_REQUEST_RE.test(message) && !SYMPTOM_RE.test(message)) {
-      logger.debug({ message }, "Router: informational-request fast-path → question");
+      logger.info({ routeSource: "fast-informational", intent: "question" }, "Router: classified");
       return { intent: "question" };
     }
 
     if (STRONG_INVESTIGATION_RE.test(message)) {
-      logger.debug({ message }, "Router: keyword fast-path → investigation");
+      logger.info({ routeSource: "fast-strong-keyword", intent: "investigation" }, "Router: classified");
       return { intent: "investigation", service: undefined };
     }
 
-    if (SYMPTOM_RE.test(message) && serviceNames?.length && messageMatchesAnyService(message, serviceNames)) {
-      logger.debug({ message }, "Router: symptom+service fast-path → investigation");
-      return { intent: "investigation", service: undefined };
-    }
+    // Fast-path 4 (symptom + service token) was removed — it was the source of
+    // false-positive auto-investigations on prompts like "check errors in <job>".
+    // Symptom-only prompts now go to the LLM (with a conservative prompt that
+    // routes them to the chat agent), or the user can opt in via /investigate.
 
     try {
       const { text } = await withLlmRetry(
@@ -316,11 +338,14 @@ export class IntentRouter {
         ? { intent: "investigation", service: parsed.service || undefined }
         : { intent: "question" };
 
-      logger.debug({ message, intent: parsed.intent, service: parsed.service || null, routedTo: result.intent }, "Router: classified intent and routed to agent");
+      logger.info(
+        { routeSource: "llm", intent: result.intent, llmService: parsed.service || null },
+        "Router: classified",
+      );
       return result;
     } catch (err) {
       if (err instanceof LlmUnavailableError) throw err;
-      logger.debug({ message, err }, "Router: classification failed, defaulting to question agent");
+      logger.info({ routeSource: "llm-failed", intent: "question", err: String(err) }, "Router: classification failed, defaulting to question");
       return { intent: "question" };
     }
   }

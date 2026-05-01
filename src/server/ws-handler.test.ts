@@ -100,15 +100,25 @@ function mockDeps(): WsDeps {
     },
     validateLlmServiceMatch: vi.fn(),
     matchServiceFromText: vi.fn(),
+    // Skip the 5s confirm-dispatch window in tests by default.
+    chatDispatchConfirmMs: 0,
   } as unknown as WsDeps;
 }
 
-function callHandler(msg: any, send: (m: ServerMessage) => void, deps: WsDeps, ctx?: StackContext) {
+function callHandler(
+  msg: any,
+  send: (m: ServerMessage) => void,
+  deps: WsDeps,
+  ctx?: StackContext,
+  pendingDispatches?: Map<string, AbortController>,
+) {
   const context = ctx ?? mockCtx();
   return handleClientMessage(
     msg, send, deps, `stack_${S}_web_test`,
     S, context,
     () => null, () => {},
+    () => {},
+    pendingDispatches,
   );
 }
 
@@ -154,6 +164,156 @@ describe("handleClientMessage", () => {
 
     const chatMsg = messages.find((m: any) => m.type === "chat" && m.content?.includes("specify"));
     expect(chatMsg).toBeDefined();
+  });
+
+  it("slash command: /investigate strips prefix, skips router, dispatches investigation", async () => {
+    const deps = mockDeps();
+    // Slash path skips the router entirely
+    (deps.matchServiceFromText as ReturnType<typeof vi.fn>).mockReturnValue({ name: "payments-api", metrics: [], logLabels: {} });
+
+    const messages: unknown[] = [];
+    const send = (msg: unknown) => messages.push(msg);
+
+    await callHandler({ type: "chat", message: "/investigate the timeout in payments-api" }, send as any, deps);
+
+    expect(deps.router.route).not.toHaveBeenCalled();
+    // Service-resolution lookup should have used the STRIPPED message
+    expect(deps.matchServiceFromText).toHaveBeenCalledWith(
+      "the timeout in payments-api",
+      expect.anything(),
+    );
+    // The runner sees the stripped message via investigation:started.query
+    const started = messages.find((m: any) => m.type === "investigation:started");
+    expect(started).toBeDefined();
+    if (started && (started as any).type === "investigation:started") {
+      expect((started as any).query).toBe("the timeout in payments-api");
+    }
+    // Confirm-dispatch was emitted (timerMs=0 in tests, so it doesn't block)
+    expect(messages.some((m: any) => m.type === "investigation:confirm_dispatch")).toBe(true);
+  });
+
+  it("slash command without resolvable service replies with help, no dispatch", async () => {
+    const deps = mockDeps();
+    (deps.matchServiceFromText as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
+    (deps.validateLlmServiceMatch as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
+
+    const messages: unknown[] = [];
+    const send = (msg: unknown) => messages.push(msg);
+
+    await callHandler({ type: "chat", message: "/investigate" }, send as any, deps);
+
+    // No router call — slash path bypasses it
+    expect(deps.router.route).not.toHaveBeenCalled();
+    // No investigation dispatched
+    expect(messages.some((m: any) => m.type === "investigation:started")).toBe(false);
+    expect(messages.some((m: any) => m.type === "investigation:confirm_dispatch")).toBe(false);
+    // Help reply present and tells the user how to retry
+    const help = messages.find((m: any) => m.type === "chat" && m.content?.includes("/investigate"));
+    expect(help).toBeDefined();
+  });
+
+  it("slash command does NOT fall back to history-resolved service", async () => {
+    const deps = mockDeps();
+    const ctx = mockCtx();
+    // Even though history mentions a service, slash without an explicit target
+    // should NOT pick up that service.
+    (ctx.conversationMemory.get as ReturnType<typeof vi.fn>).mockReturnValue([
+      { role: "user", content: "tell me about ingestion-server" },
+    ]);
+    (deps.config as any).services = [{ name: "ingestion-server", metrics: [], logLabels: {} }];
+    (deps.matchServiceFromText as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
+    (deps.validateLlmServiceMatch as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
+
+    const messages: unknown[] = [];
+    const send = (msg: unknown) => messages.push(msg);
+
+    await callHandler({ type: "chat", message: "/investigate the timeout spike" }, send as any, deps, ctx);
+
+    // No silent dispatch on the history-resolved service
+    expect(messages.some((m: any) => m.type === "investigation:started")).toBe(false);
+    const help = messages.find((m: any) => m.type === "chat" && m.content?.includes("/investigate"));
+    expect(help).toBeDefined();
+  });
+
+  it("cancel_dispatch within window aborts the runner and emits dispatch_cancelled", async () => {
+    const deps = mockDeps();
+    // Set a small but non-zero window so the cancel can race
+    deps.chatDispatchConfirmMs = 200;
+    (deps.matchServiceFromText as ReturnType<typeof vi.fn>).mockReturnValue({ name: "payments-api", metrics: [], logLabels: {} });
+
+    const ctx = mockCtx();
+    const messages: unknown[] = [];
+    const send = (msg: unknown) => messages.push(msg);
+    const pendingDispatches = new Map<string, AbortController>();
+
+    const chatPromise = callHandler(
+      { type: "chat", message: "/investigate payments-api" },
+      send as any,
+      deps,
+      ctx,
+      pendingDispatches,
+    );
+
+    // Wait one tick so the chat handler emits confirm_dispatch and registers the controller
+    await new Promise((r) => setTimeout(r, 10));
+    const confirm = messages.find((m: any) => m.type === "investigation:confirm_dispatch");
+    expect(confirm).toBeDefined();
+    const invId = confirm && (confirm as any).type === "investigation:confirm_dispatch" ? (confirm as any).id : undefined;
+    expect(invId).toBeTruthy();
+
+    // Cancel through the same handler entry — same pendingDispatches map
+    await callHandler(
+      { type: "investigation:cancel_dispatch", id: invId! },
+      send as any,
+      deps,
+      ctx,
+      pendingDispatches,
+    );
+
+    await chatPromise;
+
+    expect(messages.some((m: any) => m.type === "investigation:dispatch_cancelled")).toBe(true);
+    // No started/runner activity after cancel
+    expect(messages.some((m: any) => m.type === "investigation:started")).toBe(false);
+    // Cancelled chat reply present
+    const cancelMsg = messages.find((m: any) => m.type === "chat" && m.content?.includes("cancelled"));
+    expect(cancelMsg).toBeDefined();
+    // Pending dispatch was removed
+    expect(pendingDispatches.has(invId!)).toBe(false);
+  });
+
+  it("chat:stream_end carries serviceContext for resolved-service replies", async () => {
+    const deps = mockDeps();
+    (deps.matchServiceFromText as ReturnType<typeof vi.fn>).mockReturnValue({ name: "payments-api", metrics: [], logLabels: {} });
+
+    const messages: unknown[] = [];
+    const send = (msg: unknown) => messages.push(msg);
+
+    await callHandler({ type: "chat", message: "is payments-api healthy?" }, send as any, deps);
+
+    const streamEnd = messages.find((m: any) => m.type === "chat:stream_end");
+    expect(streamEnd).toBeDefined();
+    if (streamEnd && (streamEnd as any).type === "chat:stream_end") {
+      expect((streamEnd as any).serviceContext).toBe("payments-api");
+    }
+  });
+
+  it("cancel_dispatch for unknown id is a no-op (does not throw)", async () => {
+    const deps = mockDeps();
+    const messages: unknown[] = [];
+    const send = (msg: unknown) => messages.push(msg);
+    const pendingDispatches = new Map<string, AbortController>();
+
+    await callHandler(
+      { type: "investigation:cancel_dispatch", id: "inv_does_not_exist" },
+      send as any,
+      deps,
+      undefined,
+      pendingDispatches,
+    );
+
+    // No errors, no chat messages emitted
+    expect(messages).toEqual([]);
   });
 });
 

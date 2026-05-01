@@ -11,7 +11,11 @@ export type ClientMessage =
   | { type: "discover" }
   | { type: "discover:accept"; services: ServiceConfig[] }
   | { type: "discover:reject" }
-  | { type: "scan:trigger" };
+  | { type: "scan:trigger" }
+  // Cancel an investigation that's still inside its pre-dispatch confirmation
+  // window. No-op if the investigation already started running. See the
+  // confirm-dispatch flow in ws-handler.ts (chat-originated investigations only).
+  | { type: "investigation:cancel_dispatch"; id: string };
 
 // Phase stats emitted on phase completion
 export type PhaseStats = {
@@ -37,6 +41,14 @@ export type ChartSeries = {
 export type ServerMessage =
   | { type: "chat"; role: "user" | "assistant" | "system"; content: string; investigationId?: string; report?: unknown; chartData?: ChartSeries[] }
   | { type: "chat:tool_call"; tool: string; status: "calling" | "complete" }
+  // Pre-dispatch confirmation window: server announces an investigation is
+  // ABOUT to fire, with a timerMs cancel window. Client renders the coral
+  // banner and may send `investigation:cancel_dispatch` to abort. Only
+  // chat-originated investigations emit this — webhook/scan/health-poller
+  // paths skip the confirm flow.
+  | { type: "investigation:confirm_dispatch"; id: string; service: string; query: string; timerMs: number }
+  // Sent after `confirm_dispatch` if the user cancels within the window.
+  | { type: "investigation:dispatch_cancelled"; id: string; service: string }
   | { type: "investigation:started"; id: string; service: string; query: string; parentInvestigationId?: string }
   | { type: "investigation:phase"; id: string; phase: string; status: "running" | "complete" | "failed"; data?: unknown; stats?: PhaseStats }
   | { type: "investigation:progress"; id: string; phase: string; step: string }
@@ -50,7 +62,7 @@ export type ServerMessage =
   | { type: "services:health"; data: unknown[] }
   | { type: "chat:stream_start" }
   | { type: "chat:stream_delta"; content: string; reasoning?: boolean }
-  | { type: "chat:stream_end"; content: string; chartData?: ChartSeries[]; skillsUsed?: string[]; id?: string; createdAt?: string; investigationId?: string }
+  | { type: "chat:stream_end"; content: string; chartData?: ChartSeries[]; skillsUsed?: string[]; id?: string; createdAt?: string; investigationId?: string; serviceContext?: string }
   | { type: "investigation:phase_usage"; investigationId: string; phase: string; inputTokens: number; outputTokens: number; durationMs: number }
   | { type: "investigation:total_usage"; investigationId: string; inputTokens: number; outputTokens: number; durationMs: number }
   | { type: "chat:usage"; inputTokens: number; outputTokens: number; durationMs: number }
