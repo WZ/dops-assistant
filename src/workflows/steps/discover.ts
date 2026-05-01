@@ -29,6 +29,15 @@ export interface DiscoverStepConfig {
   maxCharsPerSkill?: number;
   /** Retry config for transient LLM-call failures. Falls back to no-retry when omitted. */
   llmRetry?: LlmRetryConfig;
+  /**
+   * Per-attempt timeout for the discover agent's `generate()` call. Without
+   * this, a silently-stalled LLM stream (mid-stream socket reset with no
+   * error surface) hangs forever — the AI SDK has no built-in idle timeout
+   * and `withLlmRetry` only catches thrown errors. With it, each attempt
+   * aborts after `llmCallMs` and surfaces an AbortError the retry layer
+   * classifies as transient.
+   */
+  llmCallMs?: number;
 }
 
 const MAX_RETRIES = 3;
@@ -333,8 +342,15 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
     });
 
     try {
+      // Per-attempt abort signal — the AI SDK has no idle timeout, so a
+      // silently-stalled stream (e.g. mid-stream socket reset that doesn't
+      // surface as an error) hangs the call forever. Bound it here.
+      const abortSignal = config.llmCallMs && config.llmCallMs > 0
+        ? AbortSignal.timeout(config.llmCallMs)
+        : undefined;
       const result = await withLlmRetry(
         () => agent.generate(discoverPrompt, {
+        abortSignal,
         providerOptions: { "openai-compatible": { max_tokens: 32768 } },
         onStepFinish: (step: any) => {
           if (!step.toolResults?.length) return;

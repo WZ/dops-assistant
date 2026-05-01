@@ -17,6 +17,10 @@ const CONNECTION_RX = /ECONNREFUSED|ENOTFOUND|ENETUNREACH|EHOSTUNREACH|ECONNRESE
  * unreachable. Only matches:
  *   1. An AI SDK `APICallError` flagged retryable (HTTP 408/409/429/5xx)
  *   2. A bare connection-level error (ECONNREFUSED etc.) walked up the cause chain
+ *   3. A `TimeoutError` from our own `AbortSignal.timeout()` — a stalled upstream
+ *      stream (silent socket reset mid-stream) only surfaces this way. Generic
+ *      `AbortError` (e.g. user-initiated cancel) is intentionally NOT matched
+ *      so explicit cancels don't trigger retry storms.
  *
  * Generic substrings like `timeout` or `503` are intentionally NOT matched
  * here — tool errors (Prometheus, Loki, MCP) often contain the same words and
@@ -28,12 +32,15 @@ export function isLlmUnavailable(err: unknown): boolean {
   // Bare strings: only match connection-level patterns.
   if (typeof err === "string") return CONNECTION_RX.test(err);
 
-  // Walk the cause chain (cap at 5) looking for an AI SDK APICallError or a
-  // connection-level error message.
+  // Walk the cause chain (cap at 5) looking for an AI SDK APICallError, a
+  // connection-level error message, or our own AbortSignal.timeout() trip.
   let current: unknown = err;
   for (let depth = 0; depth < 5 && current != null; depth++) {
     if (APICallError.isInstance(current) && current.isRetryable) return true;
-    if (current instanceof Error && CONNECTION_RX.test(current.message)) return true;
+    if (current instanceof Error) {
+      if (CONNECTION_RX.test(current.message)) return true;
+      if (current.name === "TimeoutError") return true;
+    }
     current = current instanceof Error ? (current as Error & { cause?: unknown }).cause : undefined;
   }
   return false;

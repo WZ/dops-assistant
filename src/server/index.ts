@@ -86,7 +86,7 @@ async function main() {
   await stackManager.initialize();
 
   const model = createModel(config.llm);
-  const router = new IntentRouter(model, config.llm.retry);
+  const router = new IntentRouter(model, config.llm.retry, config.timeouts?.llmCallMs);
 
   // Initialize skill store
   const skillStore = new SkillStore(config.skills);

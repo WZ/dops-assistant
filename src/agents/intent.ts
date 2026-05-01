@@ -273,10 +273,16 @@ export function resolveServiceFromHistory(
 export class IntentRouter {
   private readonly model: LanguageModel;
   private readonly llmRetry: LlmRetryConfig;
+  private readonly llmCallMs?: number;
 
-  constructor(model: LanguageModel, llmRetry: LlmRetryConfig = { maxAttempts: 1 }) {
+  constructor(
+    model: LanguageModel,
+    llmRetry: LlmRetryConfig = { maxAttempts: 1 },
+    llmCallMs?: number,
+  ) {
     this.model = model;
     this.llmRetry = llmRetry;
+    this.llmCallMs = llmCallMs;
   }
 
   async route(message: string, serviceNames?: string[]): Promise<InvestigationIntent> {
@@ -301,12 +307,18 @@ export class IntentRouter {
     }
 
     try {
+      // Per-attempt abort signal — generateText has no built-in idle timeout.
+      // Without this, a stalled upstream stream hangs every chat message.
+      const abortSignal = this.llmCallMs && this.llmCallMs > 0
+        ? AbortSignal.timeout(this.llmCallMs)
+        : undefined;
       const { text } = await withLlmRetry(
         () => generateText({
           model: this.model,
           system: buildIntentClassifierPrompt(serviceNames),
           prompt: wrapUntrusted("user_message", message),
           temperature: 0,
+          abortSignal,
         }),
         this.llmRetry,
       );

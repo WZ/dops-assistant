@@ -187,12 +187,78 @@ describe("MastraChatAgentAdapter", () => {
       supportsInlineCharts: true,
     });
 
-    expect(inlineGenerate).toHaveBeenCalledWith(expect.stringContaining("<untrusted_user_message>test</untrusted_user_message>"));
+    expect(inlineGenerate).toHaveBeenCalledWith(
+      expect.stringContaining("<untrusted_user_message>test</untrusted_user_message>"),
+    );
     expect(onStreamDelta).toHaveBeenCalledWith({
       type: "content",
       content: "Fallback response",
     });
     expect(response.response).toBe("Fallback response");
+  });
+
+  it("forwards a non-aborted AbortSignal to mastraAgent.stream when llmCallMs is set", async () => {
+    const inlineStream = vi.fn().mockResolvedValue(createFullStream([
+      { type: "text-delta", payload: { textDelta: "ok" } },
+    ]));
+    const adapter = new MastraChatAgentAdapter(
+      {
+        inlineCharts: { stream: inlineStream, generate: vi.fn() } as any,
+        imageAttachments: { stream: vi.fn(), generate: vi.fn() } as any,
+      },
+      { llmCallMs: 60_000 },
+    );
+
+    await adapter.chat({
+      mode: "conversational",
+      message: "hi",
+      supportsInlineCharts: true,
+    });
+
+    expect(inlineStream).toHaveBeenCalledOnce();
+    const opts = inlineStream.mock.calls[0]?.[1];
+    expect(opts).toBeDefined();
+    expect(opts.abortSignal).toBeInstanceOf(AbortSignal);
+    expect(opts.abortSignal.aborted).toBe(false);
+  });
+
+  it("forwards a fresh AbortSignal to the generate fallback when llmCallMs is set", async () => {
+    const inlineStream = vi.fn().mockRejectedValue(new Error("stream broke"));
+    const inlineGenerate = vi.fn().mockResolvedValue({ text: "Fallback response" });
+    const adapter = new MastraChatAgentAdapter(
+      {
+        inlineCharts: { stream: inlineStream, generate: inlineGenerate } as any,
+        imageAttachments: { stream: vi.fn(), generate: vi.fn() } as any,
+      },
+      { llmCallMs: 60_000 },
+    );
+
+    await adapter.chat({
+      mode: "conversational",
+      message: "hi",
+      supportsInlineCharts: true,
+    });
+
+    expect(inlineGenerate).toHaveBeenCalledOnce();
+    const fallbackOpts = inlineGenerate.mock.calls[0]?.[1];
+    expect(fallbackOpts).toBeDefined();
+    expect(fallbackOpts.abortSignal).toBeInstanceOf(AbortSignal);
+    // The generate-fallback signal is a fresh one, not the (already-fired)
+    // stream signal — so it must not be aborted on entry.
+    expect(fallbackOpts.abortSignal.aborted).toBe(false);
+  });
+
+  it("omits options to stream when llmCallMs is unset", async () => {
+    const inlineStream = vi.fn().mockResolvedValue(createFullStream([
+      { type: "text-delta", payload: { textDelta: "ok" } },
+    ]));
+    const adapter = new MastraChatAgentAdapter({
+      inlineCharts: { stream: inlineStream, generate: vi.fn() } as any,
+      imageAttachments: { stream: vi.fn(), generate: vi.fn() } as any,
+    });
+    await adapter.chat({ mode: "conversational", message: "hi", supportsInlineCharts: true });
+    // Single-arg overload taken — no options object plumbed.
+    expect(inlineStream).toHaveBeenCalledWith(expect.any(String));
   });
 });
 

@@ -555,6 +555,47 @@ describe("IntentRouter", () => {
     await expect(router.route("payments-api errors are spiking"))
       .rejects.toBeInstanceOf(LlmUnavailableError);
   });
+
+  it("passes an AbortSignal to generateText when llmCallMs is set", async () => {
+    mockLlmResponse(JSON.stringify({ intent: "question", service: "" }));
+    const router = new IntentRouter(dummyModel, { maxAttempts: 1 }, 60_000);
+    await router.route("payments-api errors are spiking");
+    const callArgs = mockGenerateText.mock.calls[0]![0] as any;
+    expect(callArgs.abortSignal).toBeInstanceOf(AbortSignal);
+    // Signal is fresh (not aborted) — the timeout hasn't fired yet.
+    expect(callArgs.abortSignal.aborted).toBe(false);
+  });
+
+  it("omits abortSignal when llmCallMs is not provided", async () => {
+    mockLlmResponse(JSON.stringify({ intent: "question", service: "" }));
+    const router = new IntentRouter(dummyModel);
+    await router.route("payments-api errors are spiking");
+    const callArgs = mockGenerateText.mock.calls[0]![0] as any;
+    expect(callArgs.abortSignal).toBeUndefined();
+  });
+
+  it("treats TimeoutError from a fired AbortSignal.timeout as transient and retries", async () => {
+    let calls = 0;
+    mockGenerateText.mockImplementation(async () => {
+      calls += 1;
+      if (calls === 1) {
+        // AbortSignal.timeout() aborts with a TimeoutError DOMException.
+        // The AI SDK rethrows that name, which isLlmUnavailable now matches.
+        const err = new Error("The operation timed out");
+        err.name = "TimeoutError";
+        throw err;
+      }
+      return { text: JSON.stringify({ intent: "investigation", service: "payments-api" }) } as any;
+    });
+    const router = new IntentRouter(
+      dummyModel,
+      { maxAttempts: 3, initialDelayMs: 1, maxDelayMs: 5 },
+      60_000,
+    );
+    const result = await router.route("payments-api errors are spiking");
+    expect(calls).toBe(2);
+    expect(result.intent).toBe("investigation");
+  });
 });
 
 describe("setServiceAliases", () => {
