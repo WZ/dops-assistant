@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { severityRank, ALL_SOURCES, ALL_SEVERITIES } from "./notifications.js";
+import { severityRank, ALL_SOURCES, ALL_SEVERITIES, sourceDisplayText, type NotificationSource } from "./notifications.js";
 
 describe("severityRank", () => {
   it("orders severities low < medium < high < critical", () => {
@@ -14,7 +14,17 @@ describe("severityRank", () => {
     }
   });
 
-  it("ALL_SOURCES contains exactly the six sources", () => {
-    expect([...ALL_SOURCES].sort()).toEqual(["k8s-event-poller", "manual", "poller", "scan", "scan-run", "webhook"]);
+  it("ALL_SOURCES contains exactly the seven sources", () => {
+    expect([...ALL_SOURCES].sort()).toEqual(["k8s-event-poller", "manual", "periodic-discovery", "poller", "scan", "scan-run", "webhook"]);
+  });
+});
+
+describe("NotificationSource", () => {
+  it("includes 'periodic-discovery' in ALL_SOURCES", () => {
+    expect(ALL_SOURCES).toContain("periodic-discovery" as NotificationSource);
+  });
+
+  it("provides a human-readable label for 'periodic-discovery'", () => {
+    expect(sourceDisplayText("periodic-discovery")).toBe("Discovery");
   });
 });

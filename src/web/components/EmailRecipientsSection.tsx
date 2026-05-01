@@ -33,6 +33,7 @@ const SOURCE_LABELS: Record<NotificationSource, string> = {
   poller: "poller",
   "k8s-event-poller": "k8s-events",
   manual: "manual",
+  "periodic-discovery": "discovery",
 };
 
 const SEVERITY_LABELS: Record<Recipient["minSeverity"], string> = {
