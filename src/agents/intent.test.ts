@@ -596,6 +596,43 @@ describe("IntentRouter", () => {
     expect(calls).toBe(2);
     expect(result.intent).toBe("investigation");
   });
+
+  it("uses a fresh AbortSignal for the retry after a timeout", async () => {
+    let calls = 0;
+    const signals: AbortSignal[] = [];
+    let secondSignalSameAsFirst: boolean | undefined;
+    let secondSignalAbortedOnEntry: boolean | undefined;
+
+    mockGenerateText.mockImplementation(async (args: any) => {
+      calls += 1;
+      const signal = args.abortSignal as AbortSignal;
+      signals.push(signal);
+
+      if (calls === 1) {
+        await new Promise<void>((resolve) => {
+          signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+        throw signal.reason;
+      }
+
+      secondSignalSameAsFirst = signal === signals[0];
+      secondSignalAbortedOnEntry = signal.aborted;
+      return { text: JSON.stringify({ intent: "investigation", service: "payments-api" }) } as any;
+    });
+
+    const router = new IntentRouter(
+      dummyModel,
+      { maxAttempts: 2, initialDelayMs: 1, maxDelayMs: 1, jitterPercent: 0 },
+      1,
+    );
+
+    const result = await router.route("payments-api errors are spiking");
+    expect(result.intent).toBe("investigation");
+    expect(signals).toHaveLength(2);
+    expect(signals[0]!.aborted).toBe(true);
+    expect(secondSignalSameAsFirst).toBe(false);
+    expect(secondSignalAbortedOnEntry).toBe(false);
+  });
 });
 
 describe("setServiceAliases", () => {

@@ -307,19 +307,21 @@ export class IntentRouter {
     }
 
     try {
-      // Per-attempt abort signal — generateText has no built-in idle timeout.
-      // Without this, a stalled upstream stream hangs every chat message.
-      const abortSignal = this.llmCallMs && this.llmCallMs > 0
-        ? AbortSignal.timeout(this.llmCallMs)
-        : undefined;
       const { text } = await withLlmRetry(
-        () => generateText({
-          model: this.model,
-          system: buildIntentClassifierPrompt(serviceNames),
-          prompt: wrapUntrusted("user_message", message),
-          temperature: 0,
-          abortSignal,
-        }),
+        () => {
+          // Per-attempt abort signal — generateText has no built-in idle timeout.
+          // Without this, a stalled upstream stream hangs every chat message.
+          const abortSignal = this.llmCallMs && this.llmCallMs > 0
+            ? AbortSignal.timeout(this.llmCallMs)
+            : undefined;
+          return generateText({
+            model: this.model,
+            system: buildIntentClassifierPrompt(serviceNames),
+            prompt: wrapUntrusted("user_message", message),
+            temperature: 0,
+            abortSignal,
+          });
+        },
         this.llmRetry,
       );
 
