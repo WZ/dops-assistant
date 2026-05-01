@@ -1,6 +1,12 @@
 import type BetterSqlite3 from "better-sqlite3";
-import { ulid } from "ulid";
+import { ulid, monotonicFactory } from "ulid";
 import type { ServiceConfig, ProbeMetricRule } from "../config/schema.js";
+
+// Run ids must be strictly monotonically increasing so that
+// `getPreviousSuccessfulRunId(stackId, currentRunId)` is correct even when
+// two ticks land in the same millisecond. The basic `ulid()` factory uses
+// fresh randomness each call — within one ms the lex order is undefined.
+const monotonicUlid = monotonicFactory();
 
 export type ChangeKind = "addition" | "removal";
 
@@ -280,7 +286,7 @@ export class PendingDiscoveryStore {
   // ── Runs ─────────────────────────────────────────────────────────────────
 
   startRun(stackId: string): string {
-    const id = ulid();
+    const id = monotonicUlid();
     this.db.prepare(
       "INSERT INTO periodic_discovery_runs (id, stack_id, started_at, status) VALUES (?, ?, ?, 'running')",
     ).run(id, stackId, new Date().toISOString());
@@ -320,13 +326,12 @@ export class PendingDiscoveryStore {
   }
 
   getPreviousSuccessfulRunId(stackId: string, beforeRunId: string): string | null {
-    const before = this.db.prepare("SELECT started_at FROM periodic_discovery_runs WHERE id = ?").get(beforeRunId) as { started_at: string } | undefined;
-    if (!before) return null;
-    // ULIDs are lexicographically time-sortable, so (started_at, id) is a stable
-    // ordering even when ISO timestamps tie at the millisecond boundary.
+    // ULIDs are lexicographically time-sortable AND collision-free, so we can
+    // order by id directly. Avoids timestamp-tie issues when two runs land in
+    // the same millisecond (common in fast tests + back-to-back cron ticks).
     const r = this.db.prepare(
-      "SELECT id FROM periodic_discovery_runs WHERE stack_id = ? AND status = 'success' AND (started_at < ? OR (started_at = ? AND id < ?)) ORDER BY started_at DESC, id DESC LIMIT 1",
-    ).get(stackId, before.started_at, before.started_at, beforeRunId) as { id: string } | undefined;
+      "SELECT id FROM periodic_discovery_runs WHERE stack_id = ? AND status = 'success' AND id < ? ORDER BY id DESC LIMIT 1",
+    ).get(stackId, beforeRunId) as { id: string } | undefined;
     return r?.id ?? null;
   }
 
