@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   computeAdditionMutations,
+  computeRemovalMutations,
   type ConsensusInput,
   type AdditionCandidate,
 } from "./discovery-consensus.js";
@@ -93,5 +94,59 @@ describe("computeAdditionMutations", () => {
       dismissedAdditionNames: new Set(["svc-a"]),
     });
     expect(out.upsertAdditions).toHaveLength(0);
+  });
+});
+
+describe("computeRemovalMutations", () => {
+  const removalBase = { ...baseInput, registeredNames: new Set(["svc-x", "svc-y"]) };
+
+  it("registered service back in discovered set → delete its removal row (recovery)", () => {
+    const out = computeRemovalMutations({
+      ...removalBase,
+      removalCandidates: [],
+      pendingRemovalRows: [{
+        id: "rm-1", serviceName: "svc-x", seenCount: 1,
+        lastSeenRunId: "run-2", qualifiedAt: null,
+      }],
+    });
+    expect(out.deletes).toContain("rm-1");
+  });
+
+  it("removal candidate without corroboration → no upsert, no streak progress", () => {
+    const out = computeRemovalMutations({
+      ...removalBase,
+      removalCandidates: [{ name: "svc-x", corroborated: false }],
+    });
+    expect(out.upsertRemovals).toHaveLength(0);
+  });
+
+  it("first corroborated removal → upsert seen_count=1 (no qualify yet, threshold=3)", () => {
+    const out = computeRemovalMutations({
+      ...removalBase,
+      removalCandidates: [{ name: "svc-x", corroborated: true }],
+    });
+    expect(out.upsertRemovals).toEqual([{ name: "svc-x" }]);
+    expect(out.qualifications).toHaveLength(0);
+  });
+
+  it("third consecutive corroborated removal → qualify", () => {
+    const out = computeRemovalMutations({
+      ...removalBase,
+      removalCandidates: [{ name: "svc-x", corroborated: true }],
+      pendingRemovalRows: [{
+        id: "rm-1", serviceName: "svc-x", seenCount: 2,
+        lastSeenRunId: "run-2", qualifiedAt: null,
+      }],
+    });
+    expect(out.qualifications).toEqual([{ id: "rm-1", registryVersion: "v-current" }]);
+  });
+
+  it("dismissed removal → no row written even when corroborated", () => {
+    const out = computeRemovalMutations({
+      ...removalBase,
+      removalCandidates: [{ name: "svc-x", corroborated: true }],
+      dismissedRemovalNames: new Set(["svc-x"]),
+    });
+    expect(out.upsertRemovals).toHaveLength(0);
   });
 });
