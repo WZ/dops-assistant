@@ -36,6 +36,16 @@ describe("computeAdditionMutations", () => {
     expect(out.qualifications).toHaveLength(0);
   });
 
+  it("threshold=1 addition qualifies on first sighting", () => {
+    const out = computeAdditionMutations({
+      ...baseInput,
+      consensusRuns: 1,
+      additionCandidates: [cand("svc-a")],
+    });
+    expect(out.upsertAdditions).toHaveLength(1);
+    expect(out.qualifyInsertedAdditions).toEqual(["svc-a"]);
+  });
+
   it("second consecutive sighting → upsert + qualify", () => {
     const out = computeAdditionMutations({
       ...baseInput,
@@ -127,6 +137,16 @@ describe("computeRemovalMutations", () => {
     });
     expect(out.upsertRemovals).toEqual([{ name: "svc-x" }]);
     expect(out.qualifications).toHaveLength(0);
+  });
+
+  it("threshold=1 removal qualifies on first corroborated sighting", () => {
+    const out = computeRemovalMutations({
+      ...removalBase,
+      consensusRunsForRemovals: 1,
+      removalCandidates: [{ name: "svc-x", corroborated: true }],
+    });
+    expect(out.upsertRemovals).toEqual([{ name: "svc-x" }]);
+    expect(out.qualifyInsertedRemovals).toEqual(["svc-x"]);
   });
 
   it("third consecutive corroborated removal → qualify", () => {

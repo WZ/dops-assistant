@@ -38,13 +38,20 @@ export interface ConsensusInput {
 
 export interface AdditionMutations {
   upsertAdditions: AdditionCandidate[];
+  qualifyInsertedAdditions: string[];
   resets: { id: string; runId: string }[];
   deletes: string[];
   qualifications: { id: string; registryVersion: string }[];
 }
 
 export function computeAdditionMutations(input: ConsensusInput): AdditionMutations {
-  const result: AdditionMutations = { upsertAdditions: [], resets: [], deletes: [], qualifications: [] };
+  const result: AdditionMutations = {
+    upsertAdditions: [],
+    qualifyInsertedAdditions: [],
+    resets: [],
+    deletes: [],
+    qualifications: [],
+  };
   const candidatesByName = new Map(input.additionCandidates.map((c) => [c.name, c]));
   const rowsByName = new Map(input.pendingAdditionRows.map((r) => [r.serviceName, r]));
 
@@ -53,6 +60,7 @@ export function computeAdditionMutations(input: ConsensusInput): AdditionMutatio
     const existing = rowsByName.get(cand.name);
     if (!existing) {
       result.upsertAdditions.push(cand);
+      if (input.consensusRuns <= 1) result.qualifyInsertedAdditions.push(cand.name);
       continue;
     }
     const streakIntact =
@@ -82,13 +90,20 @@ export function computeAdditionMutations(input: ConsensusInput): AdditionMutatio
 
 export interface RemovalMutations {
   upsertRemovals: { name: string }[];
+  qualifyInsertedRemovals: string[];
   resets: { id: string; runId: string }[];
   deletes: string[];
   qualifications: { id: string; registryVersion: string }[];
 }
 
 export function computeRemovalMutations(input: ConsensusInput): RemovalMutations {
-  const result: RemovalMutations = { upsertRemovals: [], resets: [], deletes: [], qualifications: [] };
+  const result: RemovalMutations = {
+    upsertRemovals: [],
+    qualifyInsertedRemovals: [],
+    resets: [],
+    deletes: [],
+    qualifications: [],
+  };
   const rowsByName = new Map(input.pendingRemovalRows.map((r) => [r.serviceName, r]));
   const removalCandidateNames = new Set(input.removalCandidates.map((c) => c.name));
 
@@ -106,6 +121,7 @@ export function computeRemovalMutations(input: ConsensusInput): RemovalMutations
     const existing = rowsByName.get(cand.name);
     if (!existing) {
       result.upsertRemovals.push({ name: cand.name });
+      if (input.consensusRunsForRemovals <= 1) result.qualifyInsertedRemovals.push(cand.name);
       continue;
     }
     const streakIntact =

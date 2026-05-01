@@ -2377,7 +2377,13 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
   app.get("/api/discovery/settings", (req: Request, res: Response) => {
     const stored = db.getPeriodicDiscoverySettings(req.stackId!);
-    res.json(stored ?? { enabled: false, cron: "", timezone: "UTC", consensusRuns: 2, consensusRunsForRemovals: 3 });
+    res.json(stored ?? config.discovery?.periodic ?? {
+      enabled: false,
+      cron: "",
+      timezone: "UTC",
+      consensusRuns: 2,
+      consensusRunsForRemovals: 3,
+    });
   });
 
   app.put("/api/discovery/settings", (req: Request, res: Response) => {

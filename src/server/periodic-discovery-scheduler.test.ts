@@ -183,6 +183,33 @@ describe("PeriodicDiscoveryScheduler — addition consensus", () => {
     expect(probe).not.toHaveBeenCalled();
     expect(store.findByStackKindName("s", "addition", "svc-a")).not.toBeNull();
   });
+
+  it("does not suggest services already registered through static config", async () => {
+    const sched = new PeriodicDiscoveryScheduler({
+      ...baseDeps(),
+      providers: () => [{} as any],
+      runDiscovery: vi.fn().mockResolvedValue({ services: [verifiedSvc("svc-a")], globalProbeRules: [] }),
+      sanityProbe: vi.fn().mockResolvedValue({ kind: "ok", value: 1 }),
+      getConfiguredServiceNames: () => ["svc-a"],
+      settings: { enabled: true, cron: "0 0 * * *", timezone: "UTC", consensusRuns: 2, consensusRunsForRemovals: 3 },
+    });
+    await sched.tickOnce();
+    expect(store.findByStackKindName("s", "addition", "svc-a")).toBeNull();
+  });
+
+  it("threshold=1 qualifies an addition on the first successful tick", async () => {
+    const sched = new PeriodicDiscoveryScheduler({
+      ...baseDeps(),
+      providers: () => [{} as any],
+      runDiscovery: vi.fn().mockResolvedValue({ services: [verifiedSvc("svc-a")], globalProbeRules: [] }),
+      sanityProbe: vi.fn().mockResolvedValue({ kind: "ok", value: 1 }),
+      settings: { enabled: true, cron: "0 0 * * *", timezone: "UTC", consensusRuns: 1, consensusRunsForRemovals: 3 },
+    });
+    await sched.tickOnce();
+    const row = store.findByStackKindName("s", "addition", "svc-a")!;
+    expect(row.seenCount).toBe(1);
+    expect(row.qualifiedAt).not.toBeNull();
+  });
 });
 
 describe("PeriodicDiscoveryScheduler — removal consensus", () => {
@@ -242,6 +269,22 @@ describe("PeriodicDiscoveryScheduler — removal consensus", () => {
     expect(store.findByStackKindName("s", "removal", "svc-x")).not.toBeNull();
     await sched.tickOnce();
     expect(store.findByStackKindName("s", "removal", "svc-x")).toBeNull();
+  });
+
+  it("threshold=1 qualifies a corroborated removal on the first successful tick", async () => {
+    const sched = new PeriodicDiscoveryScheduler({
+      ...baseDeps(),
+      providers: () => [{} as any],
+      registryStore: registryWithSvcX(),
+      runDiscovery: vi.fn().mockResolvedValue({ services: [], globalProbeRules: [] }),
+      sanityProbe: vi.fn().mockResolvedValue({ kind: "ok", value: 1 }),
+      removalCorroborationProbe: vi.fn().mockResolvedValue({ kind: "empty", value: NaN }),
+      settings: { enabled: true, cron: "0 0 * * *", timezone: "UTC", consensusRuns: 2, consensusRunsForRemovals: 1 },
+    });
+    await sched.tickOnce();
+    const row = store.findByStackKindName("s", "removal", "svc-x")!;
+    expect(row.seenCount).toBe(1);
+    expect(row.qualifiedAt).not.toBeNull();
   });
 });
 

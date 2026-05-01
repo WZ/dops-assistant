@@ -8,6 +8,7 @@ import * as emailNotifier from "./email-notifier.js";
 import { eventLog } from "./event-log.js";
 import type { ScanRunCompletedSummary } from "./scan-run-store.js";
 import type { EmailNotifierDeps } from "./email-notifier.js";
+import { runDiscovery } from "../workflows/discovery.js";
 
 // Mock ProviderRegistry — MCP connections are not available in tests.
 // The mock tracks the seed providers passed to the constructor so that
@@ -28,7 +29,11 @@ vi.mock("../mcp/provider-registry.js", () => {
     public __listeners: Array<(event: { kind: string; name: string }) => void> = [];
     initialize = vi.fn().mockResolvedValue(undefined);
     getProviders = vi.fn(() => this.seeded);
-    getAll = vi.fn(() => this.seeded.map((config) => ({ config })));
+    getAll = vi.fn(() => this.seeded.map((config) => ({
+      config,
+      prometheusDatasourceUid: (config as { prometheusDatasourceUid?: string; roles?: string[] }).prometheusDatasourceUid
+        ?? ((config as { roles?: string[] }).roles?.includes("metrics") ? "prom-ds" : undefined),
+    })));
     getByRole = vi.fn().mockReturnValue([]);
     add = vi.fn().mockResolvedValue({});
     remove = vi.fn().mockResolvedValue(undefined);
@@ -54,6 +59,10 @@ vi.mock("../mcp/provider-registry.js", () => {
 // Mock ws-handler — clearStackCaches is imported by StackManager
 vi.mock("./ws-handler.js", () => ({
   clearStackCaches: vi.fn(),
+}));
+
+vi.mock("../workflows/discovery.js", () => ({
+  runDiscovery: vi.fn(),
 }));
 
 // Mock ServiceHealthPoller — requires MCP connections for polling
@@ -132,6 +141,7 @@ describe("StackManager", () => {
   beforeEach(() => {
     db = new Database(":memory:");
     config = makeConfig();
+    vi.mocked(runDiscovery).mockReset();
   });
 
   afterEach(() => {
@@ -504,6 +514,75 @@ describe("StackManager", () => {
 
       const ctx = manager.getDefaultContext();
       expect(ctx.healthPoller.stop).toHaveBeenCalled();
+    });
+  });
+
+  describe("periodic discovery notifications", () => {
+    it("sends email through periodic-discovery recipients before marking the channel successful", async () => {
+      config = makeConfig({
+        discovery: {
+          autoRefresh: false,
+          excludeServices: [],
+          maxIterations: 40,
+          discoveryRecipes: [],
+          periodic: {
+            enabled: true,
+            cron: "0 0 * * *",
+            timezone: "UTC",
+            consensusRuns: 1,
+            consensusRunsForRemovals: 1,
+          },
+        },
+      });
+      vi.mocked(runDiscovery).mockResolvedValue({
+        services: [{
+          name: "svc-a",
+          metrics: [],
+          logLabels: {},
+          probeRules: [],
+          confidence: "verified",
+        }],
+        globalProbeRules: [],
+      } as any);
+
+      manager = new StackManager(db, config);
+      await manager.initialize();
+      manager.setLlmModel({} as any);
+
+      const transport = { sendMail: vi.fn().mockResolvedValue({}) };
+      const emailDeps: EmailNotifierDeps = {
+        isGloballyEnabled: () => true,
+        listEnabledRecipients: () => [{
+          id: 1,
+          address: "ops@example.test",
+          minSeverity: "low",
+          allowedSources: ["periodic-discovery"],
+          enabled: true,
+          createdAt: "2026-05-01T00:00:00.000Z",
+          updatedAt: "2026-05-01T00:00:00.000Z",
+        }],
+        transport: transport as any,
+        config: {
+          from: "Ops <ops@example.test>",
+          appBaseUrl: "https://app.example.test",
+          retry: { attempts: 1, backoffMs: [] },
+        },
+      };
+      manager.setEmailNotifierDeps(emailDeps);
+
+      await manager.getDefaultContext().periodicDiscoveryScheduler.tickOnce();
+
+      expect(transport.sendMail).toHaveBeenCalledTimes(1);
+      expect(transport.sendMail.mock.calls[0]![0]).toMatchObject({
+        from: "Ops <ops@example.test>",
+        to: "ops@example.test",
+      });
+      const row = manager.getDefaultContext().pendingDiscoveryStore.findByStackKindName(
+        manager.getDefaultStackId(),
+        "addition",
+        "svc-a",
+      )!;
+      expect(manager.getDefaultContext().pendingDiscoveryStore.hasSuccessfulNotification(row.id, "email")).toBe(true);
     });
   });
 

@@ -32,11 +32,17 @@ export interface PeriodicDiscoverySchedulerDeps {
     llmRetry?: LlmRetryConfig;
   }) => Promise<DiscoveryResult>;
   notifySlack: (msg: string) => Promise<{ ok: boolean; error?: string }>;
-  notifyEmail: (msg: string) => Promise<{ ok: boolean; error?: string }>;
+  notifyEmail: (msg: string, row?: {
+    id: string;
+    stackId: string;
+    serviceName: string;
+    changeKind: "addition" | "removal";
+  }) => Promise<{ ok: boolean; error?: string }>;
   /** Wired by stack-manager — passes the metrics MCP tool through. */
   sanityProbe?: (query: string) => Promise<InstantResult>;
   /** Same primitive but for removal corroboration. */
   removalCorroborationProbe?: (query: string) => Promise<InstantResult>;
+  getConfiguredServiceNames?: () => string[];
   settings: PeriodicDiscoverySettings;
   discoveryConfig?: DiscoveryConfig;
   llmRetry?: LlmRetryConfig;
@@ -171,7 +177,10 @@ export class PeriodicDiscoveryScheduler {
 
         // ── Diff vs registry ────────────────────────────────────────────
         const registry = this.deps.registryStore.loadAll();
-        const registeredNames = new Set(registry.services.map((s) => s.name));
+        const registeredNames = new Set([
+          ...registry.services.map((s) => s.name),
+          ...(this.deps.getConfiguredServiceNames?.() ?? []),
+        ]);
         const discoveredByName = new Map(sanityProbedServices.map((s) => [s.name, s]));
         const dismissed = this.deps.store.listDismissed(this.deps.stackId);
         const dismissedAdditionNames = new Set(dismissed.filter((d) => d.changeKind === "addition").map((d) => d.serviceName));
@@ -211,14 +220,16 @@ export class PeriodicDiscoveryScheduler {
           additionCandidates,
           removalCandidates: [],
         });
+        const qualifyInsertedAdditions = new Set(additionMutations.qualifyInsertedAdditions);
         for (const c of additionMutations.upsertAdditions) {
-          this.deps.store.upsertAddition({
+          const id = this.deps.store.upsertAddition({
             stackId: this.deps.stackId,
             serviceName: c.name,
             payload: c.payload,
             globalsSnapshot: c.globalsSnapshot,
             runId,
           });
+          if (qualifyInsertedAdditions.has(c.name)) this.deps.store.markQualified(id, registryVersion);
         }
         for (const r of additionMutations.resets) this.deps.store.resetSeenCount(r.id, r.runId);
         for (const id of additionMutations.deletes) this.deps.store.deleteById(id);
@@ -271,8 +282,10 @@ export class PeriodicDiscoveryScheduler {
           additionCandidates: [],
           removalCandidates,
         });
+        const qualifyInsertedRemovals = new Set(removalMutations.qualifyInsertedRemovals);
         for (const c of removalMutations.upsertRemovals) {
-          this.deps.store.upsertRemoval({ stackId: this.deps.stackId, serviceName: c.name, runId });
+          const id = this.deps.store.upsertRemoval({ stackId: this.deps.stackId, serviceName: c.name, runId });
+          if (qualifyInsertedRemovals.has(c.name)) this.deps.store.markQualified(id, registryVersion);
         }
         for (const r of removalMutations.resets) this.deps.store.resetSeenCount(r.id, r.runId);
         for (const id of removalMutations.deletes) this.deps.store.deleteById(id);
@@ -300,7 +313,7 @@ export class PeriodicDiscoveryScheduler {
           }
           if (!this.deps.store.hasSuccessfulNotification(row.id, "email")) {
             try {
-              const r = await this.deps.notifyEmail(msg);
+              const r = await this.deps.notifyEmail(msg, row);
               this.deps.store.recordNotificationAttempt(row.id, "email", r.ok ? "success" : "failed", r.error ?? null);
               if (r.ok) this.deps.store.markNotifiedNow(row.id);
             } catch (err) {

@@ -36,8 +36,6 @@ import { PendingDiscoveryStore } from "./pending-discovery-store.js";
 import { executeInstantMetric, type InstantResult } from "./instant-query.js";
 import { getToolsByRole } from "../mcp/provider.js";
 import { runDiscovery } from "../workflows/discovery.js";
-import { notifySlack } from "./slack-notifier.js";
-import { notifyEmail } from "./email-notifier.js";
 import type { LanguageModel } from "ai";
 import { getEffectiveScanConfig } from "./scan-settings.js";
 import { getEffectiveK8sEventsConfig } from "./k8s-events-settings.js";
@@ -278,8 +276,9 @@ export class StackManager {
         });
       },
       notifySlack: async (msg) => {
-        const url = this.config.webhook?.slackWebhookUrl;
-        if (!url) return { ok: true }; // Slack disabled
+        const slackEnabled = this.db.getSetting("notifications.slack.enabled") !== "false";
+        const url = this.db.getSetting("notifications.slack.webhookUrl") ?? this.config.webhook?.slackWebhookUrl;
+        if (!slackEnabled || !url) return { ok: true };
         try {
           const res = await fetch(url, {
             method: "POST",
@@ -292,16 +291,19 @@ export class StackManager {
           return { ok: false, error: err instanceof Error ? err.message : String(err) };
         }
       },
-      notifyEmail: async (_msg) => {
-        // Email dispatch for periodic discovery uses the existing email-notifier
-        // infrastructure indirectly — for v1, we no-op here unless emailNotifierDeps
-        // is wired (which happens after SMTP transport construction in index.ts).
-        // The per-channel state machine treats this as a no-op success so it doesn't
-        // queue retries.
-        return { ok: true };
+      notifyEmail: async (msg, row) => {
+        if (!this.emailNotifierDeps || !row) return { ok: true };
+        return emailNotifier.notifyEmailDiscovery(this.emailNotifierDeps, {
+          id: row.id,
+          stackId: row.stackId,
+          serviceName: row.serviceName,
+          changeKind: row.changeKind,
+          message: msg,
+        });
       },
       sanityProbe: buildInstantProbe,
       removalCorroborationProbe: buildInstantProbe,
+      getConfiguredServiceNames: () => isDefault ? this.config.services.map((s) => s.name) : [],
       settings: periodicSettings,
       discoveryConfig: this.config.discovery,
       llmRetry: this.config.llm?.retry,
