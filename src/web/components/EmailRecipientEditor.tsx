@@ -29,6 +29,7 @@ const SOURCE_HELP: Record<Source, string> = {
   poller: "Health poller",
   "k8s-event-poller": "K8s event poller (transient pod crashes)",
   manual: "Manual investigation",
+  "periodic-discovery": "Periodic service discovery",
 };
 
 const LABEL_CLASS =

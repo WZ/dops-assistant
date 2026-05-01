@@ -378,7 +378,7 @@ describe("import confirm logic", () => {
 
 // ── Email notifications CRUD endpoints ──────────────────────────────────────
 
-function makeEmailApp(opts?: { withSmtp?: boolean }): { app: Express; db: Database; cleanup: () => void } {
+function makeEmailApp(opts?: { withSmtp?: boolean; config?: Record<string, unknown> }): { app: Express; db: Database; cleanup: () => void } {
   const dbPath = join(tmpdir(), `routes-email-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`);
   const db = new Database(dbPath);
   const app = express();
@@ -408,7 +408,7 @@ function makeEmailApp(opts?: { withSmtp?: boolean }): { app: Express; db: Databa
   registerRoutes(app, {
     db,
     stackManager: mockStackManager,
-    config: { notifications: { email: emailCfg }, webhook: {} } as any,
+    config: { notifications: { email: emailCfg }, webhook: {}, ...(opts?.config ?? {}) } as any,
     skillStore: {} as any,
     sharedDedup: {} as any,
     llmModel: {} as any,
@@ -792,5 +792,36 @@ describe("/api/notifications slack onScanComplete", () => {
     expect(put.status).toBe(200);
     const get = await request(ctx.app).get("/api/notifications");
     expect(get.body.slack.onScanComplete).toBe("always");
+  });
+});
+
+describe("/api/discovery/settings", () => {
+  it("returns config periodic defaults when no DB override exists", async () => {
+    const ctx = makeEmailApp({
+      config: {
+        discovery: {
+          periodic: {
+            enabled: true,
+            cron: "0 3 * * *",
+            timezone: "America/Los_Angeles",
+            consensusRuns: 4,
+            consensusRunsForRemovals: 5,
+          },
+        },
+      },
+    });
+    try {
+      const res = await request(ctx.app).get("/api/discovery/settings");
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        enabled: true,
+        cron: "0 3 * * *",
+        timezone: "America/Los_Angeles",
+        consensusRuns: 4,
+        consensusRunsForRemovals: 5,
+      });
+    } finally {
+      ctx.cleanup();
+    }
   });
 });

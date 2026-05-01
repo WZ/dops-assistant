@@ -38,7 +38,12 @@
 import { createLogger } from "../logger.js";
 import type { MastraProvider } from "../mcp/provider.js";
 import { getToolsByRole } from "../mcp/provider.js";
-import { parsePrometheusResult } from "./service-health-poller.js";
+import {
+  type InstantOutcome,
+  type InstantResult,
+  executeInstantMetric as executeInstant,
+  executeInstantLogs,
+} from "./instant-query.js";
 import type { ProbeConfig, ProbeMetricRule, Threshold } from "../config/schema.js";
 import type { ScanServiceOverride } from "./scan-service-override.js";
 import type { ServiceRegistryStore } from "../services/registry.js";
@@ -76,17 +81,11 @@ export interface ProbeHit {
 }
 
 /**
- * Per-query outcome. `ok` carries a numeric scalar; `empty` means the query
- * succeeded but returned no rows (no data for this service/rule combo);
- * `error` means the MCP tool threw, timed out, or returned a parse-failing
- * payload. Value is always NaN for `empty` and `error` so scoring code that
- * treats NaN as no-trip keeps working.
+ * Re-export the instant-query result types so existing consumers that
+ * imported `InstantResult` / `InstantOutcome` from this module keep working
+ * unchanged. The canonical declarations now live in `instant-query.ts`.
  */
-export type InstantOutcome = "ok" | "empty" | "error";
-export interface InstantResult {
-  kind: InstantOutcome;
-  value: number;
-}
+export type { InstantOutcome, InstantResult };
 
 /**
  * Per-service coverage snapshot emitted alongside the aggregate stats.
@@ -295,96 +294,6 @@ export async function withTimeoutAndAbort(
     clearTimeout(timeoutHandle);
     if (signal) signal.removeEventListener("abort", onExternalAbort);
   }
-}
-
-/** Extract the first numeric scalar from a Prometheus-shaped result. NaN on miss. */
-function scalarFromPromResult(raw: unknown): number {
-  const entries = parsePrometheusResult(raw);
-  if (entries.length === 0) return Number.NaN;
-  const first = entries[0];
-  if (!first) return Number.NaN;
-  // Instant query shape: { value: [timestamp, "stringValue"] }
-  if (first.value && Array.isArray(first.value) && first.value.length >= 2) {
-    const parsed = parseFloat(String(first.value[1]));
-    return Number.isFinite(parsed) ? parsed : Number.NaN;
-  }
-  // Range query shape: { values: [[ts, "v"], ...] } — take the latest sample.
-  if (first.values && Array.isArray(first.values) && first.values.length > 0) {
-    const latest = first.values[first.values.length - 1];
-    if (latest && latest.length >= 2) {
-      const parsed = parseFloat(String(latest[1]));
-      return Number.isFinite(parsed) ? parsed : Number.NaN;
-    }
-  }
-  return Number.NaN;
-}
-
-// ── Instant query executors (metrics + logs) ────────────────────────────────
-
-/**
- * Execute one instant PromQL query via the metrics MCP tool. Never throws.
- * Returns a discriminated outcome so the caller can distinguish real MCP
- * failures from empty vectors (which are normal and expected whenever a
- * rule's labels don't match any active series).
- */
-async function executeInstant(
-  tool: ToolExecutor,
-  query: string,
-  datasourceUid: string | undefined,
-  signal: AbortSignal | undefined,
-  queryTimeoutMs: number,
-): Promise<InstantResult> {
-  const now = new Date();
-  const args: Record<string, unknown> = {
-    expr: query,
-    queryType: "instant",
-    startTime: new Date(now.getTime() - 5 * 60 * 1000).toISOString(),
-    endTime: now.toISOString(),
-  };
-  if (datasourceUid) args.datasourceUid = datasourceUid;
-  const raw = await withTimeoutAndAbort(tool, args, signal, queryTimeoutMs);
-  if (raw === undefined) return { kind: "error", value: Number.NaN };
-  const value = scalarFromPromResult(raw);
-  return Number.isFinite(value)
-    ? { kind: "ok", value }
-    : { kind: "empty", value: Number.NaN };
-}
-
-/**
- * Log-source executor: scalar count from a LogQL `count_over_time(...)`
- * query. Uses Grafana MCP `query_loki_logs` with `queryType: "metric"`,
- * which returns a metric vector (same shape Prometheus instant queries
- * return) rather than log lines. Never throws — NaN on failure, timeout,
- * or when the logs tool isn't wired.
- *
- * If the tool rejects `queryType: "metric"` (older Grafana MCP versions),
- * withTimeoutAndAbort catches the error and every log-source rule in the
- * tick silently scores NaN. The scan-scheduler tick log surfaces the
- * warning so operators notice and upgrade.
- */
-async function executeInstantLogs(
-  tool: ToolExecutor,
-  query: string,
-  lokiDatasourceUid: string | undefined,
-  signal: AbortSignal | undefined,
-  queryTimeoutMs: number,
-): Promise<InstantResult> {
-  // No Loki datasource wired is a config gap, not a query error. Treat as empty.
-  if (!lokiDatasourceUid) return { kind: "empty", value: Number.NaN };
-  const now = new Date();
-  const args: Record<string, unknown> = {
-    expr: query,
-    queryType: "metric",
-    datasourceUid: lokiDatasourceUid,
-    startTime: new Date(now.getTime() - 15 * 60 * 1000).toISOString(),
-    endTime: now.toISOString(),
-  };
-  const raw = await withTimeoutAndAbort(tool, args, signal, queryTimeoutMs);
-  if (raw === undefined) return { kind: "error", value: Number.NaN };
-  const value = scalarFromPromResult(raw);
-  return Number.isFinite(value)
-    ? { kind: "ok", value }
-    : { kind: "empty", value: Number.NaN };
 }
 
 // ── Track assembly helpers ──────────────────────────────────────────────────

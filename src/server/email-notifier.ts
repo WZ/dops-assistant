@@ -49,24 +49,25 @@ async function sendWithRetry(
   recipient: EmailRecipient,
   investigationId: string,
   envelope: { from: string; to: string; subject: string; html: string; text: string },
-): Promise<void> {
+): Promise<boolean> {
   const { attempts, backoffMs } = deps.config.retry;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       await deps.transport.sendMail(envelope);
       logger.info({ investigationId, to: recipient.address, attempt }, "email sent");
-      return;
+      return true;
     } catch (err) {
       const retryable = isRetryableSmtpError(err);
       const lastAttempt = attempt === attempts;
       if (!retryable || lastAttempt) {
         logger.error({ err, investigationId, to: recipient.address, attempt, retryable }, "email failed");
-        return;
+        return false;
       }
       const delay = backoffMs[attempt - 1] ?? 0;
       await sleep(delay);
     }
   }
+  return false;
 }
 
 export async function notifyEmail(
@@ -144,4 +145,69 @@ export async function notifyEmailScanRun(
       }),
     ),
   );
+}
+
+export interface DiscoveryEmailSummary {
+  id: string;
+  stackId: string;
+  serviceName: string;
+  changeKind: "addition" | "removal";
+  message: string;
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+export async function notifyEmailDiscovery(
+  deps: EmailNotifierDeps,
+  summary: DiscoveryEmailSummary,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!deps.isGloballyEnabled()) return { ok: true };
+  const recipients = deps.listEnabledRecipients().filter((r) =>
+    r.allowedSources.includes("periodic-discovery"),
+  );
+  if (recipients.length === 0) return { ok: true };
+
+  const verb = summary.changeKind === "addition" ? "found a new service" : "suggests removing a service";
+  const subject = `Discovery ${verb}: ${summary.serviceName}`;
+  const text = [
+    summary.message,
+    "",
+    `Stack: ${summary.stackId}`,
+    `Service: ${summary.serviceName}`,
+    `Change: ${summary.changeKind}`,
+    `Open: ${deps.config.appBaseUrl.replace(/\/+$/, "")}/settings`,
+  ].join("\n");
+  const html = `
+    <div style="font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.5;">
+      <p>${escapeHtml(summary.message)}</p>
+      <dl>
+        <dt>Stack</dt><dd>${escapeHtml(summary.stackId)}</dd>
+        <dt>Service</dt><dd>${escapeHtml(summary.serviceName)}</dd>
+        <dt>Change</dt><dd>${escapeHtml(summary.changeKind)}</dd>
+      </dl>
+      <p><a href="${escapeHtml(deps.config.appBaseUrl.replace(/\/+$/, ""))}/settings">Open settings</a></p>
+    </div>
+  `;
+
+  const results = await Promise.all(
+    recipients.map((r) =>
+      sendWithRetry(deps, r, summary.id, {
+        from: deps.config.from,
+        to: r.address,
+        subject,
+        html,
+        text,
+      }),
+    ),
+  );
+  return results.every(Boolean)
+    ? { ok: true }
+    : { ok: false, error: "one or more discovery emails failed" };
 }

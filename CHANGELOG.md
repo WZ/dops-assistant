@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.0.0] - 2026-05-01
+
+### Added
+- **Periodic discovery loop** — scheduled, suggest-only service discovery on top of the existing manual flow. The cron runs `runDiscovery()` per stack, applies a four-layer noise filter (validator confidence + multi-run consensus + Prometheus sanity probe + corroboration for removals), and writes qualifying suggestions to a per-stack inbox. The cron never modifies `services.yaml` directly; only the explicit accept route mutates the registry.
+  - Config: `discovery.periodic { enabled, cron, timezone, consensusRuns, consensusRunsForRemovals }`. Disabled by default. Defaults: additions consensus = 2, removals = 3 (one higher because LLM prompt drift can silently zero out a service).
+  - DB: 4 new tables (`pending_discoveries`, `dismissed_discoveries`, `periodic_discovery_runs`, `discovery_notifications`). Foreign keys are off project-wide so child rows are swept explicitly inside transactions.
+  - Notifications: per-channel delivery state — Slack and Email are tracked independently, so a Slack success + Email failure only retries Email on the next tick (no spam). The in-app badge tracks `viewed_at` separately from push `notified_at`.
+  - Routes: `GET /api/discoveries`, `/dismissed`, `/badge`, `/runs`, `GET/PUT /api/discovery/settings`, `POST /api/discoveries/{:id/accept,:id/dismiss,dismissed/:id/restore,mark-viewed,run-now,:id/accept-with-current-globals}`. Accept Zod-validates the stored payload before writing the registry (closes TODO #35) and 409s on globals_drift / registry_advanced.
+  - UI: Settings → Discovery tab exposes cron config, recent runs (with token telemetry), and the inbox (Pending Additions / Pending Removals / Dismissed) inline. 409 conflicts surface a modal that offers to re-run the sanity probe against current globals.
+  - Notification source enum extended with `"periodic-discovery"`. The existing `allowedSources` filter on each recipient/channel handles per-channel opt-in for free.
+
+### Known limitations (periodic discovery)
+- Periodic discovery inherits the `discovery_uses_status_replicas_not_ready` bug in the discovery agent prompt (`service_availability` rules use `kube_deployment_status_replicas` rather than `*_replicas_ready`). For services whose availability matters under crashloop/pending, operators may need to manually edit the rule. Tracked separately.
+- Single-instance scheduler assumption inherited from `ScanScheduler` — running ≥2 server instances will fire ticks from each. Acceptable for current deployment topology.
+- Service-name-keyed dismissal: a future genuinely-different service that reuses a dismissed name is silenced. Mitigated by the Dismissed tab's restore action.
+
 ## [0.3.9.1] - 2026-04-28
 
 ### Fixed
