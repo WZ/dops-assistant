@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useAutoScroll } from "../hooks/useAutoScroll.js";
+import { useUnreadInvestigations } from "../hooks/useUnreadInvestigations.js";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Search, SearchCode, MessageSquare, Plus, FileText, ChevronRight, Send, Trash2, X, ArrowRight, Zap } from "lucide-react";
@@ -134,6 +135,7 @@ function UnreadMarker() {
 export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, activeInvestigationId, serviceContext }: ChatPaneProps) {
   const { stackFetch, activeStackId } = useStackContext();
   const { status, messages: wsMessages, send } = ws;
+  const { isUnread, markViewed } = useUnreadInvestigations();
   const [input, setInput] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [deepMessages, setDeepMessages] = useState<ChatMessage[]>([]);
@@ -170,7 +172,25 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
   const streamRef = useRef<{ content: string; reasoning: string }>({ content: "", reasoning: "" });
   const rafRef = useRef<number | null>(null);
 
-  const scrollRef = useAutoScroll([chatMessages, deepMessages, chatLoading, deepLoading, !!streamingMessage]);
+  // Track streaming content length so auto-scroll re-fires as the assistant's
+  // bubble grows during streaming. Watching just `!!streamingMessage` (a
+  // boolean) only fires once at start; the bubble can then grow past the
+  // viewport without follow-up scroll updates.
+  const streamingContentLen = streamingMessage?.content.length ?? 0;
+  const streamingReasoningLen = streamingMessage?.reasoning.length ?? 0;
+  const scrollRef = useAutoScroll([
+    chatMessages,
+    deepMessages,
+    chatLoading,
+    deepLoading,
+    !!streamingMessage,
+    streamingContentLen,
+    streamingReasoningLen,
+    // The DISPATCHING confirmation banner is a chat-stream sibling — when it
+    // appears we want the same scroll-to-bottom behavior as a new message,
+    // so the [Cancel] pill is reachable without scrolling.
+    pendingConfirm?.id,
+  ]);
   const processedCount = useRef(0);
   const historyLoaded = useRef(false);
   const initialScrollDone = useRef(false);
@@ -221,8 +241,12 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
   };
 
   // Send a slash-command "/investigate <service>" — used by the in-reply pill button.
+  // Guarded against double-dispatch: a confirm-dispatch banner is already in flight,
+  // or a chat round-trip is already in progress. The pill is also visually disabled
+  // in those states so the user can't keep clicking through them.
   const dispatchSlashInvestigate = (service: string) => {
     if (status !== "connected") return;
+    if (pendingConfirm || chatLoading || streamingMessage) return;
     send({ type: "chat", message: `/investigate ${service}` });
   };
 
@@ -509,6 +533,20 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
       setActiveTool(null);
     }
     setInput("");
+    // Force-scroll to bottom on submit. useAutoScroll uses behavior:"smooth"
+    // and only scrolls when the user was already near the bottom. When the
+    // user types into a partially-scrolled chat, the smooth animation can
+    // leave the new bubble + thinking indicator partially hidden behind the
+    // input. Snap immediately, twice (now + after layout) to cover the
+    // streaming bubble appearing on the next paint.
+    requestAnimationFrame(() => {
+      const el = scrollRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+      requestAnimationFrame(() => {
+        const el2 = scrollRef.current;
+        if (el2) el2.scrollTop = el2.scrollHeight;
+      });
+    });
   };
 
   const handleDeleteMessage = useCallback(async (msgId: string) => {
@@ -594,12 +632,17 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
               {msg.content}
             </div>
           ) : msg.report && msg.investigationId ? (
+            (() => {
+              const unread = isUnread(msg.investigationId);
+              return (
             <div className="max-w-[92%] w-full flex flex-col gap-0.5">
               <button
-                onClick={() => onViewInvestigation(msg.investigationId!)}
+                onClick={() => { markViewed(msg.investigationId!); onViewInvestigation(msg.investigationId!); }}
                 className="w-full text-left group"
               >
                 <div className={`rca-reveal rca-reveal-glow rounded-xl border bg-card/50 overflow-hidden transition-all group-hover:border-primary/40 group-hover:shadow-md ${
+                  unread ? "rca-unread-pulse" : ""
+                } ${
                   msg.report.severity === "critical" ? "border-destructive/30 glow-red rca-reveal-glow-red" :
                   msg.report.severity === "high" ? "border-accent/25 glow-coral rca-reveal-glow-coral" :
                   "border-primary/20 glow-teal rca-reveal-glow-teal"
@@ -612,9 +655,16 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                   }`} />
                   <div className="px-3.5 py-2.5 border-b border-border/20 rca-section-1">
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-[11px] font-mono font-semibold uppercase tracking-[0.1em] text-foreground/85">
-                        Root Cause Analysis
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] font-mono font-semibold uppercase tracking-[0.1em] text-foreground/85">
+                          Root Cause Analysis
+                        </span>
+                        {unread && (
+                          <span className="font-mono text-[9px] uppercase tracking-[0.12em] px-1.5 py-px rounded-sm bg-accent text-accent-foreground animate-status-pulse">
+                            New
+                          </span>
+                        )}
+                      </div>
                       <div className="flex items-center gap-1.5">
                         <Badge variant={msg.report.severity === "critical" ? "destructive" : "secondary"} className="text-[8px] uppercase tracking-[0.1em]">
                           {msg.report.severity}
@@ -651,6 +701,8 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                 </span>
               )}
             </div>
+              );
+            })()
           ) : (
             <div className="max-w-[85%] space-y-2">
               {msg.skillsUsed && msg.skillsUsed.length > 0 && (
@@ -681,7 +733,8 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                 <Button
                   variant="outline"
                   onClick={() => dispatchSlashInvestigate(msg.serviceContext!)}
-                  className="h-9 px-4 text-[11px] font-mono bg-primary/10 border-primary/25 text-primary hover:bg-primary/15 hover:text-primary rounded-md gap-1.5 mt-1"
+                  disabled={!!pendingConfirm || chatLoading || !!streamingMessage}
+                  className="h-9 px-4 text-[11px] font-mono bg-primary/10 border-primary/25 text-primary hover:bg-primary/15 hover:text-primary rounded-md gap-1.5 mt-1 disabled:opacity-40 disabled:pointer-events-none"
                 >
                   <Zap size={12} className="!size-auto" />
                   Run full investigation on
@@ -965,8 +1018,10 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
             </div>
           )}
         </div>
-        {/* Spacer so auto-scroll clears the shortcut chips overlay */}
-        {isDeepMode && <div className="h-12" />}
+        {/* Spacer so auto-scroll clears the shortcut chips overlay (deep mode)
+            or so the streaming bubble + thinking indicator have breathing
+            room above the input box (console mode). */}
+        {isDeepMode ? <div className="h-12" /> : <div className="h-3" />}
       </div>
 
       {/* Deep mode shortcut chips -- always visible */}

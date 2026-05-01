@@ -161,6 +161,10 @@
   from { opacity: 0; transform: translateX(12px); }
   to { opacity: 1; transform: translateX(0); }
 }
+@keyframes slide-in-down {
+  from { opacity: 0; transform: translateY(-12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 @keyframes status-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
@@ -185,6 +189,9 @@
 }
 .animate-slide-in-right {
   animation: slide-in-right 0.35s ease-out both;
+}
+.animate-slide-in-down {
+  animation: slide-in-down 0.35s ease-out both;
 }
 @keyframes phase-swoop-left {
   0%   { opacity: 0; transform: translateX(420px) scale(0.96); }
@@ -381,12 +388,27 @@ input:focus, textarea:focus {
 .rca-reveal-glow-coral::after { box-shadow: 0 0 28px hsl(var(--accent) / 0.5); }
 .rca-reveal-glow-red::after { box-shadow: 0 0 28px hsl(0 90% 68% / 0.5); }
 
+/* Persistent unread pulse for an RCA card (chat) or InvestigationRow (Ops
+   Desk Investigation Log) the user hasn't opened yet. Replaces the floating
+   toast as the "you have a new investigation" cue: it sits on the existing
+   element so the user sees it in the chat scrollback or list where they're
+   actually working, instead of a corner banner that vanishes after 8s. */
+@keyframes rca-unread-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 hsl(var(--accent) / 0.0), 0 0 14px 0 hsl(var(--accent) / 0.10); }
+  50% { box-shadow: 0 0 0 2px hsl(var(--accent) / 0.35), 0 0 22px 2px hsl(var(--accent) / 0.30); }
+}
+.rca-unread-pulse {
+  animation: rca-unread-pulse 2s ease-in-out infinite;
+}
+
 /* ── Reduced motion — disable decorative animations ── */
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-up,
   .animate-fade-in,
   .animate-fade-in-fast,
-  .animate-slide-in-right {
+  .animate-slide-in-right,
+  .animate-slide-in-down,
+  .rca-unread-pulse {
     animation: none !important;
     opacity: 1 !important;
     transform: none !important;

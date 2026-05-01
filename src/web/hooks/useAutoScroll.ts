@@ -22,7 +22,11 @@ export function useAutoScroll(deps: unknown[]) {
 
   useEffect(() => {
     if (isNearBottom.current && ref.current) {
-      ref.current.scrollTo({ top: ref.current.scrollHeight, behavior: "smooth" });
+      // Instant rather than smooth: during streaming the deps change every
+      // animation frame as deltas arrive, so a smooth animation never
+      // catches up with the growing content and the bottom of the bubble
+      // ends up below the fold.
+      ref.current.scrollTop = ref.current.scrollHeight;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);

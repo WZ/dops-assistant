@@ -986,6 +986,13 @@ export async function handleClientMessage(
       mentionedService ??
       contextService ??
       resolveServiceFromHistory(db.listRecentMessages(stackId, 10), visibleServices);
+    // Service to surface in the in-reply "Run full investigation" pill. Only
+    // includes services explicitly tied to THIS message (pinned via header
+    // chip or named in the user text) — never history-resolved fallbacks.
+    // Suggesting an investigation against the previously-discussed service
+    // when the user asks about something else is a footgun: clicking the
+    // pill would dispatch the wrong RCA.
+    const replyServiceContext = pinnedService ?? mentionedService;
 
     // Search for matching chat-scoped skills (filtered by per-stack toggles)
     let chatSkillContext: string | undefined;
@@ -1060,7 +1067,10 @@ export async function handleClientMessage(
         createdAt: chatMsgTime,
         // serviceContext lets the client render the "Run full investigation"
         // pill button under chat-agent replies that resolved a service.
-        ...(chatService ? { serviceContext: chatService.name } : {}),
+        // Only set when the service was named in the user's message — never
+        // from history — so we don't suggest investigating an unrelated
+        // service the user happened to discuss earlier in the session.
+        ...(replyServiceContext ? { serviceContext: replyServiceContext.name } : {}),
       });
       send({
         type: "chat:usage",

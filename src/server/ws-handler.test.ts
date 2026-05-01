@@ -298,6 +298,35 @@ describe("handleClientMessage", () => {
     }
   });
 
+  it("chat:stream_end omits serviceContext when service is only resolvable from history", async () => {
+    // Regression: when a user's previous chat was about service-A but the new
+    // message names service-B (which isn't in the registry), we used to fall
+    // back to history-resolved service-A and surface a "Run full investigation
+    // on service-A" pill. Wrong service: clicking it would dispatch the wrong
+    // RCA. The pill must only render for services explicitly in this message.
+    const deps = mockDeps();
+    (deps.matchServiceFromText as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
+    (deps.validateLlmServiceMatch as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
+    const ctx = mockCtx();
+    // Pretend the conversation memory resolves to "impala" from prior turns.
+    (ctx.conversationMemory.get as ReturnType<typeof vi.fn>).mockReturnValue([
+      { role: "user", content: "investigate impala" },
+      { role: "assistant", content: "Investigation of impala completed." },
+    ]);
+    (deps.db.listRecentMessages as ReturnType<typeof vi.fn>).mockReturnValue([
+      { role: "user", content: "investigate impala" },
+    ]);
+
+    const messages: unknown[] = [];
+    const send = (msg: unknown) => messages.push(msg);
+
+    await callHandler({ type: "chat", message: "can you check errors in streaming-etl" }, send as any, deps, ctx);
+
+    const streamEnd = messages.find((m: any) => m.type === "chat:stream_end");
+    expect(streamEnd).toBeDefined();
+    expect((streamEnd as any).serviceContext).toBeUndefined();
+  });
+
   it("cancel_dispatch for unknown id is a no-op (does not throw)", async () => {
     const deps = mockDeps();
     const messages: unknown[] = [];
