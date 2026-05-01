@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
 import { InvestigationsPage } from "./InvestigationsPage";
 import { StackProvider } from "../contexts/StackContext";
+import { __resetUnreadInvestigationsForTest } from "../hooks/useUnreadInvestigations";
 import type { ReactNode } from "react";
 
 
@@ -66,6 +67,8 @@ describe("InvestigationsPage", () => {
   beforeEach(() => {
     cleanup();
     globalThis.fetch = vi.fn();
+    // Drop the module-level unread-set cache so each test starts clean.
+    __resetUnreadInvestigationsForTest();
   });
 
 
