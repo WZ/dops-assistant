@@ -1,17 +1,53 @@
 import type { ReactNode } from "react";
 import { renderInline } from "./renderInline";
 
-/** Collapse newlines inside inline backtick code spans so the line-based parser doesn't break them */
+/**
+ * Collapse newlines inside single-backtick inline code spans so the
+ * line-based parser doesn't break them. Walks char-by-char pairing single
+ * backticks; only the content between a matched open/close pair is
+ * touched. The previous regex-based version greedily spanned across two
+ * unrelated single-backtick spans whenever any newline sat between them,
+ * collapsing structural newlines and merging headings into bullets.
+ */
 function normalizeInlineCode(text: string): string {
-  return text.replace(/(?<!`)`(?!`)([^`]*\n[^`]*?)`(?!`)/g, (_, content) =>
-    "`" + content.replace(/\n/g, " ") + "`"
-  );
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    // Skip past fenced code blocks intact — the block parser consumes them later.
+    if (text[i] === "`" && text[i + 1] === "`" && text[i + 2] === "`") {
+      const end = text.indexOf("```", i + 3);
+      if (end === -1) { out += text.slice(i); return out; }
+      out += text.slice(i, end + 3);
+      i = end + 3;
+      continue;
+    }
+    // Single backtick (not part of `` or ```) — find its mate.
+    if (text[i] === "`" && text[i - 1] !== "`" && text[i + 1] !== "`") {
+      let close = -1;
+      for (let j = i + 1; j < text.length; j++) {
+        if (text[j] === "`" && text[j - 1] !== "`" && text[j + 1] !== "`") {
+          close = j;
+          break;
+        }
+      }
+      if (close === -1) { out += text.slice(i); return out; }
+      const content = text.slice(i + 1, close);
+      out += "`" + (content.includes("\n") ? content.replace(/\n/g, " ") : content) + "`";
+      i = close + 1;
+      continue;
+    }
+    out += text[i];
+    i++;
+  }
+  return out;
 }
 
 /** Ensure block-level elements (headings, table rows) start on their own line */
 function normalizeBlocks(text: string): string {
-  // Ensure markdown headings start on their own line
-  let result = text.replace(/([^\n/&])(#{1,4}\s+)/g, "$1\n$2");
+  // Ensure markdown headings start on their own line. '#' is excluded from the
+  // lookbehind so that '## Heading' is not split into '#\n# Heading' — only a
+  // heading marker preceded by non-hash content gets broken onto its own line.
+  let result = text.replace(/([^\n/&#])(#{1,4}\s+)/g, "$1\n$2");
   // Ensure pipe-table rows (3+ cells) start on their own line
   result = result.replace(/([^\n|])\s*(\|(?:[^|\n]+\|){2,})/g, "$1\n$2");
   // Ensure pipe-separator rows start on their own line
