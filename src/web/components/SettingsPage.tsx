@@ -5,11 +5,12 @@ import { SkillsPage } from "./SkillsPage";
 import { StacksManagePage } from "./StacksManagePage";
 import { NotificationsTab } from "./NotificationsTab";
 import { ScanTab } from "./ScanTab";
+import { DiscoveryTab } from "./DiscoveryTab";
 import type { StackSummary } from "../../types/stack-types.js";
 
 interface SettingsPageProps {
   onRunDiscovery: () => void;
-  initialTab?: "providers" | "skills" | "stacks" | "scan" | "notifications";
+  initialTab?: "providers" | "skills" | "stacks" | "scan" | "discovery" | "notifications";
   stacks: StackSummary[];
   activeStackId: string;
   onSwitchStack: (stackId: string) => void;
@@ -54,6 +55,12 @@ export function SettingsPage({ onRunDiscovery, initialTab = "providers", stacks,
             Scan
           </TabsTrigger>
           <TabsTrigger
+            value="discovery"
+            className="font-mono text-[10px] font-medium px-4 py-2 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+          >
+            Discovery
+          </TabsTrigger>
+          <TabsTrigger
             value="notifications"
             className="font-mono text-[10px] font-medium px-4 py-2 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
           >
@@ -76,6 +83,9 @@ export function SettingsPage({ onRunDiscovery, initialTab = "providers", stacks,
         </TabsContent>
         <TabsContent value="scan" className="mt-4">
           <ScanTab />
+        </TabsContent>
+        <TabsContent value="discovery" className="mt-4">
+          <DiscoveryTab />
         </TabsContent>
         <TabsContent value="notifications" className="mt-4">
           <NotificationsTab />
