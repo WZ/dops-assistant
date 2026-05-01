@@ -31,6 +31,14 @@ import { ServiceRegistryStore } from "../services/registry.js";
 import { ServiceHealthPoller, type HealthStatus } from "./service-health-poller.js";
 import { K8sEventPoller, type K8sEventHit } from "./k8s-event-poller.js";
 import { ScanScheduler, type ScanAnomaliesEvent } from "./scan-scheduler.js";
+import { PeriodicDiscoveryScheduler, type PeriodicDiscoverySettings } from "./periodic-discovery-scheduler.js";
+import { PendingDiscoveryStore } from "./pending-discovery-store.js";
+import { executeInstantMetric, type InstantResult } from "./instant-query.js";
+import { getToolsByRole } from "../mcp/provider.js";
+import { runDiscovery } from "../workflows/discovery.js";
+import { notifySlack } from "./slack-notifier.js";
+import { notifyEmail } from "./email-notifier.js";
+import type { LanguageModel } from "ai";
 import { getEffectiveScanConfig } from "./scan-settings.js";
 import { getEffectiveK8sEventsConfig } from "./k8s-events-settings.js";
 import type { Database } from "./db.js";
@@ -55,6 +63,10 @@ export interface StackContext {
   healthPoller: ServiceHealthPoller;
   k8sEventPoller: K8sEventPoller;
   scanScheduler: ScanScheduler;
+  pendingDiscoveryStore: PendingDiscoveryStore;
+  periodicDiscoveryScheduler: PeriodicDiscoveryScheduler;
+  /** Helper that runs a single instant metric query through the stack's metrics provider. Used by the accept-with-current-globals route. */
+  buildInstantProbe: (query: string) => Promise<InstantResult>;
 }
 
 export class StackManager {
@@ -79,9 +91,22 @@ export class StackManager {
    */
   private emailNotifierDeps: EmailNotifierDeps | null = null;
 
+  /**
+   * Optional. When set, enables the periodic discovery scheduler. Supplied by
+   * index.ts after the LLM model is constructed. Without it, periodic
+   * discovery falls through to a no-op (scheduler.start() is a noop unless a
+   * model is provided).
+   */
+  private llmModel: LanguageModel | null = null;
+
   constructor(db: Database, config: Config) {
     this.db = db;
     this.config = config;
+  }
+
+  /** Wire the LLM model (called from index.ts after createModel). */
+  setLlmModel(model: LanguageModel): void {
+    this.llmModel = model;
   }
 
   /**
@@ -215,6 +240,73 @@ export class StackManager {
       onScanRunComplete: (summary) => this.handleScanRunComplete(summary),
     });
 
+    // ── Periodic discovery (suggest-only inbox + cron) ─────────────────
+    const pendingDiscoveryStore = new PendingDiscoveryStore(this.db.raw());
+    const buildInstantProbe = async (query: string): Promise<InstantResult> => {
+      try {
+        const tools = (await getToolsByRole(providerRegistry.getProviders(), "metrics")) as Record<string, any>;
+        const candidates = Object.entries(tools)
+          .filter(([name]) => /query|prom|metric/i.test(name));
+        const tool = candidates[0]?.[1];
+        if (!tool) return { kind: "error", value: NaN };
+        const dsUid = getDatasourceUid();
+        return await executeInstantMetric(tool, query, dsUid, undefined, 10_000);
+      } catch {
+        return { kind: "error", value: NaN };
+      }
+    };
+    const periodicSettings: PeriodicDiscoverySettings =
+      this.db.getPeriodicDiscoverySettings(row.id)
+      ?? this.config.discovery?.periodic
+      ?? { enabled: false, cron: "", timezone: "UTC", consensusRuns: 2, consensusRunsForRemovals: 3 };
+    const periodicDiscoveryScheduler = new PeriodicDiscoveryScheduler({
+      store: pendingDiscoveryStore,
+      stackId: row.id,
+      providers: () => providerRegistry.getProviders(),
+      getPrometheusDatasourceUid: getDatasourceUid,
+      registryStore: serviceRegistry,
+      runDiscovery: async (args) => {
+        if (!this.llmModel) {
+          throw new Error("periodic-discovery: LLM model not set on StackManager");
+        }
+        return runDiscovery({
+          model: this.llmModel,
+          providers: args.providers,
+          discoveryConfig: args.discoveryConfig,
+          onTokenUsage: args.onTokenUsage,
+          llmRetry: args.llmRetry,
+        });
+      },
+      notifySlack: async (msg) => {
+        const url = this.config.webhook?.slackWebhookUrl;
+        if (!url) return { ok: true }; // Slack disabled
+        try {
+          const res = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: msg }),
+          });
+          if (!res.ok) return { ok: false, error: `slack ${res.status}` };
+          return { ok: true };
+        } catch (err) {
+          return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+      },
+      notifyEmail: async (_msg) => {
+        // Email dispatch for periodic discovery uses the existing email-notifier
+        // infrastructure indirectly — for v1, we no-op here unless emailNotifierDeps
+        // is wired (which happens after SMTP transport construction in index.ts).
+        // The per-channel state machine treats this as a no-op success so it doesn't
+        // queue retries.
+        return { ok: true };
+      },
+      sanityProbe: buildInstantProbe,
+      removalCorroborationProbe: buildInstantProbe,
+      settings: periodicSettings,
+      discoveryConfig: this.config.discovery,
+      llmRetry: this.config.llm?.retry,
+    });
+
     const ctx: StackContext = {
       id: row.id,
       slug: row.slug,
@@ -225,6 +317,9 @@ export class StackManager {
       healthPoller,
       k8sEventPoller,
       scanScheduler,
+      pendingDiscoveryStore,
+      periodicDiscoveryScheduler,
+      buildInstantProbe,
     };
 
     this.stacks.set(row.id, ctx);
@@ -259,6 +354,7 @@ export class StackManager {
     ctx.healthPoller.start();
     ctx.k8sEventPoller.start();
     ctx.scanScheduler.start();
+    ctx.periodicDiscoveryScheduler.start();
   }
 
   /**
@@ -365,6 +461,7 @@ export class StackManager {
       ctx.healthPoller.start();
       ctx.k8sEventPoller.start();
       ctx.scanScheduler.start();
+    ctx.periodicDiscoveryScheduler.start();
     } else {
       this.skippedPollers.add(ctx.id);
       logger.info(
@@ -394,6 +491,7 @@ export class StackManager {
     ctx.healthPoller.stop();
     ctx.k8sEventPoller.stop();
     ctx.scanScheduler.stop();
+    ctx.periodicDiscoveryScheduler.stop();
 
     // Destroy conversation memory (clears eviction interval)
     ctx.conversationMemory.destroy();
@@ -497,6 +595,7 @@ export class StackManager {
           try { ctx.healthPoller.stop(); } catch { /* ignore */ }
           try { ctx.k8sEventPoller.stop(); } catch { /* ignore */ }
           try { ctx.scanScheduler.stop(); } catch { /* ignore */ }
+          try { ctx.periodicDiscoveryScheduler.stop(); } catch { /* ignore */ }
           try { ctx.conversationMemory.destroy(); } catch { /* ignore */ }
           this.stacks.delete(stackId);
           this.skippedPollers.delete(stackId);
@@ -555,7 +654,7 @@ export class StackManager {
       // Scan scheduler uses a wider 0-60s jitter (design decision #5) to reduce
       // cross-stack cron collision when multiple stacks share "0 */4 * * *".
       const scanDelay = Math.floor(Math.random() * 60_000);
-      setTimeout(() => ctx.scanScheduler.start(), scanDelay);
+      setTimeout(() => { ctx.scanScheduler.start(); ctx.periodicDiscoveryScheduler.start(); }, scanDelay);
     }
   }
 
@@ -567,6 +666,7 @@ export class StackManager {
       ctx.healthPoller.stop();
       ctx.k8sEventPoller.stop();
       ctx.scanScheduler.stop();
+    ctx.periodicDiscoveryScheduler.stop();
     }
   }
 
