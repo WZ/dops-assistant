@@ -1323,3 +1323,14 @@ describe("Database", () => {
     });
   });
 });
+
+describe("DB settings — periodic discovery", () => {
+  it("get/set periodic discovery settings round-trip", () => {
+    const db = new Database(":memory:");
+    expect(db.getPeriodicDiscoverySettings("s")).toBeNull();
+    db.setPeriodicDiscoverySettings("s", { enabled: true, cron: "0 3 * * *", timezone: "UTC", consensusRuns: 2, consensusRunsForRemovals: 3 });
+    expect(db.getPeriodicDiscoverySettings("s")).toEqual({
+      enabled: true, cron: "0 3 * * *", timezone: "UTC", consensusRuns: 2, consensusRunsForRemovals: 3,
+    });
+  });
+});

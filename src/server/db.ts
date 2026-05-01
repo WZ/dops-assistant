@@ -2,6 +2,7 @@ import BetterSqlite3 from "better-sqlite3";
 import type { StackRow } from "../types/stack-types.js";
 import type { SeverityLevel, NotificationSource, EmailRecipient } from "../types/notifications.js";
 import { ALL_SEVERITIES, ALL_SOURCES } from "../types/notifications.js";
+import type { PeriodicDiscoveryConfig } from "../config/schema.js";
 import { createLogger as _createLoggerForRecipientParser } from "../logger.js";
 const _emailRecipientLogger = _createLoggerForRecipientParser();
 
@@ -1926,6 +1927,16 @@ export class Database {
 
   deleteSetting(key: string): void {
     this.db.prepare("DELETE FROM settings WHERE key = ?").run(key);
+  }
+
+  getPeriodicDiscoverySettings(stackId: string): PeriodicDiscoveryConfig | null {
+    const raw = this.getSetting(`discovery.periodic.${stackId}`);
+    if (!raw) return null;
+    try { return JSON.parse(raw) as PeriodicDiscoveryConfig; } catch { return null; }
+  }
+
+  setPeriodicDiscoverySettings(stackId: string, settings: PeriodicDiscoveryConfig): void {
+    this.setSetting(`discovery.periodic.${stackId}`, JSON.stringify(settings));
   }
 
   /**
