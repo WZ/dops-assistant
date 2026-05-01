@@ -546,6 +546,16 @@ export class Database {
     this.migrateStacks();
     this.migrateDisabledSkills();
     this.migrateEmailRecipients();
+    this.migratePeriodicDiscovery();
+  }
+
+  /**
+   * Test-only accessor for the underlying BetterSqlite3 handle. Lets tests
+   * inspect schema (PRAGMA table_info, sqlite_master) without exposing
+   * `private db` via `as unknown as` casts.
+   */
+  raw(): BetterSqlite3.Database {
+    return this.db;
   }
 
   private migrate(): void {
@@ -757,6 +767,83 @@ export class Database {
     // the same in the UI until the next scan tick writes real numbers.
     const addEmptyCol = "ALTER TABLE scan_runs ADD COLUMN queries_empty INTEGER NOT NULL DEFAULT 0";
     try { this.db.exec(addEmptyCol); } catch { /* column already exists */ }
+  }
+
+  // ── Periodic discovery migration ───────────────────────────────────────
+
+  /**
+   * Periodic service-discovery tables. Safe to call multiple times — every
+   * statement uses CREATE TABLE/INDEX IF NOT EXISTS.
+   *
+   * Tables:
+   *   - pending_discoveries:    qualified additions/removals awaiting user action.
+   *   - dismissed_discoveries:  user-dismissed (service, change_kind) tuples.
+   *   - periodic_discovery_runs: per-run telemetry (status, tokens, errors).
+   *   - discovery_notifications: per-channel delivery log for each pending row.
+   *
+   * Note: the ON DELETE CASCADE on discovery_notifications.pending_id is
+   * declarative only — PRAGMA foreign_keys is OFF in this project. Cascading
+   * deletes must be performed explicitly by callers (mirrors scan_runs).
+   */
+  migratePeriodicDiscovery(): void {
+    const ddl = `
+      CREATE TABLE IF NOT EXISTS pending_discoveries (
+        id                                  TEXT PRIMARY KEY,
+        stack_id                            TEXT NOT NULL,
+        service_name                        TEXT NOT NULL,
+        change_kind                         TEXT NOT NULL CHECK(change_kind IN ('addition','removal')),
+        payload                             TEXT,
+        globals_snapshot                    TEXT,
+        registry_version_at_qualification   TEXT,
+        first_seen_at                       TEXT NOT NULL,
+        last_seen_run_id                    TEXT NOT NULL,
+        seen_count                          INTEGER NOT NULL DEFAULT 1,
+        qualified_at                        TEXT,
+        notified_at                         TEXT,
+        viewed_at                           TEXT,
+        UNIQUE(stack_id, service_name, change_kind)
+      );
+      CREATE INDEX IF NOT EXISTS idx_pending_disc_stack_qualified
+        ON pending_discoveries(stack_id, qualified_at);
+      CREATE INDEX IF NOT EXISTS idx_pending_disc_badge
+        ON pending_discoveries(stack_id, qualified_at, viewed_at);
+
+      CREATE TABLE IF NOT EXISTS dismissed_discoveries (
+        id              TEXT PRIMARY KEY,
+        stack_id        TEXT NOT NULL,
+        service_name    TEXT NOT NULL,
+        change_kind     TEXT NOT NULL CHECK(change_kind IN ('addition','removal')),
+        dismissed_at    TEXT NOT NULL,
+        UNIQUE(stack_id, service_name, change_kind)
+      );
+
+      CREATE TABLE IF NOT EXISTS periodic_discovery_runs (
+        id              TEXT PRIMARY KEY,
+        stack_id        TEXT NOT NULL,
+        started_at      TEXT NOT NULL,
+        finished_at     TEXT,
+        status          TEXT NOT NULL CHECK(status IN ('running','success','failed','skipped')),
+        service_count   INTEGER,
+        tokens_input    INTEGER,
+        tokens_output   INTEGER,
+        error           TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_periodic_runs_stack_started
+        ON periodic_discovery_runs(stack_id, started_at DESC);
+
+      CREATE TABLE IF NOT EXISTS discovery_notifications (
+        id            TEXT PRIMARY KEY,
+        pending_id    TEXT NOT NULL REFERENCES pending_discoveries(id) ON DELETE CASCADE,
+        channel       TEXT NOT NULL CHECK(channel IN ('slack','email','badge')),
+        attempted_at  TEXT NOT NULL,
+        status        TEXT NOT NULL CHECK(status IN ('success','failed')),
+        error         TEXT,
+        UNIQUE(pending_id, channel)
+      );
+      CREATE INDEX IF NOT EXISTS idx_disc_notifs_pending
+        ON discovery_notifications(pending_id);
+    `;
+    this.db.exec(ddl);
   }
 
   // ── Email recipients migration ─────────────────────────────────────────

@@ -1275,4 +1275,51 @@ describe("Database", () => {
       expect(db.hasPatternForInvestigation("other", "inv_1")).toBe(false);
     });
   });
+
+  describe("migratePeriodicDiscovery", () => {
+    it("creates pending_discoveries with all required columns and indexes", () => {
+      const cols = db.raw().prepare("PRAGMA table_info(pending_discoveries)").all() as Array<{ name: string }>;
+      const names = cols.map((c) => c.name);
+      expect(names).toEqual(expect.arrayContaining([
+        "id", "stack_id", "service_name", "change_kind",
+        "payload", "globals_snapshot", "registry_version_at_qualification",
+        "first_seen_at", "last_seen_run_id", "seen_count",
+        "qualified_at", "notified_at", "viewed_at",
+      ]));
+      const idx = db.raw().prepare(
+        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='pending_discoveries'",
+      ).all() as Array<{ name: string }>;
+      expect(idx.map((i) => i.name)).toEqual(expect.arrayContaining([
+        "idx_pending_disc_stack_qualified",
+        "idx_pending_disc_badge",
+      ]));
+    });
+
+    it("creates dismissed_discoveries", () => {
+      const cols = db.raw().prepare("PRAGMA table_info(dismissed_discoveries)").all() as Array<{ name: string }>;
+      expect(cols.map((c) => c.name)).toEqual(expect.arrayContaining([
+        "id", "stack_id", "service_name", "change_kind", "dismissed_at",
+      ]));
+    });
+
+    it("creates periodic_discovery_runs with token columns", () => {
+      const cols = db.raw().prepare("PRAGMA table_info(periodic_discovery_runs)").all() as Array<{ name: string }>;
+      expect(cols.map((c) => c.name)).toEqual(expect.arrayContaining([
+        "id", "stack_id", "started_at", "finished_at", "status",
+        "service_count", "tokens_input", "tokens_output", "error",
+      ]));
+    });
+
+    it("creates discovery_notifications with cascade", () => {
+      const cols = db.raw().prepare("PRAGMA table_info(discovery_notifications)").all() as Array<{ name: string }>;
+      expect(cols.map((c) => c.name)).toEqual(expect.arrayContaining([
+        "id", "pending_id", "channel", "attempted_at", "status", "error",
+      ]));
+    });
+
+    it("is idempotent", () => {
+      expect(() => db.migratePeriodicDiscovery()).not.toThrow();
+      expect(() => db.migratePeriodicDiscovery()).not.toThrow();
+    });
+  });
 });
