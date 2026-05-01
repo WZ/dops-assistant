@@ -3,7 +3,7 @@ import { createLogger } from "../logger.js";
 import type { Database } from "./db.js";
 import type { ServiceConfig, Config, ProviderConfig } from "../config/schema.js";
 import { MAX_CACHE_ENTRIES } from "../constants.js";
-import { ProviderSchema, StackConfigSchema } from "../config/schema.js";
+import { ProviderSchema, StackConfigSchema, PeriodicDiscoverySchema, ServiceConfigSchema } from "../config/schema.js";
 import { DEFAULT_STACK_SLUG } from "../types/stack-types.js";
 import { createMcpProvider, listProviderTools } from "../mcp/provider.js";
 import { clearStackCaches } from "./ws-handler.js";
@@ -1280,7 +1280,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   });
 
   app.delete("/api/messages/:id", (req: Request, res: Response) => {
-    const id = Array.isArray(req.params["id"]) ? req.params["id"][0]! : req.params["id"]!;
+    const id = Array.isArray(req.params["id"]) ? req.params["id"][0]! : (req.params["id"] as string);
     const deleted = db.deleteMessage(req.stackId, id);
     if (!deleted) {
       res.status(404).json({ error: "Message not found or is an investigation message" });
@@ -1332,7 +1332,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     });
 
     app.get("/api/skills/:id", (req: Request, res: Response) => {
-      const id = Array.isArray(req.params["id"]) ? req.params["id"][0]! : req.params["id"]!;
+      const id = Array.isArray(req.params["id"]) ? req.params["id"][0]! : (req.params["id"] as string);
       const skill = skillStore.getById(id);
       if (!skill) {
         res.status(404).json({ error: "Skill not found" });
@@ -1359,7 +1359,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
     app.put("/api/skills/:id", async (req: Request, res: Response) => {
       try {
-        const id = Array.isArray(req.params["id"]) ? req.params["id"][0]! : req.params["id"]!;
+        const id = Array.isArray(req.params["id"]) ? req.params["id"][0]! : (req.params["id"] as string);
         const parsed = SkillInputSchema.safeParse(req.body);
         if (!parsed.success) {
           const errors = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
@@ -1377,7 +1377,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
     app.delete("/api/skills/:id", async (req: Request, res: Response) => {
       try {
-        const id = Array.isArray(req.params["id"]) ? req.params["id"][0]! : req.params["id"]!;
+        const id = Array.isArray(req.params["id"]) ? req.params["id"][0]! : (req.params["id"] as string);
         await skillStore.delete(id);
         res.status(204).end();
       } catch (err) {
@@ -1386,7 +1386,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     });
 
     app.put("/api/skills/:id/enabled", (req: Request, res: Response) => {
-      const id = Array.isArray(req.params["id"]) ? req.params["id"][0]! : req.params["id"]!;
+      const id = Array.isArray(req.params["id"]) ? req.params["id"][0]! : (req.params["id"] as string);
       const skill = skillStore.getById(id);
       if (!skill) {
         res.status(404).json({ error: "Skill not found" });
@@ -1549,7 +1549,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
   app.get("/api/services/versions/:id", (req: Request, res: Response) => {
     try {
-      const id = Array.isArray(req.params["id"]) ? req.params["id"][0]! : req.params["id"]!;
+      const id = Array.isArray(req.params["id"]) ? req.params["id"][0]! : (req.params["id"] as string);
       const registryStore = req.stackContext.serviceRegistry;
       const services = registryStore.getVersion(id);
       res.json(services);
@@ -1560,7 +1560,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
   app.post("/api/services/versions/:id/restore", (req: Request, res: Response) => {
     try {
-      const id = Array.isArray(req.params["id"]) ? req.params["id"][0]! : req.params["id"]!;
+      const id = Array.isArray(req.params["id"]) ? req.params["id"][0]! : (req.params["id"] as string);
       const registryStore = req.stackContext.serviceRegistry;
       registryStore.rollback(id);
       res.json({ restored: true, services: registryStore.load() });
@@ -1571,14 +1571,14 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
   // ── Feedback + Patterns REST API ────────────────────────────────────────
   app.get("/api/investigations/:id/feedback", (req: Request, res: Response) => {
-    const investigationId = Array.isArray(req.params["id"]) ? req.params["id"][0]! : req.params["id"]!;
+    const investigationId = Array.isArray(req.params["id"]) ? req.params["id"][0]! : (req.params["id"] as string);
     const existing = db.getFeedback(req.stackId, investigationId);
     res.json({ rating: existing?.rating ?? null, created_at: existing?.created_at ?? null });
   });
 
   app.post("/api/investigations/:id/feedback", async (req: Request, res: Response) => {
     try {
-      const investigationId = Array.isArray(req.params["id"]) ? req.params["id"][0]! : req.params["id"]!;
+      const investigationId = Array.isArray(req.params["id"]) ? req.params["id"][0]! : (req.params["id"] as string);
       const { rating } = req.body as { rating: string };
       if (rating !== "useful" && rating !== "not_useful") {
         res.status(400).json({ error: "rating must be 'useful' or 'not_useful'" });
@@ -1631,7 +1631,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   });
 
   app.get("/api/patterns/:id", (req: Request, res: Response) => {
-    const patternId = Array.isArray(req.params["id"]) ? req.params["id"][0]! : req.params["id"]!;
+    const patternId = Array.isArray(req.params["id"]) ? req.params["id"][0]! : (req.params["id"] as string);
     const seed = db.getPattern(req.stackId, patternId);
     if (!seed) {
       res.status(404).json({ error: "Pattern not found" });
@@ -2343,5 +2343,177 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     }
 
     res.json({ ok: true, envelope: captured[0] ?? null });
+  });
+
+  // ── Periodic discovery — listing & runs ────────────────────────────────
+  app.get("/api/discoveries", (req: Request, res: Response) => {
+    const stackId = req.stackId!;
+    let ctx;
+    try { ctx = stackManager.getContext(stackId); } catch { res.status(404).json({ error: "stack_not_found" }); return; }
+    const additions = ctx.pendingDiscoveryStore.listQualified(stackId, "addition");
+    const removals = ctx.pendingDiscoveryStore.listQualified(stackId, "removal");
+    const dismissedCount = ctx.pendingDiscoveryStore.listDismissed(stackId).length;
+    res.json({
+      additions, removals,
+      counts: { additions: additions.length, removals: removals.length, dismissed: dismissedCount },
+    });
+  });
+
+  app.get("/api/discoveries/dismissed", (req: Request, res: Response) => {
+    let ctx; try { ctx = stackManager.getContext(req.stackId!); } catch { res.status(404).json({ error: "stack_not_found" }); return; }
+    res.json(ctx.pendingDiscoveryStore.listDismissed(req.stackId!));
+  });
+
+  app.get("/api/discoveries/badge", (req: Request, res: Response) => {
+    let ctx; try { ctx = stackManager.getContext(req.stackId!); } catch { res.status(404).json({ error: "stack_not_found" }); return; }
+    res.json({ count: ctx.pendingDiscoveryStore.countUnviewed(req.stackId!) });
+  });
+
+  app.get("/api/discoveries/runs", (req: Request, res: Response) => {
+    let ctx; try { ctx = stackManager.getContext(req.stackId!); } catch { res.status(404).json({ error: "stack_not_found" }); return; }
+    const limit = Math.min(parseInt(String(req.query["limit"] ?? "10"), 10) || 10, 100);
+    res.json(ctx.pendingDiscoveryStore.listRuns(req.stackId!, limit));
+  });
+
+  app.get("/api/discovery/settings", (req: Request, res: Response) => {
+    const stored = db.getPeriodicDiscoverySettings(req.stackId!);
+    res.json(stored ?? { enabled: false, cron: "", timezone: "UTC", consensusRuns: 2, consensusRunsForRemovals: 3 });
+  });
+
+  app.put("/api/discovery/settings", (req: Request, res: Response) => {
+    const parsed = PeriodicDiscoverySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(422).json({ error: "validation_failed", issues: parsed.error.issues });
+      return;
+    }
+    db.setPeriodicDiscoverySettings(req.stackId!, parsed.data);
+    let ctx; try { ctx = stackManager.getContext(req.stackId!); } catch { res.json({ ok: true }); return; }
+    ctx.periodicDiscoveryScheduler.restart(parsed.data);
+    res.json({ ok: true });
+  });
+
+  // ── Periodic discovery — mutations ──────────────────────────────────────
+  app.post("/api/discoveries/:id/dismiss", (req: Request, res: Response) => {
+    let ctx; try { ctx = stackManager.getContext(req.stackId!); } catch { res.status(404).json({ error: "stack_not_found" }); return; }
+    const row = ctx.pendingDiscoveryStore.findById((req.params["id"] as string));
+    if (!row || row.stackId !== req.stackId) { res.status(404).json({ error: "not_found" }); return; }
+    ctx.pendingDiscoveryStore.dismiss((req.params["id"] as string));
+    res.json({ ok: true });
+  });
+
+  app.post("/api/discoveries/dismissed/:id/restore", (req: Request, res: Response) => {
+    let ctx; try { ctx = stackManager.getContext(req.stackId!); } catch { res.status(404).json({ error: "stack_not_found" }); return; }
+    ctx.pendingDiscoveryStore.restoreDismissed((req.params["id"] as string));
+    res.json({ ok: true });
+  });
+
+  app.post("/api/discoveries/mark-viewed", (req: Request, res: Response) => {
+    let ctx; try { ctx = stackManager.getContext(req.stackId!); } catch { res.status(404).json({ error: "stack_not_found" }); return; }
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((x: unknown) => typeof x === "string") : null;
+    if (ids === null) {
+      const all = [
+        ...ctx.pendingDiscoveryStore.listQualified(req.stackId!, "addition"),
+        ...ctx.pendingDiscoveryStore.listQualified(req.stackId!, "removal"),
+      ].filter((r) => r.viewedAt === null).map((r) => r.id);
+      ctx.pendingDiscoveryStore.markViewed(all);
+    } else {
+      ctx.pendingDiscoveryStore.markViewed(ids);
+    }
+    res.json({ ok: true });
+  });
+
+  app.post("/api/discoveries/run-now", async (req: Request, res: Response) => {
+    let ctx; try { ctx = stackManager.getContext(req.stackId!); } catch { res.status(404).json({ error: "stack_not_found" }); return; }
+    const sched = ctx.periodicDiscoveryScheduler;
+    if (sched.isTicking()) {
+      const next = sched.status().nextRun;
+      res.status(409).json({ kind: "tick_in_progress", nextEligibleAt: next });
+      return;
+    }
+    sched.tickOnce().catch(() => {/* logged inside */});
+    res.json({ ok: true });
+  });
+
+  // ── Accept route — Zod-validated, conflict-aware (T16 critical) ────────
+  app.post("/api/discoveries/:id/accept", async (req: Request, res: Response) => {
+    let ctx; try { ctx = stackManager.getContext(req.stackId!); } catch { res.status(404).json({ error: "stack_not_found" }); return; }
+    const row = ctx.pendingDiscoveryStore.findById((req.params["id"] as string));
+    if (!row || row.stackId !== req.stackId) { res.status(404).json({ error: "not_found" }); return; }
+
+    if (row.changeKind === "removal") {
+      const current = ctx.serviceRegistry.load();
+      const next = current.filter((s) => s.name !== row.serviceName);
+      ctx.serviceRegistry.save(next, "discovery");
+      ctx.pendingDiscoveryStore.deleteById(row.id);
+      res.json({ ok: true });
+      return;
+    }
+
+    if (!row.payload) { res.status(422).json({ error: "missing_payload" }); return; }
+    let parsedConfig: ServiceConfig;
+    try {
+      const json = JSON.parse(row.payload);
+      const result = ServiceConfigSchema.safeParse(json);
+      if (!result.success) { res.status(422).json({ error: "payload_corrupt", issues: result.error.issues }); return; }
+      parsedConfig = result.data as ServiceConfig;
+    } catch (err) {
+      res.status(422).json({ error: "payload_corrupt", message: err instanceof Error ? err.message : String(err) });
+      return;
+    }
+
+    const currentGlobals = JSON.stringify(ctx.serviceRegistry.loadAll().globalProbeRules ?? []);
+    const snapshot = row.globalsSnapshot ?? "[]";
+    if (currentGlobals !== snapshot) {
+      res.status(409).json({
+        kind: "globals_drift",
+        current: JSON.parse(currentGlobals),
+        snapshot: JSON.parse(snapshot),
+      });
+      return;
+    }
+
+    const currentVersion = ctx.serviceRegistry.listVersions().slice(-1)[0]?.id ?? "v-initial";
+    if (row.registryVersionAtQualification && row.registryVersionAtQualification !== currentVersion) {
+      res.status(409).json({
+        kind: "registry_advanced",
+        current_version: currentVersion,
+        qualification_version: row.registryVersionAtQualification,
+      });
+      return;
+    }
+
+    const next = [...ctx.serviceRegistry.load(), parsedConfig];
+    ctx.serviceRegistry.save(next, "discovery");
+    ctx.pendingDiscoveryStore.deleteById(row.id);
+    res.json({ ok: true });
+  });
+
+  // ── Accept-with-current-globals — re-runs sanity probe ─────────────────
+  app.post("/api/discoveries/:id/accept-with-current-globals", async (req: Request, res: Response) => {
+    let ctx; try { ctx = stackManager.getContext(req.stackId!); } catch { res.status(404).json({ error: "stack_not_found" }); return; }
+    const row = ctx.pendingDiscoveryStore.findById((req.params["id"] as string));
+    if (!row || row.stackId !== req.stackId || row.changeKind !== "addition") {
+      res.status(404).json({ error: "not_found" }); return;
+    }
+    if (!row.payload) { res.status(422).json({ error: "missing_payload" }); return; }
+    let parsedConfig: ServiceConfig;
+    try {
+      const json = JSON.parse(row.payload);
+      const result = ServiceConfigSchema.safeParse(json);
+      if (!result.success) { res.status(422).json({ error: "payload_corrupt", issues: result.error.issues }); return; }
+      parsedConfig = result.data as ServiceConfig;
+    } catch { res.status(422).json({ error: "payload_corrupt" }); return; }
+
+    if (parsedConfig.metrics?.[0]) {
+      const r = await ctx.buildInstantProbe(parsedConfig.metrics[0].query);
+      if (r.kind !== "ok") {
+        res.status(409).json({ kind: "sanity_probe_failed", probe: r });
+        return;
+      }
+    }
+    const next = [...ctx.serviceRegistry.load(), parsedConfig];
+    ctx.serviceRegistry.save(next, "discovery");
+    ctx.pendingDiscoveryStore.deleteById(row.id);
+    res.json({ ok: true });
   });
 }

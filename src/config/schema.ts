@@ -398,6 +398,7 @@ export const ConfigSchema = z.object({
 export type Config = z.infer<typeof ConfigSchema>;
 export type SkillsConfig = z.infer<typeof SkillsSchema>;
 export type ServiceConfig = z.infer<typeof ServiceSchema>;
+export { ServiceSchema as ServiceConfigSchema };
 export type McpServerConfig = z.infer<typeof McpServerSchema>;
 export type TimeoutsConfig = z.infer<typeof TimeoutsSchema>;
 export type RetryConfig = z.infer<typeof RetrySchema>;
