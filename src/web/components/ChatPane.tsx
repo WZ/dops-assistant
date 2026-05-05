@@ -11,6 +11,7 @@ import { formatTimestamp } from "../lib/formatTimestamp";
 import { MetricChart, type TimeSeriesData } from "./MetricChart";
 import { useStackContext } from "../contexts/StackContext";
 import { safeGetItem, safeSetItem } from "../lib/utils";
+import { ConfirmActionDialog } from "./ConfirmActionDialog";
 import type { useWebSocket } from "../hooks/useWebSocket";
 import type { ChartSeries } from "../../types/ws-types.js";
 
@@ -142,6 +143,8 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
   const [deepLoading, setDeepLoading] = useState(false);
   const [chatLoading, setChatLoading] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(true);
+  const [clearHistoryOpen, setClearHistoryOpen] = useState(false);
+  const [clearingHistory, setClearingHistory] = useState(false);
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [contextSwitch, setContextSwitch] = useState<{ previousService: string; newService: string } | null>(null);
   const [sessionTokens, setSessionTokens] = useState({ inputTokens: 0, outputTokens: 0, messageCount: 0 });
@@ -590,6 +593,31 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
     } catch { /* ignore */ }
   }, [stackFetch]);
 
+  const handleClearHistory = useCallback(async () => {
+    setClearingHistory(true);
+    try {
+      const res = await stackFetch("/api/messages", { method: "DELETE" });
+      if (!res.ok) return;
+      setChatMessages([]);
+      setChatLoading(false);
+      setActiveTool(null);
+      setContextSwitch(null);
+      setPendingConfirm(null);
+      dispatchPendingRef.current = false;
+      setDispatchPending(false);
+      setSessionTokens({ inputTokens: 0, outputTokens: 0, messageCount: 0 });
+      setStreamingMessage(null);
+      streamRef.current = { content: "", reasoning: "" };
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    } catch { /* ignore */ }
+    finally {
+      setClearingHistory(false);
+    }
+  }, [stackFetch]);
+
 
   // Compute unread marker index (insert before first message newer than lastVisitedAt)
   const unreadMarkerIndex = (() => {
@@ -820,17 +848,37 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
           )}
         </div>
         {!isDeepMode && chatMessages.length > 0 && (
-          <Button
+          <div className="flex items-center gap-1.5 shrink-0">
+            <Button
+              variant="ghost"
+              disabled={isLoading || !!streamingMessage || clearingHistory}
+              onClick={() => setClearHistoryOpen(true)}
+              className={`h-9 px-3 text-[12px] font-mono rounded-lg border border-destructive/25 text-destructive/70 hover:text-destructive hover:bg-destructive/8 transition-colors${isLoading || !!streamingMessage || clearingHistory ? " opacity-40 pointer-events-none" : ""}`}
+            >
+              <Trash2 size={13} className="!size-auto" />
+              Clear history
+            </Button>
+            <Button
               variant="ghost"
               disabled={isLoading || !!streamingMessage}
               onClick={() => { send({ type: "new_session" }); }}
-              className={`h-9 px-4 text-[12px] font-mono rounded-lg border border-border/50 text-muted-foreground hover:text-foreground/70 hover:bg-secondary/30 transition-colors${isLoading || !!streamingMessage ? " opacity-40 pointer-events-none" : ""}`}
+              className={`h-9 px-3 text-[12px] font-mono rounded-lg border border-border/50 text-muted-foreground hover:text-foreground/70 hover:bg-secondary/30 transition-colors${isLoading || !!streamingMessage ? " opacity-40 pointer-events-none" : ""}`}
             >
               <Plus size={13} className="!size-auto" />
               New chat
             </Button>
+          </div>
         )}
       </div>
+      <ConfirmActionDialog
+        open={clearHistoryOpen}
+        onOpenChange={setClearHistoryOpen}
+        title="Clear chat history?"
+        body="This removes saved console messages for this stack. Investigation records and RCA reports stay intact."
+        confirmLabel="Clear history"
+        variant="destructive"
+        onConfirm={handleClearHistory}
+      />
 
       {/* Deep mode banner */}
       {isDeepMode && (
