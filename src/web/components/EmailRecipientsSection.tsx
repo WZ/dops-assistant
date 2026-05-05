@@ -1,6 +1,7 @@
-import { useEffect, useState, forwardRef, useImperativeHandle } from "react";
+import { useCallback, useEffect, useRef, useState, forwardRef, useImperativeHandle } from "react";
 import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ScopeChip } from "./ScopeChip.js";
 import type { NotificationSource, SeverityLevel } from "../../types/notifications.js";
 
 export interface Recipient {
@@ -10,6 +11,8 @@ export interface Recipient {
   minSeverity: SeverityLevel;
   allowedSources: NotificationSource[];
   enabled: boolean;
+  stackId?: string | null;
+  scope?: "global" | "stack";
 }
 
 interface EmailConfig {
@@ -24,6 +27,7 @@ export interface EmailRecipientsSectionHandle {
 interface Props {
   stackFetch: (path: string, init?: RequestInit) => Promise<Response>;
   onOpenEditor: (recipient: Recipient | null) => void;
+  activeStackName?: string;
 }
 
 const SOURCE_LABELS: Record<NotificationSource, string> = {
@@ -46,30 +50,43 @@ const SEVERITY_LABELS: Record<Recipient["minSeverity"], string> = {
 const LABEL_CLASS =
   "font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/60";
 
-export const EmailRecipientsSection = forwardRef<EmailRecipientsSectionHandle, Props>(function EmailRecipientsSection({ stackFetch, onOpenEditor }, ref) {
+export const EmailRecipientsSection = forwardRef<EmailRecipientsSectionHandle, Props>(function EmailRecipientsSection({ stackFetch, onOpenEditor, activeStackName }, ref) {
   const [cfg, setCfg] = useState<EmailConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [togglingGlobal, setTogglingGlobal] = useState(false);
   const [testingId, setTestingId] = useState<number | null>(null);
   const [testResult, setTestResult] = useState<{ id: number; ok: boolean; msg: string } | null>(null);
+  const refreshRequestRef = useRef(0);
+  const previousStackFetchRef = useRef(stackFetch);
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
+    const requestId = ++refreshRequestRef.current;
     setLoading(true);
     setError(null);
     try {
       const res = await stackFetch("/api/notifications/email");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setCfg(await res.json());
+      const nextCfg = await res.json();
+      if (requestId === refreshRequestRef.current) setCfg(nextCfg);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load email config");
+      if (requestId === refreshRequestRef.current) {
+        setError(e instanceof Error ? e.message : "Failed to load email config");
+      }
     } finally {
-      setLoading(false);
+      if (requestId === refreshRequestRef.current) setLoading(false);
     }
-  };
+  }, [stackFetch]);
 
-  useImperativeHandle(ref, () => ({ refresh }));
-  useEffect(() => { void refresh(); }, []);
+  useImperativeHandle(ref, () => ({ refresh }), [refresh]);
+  useEffect(() => {
+    if (previousStackFetchRef.current !== stackFetch) {
+      previousStackFetchRef.current = stackFetch;
+      setCfg(null);
+      setTestResult(null);
+    }
+    void refresh();
+  }, [refresh, stackFetch]);
 
   const toggleGlobal = async (enabled: boolean) => {
     if (togglingGlobal) return;
@@ -91,6 +108,15 @@ export const EmailRecipientsSection = forwardRef<EmailRecipientsSectionHandle, P
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled: !r.enabled }),
+    });
+    if (res.ok) await refresh();
+  };
+
+  const rescope = async (r: Recipient, scope: "global" | "stack") => {
+    const res = await stackFetch(`/api/notifications/email/recipients/${r.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope }),
     });
     if (res.ok) await refresh();
   };
@@ -202,6 +228,16 @@ export const EmailRecipientsSection = forwardRef<EmailRecipientsSectionHandle, P
                         {SOURCE_LABELS[s]}
                       </span>
                     ))}
+                  </div>
+                  <div onClick={(e) => e.stopPropagation()}>
+                    <ScopeChip
+                      kind={r.scope === "stack" ? "stack" : "global"}
+                      stackLabel={r.scope === "stack" ? activeStackName : undefined}
+                      actions={r.scope === "stack"
+                        ? [{ label: "Make global", onSelect: () => void rescope(r, "global") }]
+                        : [{ label: `Pin to ${activeStackName ?? "this stack"}`, onSelect: () => void rescope(r, "stack") }]
+                      }
+                    />
                   </div>
                   <input
                     type="checkbox"

@@ -1334,3 +1334,52 @@ describe("DB settings — periodic discovery", () => {
     });
   });
 });
+
+describe("stack_settings", () => {
+  let db: Database;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("creates the table with primary key (stack_id, key)", () => {
+    db.setStackSetting("s1", "notifications.slack.webhookUrl", "https://hooks.example.com/abc");
+    db.setStackSetting("s1", "notifications.slack.enabled", "true");
+    db.setStackSetting("s2", "notifications.slack.webhookUrl", "https://hooks.example.com/xyz");
+
+    expect(db.getStackSetting("s1", "notifications.slack.webhookUrl"))
+      .toBe("https://hooks.example.com/abc");
+    expect(db.getStackSetting("s2", "notifications.slack.webhookUrl"))
+      .toBe("https://hooks.example.com/xyz");
+    expect(db.getStackSetting("s1", "notifications.slack.enabled")).toBe("true");
+    expect(db.getStackSetting("s2", "notifications.slack.enabled")).toBeUndefined();
+  });
+
+  it("upsert overwrites the same (stack_id, key)", () => {
+    db.setStackSetting("s1", "k", "v1");
+    db.setStackSetting("s1", "k", "v2");
+    expect(db.getStackSetting("s1", "k")).toBe("v2");
+  });
+
+  it("deleteStackSetting removes one (stack_id, key)", () => {
+    db.setStackSetting("s1", "k1", "v1");
+    db.setStackSetting("s1", "k2", "v2");
+    db.deleteStackSetting("s1", "k1");
+    expect(db.getStackSetting("s1", "k1")).toBeUndefined();
+    expect(db.getStackSetting("s1", "k2")).toBe("v2");
+  });
+
+  it("clearStackSettings removes all rows for a stack", () => {
+    db.setStackSetting("s1", "k1", "v1");
+    db.setStackSetting("s1", "k2", "v2");
+    db.setStackSetting("s2", "k1", "v1");
+    db.clearStackSettings("s1");
+    expect(db.getStackSetting("s1", "k1")).toBeUndefined();
+    expect(db.getStackSetting("s1", "k2")).toBeUndefined();
+    expect(db.getStackSetting("s2", "k1")).toBe("v1");
+  });
+});

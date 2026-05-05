@@ -568,7 +568,7 @@ describe("StackManager", () => {
           retry: { attempts: 1, backoffMs: [] },
         },
       };
-      manager.setEmailNotifierDeps(emailDeps);
+      manager.setEmailNotifierDepsBuilder(() => emailDeps);
 
       await manager.getDefaultContext().periodicDiscoveryScheduler.tickOnce();
 
@@ -811,20 +811,26 @@ describe("StackManager — handleScanRunComplete", () => {
     expect(slackSpy).not.toHaveBeenCalled();
   });
 
-  it("calls notifyEmailScanRun whenever emailNotifierDeps is set", () => {
+  it("calls notifyEmailScanRun whenever the email notifier deps builder yields deps", () => {
     const fakeDeps = {
       isGloballyEnabled: () => true,
       listEnabledRecipients: () => [],
       transport: { sendMail: vi.fn() } as unknown as EmailNotifierDeps["transport"],
       config: { from: "x@x", appBaseUrl: "https://dops.example", retry: { attempts: 1, backoffMs: [] } },
     } satisfies EmailNotifierDeps;
-    manager.setEmailNotifierDeps(fakeDeps);
+    manager.setEmailNotifierDepsBuilder(() => fakeDeps);
     callHandleScanRunComplete(manager, baseSummary);
     expect(emailSpy).toHaveBeenCalledTimes(1);
     expect(emailSpy.mock.calls[0]![1]).toMatchObject({ runId: "r1" });
   });
 
-  it("does not call notifyEmailScanRun when emailNotifierDeps is unset", () => {
+  it("does not call notifyEmailScanRun when the email notifier deps builder is unset", () => {
+    callHandleScanRunComplete(manager, baseSummary);
+    expect(emailSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not call notifyEmailScanRun when the builder returns null for the stack", () => {
+    manager.setEmailNotifierDepsBuilder(() => null);
     callHandleScanRunComplete(manager, baseSummary);
     expect(emailSpy).not.toHaveBeenCalled();
   });

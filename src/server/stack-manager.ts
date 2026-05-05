@@ -46,6 +46,7 @@ import { clearStackCaches } from "./ws-handler.js";
 import * as slackNotifier from "./slack-notifier.js";
 import * as emailNotifier from "./email-notifier.js";
 import type { EmailNotifierDeps } from "./email-notifier.js";
+import { getEffectiveNotifications } from "./notifications-resolver.js";
 import { eventLog } from "./event-log.js";
 import type { ScanRunCompletedSummary } from "./scan-run-store.js";
 
@@ -83,11 +84,14 @@ export class StackManager {
   private allPollersStarted = false;
   private ttlReaperHandle: ReturnType<typeof setInterval> | undefined;
   /**
-   * Email notification deps. Populated by index.ts after the SMTP transport
-   * is constructed — nullable because email is optional (no SMTP config → no
-   * deps → email notifications silently skipped).
+   * Per-stack email notification deps builder. Populated by index.ts after the
+   * SMTP transport is constructed. Each invocation resolves the per-stack
+   * `enabled` flag and recipient list via the notifications resolver, so a
+   * stack-level kill switch and pinned recipients take effect at delivery
+   * time. Nullable because email is optional (no SMTP config → builder stays
+   * null → email notifications silently skipped).
    */
-  private emailNotifierDeps: EmailNotifierDeps | null = null;
+  private emailNotifierDepsBuilder: ((stackId: string) => EmailNotifierDeps | null) | null = null;
 
   /**
    * Optional. When set, enables the periodic discovery scheduler. Supplied by
@@ -276,11 +280,10 @@ export class StackManager {
         });
       },
       notifySlack: async (msg) => {
-        const slackEnabled = this.db.getSetting("notifications.slack.enabled") !== "false";
-        const url = this.db.getSetting("notifications.slack.webhookUrl") ?? this.config.webhook?.slackWebhookUrl;
-        if (!slackEnabled || !url) return { ok: true };
+        const eff = getEffectiveNotifications(this.db, row.id, this.config);
+        if (!eff.slack.enabled.value || !eff.slack.webhookUrl.value) return { ok: true };
         try {
-          const res = await fetch(url, {
+          const res = await fetch(eff.slack.webhookUrl.value, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ text: msg }),
@@ -291,13 +294,15 @@ export class StackManager {
           return { ok: false, error: err instanceof Error ? err.message : String(err) };
         }
       },
-      notifyEmail: async (msg, row) => {
-        if (!this.emailNotifierDeps || !row) return { ok: true };
-        return emailNotifier.notifyEmailDiscovery(this.emailNotifierDeps, {
-          id: row.id,
-          stackId: row.stackId,
-          serviceName: row.serviceName,
-          changeKind: row.changeKind,
+      notifyEmail: async (msg, discoveryRow) => {
+        if (!discoveryRow) return { ok: true };
+        const emailDeps = this.emailNotifierDepsBuilder?.(discoveryRow.stackId) ?? null;
+        if (!emailDeps) return { ok: true };
+        return emailNotifier.notifyEmailDiscovery(emailDeps, {
+          id: discoveryRow.id,
+          stackId: discoveryRow.stackId,
+          serviceName: discoveryRow.serviceName,
+          changeKind: discoveryRow.changeKind,
           message: msg,
         });
       },
@@ -808,12 +813,15 @@ export class StackManager {
   onScanAnomalies?: (evt: ScanAnomaliesEvent) => void;
 
   /**
-   * Register email notification deps. Called from index.ts once the SMTP
-   * transport is constructed (or left null when SMTP is not configured).
-   * Safe to call multiple times — overwrites the previous value.
+   * Register a per-stack email notifier deps builder. Called from index.ts
+   * once the SMTP transport is constructed (or left null when SMTP is not
+   * configured). Each invocation receives a `stackId` and produces a
+   * resolver-aware {@link EmailNotifierDeps} envelope (or null if SMTP is
+   * unavailable). Safe to call multiple times — overwrites the previous
+   * value.
    */
-  setEmailNotifierDeps(deps: EmailNotifierDeps | null): void {
-    this.emailNotifierDeps = deps;
+  setEmailNotifierDepsBuilder(builder: ((stackId: string) => EmailNotifierDeps | null) | null): void {
+    this.emailNotifierDepsBuilder = builder;
   }
 
   /**
@@ -848,12 +856,12 @@ export class StackManager {
       meta: { runId: summary.runId, hitsDispatched: hits, trigger: summary.trigger },
     });
 
-    // 2. Slack — gated by mode + enabled flag + webhook URL.
-    const slackMode = (this.db.getSetting("notifications.slack.onScanComplete") ?? "hits-only") as
-      | "always" | "hits-only" | "off";
-    const slackEnabled = this.db.getSetting("notifications.slack.enabled") !== "false";
-    const slackUrl = this.db.getSetting("notifications.slack.webhookUrl")
-      ?? this.config.webhook?.slackWebhookUrl;
+    // 2. Slack — gated by mode + enabled flag + webhook URL. Resolved per-stack
+    // so a stack-level toggle/URL takes precedence over globals + config.
+    const eff = getEffectiveNotifications(this.db, summary.stackId, this.config);
+    const slackMode = eff.slack.onScanComplete.value;
+    const slackEnabled = eff.slack.enabled.value;
+    const slackUrl = eff.slack.webhookUrl.value;
     const appBaseUrl = this.config.notifications?.email?.appBaseUrl;
 
     const shouldFireSlack = slackEnabled && !!slackUrl && (
@@ -868,9 +876,11 @@ export class StackManager {
     }
 
     // 3. Email — per-recipient filtering lives inside notifyEmailScanRun
-    // (enabled check + scan-run source filter). We just forward the summary.
-    if (this.emailNotifierDeps) {
-      void emailNotifier.notifyEmailScanRun(this.emailNotifierDeps, summary);
+    // (enabled check + scan-run source filter). The builder resolves per-stack
+    // overrides + stack-pinned recipients before we forward the summary.
+    const emailDeps = this.emailNotifierDepsBuilder?.(summary.stackId) ?? null;
+    if (emailDeps) {
+      void emailNotifier.notifyEmailScanRun(emailDeps, summary);
     }
   }
 }

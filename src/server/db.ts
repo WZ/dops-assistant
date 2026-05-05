@@ -60,6 +60,27 @@ export function normalizeTimestamp(sqliteStr: string): string {
   }
 }
 
+type RecipientRow = {
+  id: number; address: string; label: string | null;
+  min_severity: string; allowed_sources: string; enabled: number;
+  stack_id: string | null; created_at: string; updated_at: string;
+};
+
+function rowToRecipient(row: RecipientRow): EmailRecipient {
+  return {
+    id: row.id,
+    address: row.address,
+    label: row.label ?? undefined,
+    minSeverity: parseMinSeverity(row.min_severity, row.id),
+    allowedSources: parseAllowedSources(row.allowed_sources, row.id),
+    enabled: row.enabled === 1,
+    stackId: row.stack_id,
+    scope: row.stack_id === null ? "global" : "stack",
+    createdAt: normalizeTimestamp(row.created_at),
+    updatedAt: normalizeTimestamp(row.updated_at),
+  };
+}
+
 /**
  * Recursively walks an object (or array) and converts every string property
  * whose key ends with `_at` from SQLite format to ISO 8601.  Non-`_at`
@@ -546,6 +567,7 @@ export class Database {
     this.migrateServiceMetadata();
     this.migrateStacks();
     this.migrateDisabledSkills();
+    this.migrateStackSettings();
     this.migrateEmailRecipients();
     this.migratePeriodicDiscovery();
   }
@@ -858,12 +880,25 @@ export class Database {
         min_severity     TEXT NOT NULL DEFAULT 'high',
         allowed_sources  TEXT NOT NULL DEFAULT '["webhook","scan","poller"]',
         enabled          INTEGER NOT NULL DEFAULT 1,
+        stack_id         TEXT,
         created_at       TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
       )
     `).run();
     this.db.prepare(
       `CREATE INDEX IF NOT EXISTS idx_email_recipients_enabled ON email_recipients(enabled)`
+    ).run();
+
+    // Pre-existing DBs from older versions don't have stack_id; probe pragma
+    // and ALTER if missing.
+    const cols = this.db.prepare("PRAGMA table_info(email_recipients)")
+      .all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "stack_id")) {
+      this.db.prepare("ALTER TABLE email_recipients ADD COLUMN stack_id TEXT").run();
+    }
+
+    this.db.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_email_recipients_stack ON email_recipients(stack_id)`
     ).run();
   }
 
@@ -1137,6 +1172,8 @@ export class Database {
       this.db.prepare("DELETE FROM investigation_events WHERE investigation_id IN (SELECT id FROM investigations WHERE stack_id = ?)").run(id);
       this.db.prepare("DELETE FROM investigation_phases WHERE investigation_id IN (SELECT id FROM investigations WHERE stack_id = ?)").run(id);
       this.db.prepare("DELETE FROM investigations WHERE stack_id = ?").run(id);
+      this.db.prepare("DELETE FROM stack_settings WHERE stack_id = ?").run(id);
+      this.db.prepare("DELETE FROM email_recipients WHERE stack_id = ?").run(id);
       this.db.prepare("DELETE FROM stacks WHERE id = ?").run(id);
     });
     tx();
@@ -1714,6 +1751,52 @@ export class Database {
     return row !== undefined;
   }
 
+  // ── Stack settings (per-stack key/value overrides) ──────────────────────
+
+  private migrateStackSettings(): void {
+    this.db.prepare(`
+      CREATE TABLE IF NOT EXISTS stack_settings (
+        stack_id   TEXT NOT NULL,
+        key        TEXT NOT NULL,
+        value      TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (stack_id, key)
+      )
+    `).run();
+  }
+
+  setStackSetting(stackId: string, key: string, value: string): void {
+    this.db.prepare(
+      `INSERT INTO stack_settings (stack_id, key, value, updated_at)
+       VALUES (?, ?, ?, datetime('now'))
+       ON CONFLICT(stack_id, key) DO UPDATE
+         SET value = excluded.value, updated_at = excluded.updated_at`
+    ).run(stackId, key, value);
+  }
+
+  getStackSetting(stackId: string, key: string): string | undefined {
+    const row = this.db.prepare(
+      "SELECT value FROM stack_settings WHERE stack_id = ? AND key = ?"
+    ).get(stackId, key) as { value: string } | undefined;
+    return row?.value;
+  }
+
+  listStackSettings(stackId: string): Array<{ key: string; value: string }> {
+    return this.db.prepare(
+      "SELECT key, value FROM stack_settings WHERE stack_id = ? ORDER BY key"
+    ).all(stackId) as Array<{ key: string; value: string }>;
+  }
+
+  deleteStackSetting(stackId: string, key: string): void {
+    this.db.prepare(
+      "DELETE FROM stack_settings WHERE stack_id = ? AND key = ?"
+    ).run(stackId, key);
+  }
+
+  clearStackSettings(stackId: string): void {
+    this.db.prepare("DELETE FROM stack_settings WHERE stack_id = ?").run(stackId);
+  }
+
   // ── Service metadata ────────────────────────────────────────────────────
 
   private static parseTags(raw: string): string[] {
@@ -1961,16 +2044,18 @@ export class Database {
     minSeverity: SeverityLevel;
     allowedSources: NotificationSource[];
     enabled: boolean;
+    stackId?: string | null;
   }): EmailRecipient {
     const result = this.db.prepare(
-      `INSERT INTO email_recipients (address, label, min_severity, allowed_sources, enabled)
-       VALUES (?, ?, ?, ?, ?)`
+      `INSERT INTO email_recipients (address, label, min_severity, allowed_sources, enabled, stack_id)
+       VALUES (?, ?, ?, ?, ?, ?)`
     ).run(
       input.address,
       input.label ?? null,
       input.minSeverity,
       JSON.stringify(input.allowedSources),
       input.enabled ? 1 : 0,
+      input.stackId ?? null,
     );
     const id = Number(result.lastInsertRowid);
     return this.getEmailRecipient(id)!;
@@ -1978,47 +2063,30 @@ export class Database {
 
   getEmailRecipient(id: number): EmailRecipient | undefined {
     const row = this.db.prepare(
-      `SELECT id, address, label, min_severity, allowed_sources, enabled, created_at, updated_at
+      `SELECT id, address, label, min_severity, allowed_sources, enabled, stack_id, created_at, updated_at
        FROM email_recipients WHERE id = ?`
-    ).get(id) as {
-      id: number; address: string; label: string | null;
-      min_severity: string; allowed_sources: string; enabled: number;
-      created_at: string; updated_at: string;
-    } | undefined;
-    if (!row) return undefined;
-    return {
-      id: row.id,
-      address: row.address,
-      label: row.label ?? undefined,
-      minSeverity: parseMinSeverity(row.min_severity, row.id),
-      allowedSources: parseAllowedSources(row.allowed_sources, row.id),
-      enabled: row.enabled === 1,
-      createdAt: normalizeTimestamp(row.created_at),
-      updatedAt: normalizeTimestamp(row.updated_at),
-    };
+    ).get(id) as RecipientRow | undefined;
+    return row ? rowToRecipient(row) : undefined;
   }
 
   listEmailRecipients(opts?: { enabledOnly?: boolean }): EmailRecipient[] {
     const sql = opts?.enabledOnly
-      ? `SELECT id, address, label, min_severity, allowed_sources, enabled, created_at, updated_at
+      ? `SELECT id, address, label, min_severity, allowed_sources, enabled, stack_id, created_at, updated_at
          FROM email_recipients WHERE enabled = 1 ORDER BY id`
-      : `SELECT id, address, label, min_severity, allowed_sources, enabled, created_at, updated_at
+      : `SELECT id, address, label, min_severity, allowed_sources, enabled, stack_id, created_at, updated_at
          FROM email_recipients ORDER BY id`;
-    const rows = this.db.prepare(sql).all() as Array<{
-      id: number; address: string; label: string | null;
-      min_severity: string; allowed_sources: string; enabled: number;
-      created_at: string; updated_at: string;
-    }>;
-    return rows.map((row) => ({
-      id: row.id,
-      address: row.address,
-      label: row.label ?? undefined,
-      minSeverity: parseMinSeverity(row.min_severity, row.id),
-      allowedSources: parseAllowedSources(row.allowed_sources, row.id),
-      enabled: row.enabled === 1,
-      createdAt: normalizeTimestamp(row.created_at),
-      updatedAt: normalizeTimestamp(row.updated_at),
-    }));
+    return (this.db.prepare(sql).all() as Array<RecipientRow>).map(rowToRecipient);
+  }
+
+  /** Returns globals + recipients pinned to stackId. Defaults to enabledOnly: true (runtime delivery path); pass { enabledOnly: false } to include disabled rows for admin views. */
+  listEmailRecipientsForStack(stackId: string, opts?: { enabledOnly?: boolean }): EmailRecipient[] {
+    const enabledClause = opts?.enabledOnly !== false ? "AND enabled = 1" : "";
+    return (this.db.prepare(
+      `SELECT id, address, label, min_severity, allowed_sources, enabled, stack_id, created_at, updated_at
+       FROM email_recipients
+       WHERE (stack_id IS NULL OR stack_id = ?) ${enabledClause}
+       ORDER BY (stack_id IS NULL) DESC, id`
+    ).all(stackId) as Array<RecipientRow>).map(rowToRecipient);
   }
 
   updateEmailRecipient(id: number, patch: {
@@ -2027,6 +2095,7 @@ export class Database {
     minSeverity?: SeverityLevel;
     allowedSources?: NotificationSource[];
     enabled?: boolean;
+    stackId?: string | null;
   }): EmailRecipient | undefined {
     const fields: string[] = [];
     const values: Array<string | number | null> = [];
@@ -2035,6 +2104,7 @@ export class Database {
     if (patch.minSeverity !== undefined) { fields.push("min_severity = ?"); values.push(patch.minSeverity); }
     if (patch.allowedSources !== undefined) { fields.push("allowed_sources = ?"); values.push(JSON.stringify(patch.allowedSources)); }
     if (patch.enabled !== undefined) { fields.push("enabled = ?"); values.push(patch.enabled ? 1 : 0); }
+    if (patch.stackId !== undefined) { fields.push("stack_id = ?"); values.push(patch.stackId); }
     if (fields.length === 0) return this.getEmailRecipient(id);
     fields.push("updated_at = datetime('now', 'subsec')");
     values.push(id);

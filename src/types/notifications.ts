@@ -15,8 +15,10 @@ export interface EmailRecipient {
   minSeverity: SeverityLevel;
   allowedSources: NotificationSource[];
   enabled: boolean;
-  createdAt: string;
-  updatedAt: string;
+  stackId: string | null;        // NEW: NULL = global, value = pinned to that stack
+  scope: "global" | "stack";     // NEW: derived; convenience for UI
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 /** Human-readable rendering of the compact source enum. Used by email templates. */

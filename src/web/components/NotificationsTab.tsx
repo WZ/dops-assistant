@@ -1,17 +1,24 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type JSX } from "react";
 import { Button } from "@/components/ui/button";
 import { useStackContext } from "../contexts/StackContext";
 import { EmailRecipientsSection, type EmailRecipientsSectionHandle, type Recipient } from "./EmailRecipientsSection.js";
 import { EmailRecipientEditor } from "./EmailRecipientEditor.js";
 import { SlackEditor } from "./SlackEditor.js";
+import { ScopeChip } from "./ScopeChip.js";
 
+type FieldSource = "override" | "global" | "config" | "default";
+interface FieldWithSource<T> { value: T; source: FieldSource; }
 type OnScanCompleteMode = "always" | "hits-only" | "off";
 
-interface SlackConfig {
-  webhookUrl: string | null;
-  enabled: boolean;
-  source: "gui" | "config" | "none";
-  onScanComplete: OnScanCompleteMode;
+interface SlackView {
+  webhookUrl: FieldWithSource<string | null>;
+  enabled: FieldWithSource<boolean>;
+  onScanComplete: FieldWithSource<OnScanCompleteMode>;
+}
+
+interface NotificationsView {
+  slack: SlackView;
+  email: { enabled: FieldWithSource<boolean> };
 }
 
 const LABEL_CLASS =
@@ -39,14 +46,37 @@ function maskWebhook(url: string | null): string {
 
 type EditorMode = "none" | "slack" | "email";
 
-export function NotificationsTab() {
-  const { stackFetch } = useStackContext();
-  const [slack, setSlack] = useState<SlackConfig>({
-    webhookUrl: null,
-    enabled: false,
-    source: "none",
-    onScanComplete: "hits-only",
-  });
+interface NotificationsTabProps {
+  activeStackName?: string;
+}
+
+function chipForField<T>(
+  field: FieldWithSource<T>,
+  onOverride: () => void,
+  onUseGlobal: () => void,
+): JSX.Element {
+  if (field.source === "override") {
+    return (
+      <ScopeChip
+        kind="override"
+        actions={[
+          { label: "Edit override", onSelect: onOverride },
+          { label: "Use global instead", onSelect: onUseGlobal, destructive: true },
+        ]}
+      />
+    );
+  }
+  return (
+    <ScopeChip
+      kind="global"
+      actions={[{ label: "Override for this stack", onSelect: onOverride }]}
+    />
+  );
+}
+
+export function NotificationsTab({ activeStackName }: NotificationsTabProps = {}) {
+  const { activeStackId, stackFetch } = useStackContext();
+  const [view, setView] = useState<NotificationsView | null>(null);
   const [loading, setLoading] = useState(true);
   const [togglingEnabled, setTogglingEnabled] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -59,7 +89,7 @@ export function NotificationsTab() {
     try {
       const res = await stackFetch("/api/notifications");
       const data = await res.json();
-      setSlack(data.slack);
+      setView(data);
     } catch { /* ignore */ }
     setLoading(false);
   }, [stackFetch]);
@@ -67,20 +97,14 @@ export function NotificationsTab() {
   useEffect(() => { fetchConfig(); }, [fetchConfig]);
 
   const toggleSlackEnabled = async () => {
-    if (togglingEnabled) return;
-    const next = !slack.enabled;
+    if (togglingEnabled || !view) return;
+    const next = !view.slack.enabled.value;
     setTogglingEnabled(true);
     try {
       const res = await stackFetch("/api/notifications", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          slack: {
-            webhookUrl: slack.webhookUrl,
-            enabled: next,
-            onScanComplete: slack.onScanComplete,
-          },
-        }),
+        body: JSON.stringify({ slack: { enabled: next } }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -111,7 +135,33 @@ export function NotificationsTab() {
     setTesting(false);
   };
 
-  if (loading) {
+  const clearOverride = async () => {
+    if (!confirm("Revert all per-stack overrides on this tab? This stack will follow the global values for every Notifications field.")) return;
+    const res = await stackFetch("/api/notifications/override", { method: "DELETE" });
+    if (res.ok) await fetchConfig();
+  };
+
+  const overrideEnabled = async () => {
+    if (!view) return;
+    const res = await stackFetch("/api/notifications", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slack: { enabled: view.slack.enabled.value } }),
+    });
+    if (res.ok) await fetchConfig();
+  };
+
+  const overrideOnScanComplete = async () => {
+    if (!view) return;
+    const res = await stackFetch("/api/notifications", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slack: { onScanComplete: view.slack.onScanComplete.value } }),
+    });
+    if (res.ok) await fetchConfig();
+  };
+
+  if (loading || !view) {
     return (
       <div className="h-32 rounded-lg" style={{
         background: "linear-gradient(90deg, hsl(var(--muted)) 25%, hsl(var(--secondary)) 50%, hsl(var(--muted)) 75%)",
@@ -125,7 +175,11 @@ export function NotificationsTab() {
     return (
       <SlackEditor
         stackFetch={stackFetch}
-        config={slack}
+        config={{
+          webhookUrl: view.slack.webhookUrl.value,
+          enabled: view.slack.enabled.value,
+          onScanComplete: view.slack.onScanComplete.value,
+        }}
         onClose={() => setEditorMode("none")}
         onSaved={() => {
           setEditorMode("none");
@@ -140,6 +194,7 @@ export function NotificationsTab() {
       <EmailRecipientEditor
         stackFetch={stackFetch}
         existing={editingRecipient}
+        activeStackName={activeStackName}
         onClose={() => { setEditorMode("none"); setEditingRecipient(null); }}
         onSaved={() => {
           setEditorMode("none");
@@ -150,7 +205,9 @@ export function NotificationsTab() {
     );
   }
 
-  const slackConfigured = !!slack.webhookUrl;
+  const slack = view.slack;
+  const slackConfigured = !!slack.webhookUrl.value;
+  const stackDisplay = activeStackName ?? activeStackId;
 
   return (
     <div>
@@ -162,6 +219,19 @@ export function NotificationsTab() {
         </p>
       </div>
 
+      {/* Effective-settings banner */}
+      <div className="mb-5 rounded-lg border border-border/40 bg-card/40 px-4 py-3 flex items-start gap-3 animate-fade-in">
+        <span aria-hidden className="text-base mt-0.5">🌐</span>
+        <div>
+          <div className="font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-foreground/80">
+            Showing effective settings for: {stackDisplay}
+          </div>
+          <p className="text-xs text-muted-foreground/70 mt-0.5 max-w-xl">
+            Some values are global (apply to all stacks); others are overridden for this stack. Click any chip to override or revert.
+          </p>
+        </div>
+      </div>
+
       {/* Section: SLACK */}
       <section aria-label="Slack notifications" className="mb-6">
         <div className="flex items-center gap-2 mb-3">
@@ -169,7 +239,7 @@ export function NotificationsTab() {
           <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
             Slack
           </h2>
-          {slack.source === "config" && (
+          {slack.webhookUrl.source === "config" && (
             <span className="font-mono text-[9px] text-muted-foreground/40 ml-1">(from config.yaml)</span>
           )}
         </div>
@@ -183,33 +253,39 @@ export function NotificationsTab() {
                 Send investigation results to Slack when complete
               </p>
             </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={slack.enabled}
-              disabled={togglingEnabled}
-              onClick={() => void toggleSlackEnabled()}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                slack.enabled ? "bg-primary" : "bg-muted-foreground/20"
-              }`}
-            >
-              <span className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
-                slack.enabled ? "translate-x-6" : "translate-x-1"
-              }`} />
-            </button>
+            <div className="flex items-center gap-3">
+              {chipForField(slack.enabled, () => void overrideEnabled(), () => void clearOverride())}
+              <button
+                type="button"
+                role="switch"
+                aria-checked={slack.enabled.value}
+                disabled={togglingEnabled}
+                onClick={() => void toggleSlackEnabled()}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                  slack.enabled.value ? "bg-primary" : "bg-muted-foreground/20"
+                }`}
+              >
+                <span className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
+                  slack.enabled.value ? "translate-x-6" : "translate-x-1"
+                }`} />
+              </button>
+            </div>
           </div>
 
           {/* Webhook row — mirrors Email recipients list */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className={LABEL_CLASS}>Webhook</label>
-              <Button
-                variant="outline"
-                onClick={() => setEditorMode("slack")}
-                className="font-mono text-xs font-medium h-9 rounded-lg px-3"
-              >
-                {slackConfigured ? "Edit webhook" : "+ Add webhook"}
-              </Button>
+              <div className="flex items-center gap-3">
+                {chipForField(slack.webhookUrl, () => setEditorMode("slack"), () => void clearOverride())}
+                <Button
+                  variant="outline"
+                  onClick={() => setEditorMode("slack")}
+                  className="font-mono text-xs font-medium h-9 rounded-lg px-3"
+                >
+                  {slackConfigured ? "Edit webhook" : "+ Add webhook"}
+                </Button>
+              </div>
             </div>
 
             {!slackConfigured ? (
@@ -227,11 +303,18 @@ export function NotificationsTab() {
                   aria-label="Edit Slack webhook"
                 >
                   <div className="flex-1 min-w-0">
-                    <div className="font-mono text-foreground truncate">{maskWebhook(slack.webhookUrl)}</div>
+                    <div className="font-mono text-foreground truncate">{maskWebhook(slack.webhookUrl.value)}</div>
                   </div>
                   <span className="font-mono px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground text-[10px]">
-                    scan: {SCAN_MODE_LABEL[slack.onScanComplete]}
+                    scan: {SCAN_MODE_LABEL[slack.onScanComplete.value]}
                   </span>
+                  <div onClick={(e) => e.stopPropagation()}>
+                    {chipForField(
+                      slack.onScanComplete,
+                      () => void overrideOnScanComplete(),
+                      () => void clearOverride(),
+                    )}
+                  </div>
                   <Button
                     variant="outline"
                     onClick={(e) => { e.stopPropagation(); void handleTest(); }}
@@ -260,6 +343,7 @@ export function NotificationsTab() {
       <EmailRecipientsSection
         ref={recipientsRef}
         stackFetch={stackFetch}
+        activeStackName={activeStackName}
         onOpenEditor={(r) => { setEditingRecipient(r); setEditorMode("email"); }}
       />
     </div>

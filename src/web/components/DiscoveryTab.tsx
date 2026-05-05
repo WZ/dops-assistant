@@ -5,7 +5,7 @@
 // headers, card-wrapped form, custom toggle switch instead of native checkbox,
 // cron presets, embedded inbox + recent runs sections.
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useStackContext } from "../contexts/StackContext";
 import { Button } from "@/components/ui/button";
 import { DiscoveriesPage } from "./DiscoveriesPage";
@@ -76,7 +76,7 @@ function withBrowserTimezoneDefault(s: Settings): Settings {
 }
 
 export function DiscoveryTab() {
-  const { stackFetch } = useStackContext();
+  const { activeStackId, stackFetch } = useStackContext();
 
   const [settings, setSettings] = useState<Settings | null>(null);
   const [runs, setRuns] = useState<RunRow[]>([]);
@@ -91,17 +91,32 @@ export function DiscoveryTab() {
   const [removalsInput, setRemovalsInput] = useState(3);
   const [dirty, setDirty] = useState(false);
 
-  const reloadRuns = () => {
-    stackFetch("/api/discoveries/runs?limit=10")
-      .then((r) => (r.ok ? r.json() : []))
-      .then(setRuns)
-      .catch(() => {});
-  };
+  // Per-component request-id guards: a slow response from the prior stack
+  // must not overwrite fresher data after a stack switch.
+  const settingsRequestRef = useRef(0);
+  const runsRequestRef = useRef(0);
+
+  const reloadRuns = useCallback(async () => {
+    const requestId = ++runsRequestRef.current;
+    try {
+      const res = await stackFetch("/api/discoveries/runs?limit=10");
+      const nextRuns = res.ok ? await res.json() : [];
+      if (requestId === runsRequestRef.current) setRuns(nextRuns);
+    } catch { /* ignore */ }
+  }, [stackFetch]);
 
   useEffect(() => {
+    // Reset visible state on stack change so the prior stack's content
+    // doesn't flash through while the new fetch is in flight.
+    setSettings(null);
+    setRuns([]);
+    setSaveError(null);
+    setDirty(false);
+    const requestId = ++settingsRequestRef.current;
     stackFetch("/api/discovery/settings")
       .then((r) => r.json())
       .then((s: Settings) => {
+        if (requestId !== settingsRequestRef.current) return;
         const next = withBrowserTimezoneDefault(s);
         setSettings(next);
         setEnabledInput(next.enabled);
@@ -111,6 +126,7 @@ export function DiscoveryTab() {
         setRemovalsInput(next.consensusRunsForRemovals);
       })
       .catch(() => {
+        if (requestId !== settingsRequestRef.current) return;
         const next = withBrowserTimezoneDefault(DEFAULT_SETTINGS);
         setSettings(next);
         setEnabledInput(next.enabled);
@@ -119,9 +135,8 @@ export function DiscoveryTab() {
         setAdditionsInput(next.consensusRuns);
         setRemovalsInput(next.consensusRunsForRemovals);
       });
-    reloadRuns();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    void reloadRuns();
+  }, [activeStackId, stackFetch, reloadRuns]);
 
   const handleSave = async () => {
     if (!settings) return;
@@ -163,7 +178,7 @@ export function DiscoveryTab() {
       setSaveError(`run-now failed (${res.status})`);
       return;
     }
-    setTimeout(reloadRuns, 800);
+    setTimeout(() => { void reloadRuns(); }, 800);
   };
 
   if (!settings) {

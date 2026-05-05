@@ -88,7 +88,7 @@ export function SettingsPage({ onRunDiscovery, initialTab = "providers", stacks,
           <DiscoveryTab />
         </TabsContent>
         <TabsContent value="notifications" className="mt-4">
-          <NotificationsTab />
+          <NotificationsTab activeStackName={stacks.find((s) => s.id === activeStackId)?.name} />
         </TabsContent>
       </Tabs>
     </div>

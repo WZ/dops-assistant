@@ -29,3 +29,31 @@ describe("deleteStack — scan_runs cleanup", () => {
     expect(links).toEqual([]);
   });
 });
+
+describe("deleteStack — notifications cleanup", () => {
+  let db: Database;
+  beforeEach(() => { db = new Database(":memory:"); });
+  afterEach(() => { db.close(); });
+
+  it("clears stack_settings rows for the deleted stack only", () => {
+    db.createStack({ id: "stk-A", name: "A", slug: "a", config: "{}" });
+    db.createStack({ id: "stk-B", name: "B", slug: "b", config: "{}" });
+    db.setStackSetting("stk-A", "notifications.slack.enabled", "false");
+    db.setStackSetting("stk-B", "notifications.slack.enabled", "true");
+    db.deleteStack("stk-A");
+    expect(db.getStackSetting("stk-A", "notifications.slack.enabled")).toBeUndefined();
+    expect(db.getStackSetting("stk-B", "notifications.slack.enabled")).toBe("true");
+  });
+
+  it("clears pinned recipients for the deleted stack, leaves globals", () => {
+    db.createStack({ id: "stk-A", name: "A", slug: "a", config: "{}" });
+    db.createStack({ id: "stk-B", name: "B", slug: "b", config: "{}" });
+    const g = db.createEmailRecipient({ address: "g@x", minSeverity: "high", allowedSources: ["scan"], enabled: true });
+    const a = db.createEmailRecipient({ address: "a@x", minSeverity: "high", allowedSources: ["scan"], enabled: true, stackId: "stk-A" });
+    const b = db.createEmailRecipient({ address: "b@x", minSeverity: "high", allowedSources: ["scan"], enabled: true, stackId: "stk-B" });
+    db.deleteStack("stk-A");
+    expect(db.getEmailRecipient(g.id)).toBeDefined();
+    expect(db.getEmailRecipient(a.id)).toBeUndefined();
+    expect(db.getEmailRecipient(b.id)).toBeDefined();
+  });
+});

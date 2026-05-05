@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.3.0] - 2026-05-05
+
+### Added
+- **Per-stack notification overrides** — Slack URL, Slack on-scan-complete mode, Slack/email enabled toggles, and email recipients are now overridable per stack via inline scope chips in the Notifications tab. Each field shows a `[Global]` chip when it falls back to the global value (or `[Override]` once the stack has its own setting). Existing global values continue to apply to stacks without overrides — operators discover the new capability incrementally without a flag-day. Stack-pinned recipients receive only their stack's events; globally-scoped recipients receive from any stack. Per-stack `enabled = false` acts as a kill switch — no notifications fire for that stack regardless of recipient scope, even global recipients are suppressed for that stack. The Scan tab stays fully global with a clearer "Global — applies to all stacks" badge so operators understand the scope at a glance.
+  - DB: new `stack_settings(stack_id, key, value)` table for singleton overrides; `email_recipients` gains a nullable `stack_id` column (NULL = global). Both swept on stack delete.
+  - API: `PUT /api/notifications` now writes per-stack overrides; new `PUT /api/notifications/global` writes the org-wide settings; `DELETE /api/notifications/override` clears all per-stack overrides on the current stack. Recipient routes accept `scope: "global" \| "stack"`.
+  - UI: new reusable `ScopeChip` component, single-view chip-driven UX in Notifications, scope dropdown in the recipient add/edit form.
+
+### Fixed
+- **Settings tabs stale after switching stacks** — Skills, Discovery, Discoveries, and email-recipients sections fetched once on mount via `stackFetch` and ignored later stack switches, so the panels kept showing the previous stack's data until a manual reload. Loaders are now wrapped in `useCallback` bound to `stackFetch` and the effects depend on the callback (matching the existing pattern in ScanTab, NotificationsTab, ProvidersPage). Each loader also carries a per-component request-id guard so a slow response from stack A can't overwrite fresher data for stack B during rapid switching.
+
 ## [0.4.2.0] - 2026-05-05
 
 ### Changed

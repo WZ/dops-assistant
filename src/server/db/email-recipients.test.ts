@@ -93,3 +93,51 @@ describe("Database — email_recipients CRUD", () => {
     } finally { cleanup(); }
   });
 });
+
+describe("Database — email_recipients stack scope", () => {
+  it("createEmailRecipient defaults to global (stack_id NULL) when scope omitted", () => {
+    const { db, cleanup } = makeTempDb();
+    try {
+      const r = db.createEmailRecipient({
+        address: "a@x", minSeverity: "high", allowedSources: ["scan"], enabled: true,
+      });
+      expect(r.stackId).toBeNull();
+      expect(r.scope).toBe("global");
+    } finally { cleanup(); }
+  });
+
+  it("createEmailRecipient with stackId pins to that stack", () => {
+    const { db, cleanup } = makeTempDb();
+    try {
+      const r = db.createEmailRecipient({
+        address: "p@x", minSeverity: "high", allowedSources: ["scan"], enabled: true,
+        stackId: "stk-prod",
+      });
+      expect(r.stackId).toBe("stk-prod");
+      expect(r.scope).toBe("stack");
+    } finally { cleanup(); }
+  });
+
+  it("listEmailRecipientsForStack returns globals + own pinned, excludes other stacks", () => {
+    const { db, cleanup } = makeTempDb();
+    try {
+      db.createEmailRecipient({ address: "g@x", minSeverity: "high", allowedSources: ["scan"], enabled: true });
+      db.createEmailRecipient({ address: "p@x", minSeverity: "high", allowedSources: ["scan"], enabled: true, stackId: "stk-prod" });
+      db.createEmailRecipient({ address: "s@x", minSeverity: "high", allowedSources: ["scan"], enabled: true, stackId: "stk-staging" });
+      const got = db.listEmailRecipientsForStack("stk-prod");
+      const addresses = got.map((r) => r.address).sort();
+      expect(addresses).toEqual(["g@x", "p@x"]);
+    } finally { cleanup(); }
+  });
+
+  it("updateEmailRecipient can re-scope (clear or set stack_id)", () => {
+    const { db, cleanup } = makeTempDb();
+    try {
+      const r = db.createEmailRecipient({ address: "a@x", minSeverity: "high", allowedSources: ["scan"], enabled: true });
+      db.updateEmailRecipient(r.id, { stackId: "stk-prod" });
+      expect(db.getEmailRecipient(r.id)!.stackId).toBe("stk-prod");
+      db.updateEmailRecipient(r.id, { stackId: null });
+      expect(db.getEmailRecipient(r.id)!.stackId).toBeNull();
+    } finally { cleanup(); }
+  });
+});

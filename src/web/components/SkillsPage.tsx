@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Plus, FilePlus } from "lucide-react";
@@ -85,20 +85,28 @@ Infrastructure-level issues suspected.
 };
 
 export function SkillsPage() {
-  const { stackFetch } = useStackContext();
+  const { activeStackId, stackFetch } = useStackContext();
   const [skills, setSkills] = useState<SkillMeta[]>([]);
   const [editing, setEditing] = useState<SkillFull | null>(null);
   const [creating, setCreating] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
+  const skillsRequestRef = useRef(0);
 
-  const fetchSkills = () => {
-    stackFetch("/api/skills")
-      .then((r) => r.ok ? r.json() : [])
-      .then(setSkills)
-      .catch(() => {});
-  };
+  const fetchSkills = useCallback(async () => {
+    const requestId = ++skillsRequestRef.current;
+    try {
+      const res = await stackFetch("/api/skills");
+      const nextSkills = res.ok ? await res.json() : [];
+      if (requestId === skillsRequestRef.current) setSkills(nextSkills);
+    } catch { /* ignore */ }
+  }, [stackFetch]);
 
-  useEffect(() => { fetchSkills(); }, []);
+  useEffect(() => {
+    setSkills([]);
+    setEditing(null);
+    setCreating(false);
+    void fetchSkills();
+  }, [activeStackId, fetchSkills]);
 
   const handleEdit = async (id: string) => {
     try {
