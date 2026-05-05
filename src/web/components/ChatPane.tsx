@@ -171,6 +171,14 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
   // tracks the highlighted row so Enter / Tab autocomplete the selection
   // instead of submitting the form with the partial slash.
   const [showSlashPopover, setShowSlashPopover] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const focusInput = () => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.focus();
+    const len = el.value.length;
+    el.setSelectionRange(len, len);
+  };
   const [slashIndex, setSlashIndex] = useState(0);
   const SLASH_COMMANDS: Array<{ command: string; placeholder: string; hint: string }> = [
     { command: "/investigate", placeholder: "<service>", hint: "Run full RCA" },
@@ -919,10 +927,15 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
               <p className="text-[11px] text-muted-foreground/50 mt-1 font-body">
                 Ask anything below — services, health, or run an investigation
               </p>
-              <div className="mt-3 flex flex-col items-center gap-0.5">
-                <ChevronDown size={16} strokeWidth={2} className="!size-auto text-primary/45 animate-pulse" />
-                <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-primary/55">Start here</span>
-              </div>
+              <button
+                type="button"
+                onClick={focusInput}
+                aria-label="Focus the chat input"
+                className="mt-3 flex flex-col items-center gap-0.5 group focus:outline-none"
+              >
+                <ChevronDown size={16} strokeWidth={2} className="!size-auto text-primary/45 group-hover:text-primary/70 animate-pulse transition-colors" />
+                <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-primary/55 group-hover:text-primary/80 transition-colors">Start here</span>
+              </button>
             </div>
           )}
           {messages.length === 0 && isDeepMode && (
@@ -1104,6 +1117,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
             </div>
           )}
           <input
+            ref={inputRef}
             value={input}
             onChange={(e) => {
               const v = e.target.value;
@@ -1181,14 +1195,23 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
         {!isDeepMode && messages.length === 0 && !chatLoading && (
           <div className="mt-2 flex flex-wrap gap-1.5">
             {[
-              { label: "What's unhealthy?", prompt: "What services are unhealthy?" },
-              { label: "Investigate noisiest", prompt: "Investigate the noisiest service" },
-              { label: "Recent incidents", prompt: "Show recent incidents" },
-            ].map(({ label, prompt }, i) => (
+              { label: "What's unhealthy?", action: "submit", value: "What services are unhealthy?" },
+              { label: "Try /investigate", action: "prefill", value: "/investigate " },
+              { label: "Recent incidents", action: "submit", value: "Show recent incidents" },
+            ].map(({ label, action, value }, i) => (
               <button
-                key={prompt}
+                key={label}
                 type="button"
-                onClick={() => handleSubmit(prompt)}
+                onClick={() => {
+                  if (action === "prefill") {
+                    setInput(value);
+                    setShowSlashPopover(true);
+                    setSlashIndex(0);
+                    focusInput();
+                  } else {
+                    handleSubmit(value);
+                  }
+                }}
                 disabled={status !== "connected"}
                 className="px-2.5 py-1 text-[10px] font-mono rounded-full border border-primary/25 text-primary/70 hover:bg-primary/8 hover:border-primary/40 hover:text-primary/90 transition-colors disabled:opacity-30 animate-fade-up"
                 style={{ animationDelay: `${i * 0.06}s` }}
