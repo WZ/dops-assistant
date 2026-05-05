@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.2.0] - 2026-05-05
+
+### Changed
+- **Discovery settings tab now matches Scan tab style** — Settings → Discovery used a different visual language than Settings → Scan: a tiny `h3` mono header instead of a page-level `h1`, native checkbox instead of the custom toggle switch, fields stacked without a card wrapper, no cron presets, no descriptive paragraph between header and form, and Save/Run-now sitting inline below the form rather than top-right. The whole tab now mirrors ScanTab's anatomy: page-level Inter h1 ("Discovery") + mono subtitle, `Run now` + `Save` chips top-right (with error chip when present), vertical primary-bar section header (`PERIODIC DISCOVERY`), description paragraph, then a card-wrapped form with the same `LABEL_CLASS` / `INPUT_CLASS` constants and the same toggle switch component. Cron now offers Every-6-hours / Every-12-hours / Daily-3am / Weekly preset chips. Browser timezone is auto-detected. The Inbox and Recent Runs are now their own primary-bar sections, also card-wrapped.
+- **Discoveries inbox table fixed** — column headers no longer wrap (`MISSING\nCOUNT` was wrapping in narrow columns); date cells use compact relative time (`4h ago`) with the full timestamp on hover via `title` attribute, so they no longer wrap to two lines either; Confirm-removal + Dismiss action buttons render as a single inline-flex row instead of stacking. Headers use the same `font-mono uppercase tracking-[0.1em] text-[10px]` style as the rest of Settings, with a thin `border-border/40` instead of the previous default border. All cells use `whitespace-nowrap` so column widths stay predictable.
+- **Dismiss-all bulk action** — when Pending Additions or Pending Removals has any rows, a `Dismiss all (N)` outline button renders in the toolbar above the table. Confirms via `window.confirm`, fires individual `POST /api/discoveries/:id/dismiss` calls in parallel via `Promise.allSettled`, surfaces partial failures inline, and reloads. Reachable for both additions and removals; restorable from the Dismissed tab as before.
+- **`DiscoveriesPage` accepts `embedded` prop** — when embedded inside `DiscoveryTab` the page-level `h1` + outer `px-4 py-5` padding suppress so the inbox reads as a section, not a duplicate page header. The standalone `/discoveries` route renders unchanged (default `embedded={false}`).
+
 ## [0.4.1.0] - 2026-05-05
 
 ### Changed
