@@ -134,7 +134,7 @@ export function DiscoveriesPage({ embedded = false }: DiscoveriesPageProps = {})
     const results = await Promise.allSettled(
       rows.map((r) => stackFetch(`/api/discoveries/${r.id}/dismiss`, { method: "POST" })),
     );
-    const failures = results.filter((r) => r.status === "rejected").length;
+    const failures = results.filter((r) => r.status === "rejected" || !r.value.ok).length;
     if (failures > 0) setError(`${failures} of ${rows.length} dismissals failed.`);
     reload();
   };

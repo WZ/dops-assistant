@@ -58,6 +58,23 @@ function detectBrowserTimezone(): string | null {
   }
 }
 
+function withBrowserTimezoneDefault(s: Settings): Settings {
+  const browserTimezone = detectBrowserTimezone();
+  const isBuiltInDefault =
+    s.enabled === DEFAULT_SETTINGS.enabled &&
+    s.cron === DEFAULT_SETTINGS.cron &&
+    s.timezone === DEFAULT_SETTINGS.timezone &&
+    s.consensusRuns === DEFAULT_SETTINGS.consensusRuns &&
+    s.consensusRunsForRemovals === DEFAULT_SETTINGS.consensusRunsForRemovals;
+
+  return {
+    ...s,
+    timezone: isBuiltInDefault && browserTimezone
+      ? browserTimezone
+      : s.timezone || browserTimezone || DEFAULT_SETTINGS.timezone,
+  };
+}
+
 export function DiscoveryTab() {
   const { stackFetch } = useStackContext();
 
@@ -85,20 +102,22 @@ export function DiscoveryTab() {
     stackFetch("/api/discovery/settings")
       .then((r) => r.json())
       .then((s: Settings) => {
-        setSettings(s);
-        setEnabledInput(s.enabled);
-        setCronInput(s.cron);
-        setTimezoneInput(s.timezone || detectBrowserTimezone() || "UTC");
-        setAdditionsInput(s.consensusRuns);
-        setRemovalsInput(s.consensusRunsForRemovals);
+        const next = withBrowserTimezoneDefault(s);
+        setSettings(next);
+        setEnabledInput(next.enabled);
+        setCronInput(next.cron);
+        setTimezoneInput(next.timezone);
+        setAdditionsInput(next.consensusRuns);
+        setRemovalsInput(next.consensusRunsForRemovals);
       })
       .catch(() => {
-        setSettings(DEFAULT_SETTINGS);
-        setEnabledInput(DEFAULT_SETTINGS.enabled);
-        setCronInput(DEFAULT_SETTINGS.cron);
-        setTimezoneInput(detectBrowserTimezone() || "UTC");
-        setAdditionsInput(DEFAULT_SETTINGS.consensusRuns);
-        setRemovalsInput(DEFAULT_SETTINGS.consensusRunsForRemovals);
+        const next = withBrowserTimezoneDefault(DEFAULT_SETTINGS);
+        setSettings(next);
+        setEnabledInput(next.enabled);
+        setCronInput(next.cron);
+        setTimezoneInput(next.timezone);
+        setAdditionsInput(next.consensusRuns);
+        setRemovalsInput(next.consensusRunsForRemovals);
       });
     reloadRuns();
     // eslint-disable-next-line react-hooks/exhaustive-deps
