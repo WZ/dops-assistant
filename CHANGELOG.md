@@ -12,6 +12,11 @@ All notable changes to this project will be documented in this file.
 - **Dismiss-all bulk action** — when Pending Additions or Pending Removals has any rows, a `Dismiss all (N)` outline button renders in the toolbar above the table. Confirms via `window.confirm`, fires individual `POST /api/discoveries/:id/dismiss` calls in parallel via `Promise.allSettled`, surfaces partial failures inline, and reloads. Reachable for both additions and removals; restorable from the Dismissed tab as before.
 - **`DiscoveriesPage` accepts `embedded` prop** — when embedded inside `DiscoveryTab` the page-level `h1` + outer `px-4 py-5` padding suppress so the inbox reads as a section, not a duplicate page header. The standalone `/discoveries` route renders unchanged (default `embedded={false}`).
 
+## [0.4.1.0] - 2026-05-05
+
+### Changed
+- **Console chat input is now visibly the entry point** — landing on the Console used to feel ambiguous because the chat input blended into the panel: faint `border-border/40`, a ghost icon, no label, no "you can type here" affordance. Most of the page read as informational, and new users took several seconds to realize the input was the action. Now the input box sits at h-12 with an always-visible `border-primary/30` teal tint, a subtle teal ring shadow that intensifies on hover/focus, and a filled `Ask →` pill (replacing the ghost send icon) that stays at 65% opacity even when the input is empty so it reads as primed rather than washed-out. The empty-state header shrinks to make room (32px Search icon, was 44px) and ends with an animated `↓ START HERE` mono label pointing at the input. Quick-prompt chips moved out of the empty state to anchor directly under the input as one tight cluster on first entry. Light mode tightens the ring shadow (3px at 0.04 opacity) so the teal wash is restrained; dark mode lightens the input bg to `bg-secondary/55` and brightens the border to `primary/55` so the input clearly elevates above the panel background. Deep-investigation mode is unchanged — Spotlight only applies to default Console mode.
+
 ## [0.4.0.1] - 2026-05-01
 
 ### Fixed

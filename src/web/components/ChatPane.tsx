@@ -3,7 +3,7 @@ import { useAutoScroll } from "../hooks/useAutoScroll.js";
 import { useUnreadInvestigations } from "../hooks/useUnreadInvestigations.js";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Search, SearchCode, MessageSquare, Plus, FileText, ChevronRight, Send, Trash2, X, ArrowRight, Zap } from "lucide-react";
+import { Search, SearchCode, MessageSquare, Plus, FileText, ChevronRight, ChevronDown, Send, Trash2, X, ArrowRight, Zap } from "lucide-react";
 import { renderInline } from "../lib/renderInline";
 import { renderMarkdown } from "../lib/renderMarkdown";
 import { formatTokens } from "../lib/formatTokens.js";
@@ -171,6 +171,14 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
   // tracks the highlighted row so Enter / Tab autocomplete the selection
   // instead of submitting the form with the partial slash.
   const [showSlashPopover, setShowSlashPopover] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const focusInput = () => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.focus();
+    const len = el.value.length;
+    el.setSelectionRange(len, len);
+  };
   const [slashIndex, setSlashIndex] = useState(0);
   const SLASH_COMMANDS: Array<{ command: string; placeholder: string; hint: string }> = [
     { command: "/investigate", placeholder: "<service>", hint: "Run full RCA" },
@@ -909,29 +917,25 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
           )}
           {/* Empty state */}
           {!historyLoading && messages.length === 0 && !isDeepMode && !chatLoading && (
-            <div className="h-full min-h-[200px] flex flex-col items-center justify-center text-center animate-fade-in">
-              <div className="w-11 h-11 rounded-xl bg-primary/8 border border-primary/15 flex items-center justify-center mb-3">
-                <Search size={18} strokeWidth={1.5} className="!size-auto text-primary/50" />
+            <div className="h-full min-h-[200px] flex flex-col items-center justify-end text-center animate-fade-in pb-1">
+              <div className="w-8 h-8 rounded-lg bg-primary/8 border border-primary/15 flex items-center justify-center mb-2">
+                <Search size={14} strokeWidth={1.5} className="!size-auto text-primary/50" />
               </div>
-              <p className="text-sm text-muted-foreground/60 font-body">
+              <p className="text-sm text-muted-foreground/70 font-body">
                 Your investigation console
               </p>
-              <p className="text-[11px] text-muted-foreground/40 mt-1 font-body">
-                Ask about services, check health, or start an investigation
+              <p className="text-[11px] text-muted-foreground/50 mt-1 font-body">
+                Ask anything below — services, health, or run an investigation
               </p>
-              <div className="flex flex-wrap justify-center gap-1.5 mt-4">
-                {["What services are unhealthy?", "Investigate the noisiest service", "Show recent incidents"].map((prompt, i) => (
-                  <button
-                    key={prompt}
-                    onClick={() => handleSubmit(prompt)}
-                    disabled={status !== "connected"}
-                    className="px-2.5 py-1 text-[10px] font-mono rounded-full border border-primary/20 text-primary/60 hover:bg-primary/8 hover:border-primary/30 hover:text-primary/80 transition-colors disabled:opacity-30 animate-fade-up"
-                    style={{ animationDelay: `${i * 0.06}s` }}
-                  >
-                    {prompt}
-                  </button>
-                ))}
-              </div>
+              <button
+                type="button"
+                onClick={focusInput}
+                aria-label="Focus the chat input"
+                className="mt-3 flex flex-col items-center gap-0.5 group focus:outline-none"
+              >
+                <ChevronDown size={16} strokeWidth={2} className="!size-auto text-primary/45 group-hover:text-primary/70 animate-pulse transition-colors" />
+                <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-primary/55 group-hover:text-primary/80 transition-colors">Start here</span>
+              </button>
             </div>
           )}
           {messages.length === 0 && isDeepMode && (
@@ -1113,6 +1117,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
             </div>
           )}
           <input
+            ref={inputRef}
             value={input}
             onChange={(e) => {
               const v = e.target.value;
@@ -1157,7 +1162,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                 return;
               }
             }}
-            className={`w-full px-4 py-2.5 pr-10 rounded-lg border text-sm font-body text-foreground/85 placeholder:text-muted-foreground/60 focus:outline-none transition-all disabled:opacity-25 ${isDeepMode ? "bg-accent/4 border-accent/20 focus:border-accent/40" : "bg-secondary/30 border-border/40 focus:border-primary/35"}`}
+            className={`w-full rounded-lg border font-body text-foreground/90 placeholder:text-muted-foreground/55 focus:outline-none transition-all disabled:opacity-25 ${isDeepMode ? "px-4 py-2.5 pr-10 text-sm bg-accent/4 border-accent/20 focus:border-accent/40" : "px-4 py-3 pr-24 text-[15px] bg-card dark:bg-secondary/55 border-primary/25 dark:border-primary/55 shadow-[0_0_0_2px_rgba(13,124,102,0.04)] dark:shadow-[0_0_0_3px_rgba(45,212,168,0.12)] hover:border-primary/40 dark:hover:border-primary/70 hover:shadow-[0_0_0_3px_rgba(13,124,102,0.07)] dark:hover:shadow-[0_0_0_4px_rgba(45,212,168,0.18)] focus:border-primary/55 dark:focus:border-primary/85 focus:shadow-[0_0_0_3px_rgba(13,124,102,0.12)] dark:focus:shadow-[0_0_0_4px_rgba(45,212,168,0.24)]"}`}
             placeholder={
               status !== "connected" ? "Reconnecting..." :
               isDeepMode ? "Ask a follow-up about this investigation..." :
@@ -1166,16 +1171,56 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
             disabled={status !== "connected" || isLoading}
           />
           <Button
-            variant="ghost"
-            size="icon"
+            variant={isDeepMode ? "ghost" : "default"}
+            size={isDeepMode ? "icon" : "default"}
             type="submit"
             aria-label="Send message"
             disabled={status !== "connected" || !input.trim() || isLoading}
-            className={`absolute right-2 top-1/2 -translate-y-1/2 h-auto w-auto p-1.5 rounded-md disabled:opacity-15 ${isDeepMode ? "text-accent/40 hover:text-accent hover:bg-accent/10" : "text-muted-foreground/60 hover:text-primary hover:bg-primary/8"}`}
+            className={
+              isDeepMode
+                ? "absolute right-2 top-1/2 -translate-y-1/2 h-auto w-auto p-1.5 rounded-md text-accent/40 hover:text-accent hover:bg-accent/10 disabled:opacity-15"
+                : "absolute right-2 top-1/2 -translate-y-1/2 h-9 px-3.5 gap-1 rounded-md font-body text-[13px] font-medium shadow-sm disabled:opacity-65 disabled:cursor-not-allowed"
+            }
           >
-            <Send size={14} className="!size-auto" />
+            {isDeepMode ? (
+              <Send size={14} className="!size-auto" />
+            ) : (
+              <>
+                <span>Ask</span>
+                <ArrowRight size={14} className="!size-auto" />
+              </>
+            )}
           </Button>
         </form>
+        {!historyLoading && !isDeepMode && messages.length === 0 && !chatLoading && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {[
+              { label: "What's unhealthy?", action: "submit", value: "What services are unhealthy?" },
+              { label: "Try /investigate", action: "prefill", value: "/investigate " },
+              { label: "Recent incidents", action: "submit", value: "Show recent incidents" },
+            ].map(({ label, action, value }, i) => (
+              <button
+                key={label}
+                type="button"
+                onClick={() => {
+                  if (action === "prefill") {
+                    setInput(value);
+                    setShowSlashPopover(true);
+                    setSlashIndex(0);
+                    focusInput();
+                  } else {
+                    handleSubmit(value);
+                  }
+                }}
+                disabled={status !== "connected"}
+                className="px-2.5 py-1 text-[10px] font-mono rounded-full border border-primary/25 text-primary/70 hover:bg-primary/8 hover:border-primary/40 hover:text-primary/90 transition-colors disabled:opacity-30 animate-fade-up"
+                style={{ animationDelay: `${i * 0.06}s` }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
         {/* Persistent caption hint — only in Console mode */}
         {!isDeepMode && (
           <div className="mt-1.5 px-1 font-mono text-[10px] text-muted-foreground/50 tracking-wide">

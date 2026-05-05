@@ -61,6 +61,15 @@ describe("ChatPane loading skeleton", () => {
     expect(pulsingBubbles.length).toBe(3);
   });
 
+  it("hides starter chips while initial history loads", () => {
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise(() => {}));
+    renderChat();
+
+    expect(screen.queryByRole("button", { name: "What's unhealthy?" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Try /investigate" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Recent incidents" })).toBeNull();
+  });
+
   it("removes the skeleton once history resolves", async () => {
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
