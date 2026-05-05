@@ -1192,7 +1192,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
             )}
           </Button>
         </form>
-        {!isDeepMode && messages.length === 0 && !chatLoading && (
+        {!historyLoading && !isDeepMode && messages.length === 0 && !chatLoading && (
           <div className="mt-2 flex flex-wrap gap-1.5">
             {[
               { label: "What's unhealthy?", action: "submit", value: "What services are unhealthy?" },
