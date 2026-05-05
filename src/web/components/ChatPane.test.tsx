@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup, waitFor, fireEvent, act } from "@testing-library/react";
+import { render, screen, cleanup, waitFor, fireEvent, act, within } from "@testing-library/react";
 import { ChatPane } from "./ChatPane";
 import { StackProvider } from "../contexts/StackContext";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -79,6 +79,71 @@ describe("ChatPane loading skeleton", () => {
 
     await waitFor(() => {
       expect(screen.queryByTestId("chat-loading-skeleton")).toBeNull();
+    });
+  });
+});
+
+describe("ChatPane clear history", () => {
+  beforeEach(() => {
+    cleanup();
+    globalThis.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/messages") && init?.method === "DELETE") {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ deleted: 2 }) } as Response);
+      }
+      if (url.includes("/api/messages")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve([
+            {
+              id: "msg_1",
+              role: "user",
+              content: "historical question",
+              created_at: "2026-05-05T12:00:00.000Z",
+            },
+            {
+              id: "msg_2",
+              role: "assistant",
+              content: "historical answer",
+              created_at: "2026-05-05T12:00:01.000Z",
+            },
+          ]),
+        } as Response);
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) } as Response);
+    }) as typeof fetch;
+    if (!("scrollTo" in Element.prototype)) {
+      // @ts-expect-error — patching jsdom prototype
+      Element.prototype.scrollTo = () => {};
+    } else {
+      Element.prototype.scrollTo = vi.fn();
+    }
+    try { localStorage.removeItem("consoleFeed:migrationToastSeen"); } catch { /* test env may stub localStorage */ }
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("permanently clears persisted console messages after confirmation", async () => {
+    renderChat();
+
+    expect(await screen.findByText("historical question")).toBeDefined();
+    expect(screen.getByText("historical answer")).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear history" }));
+
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Clear history" }));
+
+    await waitFor(() => {
+      const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+      expect(calls.some(([url, init]) => String(url) === "/api/messages" && init?.method === "DELETE")).toBe(true);
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("historical question")).toBeNull();
+      expect(screen.queryByText("historical answer")).toBeNull();
     });
   });
 });
