@@ -218,14 +218,20 @@ export const EmailRecipientsSection = forwardRef<EmailRecipientsSectionHandle, P
                       </span>
                     ))}
                   </div>
-                  <input
-                    type="checkbox"
-                    checked={r.enabled}
-                    onChange={() => void toggleRow(r)}
-                    onClick={(e) => e.stopPropagation()}
-                    className="accent-primary"
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={r.enabled}
                     aria-label={`Enable ${r.label ?? r.address}`}
-                  />
+                    onClick={(e) => { e.stopPropagation(); void toggleRow(r); }}
+                    className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+                      r.enabled ? "bg-primary" : "bg-muted-foreground/20"
+                    }`}
+                  >
+                    <span className={`inline-block h-3 w-3 rounded-full bg-white transition-transform ${
+                      r.enabled ? "translate-x-5" : "translate-x-1"
+                    }`} />
+                  </button>
                   <Button
                     variant="outline"
                     onClick={(e) => { e.stopPropagation(); void testSend(r); }}
