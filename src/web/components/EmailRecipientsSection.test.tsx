@@ -69,6 +69,54 @@ describe("EmailRecipientsSection", () => {
     expect(screen.queryByText("p@example.com")).toBeNull();
   });
 
+  it("with globalMode=true, fetches /api/notifications/email/global instead of /api/notifications/email", async () => {
+    fetchImpl.mockImplementation(async (url: any, init?: any) => {
+      const u = String(url);
+      const method = init?.method ?? "GET";
+      if (u.endsWith("/api/notifications/email/global") && method === "GET") {
+        // Global endpoint returns globals-only — and crucially, ignores any
+        // per-stack override. This is the bug fix: in global-edit mode the
+        // section must read from this endpoint so master-toggle state
+        // reflects the global layer, not whatever the active stack overrides.
+        return new Response(JSON.stringify({ enabled: false, recipients: [recipients[0]] }), { status: 200 });
+      }
+      if (u.endsWith("/api/notifications/email") && method === "GET") {
+        return new Response(JSON.stringify({ enabled: true, recipients }), { status: 200 });
+      }
+      return new Response("[]", { status: 200 });
+    });
+
+    render(
+      <Wrapper>
+        <EmailRecipientsSection
+          stackFetch={makeStackFetch("alpha")}
+          onOpenEditor={() => {}}
+          activeStackName="alpha"
+          mode="global"
+          globalMode={true}
+        />
+      </Wrapper>,
+    );
+
+    // Wait for the global fetch to land
+    await waitFor(() => {
+      const globalGets = fetchImpl.mock.calls.filter(([u, init]: any) =>
+        String(u).endsWith("/api/notifications/email/global") && (init?.method ?? "GET") === "GET"
+      );
+      expect(globalGets.length).toBeGreaterThanOrEqual(1);
+      // And we did not call the per-stack endpoint when in global mode
+      const stackGets = fetchImpl.mock.calls.filter(([u, init]: any) =>
+        String(u).endsWith("/api/notifications/email") && (init?.method ?? "GET") === "GET"
+      );
+      expect(stackGets.length).toBe(0);
+    });
+
+    // The global recipient should still render
+    await waitFor(() => {
+      expect(screen.getByText("g@example.com")).toBeDefined();
+    });
+  });
+
   it("shows inline 'stack:' label only on stack-pinned rows; global rows show no scope marker", async () => {
     const { container } = render(
       <Wrapper>

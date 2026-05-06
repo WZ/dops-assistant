@@ -63,15 +63,22 @@ export function NotificationsTab({ activeStackName }: NotificationsTabProps = {}
   const recipientsRef = useRef<EmailRecipientsSectionHandle>(null);
 
   const slackPutPath = mode === "global" ? "/api/notifications/global" : "/api/notifications";
+  // In global-edit mode, fetch the global-only view so the form reflects the
+  // global layer (settings → config → default), not whatever the active stack
+  // overrides to. Without this, a stack with a notifications override would
+  // make global-mode toggles appear to do nothing — the PUT writes globals
+  // correctly, but the per-stack effective GET still surfaces the override
+  // and the form snaps back.
+  const notificationsGetPath = mode === "global" ? "/api/notifications/global" : "/api/notifications";
 
   const fetchConfig = useCallback(async () => {
     try {
-      const res = await stackFetch("/api/notifications");
+      const res = await stackFetch(notificationsGetPath);
       const data = await res.json();
       setView(data);
     } catch { /* ignore */ }
     setLoading(false);
-  }, [stackFetch]);
+  }, [stackFetch, notificationsGetPath]);
 
   useEffect(() => { fetchConfig(); }, [fetchConfig]);
 

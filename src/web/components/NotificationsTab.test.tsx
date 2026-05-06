@@ -86,6 +86,9 @@ describe("NotificationsTab", () => {
     fetchImpl.mockImplementation(async (url: any, init?: any) => {
       const u = String(url);
       const method = init?.method ?? "GET";
+      if (u.endsWith("/api/notifications/global") && method === "GET") {
+        return new Response(JSON.stringify(baseView), { status: 200 });
+      }
       if (u.endsWith("/api/notifications") && method === "GET") {
         return new Response(JSON.stringify(baseView), { status: 200 });
       }
@@ -94,6 +97,9 @@ describe("NotificationsTab", () => {
       }
       if (u.endsWith("/api/notifications") && method === "PUT") {
         return new Response("{}", { status: 200 });
+      }
+      if (u.endsWith("/api/notifications/email/global") && method === "GET") {
+        return new Response(JSON.stringify({ enabled: false, recipients: [] }), { status: 200 });
       }
       if (u.endsWith("/api/notifications/email/recipients")) {
         return new Response("[]", { status: 200 });
@@ -119,6 +125,14 @@ describe("NotificationsTab", () => {
       expect(screen.getByText(/Editing global defaults/i)).toBeDefined();
     });
 
+    // Flipping mode should also flip the GET URL to /api/notifications/global.
+    await waitFor(() => {
+      const globalGets = fetchImpl.mock.calls.filter(([u, init]: any) =>
+        String(u).endsWith("/api/notifications/global") && (init?.method ?? "GET") === "GET"
+      );
+      expect(globalGets.length).toBeGreaterThanOrEqual(1);
+    });
+
     // Toggle slack enabled — should hit /api/notifications/global
     // Slack toggle is the first switch in the rendered output (Email enabled is second).
     const slackToggle = screen.getAllByRole("switch")[0]!;
@@ -134,6 +148,70 @@ describe("NotificationsTab", () => {
         String(u).endsWith("/api/notifications") && init?.method === "PUT"
       );
       expect(stackPuts.length).toBe(0);
+    });
+  });
+
+  // Regression for the staging bug: in stack mode the slack toggle reflects
+  // the per-stack override; flipping to global-edit mode must show the GLOBAL
+  // value (which can be different), not the override that the stack has.
+  it("global-edit mode shows the global value, not the per-stack override", async () => {
+    const stackEffectiveView = {
+      slack: {
+        webhookUrl: { value: "https://hooks.example.com/o", source: "override" },
+        enabled: { value: true, source: "override" },
+        onScanComplete: { value: "hits-only", source: "global" },
+      },
+      email: { enabled: { value: false, source: "default" } },
+    };
+    const globalOnlyView = {
+      slack: {
+        webhookUrl: { value: null, source: "default" },
+        enabled: { value: false, source: "default" },
+        onScanComplete: { value: "hits-only", source: "default" },
+      },
+      email: { enabled: { value: false, source: "default" } },
+    };
+
+    fetchImpl.mockImplementation(async (url: any, init?: any) => {
+      const u = String(url);
+      const method = init?.method ?? "GET";
+      if (u.endsWith("/api/notifications/global") && method === "GET") {
+        return new Response(JSON.stringify(globalOnlyView), { status: 200 });
+      }
+      if (u.endsWith("/api/notifications") && method === "GET") {
+        return new Response(JSON.stringify(stackEffectiveView), { status: 200 });
+      }
+      if (u.endsWith("/api/notifications/email/global") && method === "GET") {
+        return new Response(JSON.stringify({ enabled: false, recipients: [] }), { status: 200 });
+      }
+      if (u.endsWith("/api/notifications/email")) {
+        return new Response(JSON.stringify({ enabled: false, recipients: [] }), { status: 200 });
+      }
+      if (u.endsWith("/api/notifications/email/recipients")) {
+        return new Response("[]", { status: 200 });
+      }
+      return new Response("{}", { status: 200 });
+    });
+
+    render(<Wrapper stackId="alpha"><NotificationsTab /></Wrapper>);
+
+    // Stack mode: slack toggle reflects the override (true).
+    await waitFor(() => {
+      const switches = screen.getAllByRole("switch");
+      expect(switches[0]!.getAttribute("aria-checked")).toBe("true");
+    });
+
+    // Flip to global-edit mode via the chip menu.
+    const chip = await screen.findByRole("button", { name: /Mixed|Override|Global/ });
+    fireEvent.click(chip);
+    const editGlobal = await screen.findByText(/Edit global defaults/);
+    fireEvent.click(editGlobal);
+
+    // After the GET to /api/notifications/global completes, the toggle must
+    // reflect the GLOBAL value (false), not the stack-override (true).
+    await waitFor(() => {
+      const switches = screen.getAllByRole("switch");
+      expect(switches[0]!.getAttribute("aria-checked")).toBe("false");
     });
   });
 

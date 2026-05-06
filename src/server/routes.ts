@@ -34,7 +34,7 @@ import { parseInvestigationFilters } from "./investigation-filters.js";
 import { sendSlackScanRunPost } from "./slack-notifier.js";
 import { ALL_SOURCES } from "../types/notifications.js";
 import { buildPatternCluster } from "./pattern-similarity.js";
-import { getEffectiveNotifications } from "./notifications-resolver.js";
+import { getEffectiveNotifications, getGlobalNotifications } from "./notifications-resolver.js";
 
 /**
  * Zod schema for PUT /api/scan/settings body.
@@ -2008,6 +2008,16 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     res.json(getEffectiveNotifications(db, req.stackId!, config));
   });
 
+  // Global-only view for the GUI's "Edit global defaults" mode. Skips the
+  // per-stack override layer entirely so the form reflects the global layer
+  // (settings → config → default), regardless of the active stack's
+  // overrides. Without this, a stack with a notifications override would
+  // mask global edits (the PUT writes globals correctly, but the subsequent
+  // GET still surfaces the override and the UI snaps back).
+  app.get("/api/notifications/global", (_req: Request, res: Response) => {
+    res.json(getGlobalNotifications(db, config));
+  });
+
   interface SlackPatchBody {
     webhookUrl?: string | null;
     enabled?: boolean;
@@ -2247,6 +2257,18 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     res.json({
       enabled: eff.email.enabled.value,
       recipients: eff.email.recipients,
+    });
+  });
+
+  // Global-only counterpart of GET /api/notifications/email. Same response
+  // shape, but built without consulting the per-stack override row — the
+  // GUI's global-edit mode pulls from this so the form reflects what the
+  // global state actually is, not whatever the active stack overrides to.
+  app.get("/api/notifications/email/global", (_req: Request, res: Response) => {
+    const glob = getGlobalNotifications(db, config);
+    res.json({
+      enabled: glob.email.enabled.value,
+      recipients: glob.email.recipients,
     });
   });
 

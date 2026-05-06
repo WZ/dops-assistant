@@ -63,12 +63,18 @@ export const EmailRecipientsSection = forwardRef<EmailRecipientsSectionHandle, P
   const refreshRequestRef = useRef(0);
   const previousStackFetchRef = useRef(stackFetch);
 
+  // In global mode, pull from the global-only endpoint so the master enable
+  // toggle and recipients list reflect the global layer rather than the
+  // per-stack effective view (which would mask a global edit when the active
+  // stack has its own override).
+  const fetchUrl = globalMode ? "/api/notifications/email/global" : "/api/notifications/email";
+
   const refresh = useCallback(async () => {
     const requestId = ++refreshRequestRef.current;
     setLoading(true);
     setError(null);
     try {
-      const res = await stackFetch("/api/notifications/email");
+      const res = await stackFetch(fetchUrl);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const nextCfg = await res.json();
       if (requestId === refreshRequestRef.current) setCfg(nextCfg);
@@ -79,7 +85,7 @@ export const EmailRecipientsSection = forwardRef<EmailRecipientsSectionHandle, P
     } finally {
       if (requestId === refreshRequestRef.current) setLoading(false);
     }
-  }, [stackFetch]);
+  }, [stackFetch, fetchUrl]);
 
   useImperativeHandle(ref, () => ({ refresh }), [refresh]);
   useEffect(() => {

@@ -99,6 +99,64 @@ describe("GET /api/notifications — effective view", () => {
   });
 });
 
+describe("GET /api/notifications/global — global-only view", () => {
+  let ctx: TestCtx;
+  beforeEach(() => { ctx = makeApp(["stk-1"]); });
+  afterEach(() => { ctx.cleanup(); });
+
+  it("ignores X-Stack-Id overrides — returns the global layer", async () => {
+    // Bug repro: stack has an override, global has a different value. The
+    // per-stack effective view surfaces the override; the global view must
+    // surface the global.
+    ctx.db.setSetting("notifications.slack.enabled", "false");
+    ctx.db.setStackSetting("stk-1", "notifications.slack.enabled", "true");
+
+    const eff = await request(ctx.app).get("/api/notifications").set("X-Stack-Id", "stk-1");
+    expect(eff.body.slack.enabled).toEqual({ value: true, source: "override" });
+
+    const glob = await request(ctx.app).get("/api/notifications/global").set("X-Stack-Id", "stk-1");
+    expect(glob.status).toBe(200);
+    expect(glob.body.slack.enabled).toEqual({ value: false, source: "global" });
+  });
+
+  it("returns built-in defaults when nothing is configured globally, even when stack has overrides", async () => {
+    ctx.db.setStackSetting("stk-1", "notifications.slack.webhookUrl", "https://hooks.example.com/o");
+    const res = await request(ctx.app).get("/api/notifications/global").set("X-Stack-Id", "stk-1");
+    expect(res.status).toBe(200);
+    expect(res.body.slack.webhookUrl).toEqual({ value: null, source: "default" });
+  });
+
+  it("recipients only include scope=global rows, never stack-pinned", async () => {
+    ctx.db.createEmailRecipient({ address: "g@x", minSeverity: "high", allowedSources: ["scan"], enabled: true });
+    ctx.db.createEmailRecipient({ address: "p@x", minSeverity: "high", allowedSources: ["scan"], enabled: true, stackId: "stk-1" });
+    const res = await request(ctx.app).get("/api/notifications/global").set("X-Stack-Id", "stk-1");
+    const addrs = res.body.email.recipients.map((r: any) => r.address).sort();
+    expect(addrs).toEqual(["g@x"]);
+  });
+});
+
+describe("GET /api/notifications/email/global — global-only email view", () => {
+  let ctx: TestCtx;
+  beforeEach(() => { ctx = makeApp(["stk-1"]); });
+  afterEach(() => { ctx.cleanup(); });
+
+  it("returns global enabled value, ignoring stack override", async () => {
+    ctx.db.setSetting("notifications.email.enabled", "true");
+    ctx.db.setStackSetting("stk-1", "notifications.email.enabled", "false");
+    const res = await request(ctx.app).get("/api/notifications/email/global").set("X-Stack-Id", "stk-1");
+    expect(res.status).toBe(200);
+    expect(res.body.enabled).toBe(true);
+  });
+
+  it("returns only global-scoped recipients", async () => {
+    ctx.db.createEmailRecipient({ address: "g@x", minSeverity: "high", allowedSources: ["scan"], enabled: true });
+    ctx.db.createEmailRecipient({ address: "p@x", minSeverity: "high", allowedSources: ["scan"], enabled: true, stackId: "stk-1" });
+    const res = await request(ctx.app).get("/api/notifications/email/global").set("X-Stack-Id", "stk-1");
+    const addrs = res.body.recipients.map((r: any) => r.address).sort();
+    expect(addrs).toEqual(["g@x"]);
+  });
+});
+
 describe("PUT /api/notifications — per-stack write", () => {
   let ctx: TestCtx;
   beforeEach(() => { ctx = makeApp(["stk-1", "stk-2"]); });

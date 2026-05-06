@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { Database } from "./db.js";
-import { getEffectiveNotifications } from "./notifications-resolver.js";
+import { getEffectiveNotifications, getGlobalNotifications } from "./notifications-resolver.js";
 import type { Config } from "../config/schema.js";
 
 const baseConfig: Config = {
@@ -90,5 +90,81 @@ describe("getEffectiveNotifications — priority chain", () => {
     db.setSetting("notifications.slack.enabled", "false");
     const got = getEffectiveNotifications(db, "stk-1", baseConfig);
     expect(got.slack.enabled).toEqual({ value: false, source: "global" });
+  });
+});
+
+describe("getGlobalNotifications — global-only view", () => {
+  let db: Database;
+  beforeEach(() => { db = new Database(":memory:"); });
+  afterEach(() => { db.close(); });
+
+  it("ignores per-stack overrides — returns the global value, not the override", () => {
+    // The bug: with a stack override AND a global value, the per-stack view
+    // surfaces the override, hiding any global edit. The global-only view
+    // must skip the override layer entirely.
+    db.setSetting("notifications.slack.enabled", "false");
+    db.setStackSetting("stk-1", "notifications.slack.enabled", "true");
+
+    const eff = getEffectiveNotifications(db, "stk-1", baseConfig);
+    expect(eff.slack.enabled).toEqual({ value: true, source: "override" });
+
+    const glob = getGlobalNotifications(db, baseConfig);
+    expect(glob.slack.enabled).toEqual({ value: false, source: "global" });
+  });
+
+  it("ignores per-stack webhook override — returns the global webhook URL", () => {
+    db.setSetting("notifications.slack.webhookUrl", "https://hooks.example.com/g");
+    db.setStackSetting("stk-1", "notifications.slack.webhookUrl", "https://hooks.example.com/o");
+    const glob = getGlobalNotifications(db, baseConfig);
+    expect(glob.slack.webhookUrl).toEqual({ value: "https://hooks.example.com/g", source: "global" });
+  });
+
+  it("falls through to config when no global value is set", () => {
+    const cfg: Config = { ...baseConfig, webhook: { slackWebhookUrl: "https://hooks.example.com/c" } } as any;
+    db.setStackSetting("stk-1", "notifications.slack.webhookUrl", "https://hooks.example.com/o");
+    const glob = getGlobalNotifications(db, cfg);
+    expect(glob.slack.webhookUrl).toEqual({ value: "https://hooks.example.com/c", source: "config" });
+  });
+
+  it("falls through to default when nothing is set", () => {
+    db.setStackSetting("stk-1", "notifications.slack.webhookUrl", "https://hooks.example.com/o");
+    const glob = getGlobalNotifications(db, baseConfig);
+    expect(glob.slack.webhookUrl).toEqual({ value: null, source: "default" });
+    expect(glob.slack.enabled).toEqual({ value: false, source: "default" });
+    expect(glob.slack.onScanComplete).toEqual({ value: "hits-only", source: "default" });
+    expect(glob.email.enabled).toEqual({ value: false, source: "default" });
+  });
+
+  it("ignores per-stack onScanComplete override", () => {
+    db.setSetting("notifications.slack.onScanComplete", "always");
+    db.setStackSetting("stk-1", "notifications.slack.onScanComplete", "off");
+    const glob = getGlobalNotifications(db, baseConfig);
+    expect(glob.slack.onScanComplete).toEqual({ value: "always", source: "global" });
+  });
+
+  it("recipients = global only, no stack-pinned rows", () => {
+    db.createEmailRecipient({ address: "g@x", minSeverity: "high", allowedSources: ["scan"], enabled: true });
+    db.createEmailRecipient({ address: "p@x", minSeverity: "high", allowedSources: ["scan"], enabled: true, stackId: "stk-1" });
+    db.createEmailRecipient({ address: "s@x", minSeverity: "high", allowedSources: ["scan"], enabled: true, stackId: "stk-2" });
+    const glob = getGlobalNotifications(db, baseConfig);
+    expect(glob.email.recipients.map((r) => r.address)).toEqual(["g@x"]);
+    expect(glob.email.recipients[0]!.scope).toBe("global");
+  });
+
+  it("includes disabled global recipients (admin view, not delivery view)", () => {
+    db.createEmailRecipient({ address: "a@x", minSeverity: "high", allowedSources: ["scan"], enabled: false });
+    db.createEmailRecipient({ address: "b@x", minSeverity: "high", allowedSources: ["scan"], enabled: true });
+    const glob = getGlobalNotifications(db, baseConfig);
+    expect(glob.email.recipients.map((r) => r.address).sort()).toEqual(["a@x", "b@x"]);
+  });
+
+  it("config.yaml notifications.email.enabled surfaces as source=config when no global is set", () => {
+    const cfg: Config = {
+      ...baseConfig,
+      notifications: { email: { enabled: true, from: "x", appBaseUrl: "x" } } as any,
+    } as Config;
+    db.setStackSetting("stk-1", "notifications.email.enabled", "false");
+    const glob = getGlobalNotifications(db, cfg);
+    expect(glob.email.enabled).toEqual({ value: true, source: "config" });
   });
 });
