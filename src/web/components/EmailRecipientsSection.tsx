@@ -140,8 +140,6 @@ export const EmailRecipientsSection = forwardRef<EmailRecipientsSectionHandle, P
   if (error) return <div className="font-mono text-xs text-destructive">Error: {error}</div>;
   if (!cfg) return <></>;
 
-  const visibleRecipients = cfg.recipients;
-
   return (
     <section aria-label="Email notifications" className="mt-8">
       <div className="flex items-center gap-2 mb-3">
@@ -189,13 +187,13 @@ export const EmailRecipientsSection = forwardRef<EmailRecipientsSectionHandle, P
             </Button>
           </div>
 
-          {visibleRecipients.length === 0 ? (
+          {cfg.recipients.length === 0 ? (
             <div className="rounded-md border border-border/40 bg-background/40 px-4 py-6 font-mono text-xs text-muted-foreground/60 text-center">
               No recipients configured
             </div>
           ) : (
             <ul className="rounded-md border border-border/40 divide-y divide-border/40 overflow-hidden">
-              {visibleRecipients.map((r) => (
+              {cfg.recipients.map((r) => (
                 <li
                   key={r.id}
                   className="flex items-center gap-3 px-3 py-2 text-xs bg-background/40 hover:bg-background/60 transition-colors cursor-pointer group"

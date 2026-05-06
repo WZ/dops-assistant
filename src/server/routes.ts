@@ -33,7 +33,6 @@ import { notifyEmail } from "./email-notifier.js";
 import { parseInvestigationFilters } from "./investigation-filters.js";
 import { sendSlackScanRunPost } from "./slack-notifier.js";
 import { ALL_SOURCES } from "../types/notifications.js";
-
 import { buildPatternCluster } from "./pattern-similarity.js";
 
 /**

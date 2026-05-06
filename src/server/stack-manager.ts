@@ -856,9 +856,8 @@ export class StackManager {
     // 2. Slack — gated by mode + enabled flag + webhook URL. Reads globals
     // (DB settings → config.yaml) without a per-stack override layer.
     const slackMode = (this.db.getSetting("notifications.slack.onScanComplete") ?? "hits-only") as "always" | "hits-only" | "off";
-    const slackEnabledSetting = this.db.getSetting("notifications.slack.enabled");
+    const slackEnabled = this.db.getSetting("notifications.slack.enabled") !== "false";
     const slackUrl = this.db.getSetting("notifications.slack.webhookUrl") ?? this.config.webhook.slackWebhookUrl;
-    const slackEnabled = slackEnabledSetting !== undefined ? slackEnabledSetting === "true" : !!slackUrl;
     const appBaseUrl = this.config.notifications?.email?.appBaseUrl;
 
     const shouldFireSlack = slackEnabled && !!slackUrl && (

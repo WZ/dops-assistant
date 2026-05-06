@@ -12,6 +12,9 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Settings tabs stale after switching stacks** — Skills, Discovery, Discoveries, and email-recipients sections fetched once on mount via `stackFetch` and ignored later stack switches. Loaders are now wrapped in `useCallback` bound to `stackFetch` and the effects depend on the callback. Per-component request-id guards prevent stale stack-A responses overwriting fresher stack-B data.
 
+### Internal
+- DB schema gains a `stack_settings` table and a nullable `stack_id` column on `email_recipients` (with idempotent migrations and cascade-on-stack-delete sweeping). No callers in this release; the scaffolding is retained for a possible future per-stack notifications feature. Safe to remove if confirmed unused.
+
 ## [0.4.2.0] - 2026-05-05
 
 ### Changed

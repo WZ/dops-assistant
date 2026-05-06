@@ -17,8 +17,8 @@ export interface EmailRecipient {
   enabled: boolean;
   stackId?: string | null;
   scope?: "global" | "stack";
-  createdAt?: string;
-  updatedAt?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /** Human-readable rendering of the compact source enum. Used by email templates. */
