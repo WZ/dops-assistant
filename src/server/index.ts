@@ -44,7 +44,6 @@ import { notifySlack } from "./slack-notifier.js";
 import { buildInvestigationMessage } from "./anomaly-probe.js";
 import nodemailer, { type Transporter } from "nodemailer";
 import { notifyEmail } from "./email-notifier.js";
-import { getEffectiveNotifications } from "./notifications-resolver.js";
 import { ulid } from "ulid";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -179,25 +178,16 @@ async function main() {
     return emailTransport;
   };
 
-  /**
-   * Build the EmailNotifierDeps envelope for a specific stack. Both the
-   * `enabled` flag and the recipient list are resolved per-stack so per-stack
-   * overrides ({@link getEffectiveNotifications}) and stack-pinned recipients
-   * ({@link Database.listEmailRecipientsForStack}) take effect at delivery
-   * time. Used by both per-investigation notifications (globalOnComplete) and
-   * run-level scan notifications (StackManager.handleScanRunComplete via the
-   * builder registered below).
-   */
-  const buildEmailNotifierDeps = (stackId: string): import("./email-notifier.js").EmailNotifierDeps | null => {
+  const buildEmailNotifierDeps = (): import("./email-notifier.js").EmailNotifierDeps | null => {
     const emailCfg = config.notifications?.email;
     const transport = getEmailTransport();
     if (!emailCfg || !transport) return null;
     return {
       isGloballyEnabled: () => {
-        const eff = getEffectiveNotifications(db, stackId, config);
-        return eff.email.enabled.value === true;
+        const dbEnabled = db.getSetting("notifications.email.enabled");
+        return dbEnabled !== undefined ? dbEnabled === "true" : emailCfg.enabled;
       },
-      listEnabledRecipients: () => db.listEmailRecipientsForStack(stackId, { enabledOnly: true }),
+      listEnabledRecipients: () => db.listEmailRecipients({ enabledOnly: true }),
       transport,
       config: {
         from: emailCfg.from,
@@ -207,22 +197,10 @@ async function main() {
     };
   };
 
-  // Register a builder on the StackManager so handleScanRunComplete (and the
-  // periodic-discovery email lambda) can dispatch run-level emails using the
-  // per-stack resolver. Null-safe — when SMTP is not configured the builder
-  // returns null and email notifications are silently skipped.
-  stackManager.setEmailNotifierDepsBuilder((stackId: string) => buildEmailNotifierDeps(stackId));
+  stackManager.setEmailNotifierDeps(buildEmailNotifierDeps());
 
   // Build a global onComplete handler for Slack + email notifications.
   // Reads URL/settings dynamically so GUI changes take effect without restart.
-  // Resolves all toggles via `getEffectiveNotifications` (per-stack override →
-  // global → config → default) so per-stack settings take precedence.
-  //
-  // Behavior change: when `stackId` is undefined we now skip notifications
-  // entirely. Per-stack overrides require a stackId to evaluate, and every
-  // production call path supplies one. Unscoped paths (e.g., test fixtures,
-  // ad-hoc injections) historically delivered via globals; that fallback is
-  // intentionally removed because the new model is per-stack-first.
   const globalOnComplete = (
     investigationId: string,
     service: string,
@@ -230,17 +208,12 @@ async function main() {
     stackId: string | undefined,
     source: import("../types/notifications.js").NotificationSource,
   ) => {
-    if (!stackId) {
-      logger.debug({ investigationId, service }, "globalOnComplete: no stackId, skipping notifications");
-      return;
-    }
-    const eff = getEffectiveNotifications(db, stackId, config);
-
-    // ── Slack ────────────────────────────────────────────────────────
-    if (eff.slack.enabled.value && eff.slack.webhookUrl.value) {
+    const slackUrl = db.getSetting("notifications.slack.webhookUrl") ?? config.webhook.slackWebhookUrl;
+    const slackEnabled = db.getSetting("notifications.slack.enabled");
+    if (slackUrl && slackEnabled !== "false") {
       const appBaseUrl = config.notifications?.email?.appBaseUrl;
       notifySlack(
-        { slackWebhookUrl: eff.slack.webhookUrl.value, appBaseUrl, stackId },
+        { slackWebhookUrl: slackUrl, appBaseUrl, stackId },
         investigationId,
         service,
         report,
@@ -248,7 +221,7 @@ async function main() {
     }
 
     // ── Email ────────────────────────────────────────────────────────
-    const emailDeps = buildEmailNotifierDeps(stackId);
+    const emailDeps = buildEmailNotifierDeps();
     if (emailDeps && emailDeps.isGloballyEnabled()) {
       notifyEmail(emailDeps, investigationId, report, source).catch((err) => {
         logger.warn({ err, investigationId }, "notifyEmail rejected unexpectedly");

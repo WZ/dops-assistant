@@ -33,8 +33,8 @@ import { notifyEmail } from "./email-notifier.js";
 import { parseInvestigationFilters } from "./investigation-filters.js";
 import { sendSlackScanRunPost } from "./slack-notifier.js";
 import { ALL_SOURCES } from "../types/notifications.js";
+
 import { buildPatternCluster } from "./pattern-similarity.js";
-import { getEffectiveNotifications, getGlobalNotifications } from "./notifications-resolver.js";
 
 /**
  * Zod schema for PUT /api/scan/settings body.
@@ -2004,129 +2004,71 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
   const SLACK_ON_SCAN_COMPLETE_VALUES = new Set(["always", "hits-only", "off"]);
 
-  app.get("/api/notifications", (req: Request, res: Response) => {
-    res.json(getEffectiveNotifications(db, req.stackId!, config));
+  app.get("/api/notifications", (_req: Request, res: Response) => {
+    const slackUrl = db.getSetting("notifications.slack.webhookUrl");
+    const slackEnabled = db.getSetting("notifications.slack.enabled");
+    // Fall back to config.yaml if no GUI override
+    const effectiveUrl = slackUrl ?? config.webhook.slackWebhookUrl ?? null;
+    const effectiveEnabled = slackEnabled !== undefined ? slackEnabled === "true" : !!effectiveUrl;
+    const onScanComplete = db.getSetting("notifications.slack.onScanComplete") ?? "hits-only";
+    res.json({
+      slack: {
+        webhookUrl: effectiveUrl,
+        enabled: effectiveEnabled,
+        source: slackUrl ? "gui" : (config.webhook.slackWebhookUrl ? "config" : "none"),
+        onScanComplete,
+      },
+    });
   });
 
-  // Global-only view for the GUI's "Edit global defaults" mode. Skips the
-  // per-stack override layer entirely so the form reflects the global layer
-  // (settings → config → default), regardless of the active stack's
-  // overrides. Without this, a stack with a notifications override would
-  // mask global edits (the PUT writes globals correctly, but the subsequent
-  // GET still surfaces the override and the UI snaps back).
-  app.get("/api/notifications/global", (_req: Request, res: Response) => {
-    res.json(getGlobalNotifications(db, config));
-  });
-
-  interface SlackPatchBody {
-    webhookUrl?: string | null;
-    enabled?: boolean;
-    onScanComplete?: "always" | "hits-only" | "off";
-  }
-
-  interface NotificationsPatchBody {
-    slack?: SlackPatchBody;
-    email?: { enabled?: boolean };
-  }
-
-  function validateSlackPatch(slack: SlackPatchBody): { ok: true } | { ok: false; error: string } {
-    if (slack.onScanComplete !== undefined && !SLACK_ON_SCAN_COMPLETE_VALUES.has(slack.onScanComplete)) {
-      return { ok: false, error: "onScanComplete must be one of: always, hits-only, off" };
-    }
-    if (slack.webhookUrl !== undefined && slack.webhookUrl !== null && slack.webhookUrl !== "") {
-      try {
-        const parsed = new URL(slack.webhookUrl);
-        if (parsed.protocol !== "https:") return { ok: false, error: "Webhook URL must use HTTPS" };
-      } catch {
-        return { ok: false, error: "Invalid webhook URL" };
-      }
-    }
-    return { ok: true };
-  }
-
-  // Per-stack: writes stack_settings rows for X-Stack-Id.
   app.put("/api/notifications", (req: Request, res: Response) => {
-    const body = req.body as NotificationsPatchBody;
-    if (!body || (!body.slack && !body.email)) {
-      res.status(400).json({ error: "Missing slack or email patch" });
+    const { slack } = req.body as {
+      slack?: {
+        webhookUrl?: string | null;
+        enabled?: boolean;
+        onScanComplete?: "always" | "hits-only" | "off";
+      };
+    };
+    if (!slack) {
+      res.status(400).json({ error: "Missing slack configuration" });
       return;
     }
-    if (body.slack) {
-      const valid = validateSlackPatch(body.slack);
-      if (!valid.ok) { res.status(400).json({ error: valid.error }); return; }
-      if (body.slack.webhookUrl !== undefined) {
-        if (body.slack.webhookUrl === null || body.slack.webhookUrl === "") {
-          db.deleteStackSetting(req.stackId!, "notifications.slack.webhookUrl");
-        } else {
-          db.setStackSetting(req.stackId!, "notifications.slack.webhookUrl", body.slack.webhookUrl);
+    if (slack.onScanComplete !== undefined) {
+      if (!SLACK_ON_SCAN_COMPLETE_VALUES.has(slack.onScanComplete)) {
+        res.status(400).json({ error: "onScanComplete must be one of: always, hits-only, off" });
+        return;
+      }
+    }
+    if (slack.webhookUrl !== undefined) {
+      if (slack.webhookUrl === null || slack.webhookUrl === "") {
+        db.deleteSetting("notifications.slack.webhookUrl");
+        db.deleteSetting("notifications.slack.enabled");
+      } else {
+        try {
+          const parsed = new URL(slack.webhookUrl);
+          if (parsed.protocol !== "https:") {
+            res.status(400).json({ error: "Webhook URL must use HTTPS" });
+            return;
+          }
+        } catch {
+          res.status(400).json({ error: "Invalid webhook URL" });
+          return;
         }
-      }
-      if (body.slack.enabled !== undefined) {
-        db.setStackSetting(req.stackId!, "notifications.slack.enabled", String(body.slack.enabled));
-      }
-      if (body.slack.onScanComplete !== undefined) {
-        db.setStackSetting(req.stackId!, "notifications.slack.onScanComplete", body.slack.onScanComplete);
+        db.setSetting("notifications.slack.webhookUrl", slack.webhookUrl);
       }
     }
-    if (body.email && body.email.enabled !== undefined) {
-      db.setStackSetting(req.stackId!, "notifications.email.enabled", String(body.email.enabled));
+    if (slack.enabled !== undefined) {
+      db.setSetting("notifications.slack.enabled", String(slack.enabled));
     }
-    res.json({ ok: true });
-  });
-
-  // Global: writes the existing settings table.
-  app.put("/api/notifications/global", (req: Request, res: Response) => {
-    const body = req.body as NotificationsPatchBody;
-    if (!body || (!body.slack && !body.email)) {
-      res.status(400).json({ error: "Missing slack or email patch" });
-      return;
-    }
-    if (body.slack) {
-      const valid = validateSlackPatch(body.slack);
-      if (!valid.ok) { res.status(400).json({ error: valid.error }); return; }
-      if (body.slack.webhookUrl !== undefined) {
-        if (body.slack.webhookUrl === null || body.slack.webhookUrl === "") {
-          db.deleteSetting("notifications.slack.webhookUrl");
-          db.deleteSetting("notifications.slack.enabled");
-        } else {
-          db.setSetting("notifications.slack.webhookUrl", body.slack.webhookUrl);
-        }
-      }
-      if (body.slack.enabled !== undefined) {
-        db.setSetting("notifications.slack.enabled", String(body.slack.enabled));
-      }
-      if (body.slack.onScanComplete !== undefined) {
-        db.setSetting("notifications.slack.onScanComplete", body.slack.onScanComplete);
-      }
-    }
-    if (body.email && body.email.enabled !== undefined) {
-      db.setSetting("notifications.email.enabled", String(body.email.enabled));
-    }
-    res.json({ ok: true });
-  });
-
-  // Revert this stack to fully global.
-  app.delete("/api/notifications/override", (req: Request, res: Response) => {
-    const NOTIFICATION_KEYS = [
-      "notifications.slack.webhookUrl",
-      "notifications.slack.enabled",
-      "notifications.slack.onScanComplete",
-      "notifications.email.enabled",
-    ];
-    for (const k of NOTIFICATION_KEYS) {
-      db.deleteStackSetting(req.stackId!, k);
+    if (slack.onScanComplete !== undefined) {
+      db.setSetting("notifications.slack.onScanComplete", slack.onScanComplete);
     }
     res.json({ ok: true });
   });
 
   app.post("/api/notifications/test", async (req: Request, res: Response) => {
     const { webhookUrl: bodyUrl } = req.body as { webhookUrl?: string } ?? {};
-    // Honor the per-stack effective view: an explicit override on this stack
-    // wins over the global webhook URL, then config falls through. Without
-    // this, a per-stack admin who points their stack at a different webhook
-    // would still see the test post hit the global one.
-    const effective = getEffectiveNotifications(db, req.stackId!, config);
-    const slackUrl = bodyUrl || effective.slack.webhookUrl.value;
+    const slackUrl = bodyUrl || db.getSetting("notifications.slack.webhookUrl") || config.webhook.slackWebhookUrl;
     if (!slackUrl) {
       res.status(400).json({ error: "No Slack webhook URL configured" });
       return;
@@ -2246,43 +2188,18 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       if (typeof body.enabled !== "boolean") return "enabled must be boolean";
     }
     if (body.label !== undefined && body.label !== null && typeof body.label !== "string") return "label must be string or null";
-    if (body.scope !== undefined) {
-      if (body.scope !== "global" && body.scope !== "stack") return "scope must be 'global' or 'stack'";
-    }
     return null;
   }
 
-  app.get("/api/notifications/email", (req: Request, res: Response) => {
-    const eff = getEffectiveNotifications(db, req.stackId!, config);
-    res.json({
-      enabled: eff.email.enabled.value,
-      recipients: eff.email.recipients,
-    });
-  });
-
-  // Global-only counterpart of GET /api/notifications/email. Same response
-  // shape, but built without consulting the per-stack override row — the
-  // GUI's global-edit mode pulls from this so the form reflects what the
-  // global state actually is, not whatever the active stack overrides to.
-  app.get("/api/notifications/email/global", (_req: Request, res: Response) => {
-    const glob = getGlobalNotifications(db, config);
-    res.json({
-      enabled: glob.email.enabled.value,
-      recipients: glob.email.recipients,
-    });
+  app.get("/api/notifications/email", (_req: Request, res: Response) => {
+    const dbEnabled = db.getSetting("notifications.email.enabled");
+    const emailCfg = config.notifications?.email;
+    const enabled = dbEnabled !== undefined ? dbEnabled === "true" : emailCfg?.enabled ?? false;
+    const recipients = db.listEmailRecipients();
+    res.json({ enabled, recipients });
   });
 
   app.put("/api/notifications/email", (req: Request, res: Response) => {
-    const { enabled } = (req.body ?? {}) as { enabled?: boolean };
-    if (typeof enabled !== "boolean") {
-      res.status(400).json({ error: "enabled must be boolean" });
-      return;
-    }
-    db.setStackSetting(req.stackId!, "notifications.email.enabled", String(enabled));
-    res.json({ ok: true, enabled });
-  });
-
-  app.put("/api/notifications/email/global", (req: Request, res: Response) => {
     const { enabled } = (req.body ?? {}) as { enabled?: boolean };
     if (typeof enabled !== "boolean") {
       res.status(400).json({ error: "enabled must be boolean" });
@@ -2292,29 +2209,23 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     res.json({ ok: true, enabled });
   });
 
-  app.get("/api/notifications/email/recipients", (req: Request, res: Response) => {
-    res.json(db.listEmailRecipientsForStack(req.stackId!, { enabledOnly: false }));
+  app.get("/api/notifications/email/recipients", (_req: Request, res: Response) => {
+    res.json(db.listEmailRecipients());
   });
 
   app.post("/api/notifications/email/recipients", (req: Request, res: Response) => {
     const err = validateRecipientBody(req.body, { partial: false });
     if (err) { res.status(400).json({ error: err }); return; }
     const body = req.body as {
-      address: string;
-      label?: string;
-      minSeverity: import("../types/notifications.js").SeverityLevel;
-      allowedSources: import("../types/notifications.js").NotificationSource[];
-      enabled: boolean;
-      scope?: "global" | "stack";
+      address: string; label?: string; minSeverity: import("../types/notifications.js").SeverityLevel;
+      allowedSources: import("../types/notifications.js").NotificationSource[]; enabled: boolean;
     };
-    const stackId = body.scope === "stack" ? req.stackId! : null;
     const created = db.createEmailRecipient({
       address: body.address,
       label: body.label,
       minSeverity: body.minSeverity,
       allowedSources: body.allowedSources,
       enabled: body.enabled,
-      stackId,
     });
     res.status(201).json(created);
   });
@@ -2326,20 +2237,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     if (err) { res.status(400).json({ error: err }); return; }
     const existing = db.getEmailRecipient(id);
     if (!existing) { res.status(404).json({ error: "Recipient not found" }); return; }
-    const body = req.body as Partial<{
-      address: string;
-      label: string | null;
-      minSeverity: import("../types/notifications.js").SeverityLevel;
-      allowedSources: import("../types/notifications.js").NotificationSource[];
-      enabled: boolean;
-      scope: "global" | "stack";
-    }>;
-    const { scope, ...rest } = body;
-    const patch: Parameters<typeof db.updateEmailRecipient>[1] = { ...rest } as Parameters<typeof db.updateEmailRecipient>[1];
-    if (scope !== undefined) {
-      patch.stackId = scope === "stack" ? req.stackId! : null;
-    }
-    const updated = db.updateEmailRecipient(id, patch);
+    const updated = db.updateEmailRecipient(id, req.body);
     res.json(updated);
   });
 
@@ -2357,16 +2255,14 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       return;
     }
 
-    // (a) Require the effective email-enabled flag before allowing any send.
-    // Honors the per-stack resolver hierarchy (override → global → config →
-    // default) so a per-stack admin who flipped email on for their stack
-    // can use Test even when the global flag is still off. Prevents the
-    // endpoint from being used as an open SMTP relay while email is fully
-    // disabled at every layer.
+    // (a) Require the global email-enabled flag before allowing any send.
+    // Prevents the endpoint from being used as an open SMTP relay by anyone
+    // with access to the /api surface while email is nominally off.
     const emailCfg = config.notifications?.email;
-    const effective = getEffectiveNotifications(db, req.stackId!, config);
-    if (!effective.email.enabled.value) {
-      res.status(403).json({ error: "Email notifications are disabled for this stack. Enable email first." });
+    const dbEnabled = db.getSetting("notifications.email.enabled");
+    const globalEnabled = dbEnabled !== undefined ? dbEnabled === "true" : emailCfg?.enabled ?? false;
+    if (!globalEnabled) {
+      res.status(403).json({ error: "Email notifications are disabled. Enable the global toggle first." });
       return;
     }
 

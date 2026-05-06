@@ -4,21 +4,14 @@ import { useStackContext } from "../contexts/StackContext";
 import { EmailRecipientsSection, type EmailRecipientsSectionHandle, type Recipient } from "./EmailRecipientsSection.js";
 import { EmailRecipientEditor } from "./EmailRecipientEditor.js";
 import { SlackEditor } from "./SlackEditor.js";
-import { ScopeChip, type ScopeChipAction } from "./ScopeChip.js";
 
-type FieldSource = "override" | "global" | "config" | "default";
-interface FieldWithSource<T> { value: T; source: FieldSource; }
 type OnScanCompleteMode = "always" | "hits-only" | "off";
 
-interface SlackView {
-  webhookUrl: FieldWithSource<string | null>;
-  enabled: FieldWithSource<boolean>;
-  onScanComplete: FieldWithSource<OnScanCompleteMode>;
-}
-
-interface NotificationsView {
-  slack: SlackView;
-  email: { enabled: FieldWithSource<boolean> };
+interface SlackConfig {
+  webhookUrl: string | null;
+  enabled: boolean;
+  source: "gui" | "config" | "none";
+  onScanComplete: OnScanCompleteMode;
 }
 
 const LABEL_CLASS =
@@ -32,8 +25,6 @@ const SCAN_MODE_LABEL: Record<OnScanCompleteMode, string> = {
 
 function maskWebhook(url: string | null): string {
   if (!url) return "Not configured";
-  // Slack webhook URLs are like https://hooks.slack.com/services/T.../B.../xxxx
-  // Show host + first segment, mask the rest.
   try {
     const u = new URL(url);
     const segments = u.pathname.split("/").filter(Boolean);
@@ -46,51 +37,48 @@ function maskWebhook(url: string | null): string {
 
 type EditorMode = "none" | "slack" | "email";
 
-interface NotificationsTabProps {
-  activeStackName?: string;
-}
-
-export function NotificationsTab({ activeStackName }: NotificationsTabProps = {}) {
-  const { activeStackId, stackFetch } = useStackContext();
-  const [view, setView] = useState<NotificationsView | null>(null);
+export function NotificationsTab() {
+  const { stackFetch } = useStackContext();
+  const [slack, setSlack] = useState<SlackConfig>({
+    webhookUrl: null,
+    enabled: false,
+    source: "none",
+    onScanComplete: "hits-only",
+  });
   const [loading, setLoading] = useState(true);
   const [togglingEnabled, setTogglingEnabled] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
   const [editorMode, setEditorMode] = useState<EditorMode>("none");
   const [editingRecipient, setEditingRecipient] = useState<Recipient | null>(null);
-  const [mode, setMode] = useState<"stack" | "global">("stack");
   const recipientsRef = useRef<EmailRecipientsSectionHandle>(null);
-
-  const slackPutPath = mode === "global" ? "/api/notifications/global" : "/api/notifications";
-  // In global-edit mode, fetch the global-only view so the form reflects the
-  // global layer (settings → config → default), not whatever the active stack
-  // overrides to. Without this, a stack with a notifications override would
-  // make global-mode toggles appear to do nothing — the PUT writes globals
-  // correctly, but the per-stack effective GET still surfaces the override
-  // and the form snaps back.
-  const notificationsGetPath = mode === "global" ? "/api/notifications/global" : "/api/notifications";
 
   const fetchConfig = useCallback(async () => {
     try {
-      const res = await stackFetch(notificationsGetPath);
+      const res = await stackFetch("/api/notifications");
       const data = await res.json();
-      setView(data);
+      setSlack(data.slack);
     } catch { /* ignore */ }
     setLoading(false);
-  }, [stackFetch, notificationsGetPath]);
+  }, [stackFetch]);
 
   useEffect(() => { fetchConfig(); }, [fetchConfig]);
 
   const toggleSlackEnabled = async () => {
-    if (togglingEnabled || !view) return;
-    const next = !view.slack.enabled.value;
+    if (togglingEnabled) return;
+    const next = !slack.enabled;
     setTogglingEnabled(true);
     try {
-      const res = await stackFetch(slackPutPath, {
+      const res = await stackFetch("/api/notifications", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slack: { enabled: next } }),
+        body: JSON.stringify({
+          slack: {
+            webhookUrl: slack.webhookUrl,
+            enabled: next,
+            onScanComplete: slack.onScanComplete,
+          },
+        }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -121,13 +109,7 @@ export function NotificationsTab({ activeStackName }: NotificationsTabProps = {}
     setTesting(false);
   };
 
-  const resetAll = async () => {
-    if (!confirm("Reset all per-stack overrides on this tab? This stack will follow the global values for every Notifications field.")) return;
-    const res = await stackFetch("/api/notifications/override", { method: "DELETE" });
-    if (res.ok) await fetchConfig();
-  };
-
-  if (loading || !view) {
+  if (loading) {
     return (
       <div className="h-32 rounded-lg" style={{
         background: "linear-gradient(90deg, hsl(var(--muted)) 25%, hsl(var(--secondary)) 50%, hsl(var(--muted)) 75%)",
@@ -141,12 +123,7 @@ export function NotificationsTab({ activeStackName }: NotificationsTabProps = {}
     return (
       <SlackEditor
         stackFetch={stackFetch}
-        putPath={slackPutPath}
-        config={{
-          webhookUrl: view.slack.webhookUrl.value,
-          enabled: view.slack.enabled.value,
-          onScanComplete: view.slack.onScanComplete.value,
-        }}
+        config={slack}
         onClose={() => setEditorMode("none")}
         onSaved={() => {
           setEditorMode("none");
@@ -161,8 +138,6 @@ export function NotificationsTab({ activeStackName }: NotificationsTabProps = {}
       <EmailRecipientEditor
         stackFetch={stackFetch}
         existing={editingRecipient}
-        activeStackName={activeStackName}
-        defaultScope={mode === "global" ? "global" : undefined}
         onClose={() => { setEditorMode("none"); setEditingRecipient(null); }}
         onSaved={() => {
           setEditorMode("none");
@@ -173,56 +148,10 @@ export function NotificationsTab({ activeStackName }: NotificationsTabProps = {}
     );
   }
 
-  const slack = view.slack;
-  const slackConfigured = !!slack.webhookUrl.value;
-  const stackDisplay = activeStackName ?? activeStackId;
-
-  const sources = [
-    view.slack.webhookUrl.source,
-    view.slack.enabled.source,
-    view.slack.onScanComplete.source,
-    view.email.enabled.source,
-  ];
-  const overrideCount = sources.filter((s) => s === "override").length;
-
-  const chipActions: ScopeChipAction[] = [];
-  if (mode === "stack") {
-    chipActions.push({ label: "Edit global defaults…", onSelect: () => setMode("global") });
-    if (overrideCount > 0) {
-      chipActions.push({ label: "Reset all to global", onSelect: () => void resetAll(), destructive: true });
-    }
-  } else {
-    chipActions.push({ label: "← Back to stack view", onSelect: () => setMode("stack") });
-  }
-
-  const chipKind: "global" | "override" =
-    mode === "global" ? "override" : (overrideCount > 0 ? "override" : "global");
-  const chipLabel =
-    mode === "global"
-      ? "Editing global"
-      : overrideCount === 0
-      ? undefined
-      : overrideCount === sources.length
-      ? undefined
-      : `Mixed (${overrideCount})`;
-
-  const bannerHeading =
-    mode === "global"
-      ? "Editing global defaults — applies to all stacks"
-      : `Showing effective settings for: ${stackDisplay}`;
-  const bannerCopy =
-    mode === "global"
-      ? "Changes here update the org-wide defaults. Stacks with their own overrides will not be affected."
-      : overrideCount === 0
-      ? "All values come from the global defaults. Edits will create per-stack overrides for this stack."
-      : `${overrideCount} of ${sources.length} values are overridden for this stack. Edits create more overrides; use the chip menu to revert.`;
-  const bannerClasses = mode === "global"
-    ? "border-amber-500/40 bg-amber-500/5"
-    : "border-border/40 bg-card/40";
+  const slackConfigured = !!slack.webhookUrl;
 
   return (
     <div>
-      {/* Title row */}
       <div className="mb-6 animate-fade-up">
         <h1 className="font-display text-2xl font-extrabold tracking-tight text-foreground/90">Notifications</h1>
         <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">
@@ -230,38 +159,30 @@ export function NotificationsTab({ activeStackName }: NotificationsTabProps = {}
         </p>
       </div>
 
-      {/* Effective-settings banner */}
-      <div className={`mb-5 rounded-lg border px-4 py-3 flex items-start gap-3 animate-fade-in ${bannerClasses}`}>
+      <div className="mb-5 rounded-lg border border-border/40 bg-card/40 px-4 py-3 flex items-start gap-3 animate-fade-in">
         <span aria-hidden className="text-base mt-0.5">🌐</span>
-        <div className="flex-1">
+        <div>
           <div className="font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-foreground/80">
-            {bannerHeading}
+            Global — applies to all stacks
           </div>
           <p className="text-xs text-muted-foreground/70 mt-0.5 max-w-xl">
-            {bannerCopy}
+            Per-stack notification settings aren&apos;t supported yet. Edits here affect every stack.
           </p>
         </div>
-        <ScopeChip
-          kind={chipKind}
-          label={chipLabel}
-          actions={chipActions.length > 0 ? chipActions : undefined}
-        />
       </div>
 
-      {/* Section: SLACK */}
       <section aria-label="Slack notifications" className="mb-6">
         <div className="flex items-center gap-2 mb-3">
           <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
           <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
             Slack
           </h2>
-          {slack.webhookUrl.source === "config" && (
+          {slack.source === "config" && (
             <span className="font-mono text-[9px] text-muted-foreground/40 ml-1">(from config.yaml)</span>
           )}
         </div>
 
         <div className="rounded-lg border border-border/40 bg-card/50 p-4 space-y-4">
-          {/* Enable toggle */}
           <div className="flex items-center justify-between">
             <div>
               <label className={LABEL_CLASS}>Enabled</label>
@@ -269,39 +190,29 @@ export function NotificationsTab({ activeStackName }: NotificationsTabProps = {}
                 Send investigation results to Slack when complete
               </p>
             </div>
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                role="switch"
-                aria-checked={slack.enabled.value}
-                disabled={togglingEnabled}
-                onClick={() => void toggleSlackEnabled()}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                  slack.enabled.value ? "bg-primary" : "bg-muted-foreground/20"
-                }`}
-              >
-                <span className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
-                  slack.enabled.value ? "translate-x-6" : "translate-x-1"
-                }`} />
-              </button>
-            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={slack.enabled}
+              disabled={togglingEnabled}
+              onClick={() => void toggleSlackEnabled()}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${slack.enabled ? "bg-primary" : "bg-muted-foreground/20"}`}
+            >
+              <span className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${slack.enabled ? "translate-x-6" : "translate-x-1"}`} />
+            </button>
           </div>
 
-          {/* Webhook row — mirrors Email recipients list */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className={LABEL_CLASS}>Webhook</label>
-              <div className="flex items-center gap-3">
-                <Button
-                  variant="outline"
-                  onClick={() => setEditorMode("slack")}
-                  className="font-mono text-xs font-medium h-9 rounded-lg px-3"
-                >
-                  {slackConfigured ? "Edit webhook" : "+ Add webhook"}
-                </Button>
-              </div>
+              <Button
+                variant="outline"
+                onClick={() => setEditorMode("slack")}
+                className="font-mono text-xs font-medium h-9 rounded-lg px-3"
+              >
+                {slackConfigured ? "Edit webhook" : "+ Add webhook"}
+              </Button>
             </div>
-
             {!slackConfigured ? (
               <div className="rounded-md border border-border/40 bg-background/40 px-4 py-6 font-mono text-xs text-muted-foreground/60 text-center">
                 No webhook configured
@@ -317,10 +228,10 @@ export function NotificationsTab({ activeStackName }: NotificationsTabProps = {}
                   aria-label="Edit Slack webhook"
                 >
                   <div className="flex-1 min-w-0">
-                    <div className="font-mono text-foreground truncate">{maskWebhook(slack.webhookUrl.value)}</div>
+                    <div className="font-mono text-foreground truncate">{maskWebhook(slack.webhookUrl)}</div>
                   </div>
                   <span className="font-mono px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground text-[10px]">
-                    scan: {SCAN_MODE_LABEL[slack.onScanComplete.value]}
+                    scan: {SCAN_MODE_LABEL[slack.onScanComplete]}
                   </span>
                   <Button
                     variant="outline"
@@ -336,11 +247,7 @@ export function NotificationsTab({ activeStackName }: NotificationsTabProps = {}
           </div>
 
           {testResult && (
-            <div className={`text-xs font-mono px-3 py-2 rounded-md ${
-              testResult.ok
-                ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                : "bg-destructive/10 text-destructive"
-            }`}>
+            <div className={`text-xs font-mono px-3 py-2 rounded-md ${testResult.ok ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-destructive/10 text-destructive"}`}>
               {testResult.ok ? "Test notification sent successfully" : testResult.error}
             </div>
           )}
@@ -350,9 +257,6 @@ export function NotificationsTab({ activeStackName }: NotificationsTabProps = {}
       <EmailRecipientsSection
         ref={recipientsRef}
         stackFetch={stackFetch}
-        activeStackName={activeStackName}
-        mode={mode}
-        globalMode={mode === "global"}
         onOpenEditor={(r) => { setEditingRecipient(r); setEditorMode("email"); }}
       />
     </div>

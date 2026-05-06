@@ -568,7 +568,7 @@ describe("StackManager", () => {
           retry: { attempts: 1, backoffMs: [] },
         },
       };
-      manager.setEmailNotifierDepsBuilder(() => emailDeps);
+      manager.setEmailNotifierDeps(emailDeps);
 
       await manager.getDefaultContext().periodicDiscoveryScheduler.tickOnce();
 
@@ -818,7 +818,7 @@ describe("StackManager — handleScanRunComplete", () => {
       transport: { sendMail: vi.fn() } as unknown as EmailNotifierDeps["transport"],
       config: { from: "x@x", appBaseUrl: "https://dops.example", retry: { attempts: 1, backoffMs: [] } },
     } satisfies EmailNotifierDeps;
-    manager.setEmailNotifierDepsBuilder(() => fakeDeps);
+    manager.setEmailNotifierDeps(fakeDeps);
     callHandleScanRunComplete(manager, baseSummary);
     expect(emailSpy).toHaveBeenCalledTimes(1);
     expect(emailSpy.mock.calls[0]![1]).toMatchObject({ runId: "r1" });
@@ -830,7 +830,7 @@ describe("StackManager — handleScanRunComplete", () => {
   });
 
   it("does not call notifyEmailScanRun when the builder returns null for the stack", () => {
-    manager.setEmailNotifierDepsBuilder(() => null);
+    manager.setEmailNotifierDeps(null);
     callHandleScanRunComplete(manager, baseSummary);
     expect(emailSpy).not.toHaveBeenCalled();
   });

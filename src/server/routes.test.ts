@@ -586,8 +586,8 @@ describe("/api/notifications/email", () => {
     expect(res.body).toEqual({ enabled: false, recipients: [] });
   });
 
-  it("PUT /global updates global enabled", async () => {
-    const res = await request(ctx.app).put("/api/notifications/email/global").send({ enabled: true });
+  it("PUT updates global enabled", async () => {
+    const res = await request(ctx.app).put("/api/notifications/email").send({ enabled: true });
     expect(res.status).toBe(200);
     const get = await request(ctx.app).get("/api/notifications/email");
     expect(get.body.enabled).toBe(true);
@@ -677,7 +677,7 @@ describe("/api/notifications/email", () => {
     const created = await request(ctx.app).post("/api/notifications/email/recipients").send({
       address: "sre@example.com", minSeverity: "low", allowedSources: ["manual"], enabled: true,
     });
-    await request(ctx.app).put("/api/notifications/email/global").send({ enabled: true });
+    await request(ctx.app).put("/api/notifications/email").send({ enabled: true });
     const res = await request(ctx.app).post("/api/notifications/email/test").send({ recipientId: created.body.id });
     expect(res.status).toBe(400);
   });
@@ -685,7 +685,7 @@ describe("/api/notifications/email", () => {
   it("POST /test returns 404 for unknown recipient id", async () => {
     const withSmtp = makeEmailApp({ withSmtp: true });
     try {
-      await request(withSmtp.app).put("/api/notifications/email/global").send({ enabled: true });
+      await request(withSmtp.app).put("/api/notifications/email").send({ enabled: true });
       const res = await request(withSmtp.app).post("/api/notifications/email/test").send({ recipientId: 99999 });
       expect(res.status).toBe(404);
     } finally { withSmtp.cleanup(); }
@@ -702,7 +702,7 @@ describe("/api/notifications/email", () => {
       const jsonT = nodemailer.createTransport({ jsonTransport: true });
       const spy = vi.spyOn(nodemailer, "createTransport").mockReturnValue(jsonT);
       try {
-        await request(withSmtp.app).put("/api/notifications/email/global").send({ enabled: true });
+        await request(withSmtp.app).put("/api/notifications/email").send({ enabled: true });
         const created = await request(withSmtp.app).post("/api/notifications/email/recipients").send({
           address: "crit@example.com", minSeverity: "critical", allowedSources: ["manual"], enabled: true,
         });
@@ -721,7 +721,7 @@ describe("/api/notifications/email", () => {
       (failTransport as any).sendMail = async () => { throw Object.assign(new Error("auth failure"), { responseCode: 535 }); };
       const spy = vi.spyOn(nodemailer, "createTransport").mockReturnValue(failTransport);
       try {
-        await request(withSmtp.app).put("/api/notifications/email/global").send({ enabled: true });
+        await request(withSmtp.app).put("/api/notifications/email").send({ enabled: true });
         const created = await request(withSmtp.app).post("/api/notifications/email/recipients").send({
           address: "a@example.com", minSeverity: "low", allowedSources: ["manual"], enabled: true,
         });
@@ -752,7 +752,7 @@ describe("/api/notifications slack onScanComplete", () => {
   it("defaults onScanComplete to 'hits-only' in GET response when unset", async () => {
     const res = await request(ctx.app).get("/api/notifications");
     expect(res.status).toBe(200);
-    expect(res.body.slack.onScanComplete.value).toBe("hits-only");
+    expect(res.body.slack.onScanComplete).toBe("hits-only");
   });
 
   it("saves notifications.slack.onScanComplete via PUT /api/notifications", async () => {
@@ -761,7 +761,7 @@ describe("/api/notifications slack onScanComplete", () => {
     });
     expect(put.status).toBe(200);
     const get = await request(ctx.app).get("/api/notifications");
-    expect(get.body.slack.onScanComplete.value).toBe("always");
+    expect(get.body.slack.onScanComplete).toBe("always");
   });
 
   it("accepts 'off' for onScanComplete", async () => {
@@ -770,7 +770,7 @@ describe("/api/notifications slack onScanComplete", () => {
     });
     expect(put.status).toBe(200);
     const get = await request(ctx.app).get("/api/notifications");
-    expect(get.body.slack.onScanComplete.value).toBe("off");
+    expect(get.body.slack.onScanComplete).toBe("off");
   });
 
   it("rejects invalid onScanComplete values", async () => {
@@ -791,7 +791,7 @@ describe("/api/notifications slack onScanComplete", () => {
     });
     expect(put.status).toBe(200);
     const get = await request(ctx.app).get("/api/notifications");
-    expect(get.body.slack.onScanComplete.value).toBe("always");
+    expect(get.body.slack.onScanComplete).toBe("always");
   });
 });
 

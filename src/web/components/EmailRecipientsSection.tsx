@@ -26,11 +26,6 @@ export interface EmailRecipientsSectionHandle {
 interface Props {
   stackFetch: (path: string, init?: RequestInit) => Promise<Response>;
   onOpenEditor: (recipient: Recipient | null) => void;
-  activeStackName?: string;
-  /** When "global", filter the rendered recipient list to scope === "global" rows only. */
-  mode?: "stack" | "global";
-  /** When true, the master enable toggle PUTs to /api/notifications/email/global instead of /api/notifications/email. */
-  globalMode?: boolean;
 }
 
 const SOURCE_LABELS: Record<NotificationSource, string> = {
@@ -53,7 +48,7 @@ const SEVERITY_LABELS: Record<Recipient["minSeverity"], string> = {
 const LABEL_CLASS =
   "font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/60";
 
-export const EmailRecipientsSection = forwardRef<EmailRecipientsSectionHandle, Props>(function EmailRecipientsSection({ stackFetch, onOpenEditor, activeStackName, mode = "stack", globalMode = false }, ref) {
+export const EmailRecipientsSection = forwardRef<EmailRecipientsSectionHandle, Props>(function EmailRecipientsSection({ stackFetch, onOpenEditor }, ref) {
   const [cfg, setCfg] = useState<EmailConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -63,18 +58,12 @@ export const EmailRecipientsSection = forwardRef<EmailRecipientsSectionHandle, P
   const refreshRequestRef = useRef(0);
   const previousStackFetchRef = useRef(stackFetch);
 
-  // In global mode, pull from the global-only endpoint so the master enable
-  // toggle and recipients list reflect the global layer rather than the
-  // per-stack effective view (which would mask a global edit when the active
-  // stack has its own override).
-  const fetchUrl = globalMode ? "/api/notifications/email/global" : "/api/notifications/email";
-
   const refresh = useCallback(async () => {
     const requestId = ++refreshRequestRef.current;
     setLoading(true);
     setError(null);
     try {
-      const res = await stackFetch(fetchUrl);
+      const res = await stackFetch("/api/notifications/email");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const nextCfg = await res.json();
       if (requestId === refreshRequestRef.current) setCfg(nextCfg);
@@ -85,7 +74,7 @@ export const EmailRecipientsSection = forwardRef<EmailRecipientsSectionHandle, P
     } finally {
       if (requestId === refreshRequestRef.current) setLoading(false);
     }
-  }, [stackFetch, fetchUrl]);
+  }, [stackFetch]);
 
   useImperativeHandle(ref, () => ({ refresh }), [refresh]);
   useEffect(() => {
@@ -101,8 +90,7 @@ export const EmailRecipientsSection = forwardRef<EmailRecipientsSectionHandle, P
     if (togglingGlobal) return;
     setTogglingGlobal(true);
     try {
-      const path = globalMode ? "/api/notifications/email/global" : "/api/notifications/email";
-      const res = await stackFetch(path, {
+      const res = await stackFetch("/api/notifications/email", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled }),
@@ -152,9 +140,7 @@ export const EmailRecipientsSection = forwardRef<EmailRecipientsSectionHandle, P
   if (error) return <div className="font-mono text-xs text-destructive">Error: {error}</div>;
   if (!cfg) return <></>;
 
-  const visibleRecipients = mode === "global"
-    ? cfg.recipients.filter((r) => r.scope === "global")
-    : cfg.recipients;
+  const visibleRecipients = cfg.recipients;
 
   return (
     <section aria-label="Email notifications" className="mt-8">
@@ -234,11 +220,6 @@ export const EmailRecipientsSection = forwardRef<EmailRecipientsSectionHandle, P
                       </span>
                     ))}
                   </div>
-                  {r.scope === "stack" && (
-                    <span className="font-mono text-[10px] text-primary/70 px-1.5">
-                      stack: {activeStackName ?? "this stack"}
-                    </span>
-                  )}
                   <input
                     type="checkbox"
                     checked={r.enabled}
