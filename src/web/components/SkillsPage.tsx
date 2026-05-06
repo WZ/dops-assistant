@@ -212,6 +212,18 @@ export function SkillsPage() {
         </div>
       </div>
 
+      <div className="mb-5 rounded-lg border border-border/40 bg-card/40 px-4 py-3 flex items-start gap-3 animate-fade-in max-w-4xl">
+        <span aria-hidden className="text-base mt-0.5">🌐</span>
+        <div>
+          <div className="font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-foreground/80">
+            Global — visible to all stacks
+          </div>
+          <p className="text-xs text-muted-foreground/70 mt-0.5 max-w-xl">
+            Skills are shared across stacks. Edits here affect every stack. The enable toggle is per-stack — turn a skill off on one stack without affecting the others.
+          </p>
+        </div>
+      </div>
+
       <div className="max-w-4xl">
           {skills.length === 0 ? (
             <div className="text-center py-12 animate-fade-in">
