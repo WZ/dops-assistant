@@ -15,6 +15,8 @@ interface Props {
   config: SlackConfig;
   onClose: () => void;
   onSaved: () => void;
+  /** Path the editor PUTs to. Defaults to per-stack route. */
+  putPath?: string;
 }
 
 const LABEL_CLASS =
@@ -22,7 +24,7 @@ const LABEL_CLASS =
 const INPUT_CLASS =
   "w-full h-9 px-3 rounded-lg border border-border/40 bg-background/40 text-xs text-foreground placeholder:text-muted-foreground/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
-export function SlackEditor({ stackFetch, config, onClose, onSaved }: Props) {
+export function SlackEditor({ stackFetch, config, onClose, onSaved, putPath = "/api/notifications" }: Props) {
   const [urlInput, setUrlInput] = useState(config.webhookUrl ?? "");
   const [onScanComplete, setOnScanComplete] = useState<OnScanCompleteMode>(config.onScanComplete);
   const [showUrl, setShowUrl] = useState(false);
@@ -40,7 +42,7 @@ export function SlackEditor({ stackFetch, config, onClose, onSaved }: Props) {
     }
     setSaving(true);
     try {
-      const res = await stackFetch("/api/notifications", {
+      const res = await stackFetch(putPath, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

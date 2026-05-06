@@ -51,6 +51,24 @@ describe("EmailRecipientsSection", () => {
     };
   }
 
+  it("with mode='global', filters out stack-pinned rows", async () => {
+    render(
+      <Wrapper>
+        <EmailRecipientsSection
+          stackFetch={makeStackFetch("alpha")}
+          onOpenEditor={() => {}}
+          activeStackName="alpha"
+          mode="global"
+        />
+      </Wrapper>,
+    );
+    await waitFor(() => {
+      expect(screen.getByText("g@example.com")).toBeDefined();
+    });
+    // Stack-pinned recipient should not appear in global mode
+    expect(screen.queryByText("p@example.com")).toBeNull();
+  });
+
   it("shows inline 'stack:' label only on stack-pinned rows; global rows show no scope marker", async () => {
     const { container } = render(
       <Wrapper>

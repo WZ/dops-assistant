@@ -23,6 +23,8 @@ interface Props {
   onClose: () => void;
   onSaved: () => void;
   activeStackName?: string;
+  /** Default scope for new recipients when no `existing` is provided. */
+  defaultScope?: "global" | "stack";
 }
 
 const SOURCE_HELP: Record<Source, string> = {
@@ -40,13 +42,13 @@ const LABEL_CLASS =
 const INPUT_CLASS =
   "w-full h-9 px-3 rounded-lg border border-border/40 bg-background/40 text-xs text-foreground placeholder:text-muted-foreground/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
-export function EmailRecipientEditor({ stackFetch, existing, onClose, onSaved, activeStackName }: Props) {
+export function EmailRecipientEditor({ stackFetch, existing, onClose, onSaved, activeStackName, defaultScope }: Props) {
   const [address, setAddress] = useState(existing?.address ?? "");
   const [label, setLabel] = useState(existing?.label ?? "");
   const [minSeverity, setMinSeverity] = useState<Severity>(existing?.minSeverity ?? "high");
   const [sources, setSources] = useState<Set<Source>>(new Set(existing?.allowedSources ?? ["webhook", "scan", "poller"]));
   const [enabled, setEnabled] = useState(existing?.enabled ?? true);
-  const [scope, setScope] = useState<"global" | "stack">(existing?.scope ?? "stack");
+  const [scope, setScope] = useState<"global" | "stack">(existing?.scope ?? defaultScope ?? "stack");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

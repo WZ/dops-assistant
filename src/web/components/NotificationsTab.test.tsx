@@ -82,6 +82,61 @@ describe("NotificationsTab", () => {
     });
   });
 
+  it("flips into global-edit mode via chip menu and PUTs to /api/notifications/global", async () => {
+    fetchImpl.mockImplementation(async (url: any, init?: any) => {
+      const u = String(url);
+      const method = init?.method ?? "GET";
+      if (u.endsWith("/api/notifications") && method === "GET") {
+        return new Response(JSON.stringify(baseView), { status: 200 });
+      }
+      if (u.endsWith("/api/notifications/global") && method === "PUT") {
+        return new Response("{}", { status: 200 });
+      }
+      if (u.endsWith("/api/notifications") && method === "PUT") {
+        return new Response("{}", { status: 200 });
+      }
+      if (u.endsWith("/api/notifications/email/recipients")) {
+        return new Response("[]", { status: 200 });
+      }
+      if (u.endsWith("/api/notifications/email")) {
+        return new Response(JSON.stringify({ enabled: false, recipients: [] }), { status: 200 });
+      }
+      return new Response("{}", { status: 200 });
+    });
+
+    render(<Wrapper stackId="alpha"><NotificationsTab /></Wrapper>);
+
+    // Wait for the initial chip ("Global") to render
+    const chip = await screen.findByRole("button", { name: /Global/ });
+    fireEvent.click(chip);
+
+    // Click "Edit global defaults…"
+    const editGlobal = await screen.findByText(/Edit global defaults/);
+    fireEvent.click(editGlobal);
+
+    // Banner copy now reads "Editing global defaults"
+    await waitFor(() => {
+      expect(screen.getByText(/Editing global defaults/i)).toBeDefined();
+    });
+
+    // Toggle slack enabled — should hit /api/notifications/global
+    // Slack toggle is the first switch in the rendered output (Email enabled is second).
+    const slackToggle = screen.getAllByRole("switch")[0]!;
+    fireEvent.click(slackToggle);
+
+    await waitFor(() => {
+      const globalPuts = fetchImpl.mock.calls.filter(([u, init]: any) =>
+        String(u).endsWith("/api/notifications/global") && init?.method === "PUT"
+      );
+      expect(globalPuts.length).toBe(1);
+      // Make sure we didn't accidentally hit the per-stack path
+      const stackPuts = fetchImpl.mock.calls.filter(([u, init]: any) =>
+        String(u).endsWith("/api/notifications") && init?.method === "PUT"
+      );
+      expect(stackPuts.length).toBe(0);
+    });
+  });
+
   // Regression: switching the active stack must trigger a refetch with the new X-Stack-Id.
   // Mirrors the pattern shipped in SkillsPage.test.tsx.
   it("refetches /api/notifications when the active stack changes", async () => {

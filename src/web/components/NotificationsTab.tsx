@@ -4,7 +4,7 @@ import { useStackContext } from "../contexts/StackContext";
 import { EmailRecipientsSection, type EmailRecipientsSectionHandle, type Recipient } from "./EmailRecipientsSection.js";
 import { EmailRecipientEditor } from "./EmailRecipientEditor.js";
 import { SlackEditor } from "./SlackEditor.js";
-import { ScopeChip } from "./ScopeChip.js";
+import { ScopeChip, type ScopeChipAction } from "./ScopeChip.js";
 
 type FieldSource = "override" | "global" | "config" | "default";
 interface FieldWithSource<T> { value: T; source: FieldSource; }
@@ -59,7 +59,10 @@ export function NotificationsTab({ activeStackName }: NotificationsTabProps = {}
   const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
   const [editorMode, setEditorMode] = useState<EditorMode>("none");
   const [editingRecipient, setEditingRecipient] = useState<Recipient | null>(null);
+  const [mode, setMode] = useState<"stack" | "global">("stack");
   const recipientsRef = useRef<EmailRecipientsSectionHandle>(null);
+
+  const slackPutPath = mode === "global" ? "/api/notifications/global" : "/api/notifications";
 
   const fetchConfig = useCallback(async () => {
     try {
@@ -77,7 +80,7 @@ export function NotificationsTab({ activeStackName }: NotificationsTabProps = {}
     const next = !view.slack.enabled.value;
     setTogglingEnabled(true);
     try {
-      const res = await stackFetch("/api/notifications", {
+      const res = await stackFetch(slackPutPath, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ slack: { enabled: next } }),
@@ -131,6 +134,7 @@ export function NotificationsTab({ activeStackName }: NotificationsTabProps = {}
     return (
       <SlackEditor
         stackFetch={stackFetch}
+        putPath={slackPutPath}
         config={{
           webhookUrl: view.slack.webhookUrl.value,
           enabled: view.slack.enabled.value,
@@ -151,6 +155,7 @@ export function NotificationsTab({ activeStackName }: NotificationsTabProps = {}
         stackFetch={stackFetch}
         existing={editingRecipient}
         activeStackName={activeStackName}
+        defaultScope={mode === "global" ? "global" : undefined}
         onClose={() => { setEditorMode("none"); setEditingRecipient(null); }}
         onSaved={() => {
           setEditorMode("none");
@@ -172,17 +177,41 @@ export function NotificationsTab({ activeStackName }: NotificationsTabProps = {}
     view.email.enabled.source,
   ];
   const overrideCount = sources.filter((s) => s === "override").length;
-  const chipKind: "global" | "override" = overrideCount > 0 ? "override" : "global";
+
+  const chipActions: ScopeChipAction[] = [];
+  if (mode === "stack") {
+    chipActions.push({ label: "Edit global defaults…", onSelect: () => setMode("global") });
+    if (overrideCount > 0) {
+      chipActions.push({ label: "Reset all to global", onSelect: () => void resetAll(), destructive: true });
+    }
+  } else {
+    chipActions.push({ label: "← Back to stack view", onSelect: () => setMode("stack") });
+  }
+
+  const chipKind: "global" | "override" =
+    mode === "global" ? "override" : (overrideCount > 0 ? "override" : "global");
   const chipLabel =
-    overrideCount === 0
+    mode === "global"
+      ? "Editing global"
+      : overrideCount === 0
       ? undefined
       : overrideCount === sources.length
       ? undefined
       : `Mixed (${overrideCount})`;
+
+  const bannerHeading =
+    mode === "global"
+      ? "Editing global defaults — applies to all stacks"
+      : `Showing effective settings for: ${stackDisplay}`;
   const bannerCopy =
-    chipKind === "global"
+    mode === "global"
+      ? "Changes here update the org-wide defaults. Stacks with their own overrides will not be affected."
+      : overrideCount === 0
       ? "All values come from the global defaults. Edits will create per-stack overrides for this stack."
       : `${overrideCount} of ${sources.length} values are overridden for this stack. Edits create more overrides; use the chip menu to revert.`;
+  const bannerClasses = mode === "global"
+    ? "border-amber-500/40 bg-amber-500/5"
+    : "border-border/40 bg-card/40";
 
   return (
     <div>
@@ -195,11 +224,11 @@ export function NotificationsTab({ activeStackName }: NotificationsTabProps = {}
       </div>
 
       {/* Effective-settings banner */}
-      <div className="mb-5 rounded-lg border border-border/40 bg-card/40 px-4 py-3 flex items-start gap-3 animate-fade-in">
+      <div className={`mb-5 rounded-lg border px-4 py-3 flex items-start gap-3 animate-fade-in ${bannerClasses}`}>
         <span aria-hidden className="text-base mt-0.5">🌐</span>
         <div className="flex-1">
           <div className="font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-foreground/80">
-            Showing effective settings for: {stackDisplay}
+            {bannerHeading}
           </div>
           <p className="text-xs text-muted-foreground/70 mt-0.5 max-w-xl">
             {bannerCopy}
@@ -208,9 +237,7 @@ export function NotificationsTab({ activeStackName }: NotificationsTabProps = {}
         <ScopeChip
           kind={chipKind}
           label={chipLabel}
-          actions={overrideCount > 0
-            ? [{ label: "Reset all to global", onSelect: () => void resetAll(), destructive: true }]
-            : undefined}
+          actions={chipActions.length > 0 ? chipActions : undefined}
         />
       </div>
 
@@ -317,6 +344,8 @@ export function NotificationsTab({ activeStackName }: NotificationsTabProps = {}
         ref={recipientsRef}
         stackFetch={stackFetch}
         activeStackName={activeStackName}
+        mode={mode}
+        globalMode={mode === "global"}
         onOpenEditor={(r) => { setEditingRecipient(r); setEditorMode("email"); }}
       />
     </div>
