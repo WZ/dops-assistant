@@ -205,6 +205,13 @@ config:
     storage: libsql
     dbPath: /app/data/memory.db
 
+  # Keep operator-added skill markdown files on the PVC. The schema default
+  # is `./skills` which resolves to /app/skills (cwd) — ephemeral container
+  # storage that gets wiped on pod restart. The init container ensures this
+  # directory exists.
+  skills:
+    dir: /app/data/skills
+
   observability:
     port: 9090
     logLevel: info
