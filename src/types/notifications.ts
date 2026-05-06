@@ -15,6 +15,8 @@ export interface EmailRecipient {
   minSeverity: SeverityLevel;
   allowedSources: NotificationSource[];
   enabled: boolean;
+  stackId?: string | null;
+  scope?: "global" | "stack";
   createdAt: string;
   updatedAt: string;
 }

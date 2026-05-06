@@ -25,8 +25,6 @@ const SCAN_MODE_LABEL: Record<OnScanCompleteMode, string> = {
 
 function maskWebhook(url: string | null): string {
   if (!url) return "Not configured";
-  // Slack webhook URLs are like https://hooks.slack.com/services/T.../B.../xxxx
-  // Show host + first segment, mask the rest.
   try {
     const u = new URL(url);
     const segments = u.pathname.split("/").filter(Boolean);
@@ -154,7 +152,6 @@ export function NotificationsTab() {
 
   return (
     <div>
-      {/* Title row */}
       <div className="mb-6 animate-fade-up">
         <h1 className="font-display text-2xl font-extrabold tracking-tight text-foreground/90">Notifications</h1>
         <p className="text-xs font-mono text-muted-foreground/70 mt-1 tracking-wide">
@@ -162,7 +159,18 @@ export function NotificationsTab() {
         </p>
       </div>
 
-      {/* Section: SLACK */}
+      <div className="mb-5 rounded-lg border border-border/40 bg-card/40 px-4 py-3 flex items-start gap-3 animate-fade-in">
+        <span aria-hidden className="text-base mt-0.5">🌐</span>
+        <div>
+          <div className="font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-foreground/80">
+            Global — applies to all stacks
+          </div>
+          <p className="text-xs text-muted-foreground/70 mt-0.5 max-w-xl">
+            Per-stack notification settings aren&apos;t supported yet. Edits here affect every stack.
+          </p>
+        </div>
+      </div>
+
       <section aria-label="Slack notifications" className="mb-6">
         <div className="flex items-center gap-2 mb-3">
           <div className="w-0.5 h-3.5 rounded-full bg-primary/60" />
@@ -175,7 +183,6 @@ export function NotificationsTab() {
         </div>
 
         <div className="rounded-lg border border-border/40 bg-card/50 p-4 space-y-4">
-          {/* Enable toggle */}
           <div className="flex items-center justify-between">
             <div>
               <label className={LABEL_CLASS}>Enabled</label>
@@ -189,17 +196,12 @@ export function NotificationsTab() {
               aria-checked={slack.enabled}
               disabled={togglingEnabled}
               onClick={() => void toggleSlackEnabled()}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                slack.enabled ? "bg-primary" : "bg-muted-foreground/20"
-              }`}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${slack.enabled ? "bg-primary" : "bg-muted-foreground/20"}`}
             >
-              <span className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
-                slack.enabled ? "translate-x-6" : "translate-x-1"
-              }`} />
+              <span className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${slack.enabled ? "translate-x-6" : "translate-x-1"}`} />
             </button>
           </div>
 
-          {/* Webhook row — mirrors Email recipients list */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className={LABEL_CLASS}>Webhook</label>
@@ -211,7 +213,6 @@ export function NotificationsTab() {
                 {slackConfigured ? "Edit webhook" : "+ Add webhook"}
               </Button>
             </div>
-
             {!slackConfigured ? (
               <div className="rounded-md border border-border/40 bg-background/40 px-4 py-6 font-mono text-xs text-muted-foreground/60 text-center">
                 No webhook configured
@@ -246,11 +247,7 @@ export function NotificationsTab() {
           </div>
 
           {testResult && (
-            <div className={`text-xs font-mono px-3 py-2 rounded-md ${
-              testResult.ok
-                ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                : "bg-destructive/10 text-destructive"
-            }`}>
+            <div className={`text-xs font-mono px-3 py-2 rounded-md ${testResult.ok ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-destructive/10 text-destructive"}`}>
               {testResult.ok ? "Test notification sent successfully" : testResult.error}
             </div>
           )}

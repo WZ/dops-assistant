@@ -200,11 +200,6 @@ export function ScanTab() {
     );
   }
 
-  const allFromConfig =
-    settings?.source.enabled === "config" &&
-    settings.source.cron === "config" &&
-    settings.source.timezone === "config";
-
   return (
     <div>
       {/* Title row: h1 + subtitle on the left, Save (and any error) on the right */}
@@ -231,6 +226,19 @@ export function ScanTab() {
         </div>
       </div>
 
+      {/* Global banner — per-stack scan settings not yet supported */}
+      <div className="mb-5 rounded-lg border border-border/40 bg-card/40 px-4 py-3 flex items-start gap-3 animate-fade-in">
+        <span aria-hidden className="text-base mt-0.5">🌐</span>
+        <div>
+          <div className="font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-foreground/80">
+            Global — applies to all stacks
+          </div>
+          <p className="text-xs text-muted-foreground/70 mt-0.5 max-w-xl">
+            Per-stack scan settings aren&apos;t supported yet. Edits here affect every stack.
+          </p>
+        </div>
+      </div>
+
       {/* Section: SCAN */}
       <section aria-label="Proactive scan" className="mb-8">
         <div className="flex items-center gap-2 mb-2">
@@ -238,11 +246,6 @@ export function ScanTab() {
           <h2 className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/60">
             Proactive Scan
           </h2>
-          {allFromConfig && (
-            <span className="font-mono text-[9px] text-muted-foreground/40 ml-1">
-              (all from config.yaml)
-            </span>
-          )}
         </div>
 
         <p className="text-xs text-muted-foreground/60 mb-3 max-w-2xl">

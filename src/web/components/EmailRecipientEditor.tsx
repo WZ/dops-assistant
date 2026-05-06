@@ -13,6 +13,8 @@ interface Recipient {
   minSeverity: Severity;
   allowedSources: Source[];
   enabled: boolean;
+  stackId?: string | null;
+  scope?: "global" | "stack";
 }
 
 interface Props {

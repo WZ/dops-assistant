@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Plus, FilePlus } from "lucide-react";
@@ -85,20 +85,28 @@ Infrastructure-level issues suspected.
 };
 
 export function SkillsPage() {
-  const { stackFetch } = useStackContext();
+  const { activeStackId, stackFetch } = useStackContext();
   const [skills, setSkills] = useState<SkillMeta[]>([]);
   const [editing, setEditing] = useState<SkillFull | null>(null);
   const [creating, setCreating] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
+  const skillsRequestRef = useRef(0);
 
-  const fetchSkills = () => {
-    stackFetch("/api/skills")
-      .then((r) => r.ok ? r.json() : [])
-      .then(setSkills)
-      .catch(() => {});
-  };
+  const fetchSkills = useCallback(async () => {
+    const requestId = ++skillsRequestRef.current;
+    try {
+      const res = await stackFetch("/api/skills");
+      const nextSkills = res.ok ? await res.json() : [];
+      if (requestId === skillsRequestRef.current) setSkills(nextSkills);
+    } catch { /* ignore */ }
+  }, [stackFetch]);
 
-  useEffect(() => { fetchSkills(); }, []);
+  useEffect(() => {
+    setSkills([]);
+    setEditing(null);
+    setCreating(false);
+    void fetchSkills();
+  }, [activeStackId, fetchSkills]);
 
   const handleEdit = async (id: string) => {
     try {
@@ -201,6 +209,18 @@ export function SkillsPage() {
               ))}
             </div>
           )}
+        </div>
+      </div>
+
+      <div className="mb-5 rounded-lg border border-border/40 bg-card/40 px-4 py-3 flex items-start gap-3 animate-fade-in max-w-4xl">
+        <span aria-hidden className="text-base mt-0.5">🌐</span>
+        <div>
+          <div className="font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-foreground/80">
+            Global — visible to all stacks
+          </div>
+          <p className="text-xs text-muted-foreground/70 mt-0.5 max-w-xl">
+            Skills are shared across stacks. Edits here affect every stack. The enable toggle is per-stack — turn a skill off on one stack without affecting the others.
+          </p>
         </div>
       </div>
 

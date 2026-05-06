@@ -1,4 +1,4 @@
-import { useEffect, useState, forwardRef, useImperativeHandle } from "react";
+import { useCallback, useEffect, useRef, useState, forwardRef, useImperativeHandle } from "react";
 import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { NotificationSource, SeverityLevel } from "../../types/notifications.js";
@@ -10,6 +10,8 @@ export interface Recipient {
   minSeverity: SeverityLevel;
   allowedSources: NotificationSource[];
   enabled: boolean;
+  stackId?: string | null;
+  scope?: "global" | "stack";
 }
 
 interface EmailConfig {
@@ -53,23 +55,36 @@ export const EmailRecipientsSection = forwardRef<EmailRecipientsSectionHandle, P
   const [togglingGlobal, setTogglingGlobal] = useState(false);
   const [testingId, setTestingId] = useState<number | null>(null);
   const [testResult, setTestResult] = useState<{ id: number; ok: boolean; msg: string } | null>(null);
+  const refreshRequestRef = useRef(0);
+  const previousStackFetchRef = useRef(stackFetch);
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
+    const requestId = ++refreshRequestRef.current;
     setLoading(true);
     setError(null);
     try {
       const res = await stackFetch("/api/notifications/email");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setCfg(await res.json());
+      const nextCfg = await res.json();
+      if (requestId === refreshRequestRef.current) setCfg(nextCfg);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load email config");
+      if (requestId === refreshRequestRef.current) {
+        setError(e instanceof Error ? e.message : "Failed to load email config");
+      }
     } finally {
-      setLoading(false);
+      if (requestId === refreshRequestRef.current) setLoading(false);
     }
-  };
+  }, [stackFetch]);
 
-  useImperativeHandle(ref, () => ({ refresh }));
-  useEffect(() => { void refresh(); }, []);
+  useImperativeHandle(ref, () => ({ refresh }), [refresh]);
+  useEffect(() => {
+    if (previousStackFetchRef.current !== stackFetch) {
+      previousStackFetchRef.current = stackFetch;
+      setCfg(null);
+      setTestResult(null);
+    }
+    void refresh();
+  }, [refresh, stackFetch]);
 
   const toggleGlobal = async (enabled: boolean) => {
     if (togglingGlobal) return;
@@ -203,14 +218,20 @@ export const EmailRecipientsSection = forwardRef<EmailRecipientsSectionHandle, P
                       </span>
                     ))}
                   </div>
-                  <input
-                    type="checkbox"
-                    checked={r.enabled}
-                    onChange={() => void toggleRow(r)}
-                    onClick={(e) => e.stopPropagation()}
-                    className="accent-primary"
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={r.enabled}
                     aria-label={`Enable ${r.label ?? r.address}`}
-                  />
+                    onClick={(e) => { e.stopPropagation(); void toggleRow(r); }}
+                    className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+                      r.enabled ? "bg-primary" : "bg-muted-foreground/20"
+                    }`}
+                  >
+                    <span className={`inline-block h-3 w-3 rounded-full bg-white transition-transform ${
+                      r.enabled ? "translate-x-5" : "translate-x-1"
+                    }`} />
+                  </button>
                   <Button
                     variant="outline"
                     onClick={(e) => { e.stopPropagation(); void testSend(r); }}

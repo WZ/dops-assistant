@@ -178,12 +178,6 @@ async function main() {
     return emailTransport;
   };
 
-  /**
-   * Build the EmailNotifierDeps envelope used by both per-investigation
-   * notifications (globalOnComplete) and run-level scan notifications
-   * (StackManager.handleScanRunComplete). `isGloballyEnabled` reads the
-   * DB toggle dynamically so GUI changes take effect without a restart.
-   */
   const buildEmailNotifierDeps = (): import("./email-notifier.js").EmailNotifierDeps | null => {
     const emailCfg = config.notifications?.email;
     const transport = getEmailTransport();
@@ -203,9 +197,6 @@ async function main() {
     };
   };
 
-  // Register email deps on the StackManager so handleScanRunComplete can
-  // dispatch run-level scan summary emails. Null-safe — if SMTP is not
-  // configured, email notifications are silently skipped.
   stackManager.setEmailNotifierDeps(buildEmailNotifierDeps());
 
   // Build a global onComplete handler for Slack + email notifications.
@@ -217,14 +208,9 @@ async function main() {
     stackId: string | undefined,
     source: import("../types/notifications.js").NotificationSource,
   ) => {
-    // ── Slack (existing) ────────────────────────────────────────────
     const slackUrl = db.getSetting("notifications.slack.webhookUrl") ?? config.webhook.slackWebhookUrl;
     const slackEnabled = db.getSetting("notifications.slack.enabled");
     if (slackUrl && slackEnabled !== "false") {
-      // The slack-notifier's resolveAppBaseUrl handles the missing-config
-      // case (warns once per process, omits the link) for every Slack
-      // path. Don't re-implement the dedup here — leave the policy in
-      // one place so future callers stay consistent.
       const appBaseUrl = config.notifications?.email?.appBaseUrl;
       notifySlack(
         { slackWebhookUrl: slackUrl, appBaseUrl, stackId },
@@ -234,7 +220,7 @@ async function main() {
       );
     }
 
-    // ── Email (new) ─────────────────────────────────────────────────
+    // ── Email ────────────────────────────────────────────────────────
     const emailDeps = buildEmailNotifierDeps();
     if (emailDeps && emailDeps.isGloballyEnabled()) {
       notifyEmail(emailDeps, investigationId, report, source).catch((err) => {

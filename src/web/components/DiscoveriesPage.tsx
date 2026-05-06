@@ -10,7 +10,7 @@
 // re-run the sanity probe against the current registry's globals. A 409 with
 // kind=registry_advanced asks the user to refresh and re-review.
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useStackContext } from "../contexts/StackContext";
 import { Button } from "@/components/ui/button";
 
@@ -68,36 +68,54 @@ function relativeTime(iso: string): string {
 }
 
 export function DiscoveriesPage({ embedded = false }: DiscoveriesPageProps = {}) {
-  const { stackFetch } = useStackContext();
+  const { activeStackId, stackFetch } = useStackContext();
   const [tab, setTab] = useState<Tab>("additions");
   const [data, setData] = useState<DiscoveriesPayload | null>(null);
   const [dismissed, setDismissed] = useState<DismissedRow[]>([]);
   const [conflict, setConflict] = useState<{ id: string; body: ConflictBody } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const reloadRequestRef = useRef(0);
+  const dismissedRequestRef = useRef(0);
 
-  const reload = async () => {
-    const res = await stackFetch("/api/discoveries");
-    if (res.ok) setData(await res.json());
-  };
+  const reload = useCallback(async () => {
+    const requestId = ++reloadRequestRef.current;
+    try {
+      const res = await stackFetch("/api/discoveries");
+      if (res.ok) {
+        const nextData = await res.json();
+        if (requestId === reloadRequestRef.current) setData(nextData);
+      }
+    } catch { /* ignore */ }
+  }, [stackFetch]);
 
-  const reloadDismissed = async () => {
-    const res = await stackFetch("/api/discoveries/dismissed");
-    if (res.ok) setDismissed(await res.json());
-  };
+  const reloadDismissed = useCallback(async () => {
+    const requestId = ++dismissedRequestRef.current;
+    try {
+      const res = await stackFetch("/api/discoveries/dismissed");
+      if (res.ok) {
+        const nextDismissed = await res.json();
+        if (requestId === dismissedRequestRef.current) setDismissed(nextDismissed);
+      }
+    } catch { /* ignore */ }
+  }, [stackFetch]);
 
   useEffect(() => {
-    reload();
+    setData(null);
+    setDismissed([]);
+    setConflict(null);
+    setError(null);
+    void reload();
     // mark-viewed clears the badge for the qualified rows visible on this page.
     stackFetch("/api/discoveries/mark-viewed", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
     }).catch(() => {});
-  }, []);
+  }, [activeStackId, stackFetch, reload]);
 
   useEffect(() => {
-    if (tab === "dismissed") reloadDismissed();
-  }, [tab]);
+    if (tab === "dismissed") void reloadDismissed();
+  }, [tab, reloadDismissed]);
 
   const onAccept = async (id: string) => {
     setError(null);
@@ -112,7 +130,7 @@ export function DiscoveriesPage({ embedded = false }: DiscoveriesPageProps = {})
       setError(body.error ?? `Accept failed (${res.status})`);
       return;
     }
-    reload();
+    void reload();
   };
 
   const onConfirmRemoval = async (id: string) => {
@@ -122,7 +140,7 @@ export function DiscoveriesPage({ embedded = false }: DiscoveriesPageProps = {})
 
   const onDismiss = async (id: string) => {
     await stackFetch(`/api/discoveries/${id}/dismiss`, { method: "POST" });
-    reload();
+    void reload();
   };
 
   const onDismissAll = async (kind: "addition" | "removal") => {
@@ -143,7 +161,7 @@ export function DiscoveriesPage({ embedded = false }: DiscoveriesPageProps = {})
     const res = await stackFetch(`/api/discoveries/${id}/accept-with-current-globals`, { method: "POST" });
     if (res.ok) {
       setConflict(null);
-      reload();
+      void reload();
     } else {
       const body = await res.json().catch(() => ({}));
       setError(body.error ?? "Re-run failed");
@@ -152,7 +170,7 @@ export function DiscoveriesPage({ embedded = false }: DiscoveriesPageProps = {})
 
   const onRestore = async (id: string) => {
     await stackFetch(`/api/discoveries/dismissed/${id}/restore`, { method: "POST" });
-    reloadDismissed();
+    void reloadDismissed();
   };
 
   const tabLabels: Record<Tab, string> = {
