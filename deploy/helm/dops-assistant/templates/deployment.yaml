@@ -90,6 +90,14 @@ spec:
               else
                 echo "init-config: preserved existing providers.yaml on PVC ($TARGET)"
               fi
+              # Preserve skills directory (operator-added skills survive restarts).
+              # If the directory doesn't exist, create it to ensure skill files can be written.
+              if [ ! -d "{{ .Values.persistence.mountPath }}/skills" ]; then
+                mkdir -p "{{ .Values.persistence.mountPath }}/skills"
+                echo "init-config: created skills directory"
+              else
+                echo "init-config: preserved existing skills directory"
+              fi
           volumeMounts:
             - name: config
               mountPath: /config-src
