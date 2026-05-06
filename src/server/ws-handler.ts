@@ -1019,6 +1019,43 @@ export async function handleClientMessage(
 
     const metricsToolNames = await getMetricsToolNames(stackId, ctx);
 
+    // Short-circuit when no MCP provider is reachable. Without this, the
+    // chat agent runs with an empty tools record (snapshotted at adapter
+    // creation in agents.ts:createMastraAdapters) and the LLM produces a
+    // useless "We need to run a log query" placeholder for any data
+    // question — leaving the user staring at a green-dot UI wondering
+    // why nothing works. Burn no LLM tokens; tell them what's wrong.
+    const reachableProviders = ctx.providerRegistry.getAll()
+      .filter((p) => p.status === "connected" && p.toolCount > 0);
+    if (reachableProviders.length === 0) {
+      const allProviders = ctx.providerRegistry.getAll();
+      const reason = allProviders.length === 0
+        ? "No MCP providers are configured for this stack."
+        : "All MCP providers are unreachable or returned no tools. Check Settings → Providers and click **Test** on each one to see the connection error.";
+      const content = `**Can't answer this** — ${reason}`;
+      const errMsgId = `msg_${ulid()}`;
+      const errMsgTime = new Date().toISOString();
+      memory.append(threadId, { role: "user", content: msg.message });
+      memory.append(threadId, { role: "assistant", content });
+      send({
+        type: "chat:stream_start",
+      });
+      send({
+        type: "chat:stream_end",
+        content,
+        id: errMsgId,
+        createdAt: errMsgTime,
+      });
+      send({
+        type: "chat:usage",
+        inputTokens: 0,
+        outputTokens: 0,
+        durationMs: 0,
+      });
+      db.createMessage(stackId, { id: errMsgId, role: "assistant", content });
+      return;
+    }
+
     const chatTokens = { inputTokens: 0, outputTokens: 0 };
     const chatStartMs = Date.now();
 

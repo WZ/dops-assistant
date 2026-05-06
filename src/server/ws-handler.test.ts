@@ -41,7 +41,12 @@ function mockCtx(): StackContext {
     name: "Default",
     providerRegistry: {
       getProviders: vi.fn().mockReturnValue([]),
-      getAll: vi.fn().mockReturnValue([]),
+      // Default to a single healthy provider so chat tests exercise the
+      // normal LLM path. Tests that need the "no reachable providers"
+      // short-circuit (ws-handler.ts ~line 1020) override this mock.
+      getAll: vi.fn().mockReturnValue([
+        { config: { name: "test", roles: ["metrics"] }, source: "config", status: "connected", toolCount: 1, enabledToolCount: 1 },
+      ]),
       initialize: vi.fn().mockResolvedValue(undefined),
       buildDatasourceUidMap: vi.fn().mockReturnValue(new Map()),
     },
@@ -298,6 +303,37 @@ describe("handleClientMessage", () => {
     if (streamEnd && (streamEnd as any).type === "chat:stream_end") {
       expect((streamEnd as any).serviceContext).toBe("payments-api");
     }
+  });
+
+  it("short-circuits the chat path when no MCP providers are reachable", async () => {
+    // Regression: pre-fix, "0 tools" providers wore a green dot and the
+    // chat agent ran with an empty tools record, so the LLM produced a
+    // useless "We need to run a log query" placeholder. Now we detect
+    // the empty fleet first, post a clear error, and burn no tokens.
+    const deps = mockDeps();
+    const ctx = mockCtx();
+    (ctx.providerRegistry.getAll as ReturnType<typeof vi.fn>).mockReturnValue([
+      { config: { name: "grafana-mcp" }, source: "config", status: "error", toolCount: 0, enabledToolCount: 0, error: "MCP server returned no tools" },
+    ]);
+
+    const messages: unknown[] = [];
+    const send = (msg: unknown) => messages.push(msg);
+
+    await callHandler({ type: "chat", message: "whats the ingestion log rate" }, send as any, deps, ctx);
+
+    const streamEnd = messages.find((m: any) => m.type === "chat:stream_end");
+    expect(streamEnd).toBeDefined();
+    expect((streamEnd as any).content).toMatch(/can't answer/i);
+    expect((streamEnd as any).content).toMatch(/Settings/i);
+
+    // No tokens burned, persisted to DB so it survives reload.
+    const usage = messages.find((m: any) => m.type === "chat:usage");
+    expect((usage as any)?.inputTokens).toBe(0);
+    expect((usage as any)?.outputTokens).toBe(0);
+    expect(deps.db.createMessage).toHaveBeenCalledWith(
+      S,
+      expect.objectContaining({ role: "assistant", content: expect.stringMatching(/can't answer/i) }),
+    );
   });
 
   it("chat:stream_end omits serviceContext when service is only resolvable from history", async () => {

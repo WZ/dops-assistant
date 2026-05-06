@@ -280,6 +280,21 @@ export class ProviderRegistry {
     try {
       const tools = await listProviderTools(entry.provider);
       const toolCount = Object.keys(tools).length;
+
+      // Same reasoning as createAndRegister: 0 tools after a "successful"
+      // listTools means @mastra/mcp swallowed a connection failure. Surface
+      // it instead of pretending we're connected.
+      if (toolCount === 0) {
+        const message = "MCP server returned no tools (likely unreachable or misconfigured)";
+        entry.status = "error";
+        entry.toolCount = 0;
+        entry.error = message;
+        entry.enabledToolCount = 0;
+        entry.toolNames = [];
+        this.emit({ kind: "test", name });
+        return { status: "error", toolCount: 0, error: message };
+      }
+
       entry.status = "connected";
       entry.toolCount = toolCount;
       entry.error = undefined;
@@ -468,6 +483,19 @@ export class ProviderRegistry {
     } catch (err) {
       status = "error";
       error = err instanceof Error ? err.message : String(err);
+    }
+
+    // @mastra/mcp's MCPClient.listTools() catches per-server connection
+    // failures and silently returns {} (see node_modules/@mastra/mcp/dist/
+    // index.js around `async listTools()` — the catch block logs and moves
+    // on). So "connected with 0 tools" is almost always an unreachable
+    // upstream wearing a green sweater, not a server that legitimately
+    // exposes nothing. Reclassify it as an error so the UI dot turns red,
+    // the chat short-circuit fires, and downstream code stops operating
+    // on an empty tool set thinking it succeeded.
+    if (status === "connected" && toolCount === 0) {
+      status = "error";
+      error = "MCP server returned no tools (likely unreachable or misconfigured)";
     }
 
     // Auto-compute default enabledTools if not configured

@@ -59,10 +59,12 @@ describe("ProviderRegistry", () => {
     dir = mkdtempSync(join(tmpdir(), "provider-registry-test-"));
     providersPath = join(dir, "providers.yaml");
 
-    // Default mocks: createMcpProvider returns a fake, listProviderTools returns empty tools
+    // Default mocks: createMcpProvider returns a fake, listProviderTools
+    // returns one tool. Tests that exercise the "0 tools = error" path
+    // opt in by overriding mockListProviderTools to return {} themselves.
     mockCreateMcpProvider.mockImplementation((config: ProviderConfig) => makeFakeProvider(config));
-    mockListProviderTools.mockResolvedValue({});
-    mockListAllProviderTools.mockResolvedValue({});
+    mockListProviderTools.mockResolvedValue({ default_tool: {} });
+    mockListAllProviderTools.mockResolvedValue({ default_tool: {} });
     mockGetToolsWithMetadata.mockResolvedValue([]);
     mockComputeDefaultEnabledTools.mockReturnValue([]);
   });
@@ -103,6 +105,24 @@ describe("ProviderRegistry", () => {
       expect(all[0].status).toBe("error");
       expect(all[0].error).toBe("connection refused");
       expect(all[0].toolCount).toBe(0);
+    });
+
+    // Reclassify "connected with 0 tools" as an error because @mastra/mcp
+    // silently swallows per-server connection failures inside listTools()
+    // (see node_modules/@mastra/mcp/dist/index.js → MCPClient.listTools).
+    // Without this, an unreachable upstream renders as a healthy green
+    // dot in the UI and the chat path runs with an empty tool set.
+    it("treats 0 tools after a 'successful' listTools as an error (init)", async () => {
+      mockListProviderTools.mockResolvedValue({});
+
+      const registry = new ProviderRegistry([makeConfig("silent-fail")], providersPath);
+      await registry.initialize();
+
+      const all = registry.getAll();
+      expect(all).toHaveLength(1);
+      expect(all[0].status).toBe("error");
+      expect(all[0].toolCount).toBe(0);
+      expect(all[0].error).toMatch(/no tools/i);
     });
 
     it("loads GUI providers from providers.yaml on initialize", async () => {
@@ -336,7 +356,7 @@ describe("ProviderRegistry", () => {
     });
 
     it("returns error status on failure", async () => {
-      mockListProviderTools.mockResolvedValue({});
+      mockListProviderTools.mockResolvedValue({ default_tool: {} });
 
       const registry = new ProviderRegistry([makeConfig("grafana")], providersPath);
       await registry.initialize();
@@ -347,6 +367,26 @@ describe("ProviderRegistry", () => {
       expect(result.status).toBe("error");
       expect(result.toolCount).toBe(0);
       expect(result.error).toBe("timeout");
+    });
+
+    // Same heuristic as the init-time check, but on the Test button path:
+    // a click that "succeeds" with zero tools should not flip the dot
+    // green again — that would just hide the connectivity problem.
+    it("treats 0 tools after a 'successful' listTools as an error (test)", async () => {
+      mockListProviderTools.mockResolvedValue({ default_tool: {} });
+
+      const registry = new ProviderRegistry([makeConfig("grafana")], providersPath);
+      await registry.initialize();
+
+      mockListProviderTools.mockResolvedValue({});
+      const result = await registry.test("grafana");
+
+      expect(result.status).toBe("error");
+      expect(result.toolCount).toBe(0);
+      expect(result.error).toMatch(/no tools/i);
+      const entry = registry.getAll().find((p) => p.config.name === "grafana");
+      expect(entry?.status).toBe("error");
+      expect(entry?.toolCount).toBe(0);
     });
 
     it("updates provider status in registry after test", async () => {
