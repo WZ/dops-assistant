@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type JSX } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useStackContext } from "../contexts/StackContext";
 import { EmailRecipientsSection, type EmailRecipientsSectionHandle, type Recipient } from "./EmailRecipientsSection.js";
@@ -48,30 +48,6 @@ type EditorMode = "none" | "slack" | "email";
 
 interface NotificationsTabProps {
   activeStackName?: string;
-}
-
-function chipForField<T>(
-  field: FieldWithSource<T>,
-  onOverride: () => void,
-  onUseGlobal: () => void,
-): JSX.Element {
-  if (field.source === "override") {
-    return (
-      <ScopeChip
-        kind="override"
-        actions={[
-          { label: "Edit override", onSelect: onOverride },
-          { label: "Use global instead", onSelect: onUseGlobal, destructive: true },
-        ]}
-      />
-    );
-  }
-  return (
-    <ScopeChip
-      kind="global"
-      actions={[{ label: "Override for this stack", onSelect: onOverride }]}
-    />
-  );
 }
 
 export function NotificationsTab({ activeStackName }: NotificationsTabProps = {}) {
@@ -135,29 +111,9 @@ export function NotificationsTab({ activeStackName }: NotificationsTabProps = {}
     setTesting(false);
   };
 
-  const clearOverride = async () => {
-    if (!confirm("Revert all per-stack overrides on this tab? This stack will follow the global values for every Notifications field.")) return;
+  const resetAll = async () => {
+    if (!confirm("Reset all per-stack overrides on this tab? This stack will follow the global values for every Notifications field.")) return;
     const res = await stackFetch("/api/notifications/override", { method: "DELETE" });
-    if (res.ok) await fetchConfig();
-  };
-
-  const overrideEnabled = async () => {
-    if (!view) return;
-    const res = await stackFetch("/api/notifications", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ slack: { enabled: view.slack.enabled.value } }),
-    });
-    if (res.ok) await fetchConfig();
-  };
-
-  const overrideOnScanComplete = async () => {
-    if (!view) return;
-    const res = await stackFetch("/api/notifications", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ slack: { onScanComplete: view.slack.onScanComplete.value } }),
-    });
     if (res.ok) await fetchConfig();
   };
 
@@ -209,6 +165,25 @@ export function NotificationsTab({ activeStackName }: NotificationsTabProps = {}
   const slackConfigured = !!slack.webhookUrl.value;
   const stackDisplay = activeStackName ?? activeStackId;
 
+  const sources = [
+    view.slack.webhookUrl.source,
+    view.slack.enabled.source,
+    view.slack.onScanComplete.source,
+    view.email.enabled.source,
+  ];
+  const overrideCount = sources.filter((s) => s === "override").length;
+  const chipKind: "global" | "override" = overrideCount > 0 ? "override" : "global";
+  const chipLabel =
+    overrideCount === 0
+      ? undefined
+      : overrideCount === sources.length
+      ? undefined
+      : `Mixed (${overrideCount})`;
+  const bannerCopy =
+    chipKind === "global"
+      ? "All values come from the global defaults. Edits will create per-stack overrides for this stack."
+      : `${overrideCount} of ${sources.length} values are overridden for this stack. Edits create more overrides; use the chip menu to revert.`;
+
   return (
     <div>
       {/* Title row */}
@@ -222,14 +197,21 @@ export function NotificationsTab({ activeStackName }: NotificationsTabProps = {}
       {/* Effective-settings banner */}
       <div className="mb-5 rounded-lg border border-border/40 bg-card/40 px-4 py-3 flex items-start gap-3 animate-fade-in">
         <span aria-hidden className="text-base mt-0.5">🌐</span>
-        <div>
+        <div className="flex-1">
           <div className="font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-foreground/80">
             Showing effective settings for: {stackDisplay}
           </div>
           <p className="text-xs text-muted-foreground/70 mt-0.5 max-w-xl">
-            Some values are global (apply to all stacks); others are overridden for this stack. Click any chip to override or revert.
+            {bannerCopy}
           </p>
         </div>
+        <ScopeChip
+          kind={chipKind}
+          label={chipLabel}
+          actions={overrideCount > 0
+            ? [{ label: "Reset all to global", onSelect: () => void resetAll(), destructive: true }]
+            : undefined}
+        />
       </div>
 
       {/* Section: SLACK */}
@@ -254,7 +236,6 @@ export function NotificationsTab({ activeStackName }: NotificationsTabProps = {}
               </p>
             </div>
             <div className="flex items-center gap-3">
-              {chipForField(slack.enabled, () => void overrideEnabled(), () => void clearOverride())}
               <button
                 type="button"
                 role="switch"
@@ -277,7 +258,6 @@ export function NotificationsTab({ activeStackName }: NotificationsTabProps = {}
             <div className="flex items-center justify-between mb-2">
               <label className={LABEL_CLASS}>Webhook</label>
               <div className="flex items-center gap-3">
-                {chipForField(slack.webhookUrl, () => setEditorMode("slack"), () => void clearOverride())}
                 <Button
                   variant="outline"
                   onClick={() => setEditorMode("slack")}
@@ -308,13 +288,6 @@ export function NotificationsTab({ activeStackName }: NotificationsTabProps = {}
                   <span className="font-mono px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground text-[10px]">
                     scan: {SCAN_MODE_LABEL[slack.onScanComplete.value]}
                   </span>
-                  <div onClick={(e) => e.stopPropagation()}>
-                    {chipForField(
-                      slack.onScanComplete,
-                      () => void overrideOnScanComplete(),
-                      () => void clearOverride(),
-                    )}
-                  </div>
                   <Button
                     variant="outline"
                     onClick={(e) => { e.stopPropagation(); void handleTest(); }}

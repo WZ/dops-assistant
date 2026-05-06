@@ -37,14 +37,16 @@ describe("NotificationsTab", () => {
     vi.clearAllMocks();
   });
 
-  it("renders [Global] chips when source is global", async () => {
+  it("shows tab-level [Global] chip when all sources are global/default/config", async () => {
     render(<Wrapper stackId="alpha"><NotificationsTab /></Wrapper>);
     await waitFor(() => {
       expect(screen.getAllByText(/Global/i).length).toBeGreaterThan(0);
     });
+    // No per-field "Override" chip should appear when everything is global
+    expect(screen.queryByText(/^Override$/)).toBeNull();
   });
 
-  it("clicking 'Use global instead' on an override calls DELETE /api/notifications/override", async () => {
+  it("clicking 'Reset all to global' on the tab-level chip calls DELETE /api/notifications/override", async () => {
     const overrideView = JSON.parse(JSON.stringify(baseView));
     overrideView.slack.webhookUrl.source = "override";
     fetchImpl.mockImplementation(async (url: any, init?: any) => {
@@ -67,10 +69,10 @@ describe("NotificationsTab", () => {
     window.confirm = vi.fn(() => true);
     render(<Wrapper stackId="alpha"><NotificationsTab /></Wrapper>);
 
-    // Wait for the Override chip to appear
-    const overrideChip = await screen.findByText(/Override/);
-    fireEvent.click(overrideChip);
-    fireEvent.click(await screen.findByText(/Use global instead/));
+    // With one source overridden out of four, the tab chip shows "Mixed (1)"
+    const mixedChip = await screen.findByText(/Mixed \(1\)/);
+    fireEvent.click(mixedChip);
+    fireEvent.click(await screen.findByText(/Reset all to global/));
 
     await waitFor(() => {
       const deleteCalls = fetchImpl.mock.calls.filter(([u, init]: any) =>

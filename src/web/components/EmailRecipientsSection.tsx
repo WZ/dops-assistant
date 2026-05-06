@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState, forwardRef, useImperativeHandle } from "react";
 import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ScopeChip } from "./ScopeChip.js";
 import type { NotificationSource, SeverityLevel } from "../../types/notifications.js";
 
 export interface Recipient {
@@ -108,15 +107,6 @@ export const EmailRecipientsSection = forwardRef<EmailRecipientsSectionHandle, P
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled: !r.enabled }),
-    });
-    if (res.ok) await refresh();
-  };
-
-  const rescope = async (r: Recipient, scope: "global" | "stack") => {
-    const res = await stackFetch(`/api/notifications/email/recipients/${r.id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ scope }),
     });
     if (res.ok) await refresh();
   };
@@ -229,16 +219,11 @@ export const EmailRecipientsSection = forwardRef<EmailRecipientsSectionHandle, P
                       </span>
                     ))}
                   </div>
-                  <div onClick={(e) => e.stopPropagation()}>
-                    <ScopeChip
-                      kind={r.scope === "stack" ? "stack" : "global"}
-                      stackLabel={r.scope === "stack" ? activeStackName : undefined}
-                      actions={r.scope === "stack"
-                        ? [{ label: "Make global", onSelect: () => void rescope(r, "global") }]
-                        : [{ label: `Pin to ${activeStackName ?? "this stack"}`, onSelect: () => void rescope(r, "stack") }]
-                      }
-                    />
-                  </div>
+                  {r.scope === "stack" && (
+                    <span className="font-mono text-[10px] text-primary/70 px-1.5">
+                      stack: {activeStackName ?? "this stack"}
+                    </span>
+                  )}
                   <input
                     type="checkbox"
                     checked={r.enabled}

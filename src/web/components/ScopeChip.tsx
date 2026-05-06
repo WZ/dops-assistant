@@ -13,6 +13,8 @@ interface Props {
   kind: ChipKind;
   /** For "stack" kind on recipient rows, optionally show the stack name. */
   stackLabel?: string;
+  /** Optional override for the chip's display label (e.g. "Mixed (2)"). */
+  label?: string;
   actions?: ScopeChipAction[];
   className?: string;
 }
@@ -23,14 +25,15 @@ const STYLES: Record<ChipKind, string> = {
   stack:    "bg-primary/10 text-primary border-primary/20",
 };
 
-export function ScopeChip({ kind, stackLabel, actions, className = "" }: Props) {
+export function ScopeChip({ kind, stackLabel, label: labelOverride, actions, className = "" }: Props) {
   const [open, setOpen] = useState(false);
   const interactive = (actions?.length ?? 0) > 0;
   const Icon = kind === "global" ? Globe : Bookmark;
   const label =
-    kind === "global"   ? "Global" :
-    kind === "override" ? "Override" :
-                          (stackLabel ? `stack: ${stackLabel}` : "Stack");
+    labelOverride ??
+    (kind === "global"   ? "Global" :
+     kind === "override" ? "Override" :
+                           (stackLabel ? `stack: ${stackLabel}` : "Stack"));
 
   return (
     <div className={`relative inline-block ${className}`}>
