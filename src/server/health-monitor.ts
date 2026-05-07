@@ -81,9 +81,10 @@ function probeMcpFromRegistry(infos: ProviderInfo[]): ProbeResult {
   const summary = errored.length === total
     ? `all ${total} MCP provider${total !== 1 ? "s" : ""} unreachable`
     : `${errored.length} of ${total} MCP providers unreachable`;
-  // Prefer a representative upstream error message when one is set;
-  // otherwise fall back to the count-based summary.
-  const error = errored[0]?.error ?? summary;
+  // Keep the count-based summary first; individual registry errors are often
+  // generic ("MCP server returned no tools") and otherwise hide the outage size.
+  const providerError = errored.find((p) => p.error)?.error;
+  const error = providerError ? `${summary}: ${providerError}` : summary;
   return { status: "error", latencyMs: 0, error };
 }
 

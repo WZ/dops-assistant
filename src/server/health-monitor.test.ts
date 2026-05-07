@@ -121,7 +121,10 @@ describe("health monitor", () => {
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
       status: "degraded",
       probes: expect.objectContaining({
-        mcp: expect.objectContaining({ status: "error" }),
+        mcp: expect.objectContaining({
+          status: "error",
+          error: expect.stringContaining("all 2 MCP providers unreachable"),
+        }),
       }),
     }));
   });
@@ -159,6 +162,27 @@ describe("health monitor", () => {
     const payload = (res.json as any).mock.calls[0][0];
     expect(payload.probes.mcp.status).toBe("error");
     expect(payload.probes.mcp.error).toMatch(/1 of 2/);
+  });
+
+  it("keeps the provider-count summary when registry errors are generic", async () => {
+    const stackManager = mockStackManager([
+      makeInfo({ name: "grafana", status: "connected", toolCount: 5 }),
+      makeInfo({
+        name: "loki",
+        status: "error",
+        toolCount: 0,
+        error: "MCP server returned no tools (likely unreachable or misconfigured)",
+      }),
+    ]);
+    startHealthMonitor({ stackManager, db: mockDb() }, 60_000);
+    await new Promise(r => setTimeout(r, 50));
+
+    const res = mockRes();
+    healthHandler({} as Request, res);
+
+    const payload = (res.json as any).mock.calls[0][0];
+    expect(payload.probes.mcp.error).toContain("1 of 2 MCP providers unreachable");
+    expect(payload.probes.mcp.error).toContain("MCP server returned no tools");
   });
 });
 
