@@ -38,6 +38,20 @@ export interface StackSummary {
     total: number;
   };
   providerCount: number;
+  /**
+   * Health rollup of MCP providers for this stack. `ok` counts providers
+   * in `connected` status with tools; `error` counts providers the
+   * registry has marked unreachable (including the "0 tools = error"
+   * case in src/mcp/provider-registry.ts). The dropdown badge reads
+   * this — `providerCount` alone hides the difference between "3
+   * configured" and "3 configured but all dead". Optional so legacy
+   * callers (and stacks that haven't been initialized yet) keep working.
+   */
+  providerHealth?: {
+    ok: number;
+    error: number;
+    total: number;
+  };
   createdAt: string;
   /** "active" normally, "inactive" once the stack has been idle for ~30 days. */
   status: StackStatus;

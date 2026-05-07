@@ -31,6 +31,12 @@ vi.mock("../mcp/provider-registry.js", () => {
     getProviders = vi.fn(() => this.seeded);
     getAll = vi.fn(() => this.seeded.map((config) => ({
       config,
+      // Default seeded providers to "connected with one tool" so listStacks()
+      // computes a sensible providerHealth rollup. Tests that exercise the
+      // unreachable path override getAll on the instance directly.
+      status: "connected",
+      toolCount: 1,
+      enabledToolCount: 1,
       prometheusDatasourceUid: (config as { prometheusDatasourceUid?: string; roles?: string[] }).prometheusDatasourceUid
         ?? ((config as { roles?: string[] }).roles?.includes("metrics") ? "prom-ds" : undefined),
     })));
@@ -436,6 +442,25 @@ describe("StackManager", () => {
       expect(usEast.providerCount).toBe(2);
       expect(usEast.healthSummary).toBeDefined();
       expect(usEast.createdAt).toBeDefined();
+    });
+
+    it("includes a providerHealth rollup that reflects registry status", async () => {
+      manager = new StackManager(db, config);
+      await manager.initialize();
+
+      // Override the default stack's registry to simulate one connected and
+      // one unreachable provider — the rollup should report ok=1, error=1.
+      const ctx = manager.getDefaultContext();
+      const registry = ctx.providerRegistry as unknown as {
+        getAll: () => Array<{ config: unknown; status: string; toolCount: number }>;
+      };
+      registry.getAll = () => [
+        { config: { name: "good" }, status: "connected", toolCount: 5 },
+        { config: { name: "bad" }, status: "error", toolCount: 0 },
+      ];
+
+      const summary = manager.listStacks().find((s) => s.isDefault)!;
+      expect(summary.providerHealth).toEqual({ ok: 1, error: 1, total: 2 });
     });
   });
 

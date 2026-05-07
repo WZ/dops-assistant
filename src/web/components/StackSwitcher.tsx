@@ -15,7 +15,14 @@ interface StackSwitcherProps {
   onNewStackRequested: () => void;
 }
 
-function healthDotColor(stack: StackSummary): string {
+export function healthDotColor(stack: StackSummary): string {
+  // Provider health is the canonical "is this stack usable" signal —
+  // services can't be polled and chat can't run if every MCP provider
+  // is down. Surface that first; fall back to service health for
+  // stacks where MCP is fine but services are degraded.
+  const ph = stack.providerHealth;
+  if (ph && ph.total > 0 && ph.ok === 0) return "bg-destructive";
+
   const h = stack.healthSummary;
   if (!h || h.total === 0) return "bg-muted-foreground/30";
   if (h.down > 0) return "bg-destructive";
@@ -23,6 +30,27 @@ function healthDotColor(stack: StackSummary): string {
   if (h.healthy === h.total) return "bg-success";
   return "bg-muted-foreground/30";
 }
+
+export function providerBadge(stack: StackSummary): { text: string; tone: "muted" | "warning" | "destructive" } {
+  const ph = stack.providerHealth;
+  if (!ph || ph.total === 0) {
+    return { text: `${stack.providerCount}p`, tone: "muted" };
+  }
+  // All providers down: "0/3p" in destructive tone — the headline
+  // signal that nothing on this stack is going to answer.
+  if (ph.ok === 0) return { text: `0/${ph.total}p`, tone: "destructive" };
+  // Some providers down but not all: "2/3p" in warning tone.
+  if (ph.error > 0) return { text: `${ph.ok}/${ph.total}p`, tone: "warning" };
+  // Everything healthy: keep the original "Np" badge so green stacks
+  // stay visually quiet.
+  return { text: `${ph.total}p`, tone: "muted" };
+}
+
+const BADGE_TONE_CLASS: Record<"muted" | "warning" | "destructive", string> = {
+  muted: "text-muted-foreground/50",
+  warning: "text-warning",
+  destructive: "text-destructive",
+};
 
 // TODO(v2): When switching stacks mid-investigation, the active investigation's
 // real-time WS events will stop rendering since the UI re-mounts with the new
@@ -62,25 +90,28 @@ export function StackSwitcher({ stacks, activeStackId, onSwitch, onNewStackReque
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="min-w-[200px]">
-          {stacks.map((stack) => (
-            <DropdownMenuItem
-              key={stack.id}
-              onClick={() => onSwitch(stack.id)}
-              className={`flex items-center gap-2 px-3 py-2 h-8 cursor-pointer ${
-                stack.id === activeStackId
-                  ? "bg-primary/8 text-primary"
-                  : ""
-              }`}
-            >
-              <span className={`w-[5px] h-[5px] rounded-full shrink-0 ${healthDotColor(stack)}`} />
-              <span className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] flex-1 truncate">
-                {stack.name}
-              </span>
-              <span className="font-mono text-[10px] text-muted-foreground/50">
-                {stack.providerCount}p
-              </span>
-            </DropdownMenuItem>
-          ))}
+          {stacks.map((stack) => {
+            const badge = providerBadge(stack);
+            return (
+              <DropdownMenuItem
+                key={stack.id}
+                onClick={() => onSwitch(stack.id)}
+                className={`flex items-center gap-2 px-3 py-2 h-8 cursor-pointer ${
+                  stack.id === activeStackId
+                    ? "bg-primary/8 text-primary"
+                    : ""
+                }`}
+              >
+                <span className={`w-[5px] h-[5px] rounded-full shrink-0 ${healthDotColor(stack)}`} />
+                <span className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] flex-1 truncate">
+                  {stack.name}
+                </span>
+                <span className={`font-mono text-[10px] ${BADGE_TONE_CLASS[badge.tone]}`}>
+                  {badge.text}
+                </span>
+              </DropdownMenuItem>
+            );
+          })}
           <DropdownMenuSeparator />
           <DropdownMenuItem
             onClick={onNewStackRequested}
