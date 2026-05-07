@@ -1,4 +1,4 @@
-import type { Express, Request, Response } from "express";
+import type { Express, Request, RequestHandler, Response } from "express";
 import { createLogger } from "../logger.js";
 import type { Database } from "./db.js";
 import type { ServiceConfig, Config, ProviderConfig } from "../config/schema.js";
@@ -11,7 +11,10 @@ import type { SkillStore } from "../skills/store.js";
 import type { ProviderInfo } from "../mcp/provider-registry.js";
 import type { StackManager } from "./stack-manager.js";
 import type { InvestigationDedup } from "./investigation-dedup.js";
-import { maskToken, SERVICE_LABEL_KEYS } from "./webhook-handler.js";
+import { SERVICE_LABEL_KEYS, processFiringAlert, synthesizeTestPayload } from "./webhook-handler.js";
+import { generateWebhookToken, hashWebhookToken, maskStoredToken, isValidTokenName } from "./webhook-tokens.js";
+import { createMastraAdapters } from "./agents.js";
+import { InvestigationRunner } from "./investigation-runner.js";
 import { queryServiceMetrics } from "./prometheus-query.js";
 import type { MetricSeries } from "./prometheus-query.js";
 import { inferDependencyGraph } from "./dependency-graph.js";
@@ -35,6 +38,7 @@ import { parseInvestigationFilters } from "./investigation-filters.js";
 import { sendSlackScanRunPost } from "./slack-notifier.js";
 import { ALL_SOURCES } from "../types/notifications.js";
 import { buildPatternCluster } from "./pattern-similarity.js";
+import { strictLimiter } from "./rate-limit.js";
 
 /**
  * Zod schema for PUT /api/scan/settings body.
@@ -89,6 +93,13 @@ export interface RouteDeps {
   skillStore?: SkillStore;
   sharedDedup: InvestigationDedup;
   llmModel?: LanguageModel;
+  /** Global onComplete callback (Slack notification, etc). Used by the
+   *  /api/webhooks/test path to construct a per-stack runner that
+   *  participates in the same notification pipeline as real webhook
+   *  deliveries. Optional — passed through from index.ts. */
+  globalOnComplete?: import("./investigation-runner.js").RunnerDeps["globalOnComplete"];
+  /** Injectable for route tests; production uses the strict LLM-route limiter. */
+  webhookTestLimiter?: RequestHandler;
 }
 
 /**
@@ -254,6 +265,7 @@ const logger = createLogger("routes");
 export function registerRoutes(app: Express, deps: RouteDeps): void {
   const { db, stackManager, config } = deps;
   const skillStore = deps.skillStore;
+  const webhookTestLimiter = deps.webhookTestLimiter ?? strictLimiter;
 
   // ── Stack middleware — resolve stack for all /api routes ──────────────
   //
@@ -2014,20 +2026,16 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     const stackId = req.stackId;
     const stackSlug = req.stackContext?.slug ?? DEFAULT_STACK_SLUG;
 
-    // Token list. Legacy `webhook.secret` surfaces as a row named "default"
-    // with `legacy: true` so the UI can render the rotation guidance
-    // (move to per-sender tokens) inline. Per-sender tokens come from
-    // `webhook.tokens`. Both go through `maskToken` — full token never
-    // leaves this endpoint.
-    const tokens: Array<{ name: string; masked: string; legacy: boolean }> = [];
-    if (wh.secret) {
-      tokens.push({ name: "default", masked: maskToken(wh.secret), legacy: true });
-    }
-    if (wh.tokens) {
-      for (const [name, token] of Object.entries(wh.tokens)) {
-        tokens.push({ name, masked: maskToken(token), legacy: false });
-      }
-    }
+    // Token list comes from the DB store. Plaintext tokens are never held
+    // server-side after creation; the GUI reads only the prefix + the
+    // last_used_at signal it needs to render rotation hygiene.
+    const tokens = db.listWebhookTokens().map((t) => ({
+      id: t.id,
+      name: t.name,
+      masked: maskStoredToken(t.prefix),
+      createdAt: t.createdAt,
+      lastUsedAt: t.lastUsedAt,
+    }));
 
     res.json({
       // Path-only URLs. The frontend prepends `window.location.origin` plus
@@ -2052,6 +2060,287 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       // gets a silent 422 with no UI affordance).
       serviceLabelKeys: SERVICE_LABEL_KEYS,
       acceptsResolved: false,
+    });
+  });
+
+  // ── Token CRUD ──────────────────────────────────────────────────────
+  //
+  // Auth: same posture as every other write (X-API-Key in production,
+  // passthrough on staging — VPN trust boundary, per CLAUDE.md). No
+  // special carve-out; minting webhook tokens via UI is no more sensitive
+  // than creating stacks or providers, both of which already follow this
+  // posture.
+
+  app.get("/api/webhooks/tokens", (_req: Request, res: Response) => {
+    const tokens = db.listWebhookTokens().map((t) => ({
+      id: t.id,
+      name: t.name,
+      masked: maskStoredToken(t.prefix),
+      createdAt: t.createdAt,
+      lastUsedAt: t.lastUsedAt,
+    }));
+    res.json({ tokens });
+  });
+
+  // POST returns the plaintext token EXACTLY ONCE in the body. The UI
+  // displays it in a one-time-reveal modal and discards on close. Future
+  // GETs see only the masked form.
+  app.post("/api/webhooks/tokens", (req: Request, res: Response) => {
+    const { name } = (req.body ?? {}) as { name?: unknown };
+    if (typeof name !== "string" || !isValidTokenName(name)) {
+      res.status(400).json({ error: "Invalid token name. Use 1–64 chars: letters, digits, space, dash, underscore, dot." });
+      return;
+    }
+    const trimmed = name.trim();
+    const generated = generateWebhookToken();
+    db.createWebhookToken({
+      id: generated.id,
+      name: trimmed,
+      tokenHash: generated.tokenHash,
+      prefix: generated.prefix,
+    });
+    res.status(201).json({
+      id: generated.id,
+      name: trimmed,
+      // Plaintext — present ONCE, consumer must save now.
+      token: generated.token,
+      masked: maskStoredToken(generated.prefix),
+      createdAt: new Date().toISOString(),
+    });
+  });
+
+  app.delete("/api/webhooks/tokens/:id", (req: Request, res: Response) => {
+    const id = req.params["id"] as string;
+    const ok = db.deleteWebhookToken(id);
+    if (!ok) {
+      res.status(404).json({ error: "Token not found" });
+      return;
+    }
+    res.status(204).end();
+  });
+
+  // ── Test alert (internal) ────────────────────────────────────────────
+  //
+  // Synthesizes an Alertmanager v4 payload and runs it through the same
+  // `processFiringAlert()` core the HTTP webhook uses. Auth: caller must
+  // pass a valid webhook token in `body.token` (any of the configured
+  // tokens). Mirrors the Grafana-side trust model: you can only fire a
+  // test if you can already fire a real one. Prevents anonymous-on-VPN
+  // abuse from draining the LLM budget.
+
+  app.post("/api/webhooks/test", webhookTestLimiter, async (req: Request, res: Response) => {
+    const { token, severity, service: serviceName } = (req.body ?? {}) as {
+      token?: unknown; severity?: unknown; service?: unknown;
+    };
+    if (typeof token !== "string" || token.length === 0) {
+      res.status(401).json({ error: "Missing token. Paste a configured webhook token to authorize the test." });
+      return;
+    }
+    const tokenRow = db.findWebhookTokenByHash(hashWebhookToken(token));
+    if (!tokenRow) {
+      res.status(401).json({ error: "Token not recognized." });
+      return;
+    }
+
+    const stackId = req.stackId;
+    const ctx = req.stackContext;
+    if (!ctx) {
+      res.status(500).json({ error: "Stack context unavailable" });
+      return;
+    }
+    const providers = ctx.providerRegistry.getProviders();
+    if (providers.length === 0) {
+      res.status(409).json({ error: "No providers configured for this stack — investigation would be empty. Add an MCP provider first." });
+      return;
+    }
+
+    const allServices = [
+      ...config.services,
+      ...ctx.serviceRegistry.load().filter((s: ServiceConfig) => !config.services.some((c) => c.name === s.name)),
+    ];
+    let chosen: ServiceConfig | undefined;
+    if (typeof serviceName === "string" && serviceName.length > 0) {
+      chosen = allServices.find((s) => s.name === serviceName);
+      if (!chosen) {
+        res.status(404).json({ error: `Service "${serviceName}" not found in this stack.` });
+        return;
+      }
+    } else {
+      chosen = allServices[0];
+    }
+    if (!chosen) {
+      res.status(409).json({ error: "No services configured for this stack — investigation would have no target." });
+      return;
+    }
+
+    const synthesized = synthesizeTestPayload({
+      service: chosen.name,
+      severity: typeof severity === "string" ? severity : undefined,
+      tokenName: tokenRow.name,
+    });
+
+    db.markWebhookTokenUsed(tokenRow.id);
+
+    // Build a one-shot per-stack runner the same way the stack-scoped
+    // webhook factory does. Strict route limiting keeps this path aligned
+    // with other LLM-triggering endpoints; avoiding a long-lived cache keeps
+    // this route free of stack-context lifecycle bugs.
+    const stackAdapters = await createMastraAdapters({
+      config,
+      providers,
+      registryStore: ctx.serviceRegistry,
+      datasourceUidMap: ctx.providerRegistry.buildDatasourceUidMap(),
+      db,
+      stackId,
+    });
+    const runner = new InvestigationRunner({
+      db,
+      investigationAgent: stackAdapters.investigationAgent,
+      skillStore: deps.skillStore,
+      globalOnComplete: deps.globalOnComplete,
+    });
+
+    const result = await processFiringAlert(synthesized, {
+      runner,
+      config: config.webhook,
+      services: allServices,
+      stackId,
+      dedup: deps.sharedDedup,
+      sender: tokenRow.name,
+    }, { hiddenServices: db.getHiddenServices(stackId) });
+
+    const investigationStarted = result.deliveryStatus === "investigated";
+    const statusCode = (() => {
+      switch (result.deliveryStatus) {
+        case "investigated": return 202;
+        case "concurrency_skipped": return 429;
+        case "no_service_match": return 422;
+        case "failed": return 500;
+        case "deduplicated":
+        case "no_firing":
+          return 409;
+      }
+    })();
+
+    res.status(statusCode).json({
+      deliveryStatus: result.deliveryStatus,
+      service: result.service,
+      alertName: result.alertName,
+      template: result.template,
+      tokenName: tokenRow.name,
+      investigationStarted,
+      ...(!investigationStarted ? { error: `Test alert did not start an investigation: ${result.deliveryStatus}` } : {}),
+      ...(result.activeCount !== undefined ? { activeCount: result.activeCount, maxConcurrent: result.maxConcurrent } : {}),
+    });
+  });
+
+  // ── Loopback test ────────────────────────────────────────────────────
+  //
+  // Server makes an outbound HTTP request to its own public URL with the
+  // supplied bearer. Exercises DNS / TLS / firewall / auth / parsing
+  // end-to-end — the path real Grafana traffic takes. The internal /test
+  // endpoint validates the app-side investigation pipeline only; this
+  // one validates the network-facing reality.
+  app.post("/api/webhooks/loopback-test", webhookTestLimiter, async (req: Request, res: Response) => {
+    const appBaseUrl = config.notifications?.email?.appBaseUrl?.trim();
+    if (!appBaseUrl) {
+      res.status(412).json({
+        error: "Loopback test requires notifications.email.appBaseUrl in config",
+        hint: "Set it to the public URL operators reach the UI through (e.g. https://alerts.example.com). Falls back to the internal Send Test if you can't.",
+      });
+      return;
+    }
+
+    const { token, severity, service: serviceName } = (req.body ?? {}) as {
+      token?: unknown; severity?: unknown; service?: unknown;
+    };
+    if (typeof token !== "string" || token.length === 0) {
+      res.status(401).json({ error: "Missing token. Paste a configured webhook token to authorize the loopback test." });
+      return;
+    }
+    const tokenRow = db.findWebhookTokenByHash(hashWebhookToken(token));
+    if (!tokenRow) {
+      res.status(401).json({ error: "Token not recognized." });
+      return;
+    }
+
+    const ctx = req.stackContext;
+    if (!ctx) {
+      res.status(500).json({ error: "Stack context unavailable" });
+      return;
+    }
+
+    const allServices = [
+      ...config.services,
+      ...ctx.serviceRegistry.load().filter((s: ServiceConfig) => !config.services.some((c) => c.name === s.name)),
+    ];
+    let chosen: ServiceConfig | undefined;
+    if (typeof serviceName === "string" && serviceName.length > 0) {
+      chosen = allServices.find((s) => s.name === serviceName);
+      if (!chosen) {
+        res.status(404).json({ error: `Service "${serviceName}" not found in this stack.` });
+        return;
+      }
+    } else {
+      chosen = allServices[0];
+    }
+    if (!chosen) {
+      res.status(409).json({ error: "No services configured for this stack — investigation would have no target." });
+      return;
+    }
+
+    const stackSlug = ctx.slug ?? DEFAULT_STACK_SLUG;
+    const targetUrl = `${appBaseUrl.replace(/\/+$/, "")}/api/webhook/alert/${encodeURIComponent(stackSlug)}`;
+    const payload = synthesizeTestPayload({
+      service: chosen.name,
+      severity: typeof severity === "string" ? severity : undefined,
+      tokenName: tokenRow.name,
+      alertName: "WebhookLoopbackTest",
+    });
+
+    const start = Date.now();
+    let fetchResp: globalThis.Response | undefined;
+    let fetchError: string | undefined;
+    try {
+      fetchResp = await fetch(targetUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          // Operator-supplied bearer; validated upstream as if it came
+          // from Grafana — same code path, same trust model.
+          "Authorization": `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch (err) {
+      fetchError = err instanceof Error ? err.message : String(err);
+    }
+    const latencyMs = Date.now() - start;
+
+    if (fetchError || !fetchResp) {
+      res.status(502).json({
+        targetUrl,
+        latencyMs,
+        error: `Loopback fetch failed: ${fetchError ?? "no response"}`,
+        hint: "Check that appBaseUrl resolves from inside the cluster and that ingress / TLS aren't blocking the request. The curl snippet from a workstation will tell you whether the network path works at all.",
+      });
+      return;
+    }
+
+    // Cap the relayed body — the webhook handler returns small JSON, but
+    // a misconfigured ingress might serve a 5MB HTML 404 page.
+    const rawBody = await fetchResp.text().catch(() => "");
+    const body = rawBody.length > 4_000 ? rawBody.slice(0, 4_000) + "…[truncated]" : rawBody;
+
+    res.json({
+      targetUrl,
+      tokenName: tokenRow.name,
+      status: fetchResp.status,
+      statusText: fetchResp.statusText,
+      latencyMs,
+      body,
+      ok: fetchResp.ok,
     });
   });
 
@@ -2174,7 +2463,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         {
           service: "Test Service",
           severity: "low",
-          summary: "This is a test notification from dops-assistant.",
+          summary: "This is a test notification from the assistant.",
           rootCause: "Test notification — no actual incident.",
           confidenceScore: 1.0,
           confidence: "high",

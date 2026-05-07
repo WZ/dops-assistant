@@ -75,16 +75,18 @@ Type a message like `admin-task is returning 500 errors since 4pm`. The intent r
 
 ### 2. Alert Webhook (Alertmanager)
 
-Point [Alertmanager](https://prometheus.io/docs/alerting/latest/alertmanager/) at `POST /api/webhook/alert`. The handler validates the bearer token, dedups recent alerts, extracts service/severity/labels, merges with the service's known metrics and log selectors from `services.yaml`, and runs a headless investigation.
+Generate a bearer token in Settings -> Alert Webhooks, then point [Alertmanager](https://prometheus.io/docs/alerting/latest/alertmanager/) at `POST /api/webhook/alert`. The handler validates the bearer token, dedups recent alerts, extracts service/severity/labels, merges with the service's known metrics and log selectors from `services.yaml`, and runs a headless investigation.
 
 ```yaml
 # alertmanager.yml
 receivers:
-  - name: dops
+  - name: alert-assistant
     webhook_configs:
-      - url: http://dops-assistant:3000/api/webhook/alert
+      - url: http://assistant:3000/api/webhook/alert
         http_config:
-          bearer_token: "<your-token>"
+          authorization:
+            type: Bearer
+            credentials: "<your-token>"
 ```
 
 Investigation depth (quick / standard / full) can be mapped per severity in config.

@@ -70,7 +70,7 @@ A chat message hits the `IntentRouter` (`src/agents/intent.ts`). Questions go to
 
 ### 2. Alert webhook (Alertmanager)
 
-`POST /api/webhook/alert` (`src/server/webhook-handler.ts`) receives Alertmanager v4 payloads. The handler validates a bearer token, dedups recent alerts, extracts service / severity / labels, merges with the service's known metrics and log selectors from `services.yaml`, and starts a headless investigation. Investigation depth is per-severity configurable (`webhook.severityTemplateMap` in `config.yaml`). When the webhook secret is unset, the route returns 503 by design.
+`POST /api/webhook/alert` (`src/server/webhook-handler.ts`) receives Alertmanager v4 payloads. The handler validates a DB-managed bearer token generated from Settings -> Alert Webhooks, dedups recent alerts, extracts service / severity / labels, merges with the service's known metrics and log selectors from `services.yaml`, and starts a headless investigation. Investigation depth is per-severity configurable (`webhook.severityTemplateMap` in `config.yaml`). When no webhook token exists, the route returns 503 by design.
 
 ### 3. Health poller
 
@@ -90,7 +90,7 @@ Each rule has hysteresis (consecutive-tick counters keyed by `${service}:${origi
 | Trigger | Context | Depth | Requires |
 |---|---|---|---|
 | Operator | High (natural language + time refs) | Configurable | Nothing extra |
-| Alert webhook | Medium (alert labels + service config) | Per-severity template | Alertmanager + `webhook.secret` |
+| Alert webhook | Medium (alert labels + service config) | Per-severity template | Alertmanager + Settings-managed token |
 | Health poller | Medium (transition info + service config) | Quick | Prometheus provider |
 | Proactive scan | Medium (rule trigger + service config) | Configurable per rule | `scan.enabled: true` |
 

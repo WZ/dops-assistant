@@ -30,7 +30,7 @@ import { loadConfig } from "../config/loader.js";
 import { SkillStore } from "../skills/store.js";
 import { createModel } from "../mastra/index.js";
 import { InvestigationRunner } from "./investigation-runner.js";
-import { createWebhookHandler, WEBHOOK_NOT_CONFIGURED_BODY, isWebhookAuthConfigured } from "./webhook-handler.js";
+import { createWebhookHandler, WEBHOOK_NOT_CONFIGURED_BODY } from "./webhook-handler.js";
 import { InvestigationDedup } from "./investigation-dedup.js";
 import { createApiKeyMiddleware } from "./auth-middleware.js";
 import { globalLimiter, strictLimiter, moderateLimiter } from "./rate-limit.js";
@@ -46,6 +46,7 @@ import { buildInvestigationMessage } from "./anomaly-probe.js";
 import nodemailer, { type Transporter } from "nodemailer";
 import { notifyEmail } from "./email-notifier.js";
 import { ulid } from "ulid";
+import { importLegacyWebhookTokens } from "./webhook-token-migration.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const logger = createLogger();
@@ -60,6 +61,15 @@ async function main() {
 
   const dbPath = process.env["DB_PATH"] ?? "dops.sqlite";
   const db = new Database(dbPath);
+  const configuredLegacyWebhookTokens = Object.keys(config.webhook.legacyTokens).length;
+  const importedLegacyWebhookTokens = importLegacyWebhookTokens(db, config.webhook.legacyTokens);
+  if (configuredLegacyWebhookTokens > 0) {
+    logger.warn(
+      { configuredLegacyWebhookTokens, importedLegacyWebhookTokens },
+      "Imported deprecated YAML webhook tokens into DB-backed webhook tokens; remove legacy webhook config after alert senders are updated"
+    );
+    config.webhook.legacyTokens = {};
+  }
 
   // Wire the EventLog ring to also persist to the DB. After this call, every
   // `eventLog.append(...)` writes a row into the `events` table — that's
@@ -453,7 +463,7 @@ async function main() {
     }
   };
 
-  registerRoutes(app, { db, stackManager, config, skillStore, sharedDedup, llmModel: model });
+  registerRoutes(app, { db, stackManager, config, skillStore, sharedDedup, llmModel: model, globalOnComplete });
 
   // Health check endpoint with background DB monitoring.
   // In demo mode the endpoint still works (for liveness probes / banner
@@ -467,8 +477,8 @@ async function main() {
   app.get("/api/health", healthHandler);
 
   // Alert webhook endpoint.
-  // The route is always registered. When neither `webhook.secret` nor
-  // `webhook.tokens` is set, the handler itself returns a structured 503 with
+  // The route is always registered. When no DB-managed webhook tokens exist,
+  // the handler itself returns a structured 503 with
   // a hint, so operators posting to this URL see a meaningful error instead
   // of Express's default HTML 404 ("Cannot POST /api/webhook/alert"). When
   // any auth credential IS set, we eagerly build the runner/adapters so the
@@ -478,7 +488,7 @@ async function main() {
   // demo-mode middleware would reject it anyway, but treating it as unconfigured
   // keeps the startup path free of adapter construction (which would try to
   // connect to stub MCP providers).
-  if (isWebhookAuthConfigured(config.webhook) && !isDemoMode()) {
+  if (!isDemoMode()) {
     const defaultStackId = stackManager.getDefaultStackId();
     const defaultCtx = stackManager.getDefaultContext();
     const providers = defaultCtx.providerRegistry.getProviders();
@@ -489,6 +499,7 @@ async function main() {
       runner,
       config: config.webhook,
       services: config.services,
+      db,
       stackId: defaultStackId,
       dedup: sharedDedup,
       getHiddenServices: () => db.getHiddenServices(defaultStackId),
@@ -502,7 +513,7 @@ async function main() {
 
     registerStackScopedWebhookRoute(app, { db, stackManager, config, skillStore, sharedDedup, globalOnComplete });
 
-    logger.info("Alert webhook enabled at POST /api/webhook/alert");
+    logger.info("Alert webhook enabled at POST /api/webhook/alert (tokens managed via Settings → Alert Webhooks)");
   } else {
     // No webhook auth configured: register 503 stubs at both the default and
     // stack-scoped routes so clients receive a structured JSON error.
@@ -511,7 +522,7 @@ async function main() {
     };
     app.post("/api/webhook/alert", notConfiguredResponse);
     app.post("/api/webhook/alert/:stackSlug", notConfiguredResponse);
-    logger.warn("Alert webhook registered but DISABLED: neither webhook.secret nor webhook.tokens is configured — POST /api/webhook/alert will return 503");
+    logger.warn("Alert webhook registered but DISABLED in demo mode — POST /api/webhook/alert will return 503");
   }
 
   setupWebSocket(server, {
