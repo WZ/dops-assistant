@@ -170,6 +170,54 @@ async function getMetricsToolNames(stackId: string, ctx: StackContext): Promise<
   }
 }
 
+function hasReachableMcpProvider(ctx: StackContext): boolean {
+  return ctx.providerRegistry.getAll()
+    .some((p) => p.status === "connected" && (p.enabledToolCount ?? p.toolCount) > 0);
+}
+
+function unavailableMcpProviderReply(ctx: StackContext): string {
+  const allProviders = ctx.providerRegistry.getAll();
+  const reason = allProviders.length === 0
+    ? "No MCP providers are configured for this stack."
+    : "All MCP providers are unreachable, returned no tools, or have no enabled tools. Check Settings → Providers and click **Test** on each one to see the connection error.";
+  return `**Can't answer this** — ${reason}`;
+}
+
+function sendUnavailableMcpProviderReply(
+  msg: { message: string },
+  send: (m: ServerMessage) => void,
+  deps: WsDeps,
+  threadId: string,
+  stackId: string,
+  ctx: StackContext,
+): void {
+  const memory = ctx.conversationMemory;
+  const content = unavailableMcpProviderReply(ctx);
+  const userMsgId = `msg_${ulid()}`;
+  const errMsgId = `msg_${ulid()}`;
+  const errMsgTime = new Date().toISOString();
+
+  memory.append(threadId, { role: "user", content: msg.message });
+  memory.append(threadId, { role: "assistant", content });
+  deps.db.createMessage(stackId, { id: userMsgId, role: "user", content: msg.message });
+  deps.db.createMessage(stackId, { id: errMsgId, role: "assistant", content });
+  send({
+    type: "chat:stream_start",
+  });
+  send({
+    type: "chat:stream_end",
+    content,
+    id: errMsgId,
+    createdAt: errMsgTime,
+  });
+  send({
+    type: "chat:usage",
+    inputTokens: 0,
+    outputTokens: 0,
+    durationMs: 0,
+  });
+}
+
 export function setupWebSocket(server: Server, deps: WsDeps): void {
   const wss = new WebSocketServer({ server, path: "/ws" });
   const wsRateLimiter = new WsRateLimiter();
@@ -670,6 +718,15 @@ export async function handleClientMessage(
     } finally {
       scheduler.setEventListener(null);
     }
+    return;
+  }
+
+  // Short-circuit chat before creating Mastra adapters, routing intent, or
+  // listing role tools. When every provider is down, those steps can still
+  // touch the unreachable MCP clients or burn classifier tokens before the
+  // user gets the useful answer.
+  if (msg.type === "chat" && !hasReachableMcpProvider(ctx)) {
+    sendUnavailableMcpProviderReply(msg, send, deps, threadId, stackId, ctx);
     return;
   }
 

@@ -28,13 +28,18 @@ import { ProviderRegistry } from "./provider-registry.js";
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-function makeConfig(name: string, roles: ("metrics" | "logs" | "dashboards")[] = ["metrics"]): ProviderConfig {
+function makeConfig(
+  name: string,
+  roles: ("metrics" | "logs" | "dashboards")[] = ["metrics"],
+  enabledTools?: string[],
+): ProviderConfig {
   return {
     name,
     roles,
     mcpServer: {
       transport: "http" as const,
       url: `http://localhost:8080/${name}`,
+      ...(enabledTools !== undefined ? { enabledTools } : {}),
     },
   };
 }
@@ -44,6 +49,7 @@ function makeFakeProvider(config: ProviderConfig): MastraProvider {
     name: config.name,
     roles: config.roles,
     client: { listTools: vi.fn() } as never,
+    enabledTools: config.mcpServer.enabledTools,
   };
 }
 
@@ -59,10 +65,12 @@ describe("ProviderRegistry", () => {
     dir = mkdtempSync(join(tmpdir(), "provider-registry-test-"));
     providersPath = join(dir, "providers.yaml");
 
-    // Default mocks: createMcpProvider returns a fake, listProviderTools returns empty tools
+    // Default mocks: createMcpProvider returns a fake, listProviderTools
+    // returns one tool. Tests that exercise the "0 tools = error" path
+    // opt in by overriding mockListProviderTools to return {} themselves.
     mockCreateMcpProvider.mockImplementation((config: ProviderConfig) => makeFakeProvider(config));
-    mockListProviderTools.mockResolvedValue({});
-    mockListAllProviderTools.mockResolvedValue({});
+    mockListProviderTools.mockResolvedValue({ default_tool: {} });
+    mockListAllProviderTools.mockResolvedValue({ default_tool: {} });
     mockGetToolsWithMetadata.mockResolvedValue([]);
     mockComputeDefaultEnabledTools.mockReturnValue([]);
   });
@@ -103,6 +111,58 @@ describe("ProviderRegistry", () => {
       expect(all[0].status).toBe("error");
       expect(all[0].error).toBe("connection refused");
       expect(all[0].toolCount).toBe(0);
+    });
+
+    // Reclassify "connected with 0 tools" as an error because @mastra/mcp
+    // silently swallows per-server connection failures inside listTools()
+    // (see node_modules/@mastra/mcp/dist/index.js → MCPClient.listTools).
+    // Without this, an unreachable upstream renders as a healthy green
+    // dot in the UI and the chat path runs with an empty tool set.
+    it("treats 0 tools after a 'successful' listTools as an error (init)", async () => {
+      mockListProviderTools.mockResolvedValue({});
+      mockListAllProviderTools.mockResolvedValue({});
+
+      const registry = new ProviderRegistry([makeConfig("silent-fail")], providersPath);
+      await registry.initialize();
+
+      const all = registry.getAll();
+      expect(all).toHaveLength(1);
+      expect(all[0].status).toBe("error");
+      expect(all[0].toolCount).toBe(0);
+      expect(all[0].error).toMatch(/no tools/i);
+    });
+
+    it("keeps a raw-reachable provider connected when all tools are intentionally disabled", async () => {
+      mockListProviderTools.mockResolvedValue({});
+      mockListAllProviderTools.mockResolvedValue({ grafana_query_prometheus: {} });
+
+      const registry = new ProviderRegistry([makeConfig("grafana", ["metrics"], [])], providersPath);
+      await registry.initialize();
+
+      const info = registry.getAll()[0];
+      expect(info?.status).toBe("connected");
+      expect(info?.toolCount).toBe(1);
+      expect(info?.enabledToolCount).toBe(0);
+      expect(info?.provider.enabledTools).toEqual([]);
+      expect(info?.toolNames).toEqual([]);
+      expect(mockComputeDefaultEnabledTools).not.toHaveBeenCalled();
+    });
+
+    it("reports raw tool count separately from enabled tool count", async () => {
+      mockListProviderTools.mockResolvedValue({ grafana_query_prometheus: {} });
+      mockListAllProviderTools.mockResolvedValue({
+        grafana_query_prometheus: {},
+        grafana_get_panel_image: {},
+      });
+
+      const registry = new ProviderRegistry([makeConfig("grafana", ["metrics"], ["query_prometheus"])], providersPath);
+      await registry.initialize();
+
+      const info = registry.getAll()[0];
+      expect(info?.status).toBe("connected");
+      expect(info?.toolCount).toBe(2);
+      expect(info?.enabledToolCount).toBe(1);
+      expect(info?.toolNames).toEqual(["grafana_query_prometheus"]);
     });
 
     it("loads GUI providers from providers.yaml on initialize", async () => {
@@ -329,6 +389,7 @@ describe("ProviderRegistry", () => {
 
       // Reset mock so test() gets fresh results
       mockListProviderTools.mockResolvedValue({ x: {}, y: {} });
+      mockListAllProviderTools.mockResolvedValue({ x: {}, y: {} });
       const result = await registry.test("grafana");
 
       expect(result.status).toBe("ok");
@@ -336,7 +397,7 @@ describe("ProviderRegistry", () => {
     });
 
     it("returns error status on failure", async () => {
-      mockListProviderTools.mockResolvedValue({});
+      mockListProviderTools.mockResolvedValue({ default_tool: {} });
 
       const registry = new ProviderRegistry([makeConfig("grafana")], providersPath);
       await registry.initialize();
@@ -347,6 +408,50 @@ describe("ProviderRegistry", () => {
       expect(result.status).toBe("error");
       expect(result.toolCount).toBe(0);
       expect(result.error).toBe("timeout");
+    });
+
+    // Same heuristic as the init-time check, but on the Test button path:
+    // a click that "succeeds" with zero tools should not flip the dot
+    // green again — that would just hide the connectivity problem.
+    it("treats 0 tools after a 'successful' listTools as an error (test)", async () => {
+      mockListProviderTools.mockResolvedValue({ default_tool: {} });
+
+      const registry = new ProviderRegistry([makeConfig("grafana")], providersPath);
+      await registry.initialize();
+
+      mockListProviderTools.mockResolvedValue({});
+      mockListAllProviderTools.mockResolvedValue({});
+      const result = await registry.test("grafana");
+
+      expect(result.status).toBe("error");
+      expect(result.toolCount).toBe(0);
+      expect(result.error).toMatch(/no tools/i);
+      const entry = registry.getAll().find((p) => p.config.name === "grafana");
+      expect(entry?.status).toBe("error");
+      expect(entry?.toolCount).toBe(0);
+    });
+
+    it("keeps disabled-all tools disabled when Test confirms the raw server has tools", async () => {
+      mockListProviderTools.mockResolvedValue({ grafana_query_prometheus: {} });
+      mockListAllProviderTools.mockResolvedValue({ grafana_query_prometheus: {} });
+
+      const registry = new ProviderRegistry([makeConfig("grafana")], providersPath);
+      await registry.initialize();
+      await registry.updateEnabledTools("grafana", []);
+
+      mockListProviderTools.mockResolvedValue({});
+      mockListAllProviderTools.mockResolvedValue({ grafana_query_prometheus: {} });
+
+      const result = await registry.test("grafana");
+
+      expect(result.status).toBe("ok");
+      expect(result.toolCount).toBe(1);
+      const entry = registry.getAll().find((p) => p.config.name === "grafana");
+      expect(entry?.status).toBe("connected");
+      expect(entry?.toolCount).toBe(1);
+      expect(entry?.enabledToolCount).toBe(0);
+      expect(entry?.provider.enabledTools).toEqual([]);
+      expect(entry?.toolNames).toEqual([]);
     });
 
     it("updates provider status in registry after test", async () => {
@@ -509,6 +614,7 @@ describe("ProviderRegistry", () => {
       // all returning empty tool sets at runtime. The init-time poller gate
       // must say "no viable provider" so we don't log-spam forever.
       mockListProviderTools.mockResolvedValue({});
+      mockListAllProviderTools.mockResolvedValue({});
       const registry = new ProviderRegistry([makeConfig("empty-grafana", ["metrics"])], providersPath);
       await registry.initialize();
       expect(registry.hasViableMetricsProvider()).toBe(false);
@@ -525,9 +631,12 @@ describe("ProviderRegistry", () => {
     });
 
     it("returns true when a metrics provider exposes a query_prometheus-style tool", async () => {
-      mockListProviderTools.mockResolvedValue({
+      const tools = {
         grafana_query_prometheus: { execute: vi.fn() },
-      });
+      };
+      mockListProviderTools.mockResolvedValue(tools);
+      mockListAllProviderTools.mockResolvedValue(tools);
+      mockComputeDefaultEnabledTools.mockReturnValue(["query_prometheus"]);
       const registry = new ProviderRegistry([makeConfig("grafana", ["metrics"])], providersPath);
       await registry.initialize();
       expect(registry.hasViableMetricsProvider()).toBe(true);

@@ -59,6 +59,19 @@ async function resolvePrometheusDatasourceUid(tools: Record<string, unknown>): P
   return undefined;
 }
 
+function enabledToolNamesForProvider(provider: MastraProvider, toolNames: string[]): string[] {
+  if (provider.enabledTools === undefined) return toolNames;
+  if (provider.enabledTools.length === 0) return [];
+
+  const enabled = new Set(provider.enabledTools);
+  return toolNames.filter((name) => {
+    const unprefixed = name.startsWith(`${provider.name}_`)
+      ? name.slice(provider.name.length + 1)
+      : name;
+    return enabled.has(name) || enabled.has(unprefixed);
+  });
+}
+
 export interface ProviderInfo {
   provider: MastraProvider;
   config: ProviderConfig;
@@ -70,11 +83,11 @@ export interface ProviderInfo {
   /** Cached Prometheus datasource UID, resolved at initialization for metrics-role providers. */
   prometheusDatasourceUid?: string;
   /**
-   * Raw tool names (post-namespacing by mastra) discovered during
+   * Enabled tool names (post-namespacing by mastra) discovered during
    * init/test. Cached so the StackManager init-time poller gate can cheaply
-   * ask "does this provider expose a metric query tool?" without re-calling
-   * the MCP server. Undefined = not yet probed; empty array = probed and
-   * returned nothing.
+   * ask "does this provider expose an enabled metric query tool?" without
+   * re-calling the MCP server. Undefined = not yet probed; empty array =
+   * probed and no enabled tools are available.
    */
   toolNames?: string[];
 }
@@ -279,11 +292,34 @@ export class ProviderRegistry {
 
     try {
       const tools = await listProviderTools(entry.provider);
-      const toolCount = Object.keys(tools).length;
+      let toolCount = Object.keys(tools).length;
+      let rawToolNames = Object.keys(tools);
+      let allRawTools: Awaited<ReturnType<typeof listAllProviderTools>> | undefined;
+
+      // Same reasoning as createAndRegister: 0 raw tools after a
+      // "successful" listTools means @mastra/mcp swallowed a connection
+      // failure. A filtered result can also be empty when the user has
+      // intentionally disabled every tool, so fall back to the raw tool list
+      // before declaring the provider unreachable.
+      if (toolCount === 0 || entry.provider.enabledTools !== undefined) {
+        allRawTools = await listAllProviderTools(entry.provider);
+        rawToolNames = Object.keys(allRawTools);
+        toolCount = rawToolNames.length;
+        if (toolCount === 0) {
+          const message = "MCP server returned no tools (likely unreachable or misconfigured)";
+          entry.status = "error";
+          entry.toolCount = 0;
+          entry.error = message;
+          entry.enabledToolCount = 0;
+          entry.toolNames = [];
+          this.emit({ kind: "test", name });
+          return { status: "error", toolCount: 0, error: message };
+        }
+      }
+
       entry.status = "connected";
-      entry.toolCount = toolCount;
       entry.error = undefined;
-      entry.toolNames = Object.keys(tools);
+      entry.toolNames = enabledToolNamesForProvider(entry.provider, rawToolNames);
 
       // Re-run auto-compute after a successful (re)connect so enabledTools stays in sync
       // with the current tool set. Previously this was gated on "initial registration
@@ -291,20 +327,26 @@ export class ProviderRegistry {
       // enabledTools pointing at stale tool names — surfaced in the UI as
       // "0 tools (41 enabled)" or tools silently dropping out of rotation.
       // (Regression: provider-registry-stale-enabledToolCount.)
-      if (toolCount > 0) {
+      if (toolCount > 0 && entry.provider.enabledTools?.length !== 0) {
         // Preserve any user-curated enabledTools that still exist in the fresh tool set;
         // fall back to defaults when none of the previous selections survive the reconnect.
-        const allRawTools = await listAllProviderTools(entry.provider);
-        const freshToolNames = new Set(Object.keys(allRawTools));
+        allRawTools ??= await listAllProviderTools(entry.provider);
+        rawToolNames = Object.keys(allRawTools);
+        toolCount = rawToolNames.length;
+        const freshToolNames = new Set(rawToolNames);
         const previousEnabled = entry.provider.enabledTools ?? [];
-        const survivors = previousEnabled.filter((n) => freshToolNames.has(n));
+        const survivors = previousEnabled.filter((n) =>
+          freshToolNames.has(n) || freshToolNames.has(`${entry.config.name}_${n}`)
+        );
         if (survivors.length > 0) {
           entry.provider.enabledTools = survivors;
         } else {
           entry.provider.enabledTools = computeDefaultEnabledTools(allRawTools, entry.config.name);
         }
       }
-      entry.enabledToolCount = entry.provider.enabledTools?.length ?? toolCount;
+      entry.toolCount = toolCount;
+      entry.toolNames = enabledToolNamesForProvider(entry.provider, rawToolNames);
+      entry.enabledToolCount = entry.toolNames.length;
 
       // Resolve Prometheus datasource UID if not yet cached (session is fresh after successful test)
       if (!entry.prometheusDatasourceUid && entry.config.roles.includes("metrics") && toolCount > 0) {
@@ -465,16 +507,35 @@ export class ProviderRegistry {
       toolCount = Object.keys(tools).length;
       toolNames = Object.keys(tools);
       status = "connected";
+      if (toolCount === 0 || provider.enabledTools !== undefined) {
+        const rawTools = await listAllProviderTools(provider);
+        const rawToolNames = Object.keys(rawTools);
+        toolCount = rawToolNames.length;
+        toolNames = enabledToolNamesForProvider(provider, rawToolNames);
+      }
     } catch (err) {
       status = "error";
       error = err instanceof Error ? err.message : String(err);
     }
 
+    // @mastra/mcp's MCPClient.listTools() catches per-server connection
+    // failures and silently returns {} (see node_modules/@mastra/mcp/dist/
+    // index.js around `async listTools()` — the catch block logs and moves
+    // on). So "connected with 0 raw tools" is almost always an unreachable
+    // upstream, not a working server. Reclassify it as an error so the UI dot
+    // turns red, the chat short-circuit fires, and downstream code stops
+    // operating on an empty tool set thinking it succeeded.
+    if (status === "connected" && toolCount === 0) {
+      status = "error";
+      error = "MCP server returned no tools (likely unreachable or misconfigured)";
+    }
+
     // Auto-compute default enabledTools if not configured
-    if (!provider.enabledTools?.length && toolCount > 0) {
+    if (provider.enabledTools === undefined && toolCount > 0) {
       const allRawTools = await listAllProviderTools(provider);
       const defaults = computeDefaultEnabledTools(allRawTools, config.name);
       provider.enabledTools = defaults;
+      toolNames = enabledToolNamesForProvider(provider, Object.keys(allRawTools));
     }
 
     // Resolve Prometheus datasource UID for metrics-role providers (session is fresh here)
@@ -492,7 +553,7 @@ export class ProviderRegistry {
       source,
       status,
       toolCount,
-      enabledToolCount: provider.enabledTools?.length ?? toolCount,
+      enabledToolCount: toolNames.length,
       error,
       prometheusDatasourceUid,
       toolNames,
