@@ -177,6 +177,25 @@ const DiscoverySchema = z.object({
   maxIterations: z.number().default(40),
   discoveryRecipes: z.array(DiscoveryRecipeSchema).optional().default([]),
   periodic: PeriodicDiscoverySchema.optional().default({}),
+  /**
+   * Cap on each MCP tool result's character length before it enters the
+   * agent's message history. Bounds prompt growth across iterations so the
+   * accumulated context plus reserved completion budget stays under the
+   * model's `max_model_len`. Without this cap a single unfiltered
+   * `k8s_pods_list` (~83k chars) plus 30 more tool calls overflows even a
+   * 128k-token window. Set 0 to disable.
+   */
+  maxToolResultChars: z.number().int().min(0).default(30_000),
+  /**
+   * Max completion tokens reserved for the discover agent's response.
+   * Some OpenAI-compatible gateways reject requests with
+   * `max_tokens must be at least 1, got -N` when prompt_tokens plus this
+   * value exceed the upstream model's context window. Lower for stacks
+   * with smaller context windows; raise for very large environments where
+   * the JSON output truncates. Default 8192 leaves ~2x headroom on a 32k
+   * model and accommodates roughly 25-40 services.
+   */
+  maxOutputTokens: z.number().int().min(256).max(65_536).default(8192),
 });
 
 export const InvestigationTemplateSchema = z.enum(["quick", "standard", "full"]);
