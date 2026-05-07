@@ -11,6 +11,7 @@ import type { SkillStore } from "../skills/store.js";
 import type { ProviderInfo } from "../mcp/provider-registry.js";
 import type { StackManager } from "./stack-manager.js";
 import type { InvestigationDedup } from "./investigation-dedup.js";
+import { maskToken, SERVICE_LABEL_KEYS } from "./webhook-handler.js";
 import { queryServiceMetrics } from "./prometheus-query.js";
 import type { MetricSeries } from "./prometheus-query.js";
 import { inferDependencyGraph } from "./dependency-graph.js";
@@ -1997,6 +1998,91 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       if (msg.includes("not found")) res.status(404).json({ error: msg });
       else res.status(500).json({ error: msg });
     }
+  });
+
+  // ── Alert Webhooks (inbound, Alertmanager) ──────────────────────────
+  //
+  // Read-only inspection endpoints for the Settings → Alert Webhooks tab.
+  // Both follow the existing API auth posture (passthrough on staging,
+  // X-API-Key header in prod) — neither mutates state, neither exposes raw
+  // tokens (masking is enforced server-side; full-token reveal is a separate
+  // endpoint, deferred to PR 2 when the UI lands and the auth flow can be
+  // wired end-to-end).
+
+  app.get("/api/webhooks/info", (req: Request, res: Response) => {
+    const wh = config.webhook;
+    const stackId = req.stackId;
+    const stackSlug = req.stackContext?.slug ?? DEFAULT_STACK_SLUG;
+
+    // Token list. Legacy `webhook.secret` surfaces as a row named "default"
+    // with `legacy: true` so the UI can render the rotation guidance
+    // (move to per-sender tokens) inline. Per-sender tokens come from
+    // `webhook.tokens`. Both go through `maskToken` — full token never
+    // leaves this endpoint.
+    const tokens: Array<{ name: string; masked: string; legacy: boolean }> = [];
+    if (wh.secret) {
+      tokens.push({ name: "default", masked: maskToken(wh.secret), legacy: true });
+    }
+    if (wh.tokens) {
+      for (const [name, token] of Object.entries(wh.tokens)) {
+        tokens.push({ name, masked: maskToken(token), legacy: false });
+      }
+    }
+
+    res.json({
+      // Path-only URLs. The frontend prepends `window.location.origin` plus
+      // APP_BASE so the snippet generator produces the right absolute URL
+      // for whatever ingress operators reach the UI through. Returning a
+      // server-rendered absolute URL would require a config field the
+      // current schema doesn't have (we'd need to add `webhook.publicUrl`)
+      // and would diverge from the frontend's actual origin in split-DNS
+      // setups.
+      url: `/api/webhook/alert/${stackSlug}`,
+      defaultUrl: "/api/webhook/alert",
+      stackSlug,
+      stackId,
+      tokens,
+      severityTemplateMap: wh.severityTemplateMap,
+      defaultTemplate: wh.defaultTemplate,
+      dedupWindowSeconds: wh.dedupWindowSeconds,
+      maxConcurrent: wh.maxConcurrent,
+      // The contract a Grafana-side label set must satisfy for an alert to
+      // reach an investigation. Surfacing this kills the #1 self-service
+      // failure mode (operator labels with `team` instead of `service` and
+      // gets a silent 422 with no UI affordance).
+      serviceLabelKeys: SERVICE_LABEL_KEYS,
+      acceptsResolved: false,
+    });
+  });
+
+  // GET /api/webhooks/recent — last 20 webhook deliveries for this stack.
+  // Backed by the persistent `events` DB table (not the in-memory ring) so
+  // the activity log doesn't drop entries during busy periods. Filters on
+  // kind=alert_received + meta.source=alertmanager so future inbound
+  // sources (PagerDuty, Datadog) don't conflate.
+  app.get("/api/webhooks/recent", (req: Request, res: Response) => {
+    const stackId = req.stackId;
+    // listEvents already filters by kind. Source filtering is a post-pass
+    // because db.listEvents doesn't have a meta-field predicate; fine at
+    // 20 rows. If this ever gets noisy we add a JSON1 index.
+    const rows = db.listEvents({
+      stackId,
+      kind: ["alert_received"],
+      limit: 50,
+    }).filter((r) => r.meta?.["source"] === "alertmanager").slice(0, 20);
+
+    res.json({
+      events: rows.map((r) => ({
+        id: r.id,
+        ts: r.ts,
+        sender: typeof r.meta?.["sender"] === "string" ? r.meta["sender"] : "unknown",
+        alertName: typeof r.meta?.["alertName"] === "string" ? r.meta["alertName"] : "unknown",
+        alertSeverity: typeof r.meta?.["alertSeverity"] === "string" ? r.meta["alertSeverity"] : null,
+        service: r.service,
+        deliveryStatus: typeof r.meta?.["deliveryStatus"] === "string" ? r.meta["deliveryStatus"] : "unknown",
+        summary: r.summary,
+      })),
+    });
   });
 
   // ── Notifications REST API ──────────────────────────────────────────
