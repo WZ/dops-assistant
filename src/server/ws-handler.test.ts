@@ -1,10 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
 import { createServer } from "node:http";
 import WebSocket from "ws";
-import { handleClientMessage, setupWebSocket } from "./ws-handler.js";
+import { clearStackCaches, handleClientMessage, setupWebSocket } from "./ws-handler.js";
 import type { WsDeps } from "./ws-handler.js";
 import type { ServerMessage } from "../types/ws-types.js";
 import type { StackContext } from "./stack-manager.js";
+import { createMastraAdapters } from "./agents.js";
+import { getToolsByRole } from "../mcp/provider.js";
 
 // Mock createMastraAdapters so we can control what agents are returned
 vi.mock("./agents.js", () => ({
@@ -318,6 +320,10 @@ describe("handleClientMessage", () => {
 
     const messages: unknown[] = [];
     const send = (msg: unknown) => messages.push(msg);
+    clearStackCaches(S);
+    (createMastraAdapters as ReturnType<typeof vi.fn>).mockClear();
+    (getToolsByRole as ReturnType<typeof vi.fn>).mockClear();
+    (deps.router.route as ReturnType<typeof vi.fn>).mockClear();
 
     await callHandler({ type: "chat", message: "whats the ingestion log rate" }, send as any, deps, ctx);
 
@@ -334,6 +340,32 @@ describe("handleClientMessage", () => {
       S,
       expect.objectContaining({ role: "assistant", content: expect.stringMatching(/can't answer/i) }),
     );
+    expect(createMastraAdapters).not.toHaveBeenCalled();
+    expect(getToolsByRole).not.toHaveBeenCalled();
+    expect(deps.router.route).not.toHaveBeenCalled();
+  });
+
+  it("short-circuits the chat path when providers are connected but no tools are enabled", async () => {
+    const deps = mockDeps();
+    const ctx = mockCtx();
+    (ctx.providerRegistry.getAll as ReturnType<typeof vi.fn>).mockReturnValue([
+      { config: { name: "grafana-mcp" }, source: "config", status: "connected", toolCount: 12, enabledToolCount: 0 },
+    ]);
+
+    const messages: unknown[] = [];
+    const send = (msg: unknown) => messages.push(msg);
+    clearStackCaches(S);
+    (createMastraAdapters as ReturnType<typeof vi.fn>).mockClear();
+    (getToolsByRole as ReturnType<typeof vi.fn>).mockClear();
+    (deps.router.route as ReturnType<typeof vi.fn>).mockClear();
+
+    await callHandler({ type: "chat", message: "whats the ingestion log rate" }, send as any, deps, ctx);
+
+    const streamEnd = messages.find((m: any) => m.type === "chat:stream_end");
+    expect((streamEnd as any)?.content).toMatch(/can't answer/i);
+    expect(createMastraAdapters).not.toHaveBeenCalled();
+    expect(getToolsByRole).not.toHaveBeenCalled();
+    expect(deps.router.route).not.toHaveBeenCalled();
   });
 
   it("chat:stream_end omits serviceContext when service is only resolvable from history", async () => {
