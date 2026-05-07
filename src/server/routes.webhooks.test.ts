@@ -169,8 +169,8 @@ describe("GET /api/webhooks/info", () => {
   });
 
   it("surfaces the service-label contract and severity map for the GUI panel", async () => {
-    // The whole reason this endpoint exists: an operator pasting a Grafana
-    // contact point into dops needs to know which labels dops looks for and
+    // The whole reason this endpoint exists: an operator pasting an alerting
+    // contact point needs to know which labels the app looks for and
     // how severity maps to investigation depth, without reading source.
     ctx = makeApp({
       webhook: {
@@ -251,6 +251,41 @@ describe("GET /api/webhooks/recent", () => {
       service: "checkout",
       deliveryStatus: "investigated",
     });
+  });
+
+  it("keeps older alertmanager deliveries when newer alert_received rows are from other sources", async () => {
+    ctx = makeApp();
+    const baseTs = Date.now();
+    for (let i = 0; i < 20; i++) {
+      ctx.db.insertEvent({
+        id: `am-crowded-${i}`,
+        ts: baseTs + i,
+        kind: "alert_received",
+        severity: "warn",
+        summary: `alert · C${i} · checkout`,
+        stackId: ctx.defaultStackId,
+        service: "checkout",
+        meta: { source: "alertmanager", sender: "grafana", alertName: `C${i}`, deliveryStatus: "investigated" },
+      });
+    }
+    for (let i = 0; i < 60; i++) {
+      ctx.db.insertEvent({
+        id: `other-source-${i}`,
+        ts: baseTs + 1_000 + i,
+        kind: "alert_received",
+        severity: "warn",
+        summary: "other source",
+        stackId: ctx.defaultStackId,
+        meta: { source: "pagerduty", sender: "pd-prod" },
+      });
+    }
+
+    const res = await request(ctx.app).get("/api/webhooks/recent").expect(200);
+
+    expect(res.body.events).toHaveLength(20);
+    expect(res.body.events.map((e: { id: string }) => e.id)).toEqual(
+      Array.from({ length: 20 }, (_, i) => `am-crowded-${19 - i}`),
+    );
   });
 
   it("scopes to the active stack via X-Stack-Id", async () => {
