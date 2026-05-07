@@ -90,6 +90,20 @@ services:
 discovery:
   autoRefresh: false          # Set to true to re-discover on server start
   maxIterations: 40           # Max agent iterations during discovery
+  # Cap each MCP tool result before it enters the discover agent's message
+  # history. Bounds prompt growth across iterations so accumulated context
+  # plus the reserved completion budget stays under the model's context
+  # window. Without this cap a single unfiltered k8s_pods_list (~83k chars)
+  # plus 30 more tool calls overflows even a 128k-token window. Set 0 to
+  # disable.
+  maxToolResultChars: 30000
+  # Max completion tokens reserved for the discover agent's response. Some
+  # OpenAI-compatible gateways reject requests with "max_tokens must be at
+  # least 1, got -N" when prompt_tokens plus this value exceed the model's
+  # context window. Lower for stacks with smaller context (e.g. 4096 on a
+  # 16k-token model); raise for very large environments where the JSON
+  # output truncates. Range: 256–65536.
+  maxOutputTokens: 8192
   excludeServices:            # Services to exclude from auto-discovery
     - consul
     - prometheus
