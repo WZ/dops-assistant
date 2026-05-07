@@ -30,7 +30,7 @@ import { loadConfig } from "../config/loader.js";
 import { SkillStore } from "../skills/store.js";
 import { createModel } from "../mastra/index.js";
 import { InvestigationRunner } from "./investigation-runner.js";
-import { createWebhookHandler, WEBHOOK_NOT_CONFIGURED_BODY, isWebhookAuthConfigured } from "./webhook-handler.js";
+import { createWebhookHandler, WEBHOOK_NOT_CONFIGURED_BODY } from "./webhook-handler.js";
 import { InvestigationDedup } from "./investigation-dedup.js";
 import { createApiKeyMiddleware } from "./auth-middleware.js";
 import { globalLimiter, strictLimiter, moderateLimiter } from "./rate-limit.js";
@@ -452,7 +452,7 @@ async function main() {
     }
   };
 
-  registerRoutes(app, { db, stackManager, config, skillStore, sharedDedup, llmModel: model });
+  registerRoutes(app, { db, stackManager, config, skillStore, sharedDedup, llmModel: model, globalOnComplete });
 
   // Health check endpoint with background DB monitoring.
   // In demo mode the endpoint still works (for liveness probes / banner
@@ -466,18 +466,17 @@ async function main() {
   app.get("/api/health", healthHandler);
 
   // Alert webhook endpoint.
-  // The route is always registered. When neither `webhook.secret` nor
-  // `webhook.tokens` is set, the handler itself returns a structured 503 with
-  // a hint, so operators posting to this URL see a meaningful error instead
-  // of Express's default HTML 404 ("Cannot POST /api/webhook/alert"). When
-  // any auth credential IS set, we eagerly build the runner/adapters so the
-  // first webhook call doesn't pay that cost.
   //
-  // Demo mode: never wire the real webhook handler even if auth is set —
-  // demo-mode middleware would reject it anyway, but treating it as unconfigured
-  // keeps the startup path free of adapter construction (which would try to
-  // connect to stub MCP providers).
-  if (isWebhookAuthConfigured(config.webhook) && !isDemoMode()) {
+  // Tokens are managed in the DB (Settings → Alert Webhooks), not config.yaml.
+  // The handler returns 503 when zero tokens exist (fresh deploy with nothing
+  // generated yet), 401 for unrecognized bearers, and the usual flow otherwise.
+  // We eagerly build the runner so the first webhook call doesn't pay that
+  // cost; runners are per-stack and built lazily for non-default stacks.
+  //
+  // Demo mode: register a permanent 503 stub. Demo-mode middleware would
+  // reject anyway, and skipping adapter construction keeps boot free of
+  // stub-MCP connection attempts.
+  if (!isDemoMode()) {
     const defaultStackId = stackManager.getDefaultStackId();
     const defaultCtx = stackManager.getDefaultContext();
     const providers = defaultCtx.providerRegistry.getProviders();
@@ -488,6 +487,7 @@ async function main() {
       runner,
       config: config.webhook,
       services: config.services,
+      db,
       stackId: defaultStackId,
       dedup: sharedDedup,
       getHiddenServices: () => db.getHiddenServices(defaultStackId),
@@ -521,9 +521,6 @@ async function main() {
         }
       }
 
-      // Webhook invocation counts as activity for the target stack,
-      // independent of the /api middleware (which bumps the resolved-from-
-      // header stack — usually the default for webhooks).
       stackManager.bumpActivity(stackRow.id);
       const ctx = stackManager.getContext(stackRow.id);
       const stackProviders = ctx.providerRegistry.getProviders();
@@ -533,6 +530,7 @@ async function main() {
         runner: stackRunner,
         config: config.webhook,
         services: [...config.services, ...ctx.serviceRegistry.load().filter(s => !config.services.some(c => c.name === s.name))],
+        db,
         stackId: stackRow.id,
         dedup: sharedDedup,
         getHiddenServices: () => db.getHiddenServices(stackRow.id),
@@ -540,16 +538,13 @@ async function main() {
       await stackWebhookHandler(req, res);
     });
 
-    logger.info("Alert webhook enabled at POST /api/webhook/alert");
+    logger.info("Alert webhook enabled at POST /api/webhook/alert (tokens managed via Settings → Alert Webhooks)");
   } else {
-    // No webhook auth configured: register 503 stubs at both the default and
-    // stack-scoped routes so clients receive a structured JSON error.
     const notConfiguredResponse = (_req: Request, res: Response) => {
       res.status(503).json(WEBHOOK_NOT_CONFIGURED_BODY);
     };
     app.post("/api/webhook/alert", notConfiguredResponse);
     app.post("/api/webhook/alert/:stackSlug", notConfiguredResponse);
-    logger.warn("Alert webhook registered but DISABLED: neither webhook.secret nor webhook.tokens is configured — POST /api/webhook/alert will return 503");
   }
 
   setupWebSocket(server, {

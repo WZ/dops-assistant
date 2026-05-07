@@ -570,6 +570,7 @@ export class Database {
     this.migrateStackSettings();
     this.migrateEmailRecipients();
     this.migratePeriodicDiscovery();
+    this.migrateWebhookTokens();
   }
 
   /**
@@ -2499,6 +2500,75 @@ export class Database {
       severity: r["severity"] as number,
       dispatchedAt: r["dispatched_at"] as number,
     }));
+  }
+
+  // ── Webhook tokens (UI-managed, GitHub-PAT style) ──────────────────────
+  //
+  // Tokens generated through Settings → Alert Webhooks. The plaintext token
+  // is shown to the user once at creation, then only the sha256 hash is
+  // persisted. The webhook handler hashes incoming bearers and looks them up
+  // here. There is no rotate-in-place — rotation is "create new + revoke
+  // old after Grafana side has been updated", to avoid the silent-window
+  // failure pattern where Grafana keeps using the old token through a
+  // restart.
+
+  private migrateWebhookTokens(): void {
+    this.db.prepare(`
+      CREATE TABLE IF NOT EXISTS webhook_tokens (
+        id           TEXT PRIMARY KEY,
+        name         TEXT NOT NULL,
+        token_hash   TEXT NOT NULL UNIQUE,
+        prefix       TEXT NOT NULL,
+        created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        last_used_at TEXT
+      )
+    `).run();
+    this.db.prepare(
+      "CREATE INDEX IF NOT EXISTS idx_webhook_tokens_hash ON webhook_tokens (token_hash)"
+    ).run();
+  }
+
+  createWebhookToken(args: { id: string; name: string; tokenHash: string; prefix: string }): void {
+    this.db.prepare(
+      "INSERT INTO webhook_tokens (id, name, token_hash, prefix) VALUES (?, ?, ?, ?)"
+    ).run(args.id, args.name, args.tokenHash, args.prefix);
+  }
+
+  findWebhookTokenByHash(tokenHash: string): { id: string; name: string; prefix: string } | null {
+    const row = this.db.prepare(
+      "SELECT id, name, prefix FROM webhook_tokens WHERE token_hash = ?"
+    ).get(tokenHash) as { id: string; name: string; prefix: string } | undefined;
+    return row ?? null;
+  }
+
+  markWebhookTokenUsed(id: string): void {
+    this.db.prepare(
+      "UPDATE webhook_tokens SET last_used_at = datetime('now') WHERE id = ?"
+    ).run(id);
+  }
+
+  listWebhookTokens(): Array<{
+    id: string;
+    name: string;
+    prefix: string;
+    createdAt: string;
+    lastUsedAt: string | null;
+  }> {
+    const rows = this.db.prepare(
+      "SELECT id, name, prefix, created_at, last_used_at FROM webhook_tokens ORDER BY created_at DESC"
+    ).all() as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      id: r["id"] as string,
+      name: r["name"] as string,
+      prefix: r["prefix"] as string,
+      createdAt: r["created_at"] as string,
+      lastUsedAt: (r["last_used_at"] as string | null) ?? null,
+    }));
+  }
+
+  deleteWebhookToken(id: string): boolean {
+    const info = this.db.prepare("DELETE FROM webhook_tokens WHERE id = ?").run(id);
+    return info.changes > 0;
   }
 
   close(): void {

@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Request, Response } from "express";
 import { createWebhookHandler } from "./webhook-handler.js";
+import { hashWebhookToken } from "./webhook-tokens.js";
 import type { InvestigationRunner } from "./investigation-runner.js";
 import type { WebhookConfig, ServiceConfig } from "../config/schema.js";
+import type { Database } from "./db.js";
 import { eventLog } from "./event-log.js";
 
 const SERVICES: ServiceConfig[] = [
@@ -11,7 +13,6 @@ const SERVICES: ServiceConfig[] = [
 ];
 
 const DEFAULT_CONFIG: WebhookConfig = {
-  secret: "test-secret",
   dedupWindowSeconds: 300,
   maxConcurrent: 3,
   defaultTemplate: "standard",
@@ -31,6 +32,25 @@ function mockRunner(): InvestigationRunner {
   return { run: vi.fn().mockResolvedValue({}) } as unknown as InvestigationRunner;
 }
 
+/** Mock DB with the webhook-token methods the handler needs. Pass a map of
+ *  plaintext token → sender name; the mock hashes them on access so the
+ *  handler's resolveTokenRow flow exercises the real hashing path. */
+function mockTokenDb(plaintextTokens: Record<string, string>): Database {
+  const byHash = new Map<string, { id: string; name: string; prefix: string }>();
+  for (const [tok, name] of Object.entries(plaintextTokens)) {
+    byHash.set(hashWebhookToken(tok), { id: `id-${name}`, name, prefix: tok.slice(0, 8) });
+  }
+  return {
+    listWebhookTokens: () => Array.from(byHash.values()).map((v) => ({
+      id: v.id, name: v.name, prefix: v.prefix, createdAt: "now", lastUsedAt: null,
+    })),
+    findWebhookTokenByHash: (hash: string) => byHash.get(hash) ?? null,
+    markWebhookTokenUsed: vi.fn(),
+  } as unknown as Database;
+}
+
+const DEFAULT_DB = () => mockTokenDb({ "test-secret-aaaaaaaaaaaaaaaa": "default" });
+
 describe("webhook handler", () => {
   let runner: InvestigationRunner;
 
@@ -39,7 +59,7 @@ describe("webhook handler", () => {
   });
 
   it("rejects requests without bearer token", async () => {
-    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES });
+    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES, db: DEFAULT_DB() });
     const { req, res } = mockReqRes({ alerts: [] });
 
     await handler(req, res);
@@ -47,7 +67,7 @@ describe("webhook handler", () => {
   });
 
   it("rejects requests with wrong bearer token", async () => {
-    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES });
+    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES, db: DEFAULT_DB() });
     const { req, res } = mockReqRes({ alerts: [] }, "Bearer wrong-token");
 
     await handler(req, res);
@@ -55,18 +75,18 @@ describe("webhook handler", () => {
   });
 
   it("rejects payloads with no alerts", async () => {
-    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES });
-    const { req, res } = mockReqRes({ alerts: [] }, "Bearer test-secret");
+    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES, db: DEFAULT_DB() });
+    const { req, res } = mockReqRes({ alerts: [] }, "Bearer test-secret-aaaaaaaaaaaaaaaa");
 
     await handler(req, res);
     expect(res.status).toHaveBeenCalledWith(400);
   });
 
   it("returns 422 when service cannot be matched", async () => {
-    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES });
+    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES, db: DEFAULT_DB() });
     const { req, res } = mockReqRes(
       { alerts: [{ status: "firing", labels: { alertname: "test", unknown_label: "xyz" }, annotations: {}, startsAt: "", endsAt: "" }] },
-      "Bearer test-secret",
+      "Bearer test-secret-aaaaaaaaaaaaaaaa",
     );
 
     await handler(req, res);
@@ -74,7 +94,7 @@ describe("webhook handler", () => {
   });
 
   it("returns 202 and triggers investigation for valid alert", async () => {
-    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES });
+    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES, db: DEFAULT_DB() });
     const { req, res } = mockReqRes(
       {
         alerts: [{
@@ -85,7 +105,7 @@ describe("webhook handler", () => {
           endsAt: "0001-01-01T00:00:00Z",
         }],
       },
-      "Bearer test-secret",
+      "Bearer test-secret-aaaaaaaaaaaaaaaa",
     );
 
     await handler(req, res);
@@ -102,7 +122,7 @@ describe("webhook handler", () => {
   });
 
   it("skips resolved alerts", async () => {
-    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES });
+    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES, db: DEFAULT_DB() });
     const { req, res } = mockReqRes(
       {
         alerts: [{
@@ -113,7 +133,7 @@ describe("webhook handler", () => {
           endsAt: "",
         }],
       },
-      "Bearer test-secret",
+      "Bearer test-secret-aaaaaaaaaaaaaaaa",
     );
 
     await handler(req, res);
@@ -122,7 +142,7 @@ describe("webhook handler", () => {
   });
 
   it("passes readOnlyTools: true for headless investigations", async () => {
-    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES });
+    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES, db: DEFAULT_DB() });
     const { req, res } = mockReqRes(
       {
         alerts: [{
@@ -133,7 +153,7 @@ describe("webhook handler", () => {
           endsAt: "0001-01-01T00:00:00Z",
         }],
       },
-      "Bearer test-secret",
+      "Bearer test-secret-aaaaaaaaaaaaaaaa",
     );
 
     await handler(req, res);
@@ -142,18 +162,18 @@ describe("webhook handler", () => {
     }));
   });
 
-  it("returns structured 503 when no secret is configured", async () => {
-    // Issue #18: without a secret, the webhook used to 404 from Express's
-    // default HTML fallback. Now the handler always runs and returns a
-    // JSON 503 with a hint so operators see a meaningful error.
-    const noSecretConfig = { ...DEFAULT_CONFIG, secret: undefined };
-    const handler = createWebhookHandler({ runner, config: noSecretConfig, services: SERVICES });
+  it("returns structured 503 with GUI-pointing hint when no tokens are configured in the DB", async () => {
+    // Fresh deploy: zero tokens generated yet. The handler returns 503 with a
+    // hint that points the operator at Settings → Alert Webhooks rather than
+    // a config.yaml hint (yaml-managed tokens were dropped in this PR).
+    const emptyDb = mockTokenDb({});
+    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES, db: emptyDb });
     const { req, res } = mockReqRes(
       {
         alerts: [{
           status: "firing",
           labels: { service: "payments-api", severity: "warning" },
-          annotations: { summary: "Slow responses" },
+          annotations: {},
           startsAt: "",
           endsAt: "",
         }],
@@ -164,161 +184,62 @@ describe("webhook handler", () => {
     expect(res.status).toHaveBeenCalledWith(503);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
       error: "Webhook not configured",
-      // AP9: hint should name the config key, file, section, AND instruct the
-      // operator to restart — terse hints caused support loops.
-      hint: expect.stringMatching(/webhook\.secret.*config\.yaml.*webhook section.*restart the server/),
+      hint: expect.stringMatching(/Settings.*Alert Webhooks/),
     }));
-    // Should NOT kick off an investigation.
     expect(runner.run).not.toHaveBeenCalled();
   });
 
-  it("accepts valid bearer token when secret is configured (D-3 sanity)", async () => {
-    // Mirrors the "returns 202" test but under the D-3 scope header — explicit
-    // regression coverage that adding the 503 path didn't break the happy case.
-    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES });
-    const { req, res } = mockReqRes(
-      {
-        alerts: [{
-          status: "firing",
-          labels: { alertname: "Slow", service: "payments-api", severity: "warning" },
-          annotations: { summary: "Slow responses" },
-          startsAt: "2026-04-17T10:00:00Z",
-          endsAt: "0001-01-01T00:00:00Z",
-        }],
-      },
-      "Bearer test-secret",
-    );
-
-    await handler(req, res);
-    expect(res.status).toHaveBeenCalledWith(202);
-  });
-
-  it("rejects with 401 (not 503) when secret is set but the bearer is wrong", async () => {
-    // D-3 boundary: the 503 gate must only fire when the secret is *unset*.
-    // A misconfigured client (wrong token) with secret set should still 401.
-    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES });
-    const { req, res } = mockReqRes({ alerts: [] }, "Bearer nope");
+  it("rejects unknown bearer with 401 (not 503) when the DB has tokens", async () => {
+    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES, db: DEFAULT_DB() });
+    const { req, res } = mockReqRes({ alerts: [] }, "Bearer some-other-bearer-token-here");
 
     await handler(req, res);
     expect(res.status).toHaveBeenCalledWith(401);
     expect(res.status).not.toHaveBeenCalledWith(503);
   });
-});
 
-describe("webhook handler — named tokens (per-sender auth)", () => {
-  let runner: InvestigationRunner;
-
-  beforeEach(() => {
-    runner = mockRunner();
-    eventLog.reset();
-  });
-
-  const VALID_ALERT = {
-    alerts: [{
-      status: "firing" as const,
-      labels: { alertname: "HighErrorRate", service: "checkout-service", severity: "critical" },
-      annotations: { summary: "Error rate is high" },
-      startsAt: "2026-04-26T10:00:00Z",
-      endsAt: "0001-01-01T00:00:00Z",
-    }],
-  };
-
-  it("accepts a token from webhook.tokens (no legacy secret)", async () => {
-    const config: WebhookConfig = {
-      ...DEFAULT_CONFIG,
-      secret: undefined,
-      tokens: { grafana: "grafana-token", "fortinet-shim": "fortinet-token" },
-    };
-    const handler = createWebhookHandler({ runner, config, services: SERVICES });
-    const { req, res } = mockReqRes(VALID_ALERT, "Bearer grafana-token");
-
-    await handler(req, res);
-    expect(res.status).toHaveBeenCalledWith(202);
-  });
-
-  it("accepts each named token in the map", async () => {
-    const config: WebhookConfig = {
-      ...DEFAULT_CONFIG,
-      secret: undefined,
-      tokens: { a: "token-a", b: "token-b" },
-    };
-    for (const token of ["token-a", "token-b"]) {
-      const localRunner = mockRunner();
-      const handler = createWebhookHandler({ runner: localRunner, config, services: SERVICES });
-      const { req, res } = mockReqRes(VALID_ALERT, `Bearer ${token}`);
-      await handler(req, res);
-      expect(res.status).toHaveBeenCalledWith(202);
-    }
-  });
-
-  it("legacy secret still works alongside tokens", async () => {
-    const config: WebhookConfig = {
-      ...DEFAULT_CONFIG,
-      tokens: { other: "other-token" },
-    };
-    const handler = createWebhookHandler({ runner, config, services: SERVICES });
-    const { req, res } = mockReqRes(VALID_ALERT, "Bearer test-secret");
-
-    await handler(req, res);
-    expect(res.status).toHaveBeenCalledWith(202);
-  });
-
-  it("rejects unknown tokens when only tokens map is set", async () => {
-    const config: WebhookConfig = {
-      ...DEFAULT_CONFIG,
-      secret: undefined,
-      tokens: { grafana: "grafana-token" },
-    };
-    const handler = createWebhookHandler({ runner, config, services: SERVICES });
-    const { req, res } = mockReqRes(VALID_ALERT, "Bearer wrong-token");
-
-    await handler(req, res);
-    expect(res.status).toHaveBeenCalledWith(401);
-  });
-
-  it("returns 503 when neither secret nor tokens map is configured", async () => {
-    const config: WebhookConfig = { ...DEFAULT_CONFIG, secret: undefined };
-    const handler = createWebhookHandler({ runner, config, services: SERVICES });
-    const { req, res } = mockReqRes(VALID_ALERT, "Bearer any-token");
-
-    await handler(req, res);
-    expect(res.status).toHaveBeenCalledWith(503);
-  });
-
-  it("returns 503 when tokens map is present but empty", async () => {
-    const config: WebhookConfig = { ...DEFAULT_CONFIG, secret: undefined, tokens: {} };
-    const handler = createWebhookHandler({ runner, config, services: SERVICES });
-    const { req, res } = mockReqRes(VALID_ALERT, "Bearer any-token");
-
-    await handler(req, res);
-    expect(res.status).toHaveBeenCalledWith(503);
-  });
-
-  it("attributes the sender name in the alert_received event", async () => {
-    const config: WebhookConfig = {
-      ...DEFAULT_CONFIG,
-      secret: undefined,
-      tokens: { "fortinet-shim": "fortinet-token" },
-    };
-    const handler = createWebhookHandler({ runner, config, services: SERVICES });
-    const { req, res } = mockReqRes(VALID_ALERT, "Bearer fortinet-token");
+  it("attributes the sender name (token row's name) in the alert_received event", async () => {
+    const customDb = mockTokenDb({ "grafana-prod-token-aaaaaaaa": "grafana-prod" });
+    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES, db: customDb });
+    const { req, res } = mockReqRes(
+      {
+        alerts: [{
+          status: "firing",
+          labels: { alertname: "HighErrorRate", service: "checkout-service", severity: "critical" },
+          annotations: {},
+          startsAt: "2026-05-07T10:00:00Z",
+          endsAt: "0001-01-01T00:00:00Z",
+        }],
+      },
+      "Bearer grafana-prod-token-aaaaaaaa",
+    );
 
     await handler(req, res);
 
     const { events } = eventLog.recent(10);
     expect(events.length).toBeGreaterThan(0);
     expect(events[0].kind).toBe("alert_received");
-    expect(events[0].meta).toMatchObject({ sender: "fortinet-shim" });
+    expect(events[0].meta).toMatchObject({ sender: "grafana-prod" });
   });
 
-  it('attributes the legacy secret as sender "default"', async () => {
-    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES });
-    const { req, res } = mockReqRes(VALID_ALERT, "Bearer test-secret");
+  it("bumps last_used_at on accepted webhook delivery", async () => {
+    const customDb = mockTokenDb({ "valid-token-aaaaaaaaaaaaaaaa": "grafana" });
+    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES, db: customDb });
+    const { req, res } = mockReqRes(
+      {
+        alerts: [{
+          status: "firing",
+          labels: { alertname: "Slow", service: "payments-api" },
+          annotations: {},
+          startsAt: "",
+          endsAt: "0001-01-01T00:00:00Z",
+        }],
+      },
+      "Bearer valid-token-aaaaaaaaaaaaaaaa",
+    );
 
     await handler(req, res);
-
-    const { events } = eventLog.recent(10);
-    expect(events[0].meta).toMatchObject({ sender: "default" });
+    expect(customDb.markWebhookTokenUsed).toHaveBeenCalledWith("id-grafana");
   });
 });
 
@@ -331,7 +252,7 @@ describe("webhook handler eventLog integration", () => {
   });
 
   it("emits alert_received event with correct service when a firing alert is processed", async () => {
-    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES });
+    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES, db: DEFAULT_DB() });
     const { req, res } = mockReqRes(
       {
         alerts: [{
@@ -342,7 +263,7 @@ describe("webhook handler eventLog integration", () => {
           endsAt: "0001-01-01T00:00:00Z",
         }],
       },
-      "Bearer test-secret",
+      "Bearer test-secret-aaaaaaaaaaaaaaaa",
     );
 
     await handler(req, res);
@@ -360,7 +281,7 @@ describe("webhook handler eventLog integration", () => {
   // deliver?" question went silent on every dedup'd retry. Now every
   // post-auth alert produces an event with meta.deliveryStatus.
   it("emits alert_received with deliveryStatus=deduplicated when same service is hit twice", async () => {
-    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES });
+    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES, db: DEFAULT_DB() });
     const payload = {
       alerts: [{
         status: "firing",
@@ -371,9 +292,9 @@ describe("webhook handler eventLog integration", () => {
       }],
     };
 
-    const first = mockReqRes(payload, "Bearer test-secret");
+    const first = mockReqRes(payload, "Bearer test-secret-aaaaaaaaaaaaaaaa");
     await handler(first.req, first.res);
-    const second = mockReqRes(payload, "Bearer test-secret");
+    const second = mockReqRes(payload, "Bearer test-secret-aaaaaaaaaaaaaaaa");
     await handler(second.req, second.res);
 
     expect(second.res.status).toHaveBeenCalledWith(200);
@@ -390,12 +311,12 @@ describe("webhook handler eventLog integration", () => {
     // dedup slot when the second call arrives — use a never-resolving
     // promise so markCompleted never fires during the test.
     const heldRunner = { run: vi.fn(() => new Promise(() => { /* never resolves */ })) } as unknown as InvestigationRunner;
-    const handler = createWebhookHandler({ runner: heldRunner, config: cfg, services: SERVICES });
+    const handler = createWebhookHandler({ runner: heldRunner, config: cfg, services: SERVICES, db: DEFAULT_DB() });
 
     // First fires for checkout-service, takes the only slot.
     const first = mockReqRes(
       { alerts: [{ status: "firing", labels: { alertname: "A", service: "checkout-service", severity: "warning" }, annotations: {}, startsAt: "", endsAt: "" }] },
-      "Bearer test-secret",
+      "Bearer test-secret-aaaaaaaaaaaaaaaa",
     );
     await handler(first.req, first.res);
 
@@ -403,7 +324,7 @@ describe("webhook handler eventLog integration", () => {
     // but concurrency is at cap so it must be rejected with 429.
     const second = mockReqRes(
       { alerts: [{ status: "firing", labels: { alertname: "B", service: "payments-api", severity: "warning" }, annotations: {}, startsAt: "", endsAt: "" }] },
-      "Bearer test-secret",
+      "Bearer test-secret-aaaaaaaaaaaaaaaa",
     );
     await handler(second.req, second.res);
 
@@ -415,10 +336,10 @@ describe("webhook handler eventLog integration", () => {
   });
 
   it("emits alert_received with deliveryStatus=no_service_match when labels don't resolve", async () => {
-    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES });
+    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES, db: DEFAULT_DB() });
     const { req, res } = mockReqRes(
       { alerts: [{ status: "firing", labels: { alertname: "Mystery", weird_label: "xyz" }, annotations: {}, startsAt: "", endsAt: "" }] },
-      "Bearer test-secret",
+      "Bearer test-secret-aaaaaaaaaaaaaaaa",
     );
 
     await handler(req, res);

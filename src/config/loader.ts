@@ -58,9 +58,37 @@ export function loadServicesFile(configPath: string): ServiceConfig[] {
   return parsed as ServiceConfig[];
 }
 
+/**
+ * Detect deprecated yaml-managed webhook tokens and refuse to start. The
+ * upgrade that introduced UI-managed tokens removed `webhook.secret` and
+ * `webhook.tokens` from the schema — silently dropping unknown keys would
+ * leave the operator with a Grafana that 401s every alert and no
+ * indication why. Fail loud at boot instead. Run BEFORE schema parsing
+ * because Zod strips unknown keys before we'd see them.
+ */
+function rejectLegacyWebhookYaml(parsed: unknown): void {
+  if (!parsed || typeof parsed !== "object") return;
+  const wh = (parsed as Record<string, unknown>)["webhook"];
+  if (!wh || typeof wh !== "object") return;
+  const legacy = wh as Record<string, unknown>;
+  const offenders: string[] = [];
+  if (typeof legacy["secret"] === "string" && legacy["secret"].length > 0) offenders.push("webhook.secret");
+  if (legacy["tokens"] && typeof legacy["tokens"] === "object" && Object.keys(legacy["tokens"] as object).length > 0) {
+    offenders.push("webhook.tokens");
+  }
+  if (offenders.length > 0) {
+    throw new Error(
+      `yaml-managed webhook tokens are no longer supported. Remove ${offenders.join(" and ")} ` +
+      `from your config and regenerate equivalents in Settings → Alert Webhooks. ` +
+      `Existing Grafana integrations will continue to fail until the new tokens are wired up.`
+    );
+  }
+}
+
 export function loadConfig(configPath: string): Config {
   const raw = readFileSync(configPath, "utf-8");
   const parsed = parse(raw);
+  rejectLegacyWebhookYaml(parsed);
   const resolved = resolveEnvVars(parsed);
   const result = ConfigSchema.safeParse(resolved);
   if (!result.success) {

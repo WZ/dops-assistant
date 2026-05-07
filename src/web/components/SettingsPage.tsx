@@ -1,6 +1,7 @@
 // src/web/components/SettingsPage.tsx
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ProvidersPage } from "./ProvidersPage";
+import { AlertWebhooksTab } from "./AlertWebhooksTab";
 import { SkillsPage } from "./SkillsPage";
 import { StacksManagePage } from "./StacksManagePage";
 import { NotificationsTab } from "./NotificationsTab";
@@ -10,7 +11,7 @@ import type { StackSummary } from "../../types/stack-types.js";
 
 interface SettingsPageProps {
   onRunDiscovery: () => void;
-  initialTab?: "providers" | "skills" | "stacks" | "scan" | "discovery" | "notifications";
+  initialTab?: "providers" | "webhooks" | "skills" | "stacks" | "scan" | "discovery" | "notifications";
   stacks: StackSummary[];
   activeStackId: string;
   onSwitchStack: (stackId: string) => void;
@@ -35,6 +36,12 @@ export function SettingsPage({ onRunDiscovery, initialTab = "providers", stacks,
             className="font-mono text-[10px] font-medium px-4 py-2 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
           >
             Providers
+          </TabsTrigger>
+          <TabsTrigger
+            value="webhooks"
+            className="font-mono text-[10px] font-medium px-4 py-2 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+          >
+            Alert Webhooks
           </TabsTrigger>
           <TabsTrigger
             value="skills"
@@ -69,6 +76,9 @@ export function SettingsPage({ onRunDiscovery, initialTab = "providers", stacks,
         </TabsList>
         <TabsContent value="providers" className="mt-4">
           <ProvidersPage onRunDiscovery={onRunDiscovery} onProviderSaved={onProviderSaved} />
+        </TabsContent>
+        <TabsContent value="webhooks" className="mt-4">
+          <AlertWebhooksTab />
         </TabsContent>
         <TabsContent value="skills" className="mt-4">
           <SkillsPage />

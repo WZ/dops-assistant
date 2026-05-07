@@ -11,7 +11,12 @@ import type { SkillStore } from "../skills/store.js";
 import type { ProviderInfo } from "../mcp/provider-registry.js";
 import type { StackManager } from "./stack-manager.js";
 import type { InvestigationDedup } from "./investigation-dedup.js";
-import { maskToken, SERVICE_LABEL_KEYS } from "./webhook-handler.js";
+import { SERVICE_LABEL_KEYS, processFiringAlert } from "./webhook-handler.js";
+import { generateWebhookToken, hashWebhookToken, maskStoredToken, isValidTokenName } from "./webhook-tokens.js";
+import { AlertPayloadSchema } from "./sanitize.js";
+import { ulid } from "ulid";
+import { createMastraAdapters } from "./agents.js";
+import { InvestigationRunner } from "./investigation-runner.js";
 import { queryServiceMetrics } from "./prometheus-query.js";
 import type { MetricSeries } from "./prometheus-query.js";
 import { inferDependencyGraph } from "./dependency-graph.js";
@@ -89,6 +94,11 @@ export interface RouteDeps {
   skillStore?: SkillStore;
   sharedDedup: InvestigationDedup;
   llmModel?: LanguageModel;
+  /** Global onComplete callback fired after every successful investigation
+   *  (Slack notification, etc). Used by /api/webhooks/test to construct a
+   *  per-stack runner that participates in the same notification pipeline
+   *  as real webhook deliveries. */
+  globalOnComplete?: import("./investigation-runner.js").RunnerDeps["globalOnComplete"];
 }
 
 /**
@@ -2014,20 +2024,16 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     const stackId = req.stackId;
     const stackSlug = req.stackContext?.slug ?? DEFAULT_STACK_SLUG;
 
-    // Token list. Legacy `webhook.secret` surfaces as a row named "default"
-    // with `legacy: true` so the UI can render the rotation guidance
-    // (move to per-sender tokens) inline. Per-sender tokens come from
-    // `webhook.tokens`. Both go through `maskToken` — full token never
-    // leaves this endpoint.
-    const tokens: Array<{ name: string; masked: string; legacy: boolean }> = [];
-    if (wh.secret) {
-      tokens.push({ name: "default", masked: maskToken(wh.secret), legacy: true });
-    }
-    if (wh.tokens) {
-      for (const [name, token] of Object.entries(wh.tokens)) {
-        tokens.push({ name, masked: maskToken(token), legacy: false });
-      }
-    }
+    // Token list comes from the DB store. Plaintext tokens are never held
+    // server-side after creation; the GUI reads only the prefix + the
+    // last_used_at signal it needs to render rotation hygiene.
+    const tokens = db.listWebhookTokens().map((t) => ({
+      id: t.id,
+      name: t.name,
+      masked: maskStoredToken(t.prefix),
+      createdAt: t.createdAt,
+      lastUsedAt: t.lastUsedAt,
+    }));
 
     res.json({
       // Path-only URLs. The frontend prepends `window.location.origin` plus
@@ -2052,6 +2058,179 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       // gets a silent 422 with no UI affordance).
       serviceLabelKeys: SERVICE_LABEL_KEYS,
       acceptsResolved: false,
+    });
+  });
+
+  // ── Token CRUD ──────────────────────────────────────────────────────
+  //
+  // Auth: same posture as every other write in this server (X-API-Key in
+  // production, passthrough on staging — VPN trust boundary, per CLAUDE.md).
+  // No special carve-out; minting webhook tokens via UI is no more sensitive
+  // than creating stacks or providers, both of which already follow this
+  // posture.
+
+  app.get("/api/webhooks/tokens", (_req: Request, res: Response) => {
+    const tokens = db.listWebhookTokens().map((t) => ({
+      id: t.id,
+      name: t.name,
+      masked: maskStoredToken(t.prefix),
+      createdAt: t.createdAt,
+      lastUsedAt: t.lastUsedAt,
+    }));
+    res.json({ tokens });
+  });
+
+  // POST returns the plaintext token EXACTLY ONCE in the body. The UI
+  // displays it in a one-time-reveal modal and discards on close. Future
+  // callers see only the masked form via GET.
+  app.post("/api/webhooks/tokens", (req: Request, res: Response) => {
+    const { name } = (req.body ?? {}) as { name?: unknown };
+    if (typeof name !== "string" || !isValidTokenName(name)) {
+      res.status(400).json({ error: "Invalid token name. Use 1–64 chars: letters, digits, space, dash, underscore, dot." });
+      return;
+    }
+    const trimmed = name.trim();
+    const generated = generateWebhookToken();
+    db.createWebhookToken({
+      id: generated.id,
+      name: trimmed,
+      tokenHash: generated.tokenHash,
+      prefix: generated.prefix,
+    });
+    res.status(201).json({
+      id: generated.id,
+      name: trimmed,
+      // Plaintext — present ONCE, consumer must save now.
+      token: generated.token,
+      masked: maskStoredToken(generated.prefix),
+      createdAt: new Date().toISOString(),
+    });
+  });
+
+  app.delete("/api/webhooks/tokens/:id", (req: Request, res: Response) => {
+    const id = req.params["id"] as string;
+    const ok = db.deleteWebhookToken(id);
+    if (!ok) {
+      res.status(404).json({ error: "Token not found" });
+      return;
+    }
+    res.status(204).end();
+  });
+
+  // ── Test alert ──────────────────────────────────────────────────────
+  //
+  // Synthesizes an Alertmanager v4 payload and runs it through the same
+  // `processFiringAlert()` core the HTTP webhook uses. Auth: caller must
+  // pass a valid webhook token in `body.token` (any of the configured
+  // tokens). This mirrors the Grafana-side trust model — you can only fire
+  // a test if you can already fire a real one — and prevents anonymous-
+  // on-VPN abuse from draining the LLM budget.
+
+  app.post("/api/webhooks/test", async (req: Request, res: Response) => {
+    const { token, severity, service: serviceName } = (req.body ?? {}) as {
+      token?: unknown; severity?: unknown; service?: unknown;
+    };
+    if (typeof token !== "string" || token.length === 0) {
+      res.status(401).json({ error: "Missing token. Paste a configured webhook token to authorize the test." });
+      return;
+    }
+    const tokenRow = db.findWebhookTokenByHash(hashWebhookToken(token));
+    if (!tokenRow) {
+      res.status(401).json({ error: "Token not recognized." });
+      return;
+    }
+
+    const stackId = req.stackId;
+    const ctx = req.stackContext;
+    if (!ctx) {
+      res.status(500).json({ error: "Stack context unavailable" });
+      return;
+    }
+    const providers = ctx.providerRegistry.getProviders();
+    if (providers.length === 0) {
+      res.status(409).json({ error: "No providers configured for this stack — investigation would be empty. Add an MCP provider first." });
+      return;
+    }
+
+    // Choose a service. Prefer the explicit one; fall back to the first
+    // configured service for this stack so the operator can still smoke-test
+    // without picking from a dropdown.
+    const allServices = [
+      ...config.services,
+      ...ctx.serviceRegistry.load().filter((s: ServiceConfig) => !config.services.some((c) => c.name === s.name)),
+    ];
+    let chosen: ServiceConfig | undefined;
+    if (typeof serviceName === "string" && serviceName.length > 0) {
+      chosen = allServices.find((s) => s.name === serviceName);
+      if (!chosen) {
+        res.status(404).json({ error: `Service "${serviceName}" not found in this stack.` });
+        return;
+      }
+    } else {
+      chosen = allServices[0];
+    }
+    if (!chosen) {
+      res.status(409).json({ error: "No services configured for this stack — investigation would have no target." });
+      return;
+    }
+
+    const sev = (typeof severity === "string" && severity.length > 0) ? severity : "warning";
+    const synthesized = AlertPayloadSchema.parse({
+      alerts: [{
+        status: "firing",
+        labels: {
+          alertname: "DopsTestAlert",
+          severity: sev,
+          service: chosen.name,
+        },
+        annotations: { summary: `Synthetic test alert dispatched from Settings → Alert Webhooks (token: ${tokenRow.name})` },
+        startsAt: new Date().toISOString(),
+        endsAt: "0001-01-01T00:00:00Z",
+      }],
+    });
+
+    db.markWebhookTokenUsed(tokenRow.id);
+
+    // Build a one-shot per-stack runner the same way the HTTP webhook
+    // path does. Cheap enough at test cadence (rate-limited 1/min/stack
+    // via strictLimiter); avoiding a long-lived cache keeps this route
+    // free of stack-context lifecycle bugs.
+    const stackAdapters = await createMastraAdapters({
+      config,
+      providers,
+      registryStore: ctx.serviceRegistry,
+      datasourceUidMap: ctx.providerRegistry.buildDatasourceUidMap(),
+      db,
+      stackId,
+    });
+    const runner = new InvestigationRunner({
+      db,
+      investigationAgent: stackAdapters.investigationAgent,
+      skillStore: deps.skillStore,
+      globalOnComplete: deps.globalOnComplete,
+    });
+
+    const result = await processFiringAlert(synthesized, {
+      runner,
+      config: config.webhook,
+      services: allServices,
+      stackId,
+      dedup: deps.sharedDedup,
+      sender: tokenRow.name,
+    }, { hiddenServices: db.getHiddenServices(stackId) });
+
+    res.json({
+      deliveryStatus: result.deliveryStatus,
+      service: result.service,
+      alertName: result.alertName,
+      template: result.template,
+      tokenName: tokenRow.name,
+      // No investigationId yet — runner's internal id is generated inside
+      // the workflow and not surfaced through processFiringAlert. The
+      // operator finds the resulting investigation via the activity log /
+      // ws stream. Adding an id pipe is an obvious follow-up.
+      investigationStarted: result.deliveryStatus === "investigated",
+      ...(result.activeCount !== undefined ? { activeCount: result.activeCount, maxConcurrent: result.maxConcurrent } : {}),
     });
   });
 
