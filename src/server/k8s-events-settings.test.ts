@@ -21,7 +21,7 @@ function makeK8sEventsConfig(overrides: Partial<K8sEventsConfig> = {}): K8sEvent
 
 function makeConfig(k8sOverrides: Partial<K8sEventsConfig> = {}): Config {
   return {
-    llm: { apiKey: "k", model: "gpt-4", maxTokens: 1000 },
+    llm: { apiKey: "k", model: "gpt-4" },
     providers: [],
     services: [],
     serviceAliases: {},

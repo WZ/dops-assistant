@@ -6,7 +6,6 @@ describe("createModel", () => {
     const model = createModel({
       model: "test-model",
       apiKey: "test-key",
-      maxTokens: 4096,
     });
     expect(model).toBeDefined();
   });

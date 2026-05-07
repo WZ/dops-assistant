@@ -90,7 +90,7 @@ vi.mock("./service-health-poller.js", () => {
  */
 function makeConfig(overrides?: Partial<Config>): Config {
   return {
-    llm: { model: "gpt-4", maxTokens: 4096, apiKey: "test-key" },
+    llm: { model: "gpt-4", apiKey: "test-key" },
     providers: [
       {
         name: "test-grafana",

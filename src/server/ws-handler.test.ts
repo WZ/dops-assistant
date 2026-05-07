@@ -94,7 +94,7 @@ function mockDeps(): WsDeps {
     config: {
       services: [{ name: "payments-api", metrics: [], logLabels: {} }],
       discovery: { autoRefresh: false, excludeServices: [], maxIterations: 40 },
-      llm: { model: "gpt-4", maxTokens: 4096, apiKey: "test" },
+      llm: { model: "gpt-4", apiKey: "test" },
       agent: { maxIterations: 20, conversationMemory: { maxMessages: 50, ttlMinutes: 30 } },
     },
     router: {

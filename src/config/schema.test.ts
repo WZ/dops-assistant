@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { ConfigSchema } from "./schema.js";
 
 /** Minimal valid LLM config for reuse in tests */
-const llm = { apiKey: "k", model: "gpt-4", maxTokens: 1000 };
+const llm = { apiKey: "k", model: "gpt-4" };
 
 /** Minimal valid MCP server config */
 const stdioMcp = { transport: "stdio" as const, command: "npx", args: [] };
@@ -32,7 +32,7 @@ describe("ConfigSchema – defaults", () => {
 
   it("applies default investigationTriggerPhrases", () => {
     const result = ConfigSchema.safeParse({
-      llm: { apiKey: "sk-test", model: "gpt-4", maxTokens: 4096 },
+      llm: { apiKey: "sk-test", model: "gpt-4" },
       providers: [grafanaProvider],
     });
     expect(result.success).toBe(true);
