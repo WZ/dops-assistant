@@ -14,7 +14,6 @@ import type { InvestigationDedup } from "./investigation-dedup.js";
 import { SERVICE_LABEL_KEYS, processFiringAlert } from "./webhook-handler.js";
 import { generateWebhookToken, hashWebhookToken, maskStoredToken, isValidTokenName } from "./webhook-tokens.js";
 import { AlertPayloadSchema } from "./sanitize.js";
-import { ulid } from "ulid";
 import { createMastraAdapters } from "./agents.js";
 import { InvestigationRunner } from "./investigation-runner.js";
 import { queryServiceMetrics } from "./prometheus-query.js";
@@ -260,10 +259,12 @@ export function categorizeImportActions(
 }
 
 const logger = createLogger("routes");
+const WEBHOOK_TEST_COOLDOWN_MS = 60_000;
 
 export function registerRoutes(app: Express, deps: RouteDeps): void {
   const { db, stackManager, config } = deps;
   const skillStore = deps.skillStore;
+  const webhookTestLastAttempt = new Map<string, number>();
 
   // ── Stack middleware — resolve stack for all /api routes ──────────────
   //
@@ -2027,7 +2028,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     // Token list comes from the DB store. Plaintext tokens are never held
     // server-side after creation; the GUI reads only the prefix + the
     // last_used_at signal it needs to render rotation hygiene.
-    const tokens = db.listWebhookTokens().map((t) => ({
+    const tokens = db.listWebhookTokens(stackId).map((t) => ({
       id: t.id,
       name: t.name,
       masked: maskStoredToken(t.prefix),
@@ -2069,8 +2070,8 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   // than creating stacks or providers, both of which already follow this
   // posture.
 
-  app.get("/api/webhooks/tokens", (_req: Request, res: Response) => {
-    const tokens = db.listWebhookTokens().map((t) => ({
+  app.get("/api/webhooks/tokens", (req: Request, res: Response) => {
+    const tokens = db.listWebhookTokens(req.stackId).map((t) => ({
       id: t.id,
       name: t.name,
       masked: maskStoredToken(t.prefix),
@@ -2093,6 +2094,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     const generated = generateWebhookToken();
     db.createWebhookToken({
       id: generated.id,
+      stackId: req.stackId,
       name: trimmed,
       tokenHash: generated.tokenHash,
       prefix: generated.prefix,
@@ -2109,7 +2111,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
   app.delete("/api/webhooks/tokens/:id", (req: Request, res: Response) => {
     const id = req.params["id"] as string;
-    const ok = db.deleteWebhookToken(id);
+    const ok = db.deleteWebhookToken(req.stackId, id);
     if (!ok) {
       res.status(404).json({ error: "Token not found" });
       return;
@@ -2134,13 +2136,13 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       res.status(401).json({ error: "Missing token. Paste a configured webhook token to authorize the test." });
       return;
     }
-    const tokenRow = db.findWebhookTokenByHash(hashWebhookToken(token));
+    const stackId = req.stackId;
+    const tokenRow = db.findWebhookTokenByHash(stackId, hashWebhookToken(token));
     if (!tokenRow) {
       res.status(401).json({ error: "Token not recognized." });
       return;
     }
 
-    const stackId = req.stackId;
     const ctx = req.stackContext;
     if (!ctx) {
       res.status(500).json({ error: "Stack context unavailable" });
@@ -2174,6 +2176,19 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       return;
     }
 
+    const now = Date.now();
+    for (const [key, last] of webhookTestLastAttempt) {
+      if (now - last > WEBHOOK_TEST_COOLDOWN_MS) webhookTestLastAttempt.delete(key);
+    }
+    const lastAttempt = webhookTestLastAttempt.get(stackId);
+    if (lastAttempt !== undefined && now - lastAttempt < WEBHOOK_TEST_COOLDOWN_MS) {
+      const retryAfterSeconds = Math.ceil((WEBHOOK_TEST_COOLDOWN_MS - (now - lastAttempt)) / 1000);
+      res.setHeader("Retry-After", String(retryAfterSeconds));
+      res.status(429).json({ error: "Webhook test recently sent for this stack. Try again after the cooldown.", retryAfterSeconds });
+      return;
+    }
+    webhookTestLastAttempt.set(stackId, now);
+
     const sev = (typeof severity === "string" && severity.length > 0) ? severity : "warning";
     const synthesized = AlertPayloadSchema.parse({
       alerts: [{
@@ -2189,7 +2204,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       }],
     });
 
-    db.markWebhookTokenUsed(tokenRow.id);
+    db.markWebhookTokenUsed(stackId, tokenRow.id);
 
     // Build a one-shot per-stack runner the same way the HTTP webhook
     // path does. Cheap enough at test cadence (rate-limited 1/min/stack

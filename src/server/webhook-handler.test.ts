@@ -44,7 +44,7 @@ function mockTokenDb(plaintextTokens: Record<string, string>): Database {
     listWebhookTokens: () => Array.from(byHash.values()).map((v) => ({
       id: v.id, name: v.name, prefix: v.prefix, createdAt: "now", lastUsedAt: null,
     })),
-    findWebhookTokenByHash: (hash: string) => byHash.get(hash) ?? null,
+    findWebhookTokenByHash: (_stackId: string, hash: string) => byHash.get(hash) ?? null,
     markWebhookTokenUsed: vi.fn(),
   } as unknown as Database;
 }
@@ -239,7 +239,7 @@ describe("webhook handler", () => {
     );
 
     await handler(req, res);
-    expect(customDb.markWebhookTokenUsed).toHaveBeenCalledWith("id-grafana");
+    expect(customDb.markWebhookTokenUsed).toHaveBeenCalledWith("", "id-grafana");
   });
 });
 

@@ -1038,6 +1038,7 @@ export class Database {
     this.db.prepare(`UPDATE incident_patterns SET stack_id = ? WHERE stack_id IS NULL OR stack_id = ''`).run(defaultStackId);
     this.db.prepare(`UPDATE hidden_services SET stack_id = ? WHERE stack_id = ''`).run(defaultStackId);
     this.db.prepare(`UPDATE service_metadata SET stack_id = ? WHERE stack_id = ''`).run(defaultStackId);
+    this.db.prepare(`UPDATE webhook_tokens SET stack_id = ? WHERE stack_id = ''`).run(defaultStackId);
   }
 
   // ── Stack CRUD ───────────────────────────────────────────────────────────
@@ -1175,6 +1176,7 @@ export class Database {
       this.db.prepare("DELETE FROM investigations WHERE stack_id = ?").run(id);
       this.db.prepare("DELETE FROM stack_settings WHERE stack_id = ?").run(id);
       this.db.prepare("DELETE FROM email_recipients WHERE stack_id = ?").run(id);
+      this.db.prepare("DELETE FROM webhook_tokens WHERE stack_id = ?").run(id);
       this.db.prepare("DELETE FROM stacks WHERE id = ?").run(id);
     });
     tx();
@@ -2516,6 +2518,7 @@ export class Database {
     this.db.prepare(`
       CREATE TABLE IF NOT EXISTS webhook_tokens (
         id           TEXT PRIMARY KEY,
+        stack_id     TEXT NOT NULL,
         name         TEXT NOT NULL,
         token_hash   TEXT NOT NULL UNIQUE,
         prefix       TEXT NOT NULL,
@@ -2523,31 +2526,41 @@ export class Database {
         last_used_at TEXT
       )
     `).run();
+    const cols = this.db.prepare("PRAGMA table_info(webhook_tokens)").all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "stack_id")) {
+      this.db.prepare("ALTER TABLE webhook_tokens ADD COLUMN stack_id TEXT NOT NULL DEFAULT ''").run();
+    }
     this.db.prepare(
       "CREATE INDEX IF NOT EXISTS idx_webhook_tokens_hash ON webhook_tokens (token_hash)"
     ).run();
-  }
-
-  createWebhookToken(args: { id: string; name: string; tokenHash: string; prefix: string }): void {
     this.db.prepare(
-      "INSERT INTO webhook_tokens (id, name, token_hash, prefix) VALUES (?, ?, ?, ?)"
-    ).run(args.id, args.name, args.tokenHash, args.prefix);
+      "CREATE INDEX IF NOT EXISTS idx_webhook_tokens_stack_hash ON webhook_tokens (stack_id, token_hash)"
+    ).run();
+    this.db.prepare(
+      "CREATE INDEX IF NOT EXISTS idx_webhook_tokens_stack_created ON webhook_tokens (stack_id, created_at DESC)"
+    ).run();
   }
 
-  findWebhookTokenByHash(tokenHash: string): { id: string; name: string; prefix: string } | null {
+  createWebhookToken(args: { id: string; stackId: string; name: string; tokenHash: string; prefix: string }): void {
+    this.db.prepare(
+      "INSERT INTO webhook_tokens (id, stack_id, name, token_hash, prefix) VALUES (?, ?, ?, ?, ?)"
+    ).run(args.id, args.stackId, args.name, args.tokenHash, args.prefix);
+  }
+
+  findWebhookTokenByHash(stackId: string, tokenHash: string): { id: string; name: string; prefix: string } | null {
     const row = this.db.prepare(
-      "SELECT id, name, prefix FROM webhook_tokens WHERE token_hash = ?"
-    ).get(tokenHash) as { id: string; name: string; prefix: string } | undefined;
+      "SELECT id, name, prefix FROM webhook_tokens WHERE stack_id = ? AND token_hash = ?"
+    ).get(stackId, tokenHash) as { id: string; name: string; prefix: string } | undefined;
     return row ?? null;
   }
 
-  markWebhookTokenUsed(id: string): void {
+  markWebhookTokenUsed(stackId: string, id: string): void {
     this.db.prepare(
-      "UPDATE webhook_tokens SET last_used_at = datetime('now') WHERE id = ?"
-    ).run(id);
+      "UPDATE webhook_tokens SET last_used_at = datetime('now') WHERE stack_id = ? AND id = ?"
+    ).run(stackId, id);
   }
 
-  listWebhookTokens(): Array<{
+  listWebhookTokens(stackId: string): Array<{
     id: string;
     name: string;
     prefix: string;
@@ -2555,8 +2568,8 @@ export class Database {
     lastUsedAt: string | null;
   }> {
     const rows = this.db.prepare(
-      "SELECT id, name, prefix, created_at, last_used_at FROM webhook_tokens ORDER BY created_at DESC"
-    ).all() as Array<Record<string, unknown>>;
+      "SELECT id, name, prefix, created_at, last_used_at FROM webhook_tokens WHERE stack_id = ? ORDER BY created_at DESC"
+    ).all(stackId) as Array<Record<string, unknown>>;
     return rows.map((r) => ({
       id: r["id"] as string,
       name: r["name"] as string,
@@ -2566,8 +2579,8 @@ export class Database {
     }));
   }
 
-  deleteWebhookToken(id: string): boolean {
-    const info = this.db.prepare("DELETE FROM webhook_tokens WHERE id = ?").run(id);
+  deleteWebhookToken(stackId: string, id: string): boolean {
+    const info = this.db.prepare("DELETE FROM webhook_tokens WHERE stack_id = ? AND id = ?").run(stackId, id);
     return info.changes > 0;
   }
 

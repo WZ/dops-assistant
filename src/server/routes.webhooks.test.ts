@@ -38,6 +38,7 @@ interface MakeAppOptions {
 
 function makeApp(opts: MakeAppOptions = {}): TestCtx {
   const stacks = opts.stacks ?? [{ id: "stack-default", slug: "default" }];
+  const defaultStackId = stacks[0]!.id;
   const services = opts.services ?? [];
   const dbPath = join(tmpdir(), `routes-webhooks-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`);
   const db = new Database(dbPath);
@@ -50,6 +51,7 @@ function makeApp(opts: MakeAppOptions = {}): TestCtx {
     for (const t of opts.seedTokens) {
       db.createWebhookToken({
         id: `id-${t.name}`,
+        stackId: defaultStackId,
         name: t.name,
         tokenHash: hashWebhookToken(t.plaintext),
         prefix: t.plaintext.replace(/^dops_/, "").slice(0, 8),
@@ -58,7 +60,6 @@ function makeApp(opts: MakeAppOptions = {}): TestCtx {
   }
 
   const stackById = new Map(stacks.map((s) => [s.id, s]));
-  const defaultStackId = stacks[0]!.id;
 
   const makeCtx = (id: string, slug: string) => ({
     id,
@@ -128,8 +129,8 @@ describe("GET /api/webhooks/info", () => {
     const t1 = generateWebhookToken();
     const t2 = generateWebhookToken();
     ctx = makeApp({});
-    ctx.db.createWebhookToken({ id: t1.id, name: "grafana", tokenHash: t1.tokenHash, prefix: t1.prefix });
-    ctx.db.createWebhookToken({ id: t2.id, name: "datadog", tokenHash: t2.tokenHash, prefix: t2.prefix });
+    ctx.db.createWebhookToken({ id: t1.id, stackId: ctx.defaultStackId, name: "grafana", tokenHash: t1.tokenHash, prefix: t1.prefix });
+    ctx.db.createWebhookToken({ id: t2.id, stackId: ctx.defaultStackId, name: "datadog", tokenHash: t2.tokenHash, prefix: t2.prefix });
 
     const res = await request(ctx.app).get("/api/webhooks/info").expect(200);
 
@@ -175,6 +176,40 @@ describe("GET /api/webhooks/info", () => {
     ctx = makeApp({});
     const res = await request(ctx.app).get("/api/webhooks/info").expect(200);
     expect(res.body.tokens).toEqual([]);
+  });
+
+  it("lists only tokens for the active stack", async () => {
+    const defaultToken = generateWebhookToken();
+    const eastToken = generateWebhookToken();
+    ctx = makeApp({
+      stacks: [
+        { id: "stack-default", slug: "default" },
+        { id: "stack-east", slug: "us-east" },
+      ],
+    });
+    ctx.db.createWebhookToken({
+      id: defaultToken.id,
+      stackId: "stack-default",
+      name: "default-grafana",
+      tokenHash: defaultToken.tokenHash,
+      prefix: defaultToken.prefix,
+    });
+    ctx.db.createWebhookToken({
+      id: eastToken.id,
+      stackId: "stack-east",
+      name: "east-grafana",
+      tokenHash: eastToken.tokenHash,
+      prefix: eastToken.prefix,
+    });
+
+    const def = await request(ctx.app).get("/api/webhooks/info").expect(200);
+    expect(def.body.tokens.map((t: { name: string }) => t.name)).toEqual(["default-grafana"]);
+
+    const east = await request(ctx.app)
+      .get("/api/webhooks/info")
+      .set("X-Stack-Id", "stack-east")
+      .expect(200);
+    expect(east.body.tokens.map((t: { name: string }) => t.name)).toEqual(["east-grafana"]);
   });
 });
 
@@ -232,6 +267,30 @@ describe("POST /api/webhooks/tokens", () => {
     const list = await request(ctx.app).get("/api/webhooks/tokens").expect(200);
     expect(list.body.tokens).toHaveLength(2);
   });
+
+  it("creates tokens in the active stack only", async () => {
+    ctx = makeApp({
+      stacks: [
+        { id: "stack-default", slug: "default" },
+        { id: "stack-east", slug: "us-east" },
+      ],
+    });
+
+    await request(ctx.app)
+      .post("/api/webhooks/tokens")
+      .set("X-Stack-Id", "stack-east")
+      .send({ name: "east-grafana" })
+      .expect(201);
+
+    const def = await request(ctx.app).get("/api/webhooks/tokens").expect(200);
+    expect(def.body.tokens).toEqual([]);
+
+    const east = await request(ctx.app)
+      .get("/api/webhooks/tokens")
+      .set("X-Stack-Id", "stack-east")
+      .expect(200);
+    expect(east.body.tokens.map((t: { name: string }) => t.name)).toEqual(["east-grafana"]);
+  });
 });
 
 describe("DELETE /api/webhooks/tokens/:id", () => {
@@ -252,6 +311,27 @@ describe("DELETE /api/webhooks/tokens/:id", () => {
     ctx = makeApp({});
     await request(ctx.app).delete("/api/webhooks/tokens/not-a-real-id").expect(404);
   });
+
+  it("does not revoke a token from another stack", async () => {
+    ctx = makeApp({
+      stacks: [
+        { id: "stack-default", slug: "default" },
+        { id: "stack-east", slug: "us-east" },
+      ],
+    });
+    const create = await request(ctx.app)
+      .post("/api/webhooks/tokens")
+      .send({ name: "default-grafana" })
+      .expect(201);
+
+    await request(ctx.app)
+      .delete(`/api/webhooks/tokens/${create.body.id}`)
+      .set("X-Stack-Id", "stack-east")
+      .expect(404);
+
+    const list = await request(ctx.app).get("/api/webhooks/tokens").expect(200);
+    expect(list.body.tokens.map((t: { id: string }) => t.id)).toEqual([create.body.id]);
+  });
 });
 
 describe("POST /api/webhooks/test", () => {
@@ -271,10 +351,29 @@ describe("POST /api/webhooks/test", () => {
       .expect(401);
   });
 
+  it("rejects a valid token from a different stack", async () => {
+    const t = generateWebhookToken();
+    ctx = makeApp({
+      stacks: [
+        { id: "stack-default", slug: "default" },
+        { id: "stack-east", slug: "us-east" },
+      ],
+      services: [{ name: "checkout" }],
+      hasProviders: true,
+    });
+    ctx.db.createWebhookToken({ id: t.id, stackId: "stack-default", name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix });
+
+    await request(ctx.app)
+      .post("/api/webhooks/test")
+      .set("X-Stack-Id", "stack-east")
+      .send({ token: t.token, service: "checkout" })
+      .expect(401);
+  });
+
   it("returns 409 when stack has no providers", async () => {
     const t = generateWebhookToken();
     ctx = makeApp({ services: [{ name: "checkout" }], hasProviders: false });
-    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix });
+    ctx.db.createWebhookToken({ id: t.id, stackId: ctx.defaultStackId, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix });
 
     const res = await request(ctx.app)
       .post("/api/webhooks/test")
@@ -286,7 +385,7 @@ describe("POST /api/webhooks/test", () => {
   it("returns 409 when stack has no services", async () => {
     const t = generateWebhookToken();
     ctx = makeApp({ services: [], hasProviders: true });
-    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix });
+    ctx.db.createWebhookToken({ id: t.id, stackId: ctx.defaultStackId, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix });
 
     const res = await request(ctx.app)
       .post("/api/webhooks/test")
@@ -298,7 +397,7 @@ describe("POST /api/webhooks/test", () => {
   it("returns 404 when the requested service isn't in the stack", async () => {
     const t = generateWebhookToken();
     ctx = makeApp({ services: [{ name: "checkout" }], hasProviders: true });
-    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix });
+    ctx.db.createWebhookToken({ id: t.id, stackId: ctx.defaultStackId, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix });
 
     const res = await request(ctx.app)
       .post("/api/webhooks/test")

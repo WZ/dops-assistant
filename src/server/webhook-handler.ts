@@ -294,11 +294,12 @@ export const SERVICE_LABEL_KEYS = ["service", "service_name", "app", "job", "dep
 export function resolveTokenRow(
   authHeader: string | undefined,
   db: Database,
+  stackId: string,
 ): { id: string; name: string } | null {
   if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
   const presented = authHeader.slice("Bearer ".length);
   const hash = hashWebhookToken(presented);
-  return db.findWebhookTokenByHash(hash);
+  return db.findWebhookTokenByHash(stackId, hash);
 }
 
 export function createWebhookHandler(deps: WebhookHandlerDeps) {
@@ -313,17 +314,17 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
     // 1. Validate bearer against the DB token store. If no tokens exist at
     //    all, return 503 with a hint that points the operator at the GUI
     //    (matches the post-yaml setup flow).
-    const tokenList = db.listWebhookTokens();
+    const tokenList = db.listWebhookTokens(stackId);
     if (tokenList.length === 0) {
       res.status(503).json(WEBHOOK_NOT_CONFIGURED_BODY);
       return;
     }
-    const tokenRow = resolveTokenRow(req.headers.authorization, db);
+    const tokenRow = resolveTokenRow(req.headers.authorization, db, stackId);
     if (!tokenRow) {
       res.status(401).json({ error: "Invalid or missing authorization token" });
       return;
     }
-    db.markWebhookTokenUsed(tokenRow.id);
+    db.markWebhookTokenUsed(stackId, tokenRow.id);
     const sender = tokenRow.name;
 
     // 2. Parse and validate payload through Zod schema
