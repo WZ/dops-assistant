@@ -195,6 +195,12 @@ export function stopHealthMonitor(): void {
 
 export function healthHandler(_req: Request, res: Response): void {
   cachedStatus.uptime = Math.floor((Date.now() - startTime) / 1000);
-  const statusCode = cachedStatus.status === "healthy" ? 200 : 503;
-  res.status(statusCode).json(cachedStatus);
+  // Always return 200 — the server is up and serving the response right now,
+  // which is what the k8s readiness/liveness probes ask. Component status
+  // (MCP unreachable, DB hiccup) lives in the JSON body for ops/UI consumers.
+  // Pre-fix this returned 503 on "degraded", which let the registry-aware MCP
+  // probe in PR #184 take the entire pod NotReady the moment any upstream MCP
+  // server died — the ingress then 503'd every request, including the UI
+  // itself, which doesn't depend on MCP at all.
+  res.status(200).json(cachedStatus);
 }
