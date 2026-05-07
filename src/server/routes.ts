@@ -13,7 +13,6 @@ import type { StackManager } from "./stack-manager.js";
 import type { InvestigationDedup } from "./investigation-dedup.js";
 import { SERVICE_LABEL_KEYS, processFiringAlert, synthesizeTestPayload } from "./webhook-handler.js";
 import { generateWebhookToken, hashWebhookToken, maskStoredToken, isValidTokenName } from "./webhook-tokens.js";
-import { ulid } from "ulid";
 import { createMastraAdapters } from "./agents.js";
 import { InvestigationRunner } from "./investigation-runner.js";
 import { queryServiceMetrics } from "./prometheus-query.js";
@@ -259,10 +258,24 @@ export function categorizeImportActions(
 }
 
 const logger = createLogger("routes");
+const WEBHOOK_TEST_COOLDOWN_MS = 60_000;
 
 export function registerRoutes(app: Express, deps: RouteDeps): void {
   const { db, stackManager, config } = deps;
   const skillStore = deps.skillStore;
+  const webhookTestLastAttempt = new Map<string, number>();
+  const checkWebhookTestCooldown = (stackId: string): number | null => {
+    const now = Date.now();
+    for (const [key, last] of webhookTestLastAttempt) {
+      if (now - last > WEBHOOK_TEST_COOLDOWN_MS) webhookTestLastAttempt.delete(key);
+    }
+    const lastAttempt = webhookTestLastAttempt.get(stackId);
+    if (lastAttempt !== undefined && now - lastAttempt < WEBHOOK_TEST_COOLDOWN_MS) {
+      return Math.ceil((WEBHOOK_TEST_COOLDOWN_MS - (now - lastAttempt)) / 1000);
+    }
+    webhookTestLastAttempt.set(stackId, now);
+    return null;
+  };
 
   // ── Stack middleware — resolve stack for all /api routes ──────────────
   //
@@ -2026,7 +2039,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     // Token list comes from the DB store. Plaintext tokens are never held
     // server-side after creation; the GUI reads only the prefix + the
     // last_used_at signal it needs to render rotation hygiene.
-    const tokens = db.listWebhookTokens().map((t) => ({
+    const tokens = db.listWebhookTokens(stackId).map((t) => ({
       id: t.id,
       name: t.name,
       masked: maskStoredToken(t.prefix),
@@ -2068,8 +2081,8 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   // than creating stacks or providers, both of which already follow this
   // posture.
 
-  app.get("/api/webhooks/tokens", (_req: Request, res: Response) => {
-    const tokens = db.listWebhookTokens().map((t) => ({
+  app.get("/api/webhooks/tokens", (req: Request, res: Response) => {
+    const tokens = db.listWebhookTokens(req.stackId).map((t) => ({
       id: t.id,
       name: t.name,
       masked: maskStoredToken(t.prefix),
@@ -2092,6 +2105,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     const generated = generateWebhookToken();
     db.createWebhookToken({
       id: generated.id,
+      stackId: req.stackId,
       name: trimmed,
       tokenHash: generated.tokenHash,
       prefix: generated.prefix,
@@ -2108,7 +2122,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
   app.delete("/api/webhooks/tokens/:id", (req: Request, res: Response) => {
     const id = req.params["id"] as string;
-    const ok = db.deleteWebhookToken(id);
+    const ok = db.deleteWebhookToken(req.stackId, id);
     if (!ok) {
       res.status(404).json({ error: "Token not found" });
       return;
@@ -2133,13 +2147,13 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       res.status(401).json({ error: "Missing token. Paste a configured webhook token to authorize the test." });
       return;
     }
-    const tokenRow = db.findWebhookTokenByHash(hashWebhookToken(token));
+    const stackId = req.stackId;
+    const tokenRow = db.findWebhookTokenByHash(stackId, hashWebhookToken(token));
     if (!tokenRow) {
       res.status(401).json({ error: "Token not recognized." });
       return;
     }
 
-    const stackId = req.stackId;
     const ctx = req.stackContext;
     if (!ctx) {
       res.status(500).json({ error: "Stack context unavailable" });
@@ -2173,17 +2187,24 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       return;
     }
 
+    const retryAfterSeconds = checkWebhookTestCooldown(stackId);
+    if (retryAfterSeconds !== null) {
+      res.setHeader("Retry-After", String(retryAfterSeconds));
+      res.status(429).json({ error: "Webhook test recently sent for this stack. Try again after the cooldown.", retryAfterSeconds });
+      return;
+    }
+
     const synthesized = synthesizeTestPayload({
       service: chosen.name,
       severity: typeof severity === "string" ? severity : undefined,
       tokenName: tokenRow.name,
     });
 
-    db.markWebhookTokenUsed(tokenRow.id);
+    db.markWebhookTokenUsed(stackId, tokenRow.id);
 
     // Build a one-shot per-stack runner the same way the HTTP webhook
-    // path does. Cheap enough at test cadence (rate-limited 1/min/stack
-    // via strictLimiter); avoiding a long-lived cache keeps this route
+    // path does. Cheap enough at test cadence (rate-limited 1/min/stack);
+    // avoiding a long-lived cache keeps this route
     // free of stack-context lifecycle bugs.
     const stackAdapters = await createMastraAdapters({
       config,
@@ -2234,8 +2255,8 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   // setup to confirm "yes, your pasted URL is reachable from inside the
   // cluster with this exact bearer."
   //
-  // Auth + abuse: rate-limited like /test (strictLimiter at the app
-  // level), token must match a configured one (no anon-on-VPN abuse),
+  // Auth + abuse: rate-limited like /test, token must match a configured
+  // one (no anonymous abuse),
   // pre-flight requires `appBaseUrl` to be set so we don't accidentally
   // hammer localhost:3000 in production where ingress would reject it.
   app.post("/api/webhooks/loopback-test", async (req: Request, res: Response) => {
@@ -2255,7 +2276,8 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       res.status(401).json({ error: "Missing token. Paste a configured webhook token to authorize the loopback test." });
       return;
     }
-    const tokenRow = db.findWebhookTokenByHash(hashWebhookToken(token));
+    const stackId = req.stackId;
+    const tokenRow = db.findWebhookTokenByHash(stackId, hashWebhookToken(token));
     if (!tokenRow) {
       res.status(401).json({ error: "Token not recognized." });
       return;
@@ -2284,6 +2306,13 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     }
     if (!chosen) {
       res.status(409).json({ error: "No services configured for this stack — investigation would have no target." });
+      return;
+    }
+
+    const retryAfterSeconds = checkWebhookTestCooldown(stackId);
+    if (retryAfterSeconds !== null) {
+      res.setHeader("Retry-After", String(retryAfterSeconds));
+      res.status(429).json({ error: "Webhook test recently sent for this stack. Try again after the cooldown.", retryAfterSeconds });
       return;
     }
 

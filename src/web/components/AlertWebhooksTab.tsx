@@ -120,7 +120,7 @@ export function AlertWebhooksTab() {
 
   // Snippet generator: which token to render in the example. Defaults to the
   // first token in the list once data loads.
-  const [snippetTokenName, setSnippetTokenName] = useState<string>("");
+  const [snippetTokenId, setSnippetTokenId] = useState<string>("");
 
   const fetchInfo = useCallback(async () => {
     try {
@@ -133,14 +133,16 @@ export function AlertWebhooksTab() {
       const data = (await res.json()) as InfoResponse;
       setInfo(data);
       setLoading(false);
-      if (!snippetTokenName && data.tokens[0]) {
-        setSnippetTokenName(data.tokens[0].name);
-      }
+      setSnippetTokenId((current) => (
+        current && data.tokens.some((t) => t.id === current)
+          ? current
+          : data.tokens[0]?.id ?? ""
+      ));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setLoading(false);
     }
-  }, [stackFetch, snippetTokenName]);
+  }, [stackFetch]);
 
   useEffect(() => { fetchInfo(); }, [fetchInfo]);
 
@@ -226,7 +228,7 @@ export function AlertWebhooksTab() {
   if (error) return <div className="text-destructive font-mono text-xs py-8">{error}</div>;
   if (!info) return null;
 
-  const tokenForSnippet = info.tokens.find((t) => t.name === snippetTokenName) ?? info.tokens[0];
+  const tokenForSnippet = info.tokens.find((t) => t.id === snippetTokenId) ?? info.tokens[0];
   const snippetTokenPlaceholder = tokenForSnippet
     ? `<paste-token-named-${tokenForSnippet.name}>`
     : "<generate-a-token-first>";
@@ -331,12 +333,12 @@ export function AlertWebhooksTab() {
           <>
             {info.tokens.length > 1 && (
               <select
-                value={snippetTokenName}
-                onChange={(e) => setSnippetTokenName(e.target.value)}
+                value={tokenForSnippet?.id ?? ""}
+                onChange={(e) => setSnippetTokenId(e.target.value)}
                 className="font-mono text-[10px] bg-secondary/30 border border-border/50 rounded-md px-2 py-1"
               >
                 {info.tokens.map((t) => (
-                  <option key={t.id} value={t.name}>{t.name}</option>
+                  <option key={t.id} value={t.id}>{t.name} · {t.masked}</option>
                 ))}
               </select>
             )}
