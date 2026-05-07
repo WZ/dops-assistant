@@ -454,13 +454,12 @@ async function main() {
 
   registerRoutes(app, { db, stackManager, config, skillStore, sharedDedup, llmModel: model });
 
-  // Health check endpoint with background monitoring.
-  // In demo mode the endpoint still works (for liveness probes / banner freshness
-  // checks), but the background probe loop that touches MCP/DB every 30s is
-  // skipped — demo providers are stubs, so the probe would produce spurious
-  // "degraded" status on every tick.
+  // Health check endpoint with background DB monitoring.
+  // In demo mode the endpoint still works (for liveness probes / banner
+  // freshness checks), but the background probe loop is skipped to keep
+  // the static demo build noise-free.
   if (!isDemoMode()) {
-    startHealthMonitor({ stackManager, db });
+    startHealthMonitor({ db });
   } else {
     logger.info("demo mode: skipping background health monitor");
   }
