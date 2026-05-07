@@ -430,6 +430,7 @@ function buildEventsWhere(opts: {
   kind?: ReadonlyArray<string>;
   severity?: ReadonlyArray<string>;
   service?: string;
+  source?: string;
   since?: number;
   until?: number;
   q?: string;
@@ -454,6 +455,10 @@ function buildEventsWhere(opts: {
   if (opts.service) {
     clauses.push("service = ?");
     args.push(opts.service);
+  }
+  if (opts.source) {
+    clauses.push("meta_json IS NOT NULL AND json_valid(meta_json) AND json_extract(meta_json, '$.source') = ?");
+    args.push(opts.source);
   }
   if (opts.since !== undefined) {
     clauses.push("ts >= ?");
@@ -2298,6 +2303,7 @@ export class Database {
    * set:
    *   - kind, severity   — multi-select arrays (empty = no filter)
    *   - service          — exact match (single)
+   *   - source           — exact match on meta.source
    *   - since, until     — epoch ms range applied to ts
    *   - q                — case-insensitive substring on summary
    *   - limit, offset    — pagination, default limit 25, max 200
@@ -2312,6 +2318,7 @@ export class Database {
     kind?: ReadonlyArray<string>;
     severity?: ReadonlyArray<string>;
     service?: string;
+    source?: string;
     since?: number;
     until?: number;
     q?: string;
@@ -2355,6 +2362,7 @@ export class Database {
     kind?: ReadonlyArray<string>;
     severity?: ReadonlyArray<string>;
     service?: string;
+    source?: string;
     since?: number;
     until?: number;
     q?: string;

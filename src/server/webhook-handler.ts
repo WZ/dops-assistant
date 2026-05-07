@@ -275,8 +275,8 @@ export const WEBHOOK_NOT_CONFIGURED_BODY = {
 
 /**
  * The label keys the alertname-extraction routine probes when matching a
- * service. Exported for `/api/webhooks/info` so the GUI's "What dops expects"
- * panel renders the actual contract operators must label their alerts with —
+ * service. Exported for `/api/webhooks/info` so the GUI renders the
+ * actual contract operators must label their alerts with —
  * pre-fix the only way to know was reading webhook-handler source.
  */
 export const SERVICE_LABEL_KEYS = ["service", "service_name", "app", "job", "deployment"] as const;

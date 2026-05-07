@@ -2256,14 +2256,12 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   // sources (PagerDuty, Datadog) don't conflate.
   app.get("/api/webhooks/recent", (req: Request, res: Response) => {
     const stackId = req.stackId;
-    // listEvents already filters by kind. Source filtering is a post-pass
-    // because db.listEvents doesn't have a meta-field predicate; fine at
-    // 20 rows. If this ever gets noisy we add a JSON1 index.
     const rows = db.listEvents({
       stackId,
       kind: ["alert_received"],
-      limit: 50,
-    }).filter((r) => r.meta?.["source"] === "alertmanager").slice(0, 20);
+      source: "alertmanager",
+      limit: 20,
+    });
 
     res.json({
       events: rows.map((r) => ({

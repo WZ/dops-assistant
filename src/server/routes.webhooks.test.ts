@@ -444,6 +444,41 @@ describe("GET /api/webhooks/recent", () => {
     expect(res.body.events.every((e: { id: string }) => e.id.startsWith("am-"))).toBe(true);
   });
 
+  it("keeps older alertmanager deliveries when newer alert_received rows are from other sources", async () => {
+    ctx = makeApp();
+    const baseTs = Date.now();
+    for (let i = 0; i < 20; i++) {
+      ctx.db.insertEvent({
+        id: `am-crowded-${i}`,
+        ts: baseTs + i,
+        kind: "alert_received",
+        severity: "warn",
+        summary: `alert · C${i} · checkout`,
+        stackId: ctx.defaultStackId,
+        service: "checkout",
+        meta: { source: "alertmanager", sender: "grafana", alertName: `C${i}`, deliveryStatus: "investigated" },
+      });
+    }
+    for (let i = 0; i < 60; i++) {
+      ctx.db.insertEvent({
+        id: `other-source-${i}`,
+        ts: baseTs + 1_000 + i,
+        kind: "alert_received",
+        severity: "warn",
+        summary: "other source",
+        stackId: ctx.defaultStackId,
+        meta: { source: "pagerduty", sender: "pd-prod" },
+      });
+    }
+
+    const res = await request(ctx.app).get("/api/webhooks/recent").expect(200);
+
+    expect(res.body.events).toHaveLength(20);
+    expect(res.body.events.map((e: { id: string }) => e.id)).toEqual(
+      Array.from({ length: 20 }, (_, i) => `am-crowded-${19 - i}`),
+    );
+  });
+
   it("scopes to the active stack via X-Stack-Id", async () => {
     ctx = makeApp({
       stacks: [
