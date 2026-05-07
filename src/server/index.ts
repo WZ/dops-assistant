@@ -40,6 +40,7 @@ import { startEventsRetentionTask } from "./events-retention.js";
 import { createDemoModeMiddleware, isDemoMode } from "./demo-mode.js";
 import { StackManager } from "./stack-manager.js";
 import { createMastraAdapters } from "./agents.js";
+import { registerStackScopedWebhookRoute } from "./webhook-routes.js";
 import { notifySlack } from "./slack-notifier.js";
 import { buildInvestigationMessage } from "./anomaly-probe.js";
 import nodemailer, { type Transporter } from "nodemailer";
@@ -499,46 +500,7 @@ async function main() {
     // for this specific endpoint without affecting GUI traffic.
     app.post("/api/webhook/alert", strictLimiter, webhookHandler);
 
-    // Stack-scoped webhook: POST /api/webhook/alert/:stackSlug
-    app.post("/api/webhook/alert/:stackSlug", strictLimiter, async (req, res) => {
-      const slug = req.params["stackSlug"] as string;
-      const stackRow = db.getStackBySlug(slug);
-      if (!stackRow) {
-        res.status(404).json({ error: `Stack with slug "${slug}" not found` });
-        return;
-      }
-
-      // Early dedup check: extract service name from payload before creating agents
-      const payload = req.body as { alerts?: Array<{ status: string; labels: Record<string, string> }> };
-      const firingAlerts = payload.alerts?.filter(a => a.status === "firing") ?? [];
-      if (firingAlerts.length > 0) {
-        const alert = firingAlerts[0]!;
-        const serviceLabels = ["service", "service_name", "app", "job", "deployment"];
-        const serviceName = serviceLabels.map(k => alert.labels[k]).find(Boolean);
-        if (serviceName && !sharedDedup.shouldInvestigate(stackRow.id, serviceName).allowed) {
-          res.status(429).json({ error: "Investigation already in progress for this service", service: serviceName });
-          return;
-        }
-      }
-
-      // Webhook invocation counts as activity for the target stack,
-      // independent of the /api middleware (which bumps the resolved-from-
-      // header stack — usually the default for webhooks).
-      stackManager.bumpActivity(stackRow.id);
-      const ctx = stackManager.getContext(stackRow.id);
-      const stackProviders = ctx.providerRegistry.getProviders();
-      const stackAdapters = await createMastraAdapters({ config, providers: stackProviders, registryStore: ctx.serviceRegistry, datasourceUidMap: ctx.providerRegistry.buildDatasourceUidMap(), db, stackId: stackRow.id });
-      const stackRunner = new InvestigationRunner({ db, investigationAgent: stackAdapters.investigationAgent, skillStore, globalOnComplete });
-      const stackWebhookHandler = createWebhookHandler({
-        runner: stackRunner,
-        config: config.webhook,
-        services: [...config.services, ...ctx.serviceRegistry.load().filter(s => !config.services.some(c => c.name === s.name))],
-        stackId: stackRow.id,
-        dedup: sharedDedup,
-        getHiddenServices: () => db.getHiddenServices(stackRow.id),
-      });
-      await stackWebhookHandler(req, res);
-    });
+    registerStackScopedWebhookRoute(app, { db, stackManager, config, skillStore, sharedDedup, globalOnComplete });
 
     logger.info("Alert webhook enabled at POST /api/webhook/alert");
   } else {

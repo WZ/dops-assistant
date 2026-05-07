@@ -190,8 +190,13 @@ const WebhookSchema = z.object({
    * map is accepted in addition to `secret`. The matching name is recorded in
    * logs and the event log so a noisy source can be traced and revoked
    * without rotating tokens for everyone.
+   *
+   * `min(16)` floor: the upcoming Settings → Alert Webhooks tab masks tokens
+   * as `${first4}…${last4}` and leaks the whole value for short tokens.
+   * Rejecting sub-16-char tokens at config load means the UI can rely on the
+   * invariant without a runtime branch.
    */
-  tokens: z.record(z.string(), z.string().min(1)).optional(),
+  tokens: z.record(z.string(), z.string().min(16)).optional(),
   /** Dedup window in seconds — skip alerts for the same service within this period */
   dedupWindowSeconds: z.number().default(300),
   /** Max concurrent investigations triggered by webhooks */

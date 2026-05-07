@@ -351,5 +351,85 @@ describe("webhook handler eventLog integration", () => {
     expect(events.length).toBeGreaterThan(0);
     expect(events[0].kind).toBe("alert_received");
     expect(events[0].service).toBe("checkout-service");
+    expect(events[0].meta?.deliveryStatus).toBe("investigated");
+  });
+
+  // The activity log in the upcoming Settings → Alert Webhooks tab needs
+  // to render dedup + concurrency outcomes — pre-fix the eventLog only
+  // recorded accepted alerts, so an operator's "did Grafana actually
+  // deliver?" question went silent on every dedup'd retry. Now every
+  // post-auth alert produces an event with meta.deliveryStatus.
+  it("emits alert_received with deliveryStatus=deduplicated when same service is hit twice", async () => {
+    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES });
+    const payload = {
+      alerts: [{
+        status: "firing",
+        labels: { alertname: "HighErrorRate", service: "checkout-service", severity: "critical" },
+        annotations: {},
+        startsAt: "2026-03-18T10:00:00Z",
+        endsAt: "0001-01-01T00:00:00Z",
+      }],
+    };
+
+    const first = mockReqRes(payload, "Bearer test-secret");
+    await handler(first.req, first.res);
+    const second = mockReqRes(payload, "Bearer test-secret");
+    await handler(second.req, second.res);
+
+    expect(second.res.status).toHaveBeenCalledWith(200);
+    const { events } = eventLog.recent(10);
+    const dedupEvent = events.find((e) => e.meta?.deliveryStatus === "deduplicated");
+    expect(dedupEvent).toBeDefined();
+    expect(dedupEvent!.service).toBe("checkout-service");
+    expect(dedupEvent!.meta?.source).toBe("alertmanager");
+  });
+
+  it("emits alert_received with deliveryStatus=concurrency_skipped when concurrency cap hit", async () => {
+    const cfg: WebhookConfig = { ...DEFAULT_CONFIG, maxConcurrent: 1 };
+    // The background runner from the first call must still be holding the
+    // dedup slot when the second call arrives — use a never-resolving
+    // promise so markCompleted never fires during the test.
+    const heldRunner = { run: vi.fn(() => new Promise(() => { /* never resolves */ })) } as unknown as InvestigationRunner;
+    const handler = createWebhookHandler({ runner: heldRunner, config: cfg, services: SERVICES });
+
+    // First fires for checkout-service, takes the only slot.
+    const first = mockReqRes(
+      { alerts: [{ status: "firing", labels: { alertname: "A", service: "checkout-service", severity: "warning" }, annotations: {}, startsAt: "", endsAt: "" }] },
+      "Bearer test-secret",
+    );
+    await handler(first.req, first.res);
+
+    // Second fires for a different service — would normally bypass dedup,
+    // but concurrency is at cap so it must be rejected with 429.
+    const second = mockReqRes(
+      { alerts: [{ status: "firing", labels: { alertname: "B", service: "payments-api", severity: "warning" }, annotations: {}, startsAt: "", endsAt: "" }] },
+      "Bearer test-secret",
+    );
+    await handler(second.req, second.res);
+
+    expect(second.res.status).toHaveBeenCalledWith(429);
+    const { events } = eventLog.recent(10);
+    const concEvent = events.find((e) => e.meta?.deliveryStatus === "concurrency_skipped");
+    expect(concEvent).toBeDefined();
+    expect(concEvent!.service).toBe("payments-api");
+  });
+
+  it("emits alert_received with deliveryStatus=no_service_match when labels don't resolve", async () => {
+    const handler = createWebhookHandler({ runner, config: DEFAULT_CONFIG, services: SERVICES });
+    const { req, res } = mockReqRes(
+      { alerts: [{ status: "firing", labels: { alertname: "Mystery", weird_label: "xyz" }, annotations: {}, startsAt: "", endsAt: "" }] },
+      "Bearer test-secret",
+    );
+
+    await handler(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(422);
+    const { events } = eventLog.recent(10);
+    const event = events.find((e) => e.meta?.deliveryStatus === "no_service_match");
+    expect(event).toBeDefined();
+    // No service association on the event row itself — the service couldn't
+    // be matched. Operators reading the activity log see the alertname only.
+    expect(event!.service).toBeUndefined();
+    expect(event!.meta?.alertName).toBe("Mystery");
   });
 });
