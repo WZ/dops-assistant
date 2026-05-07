@@ -527,9 +527,21 @@ export class StackManager {
       // and is not updated when providers are added/removed via the GUI, so we
       // MUST NOT read from it here. Fall back to the seed only if the stack
       // hasn't been initialized yet.
-      const providerCount = ctx
-        ? ctx.providerRegistry.getAll().length
+      const infos = ctx ? ctx.providerRegistry.getAll() : null;
+      const providerCount = infos
+        ? infos.length
         : (JSON.parse(row.config) as StackConfig).providers.length;
+
+      // Provider health rollup — only computable once the stack is initialized
+      // (registry has reconciled status). Omitted for uninitialized stacks so
+      // the UI falls back to the raw count badge instead of a confusing "0/N".
+      const providerHealth = infos
+        ? {
+            ok: infos.filter((p) => p.status === "connected" && p.toolCount > 0).length,
+            error: infos.filter((p) => p.status === "error").length,
+            total: infos.length,
+          }
+        : undefined;
 
       return {
         id: row.id,
@@ -538,6 +550,7 @@ export class StackManager {
         isDefault: row.id === this.defaultStackId,
         healthSummary,
         providerCount,
+        providerHealth,
         createdAt: row.created_at,
         status: row.inactive_at ? "inactive" : "active",
         lastActiveAt: row.last_active_at,

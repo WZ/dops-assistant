@@ -3,6 +3,7 @@ import type { Request, Response } from "express";
 import { startHealthMonitor, stopHealthMonitor, healthHandler } from "./health-monitor.js";
 import type { Database } from "./db.js";
 import type { MastraProvider } from "../mcp/provider.js";
+import type { ProviderInfo } from "../mcp/provider-registry.js";
 import { eventLog } from "./event-log.js";
 
 function mockDb(): Database {
@@ -19,6 +20,29 @@ function mockProvider(shouldFail = false): MastraProvider {
         : vi.fn().mockResolvedValue({}),
     },
   } as unknown as MastraProvider;
+}
+
+function makeInfo(overrides: Partial<ProviderInfo> & { name?: string }): ProviderInfo {
+  const { name = "p", ...rest } = overrides;
+  return {
+    provider: { name, roles: ["metrics"], client: {} as never },
+    config: { name, roles: ["metrics"], mcpServer: { transport: "http", url: "http://x" } },
+    source: "config",
+    status: "connected",
+    toolCount: 1,
+    enabledToolCount: 1,
+    ...rest,
+  } as ProviderInfo;
+}
+
+function mockStackManager(infos: ProviderInfo[]) {
+  return {
+    getDefaultContext: () => ({
+      providerRegistry: {
+        getAll: () => infos,
+      },
+    }),
+  };
 }
 
 function mockRes() {
@@ -75,6 +99,90 @@ describe("health monitor", () => {
     healthHandler({} as Request, res);
 
     expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  // Registry-aware probe path (the production wiring). Pre-fix, the probe
+  // called listTools() on providers[0] — and @mastra/mcp swallows
+  // per-server connection failures inside listTools, so the probe always
+  // reported "ok" even when every upstream was dead. Now the probe reads
+  // the registry's reconciled status and reports error correctly.
+  it("returns degraded when stackManager registry shows all providers errored", async () => {
+    const stackManager = mockStackManager([
+      makeInfo({ name: "grafana", status: "error", toolCount: 0, error: "MCP server returned no tools" }),
+      makeInfo({ name: "loki", status: "error", toolCount: 0, error: "MCP server returned no tools" }),
+    ]);
+    startHealthMonitor({ stackManager, db: mockDb() }, 60_000);
+    await new Promise(r => setTimeout(r, 50));
+
+    const res = mockRes();
+    healthHandler({} as Request, res);
+
+    expect(res.status).toHaveBeenCalledWith(503);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      status: "degraded",
+      probes: expect.objectContaining({
+        mcp: expect.objectContaining({
+          status: "error",
+          error: expect.stringContaining("all 2 MCP providers unreachable"),
+        }),
+      }),
+    }));
+  });
+
+  it("returns healthy when registry has at least one connected provider with tools", async () => {
+    const stackManager = mockStackManager([
+      makeInfo({ name: "grafana", status: "connected", toolCount: 5 }),
+    ]);
+    startHealthMonitor({ stackManager, db: mockDb() }, 60_000);
+    await new Promise(r => setTimeout(r, 50));
+
+    const res = mockRes();
+    healthHandler({} as Request, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      probes: expect.objectContaining({
+        mcp: expect.objectContaining({ status: "ok" }),
+      }),
+    }));
+  });
+
+  it("flags partial outage as error with a count summary", async () => {
+    const stackManager = mockStackManager([
+      makeInfo({ name: "grafana", status: "connected", toolCount: 5 }),
+      makeInfo({ name: "loki", status: "error", toolCount: 0 }),
+    ]);
+    startHealthMonitor({ stackManager, db: mockDb() }, 60_000);
+    await new Promise(r => setTimeout(r, 50));
+
+    const res = mockRes();
+    healthHandler({} as Request, res);
+
+    expect(res.status).toHaveBeenCalledWith(503);
+    const payload = (res.json as any).mock.calls[0][0];
+    expect(payload.probes.mcp.status).toBe("error");
+    expect(payload.probes.mcp.error).toMatch(/1 of 2/);
+  });
+
+  it("keeps the provider-count summary when registry errors are generic", async () => {
+    const stackManager = mockStackManager([
+      makeInfo({ name: "grafana", status: "connected", toolCount: 5 }),
+      makeInfo({
+        name: "loki",
+        status: "error",
+        toolCount: 0,
+        error: "MCP server returned no tools (likely unreachable or misconfigured)",
+      }),
+    ]);
+    startHealthMonitor({ stackManager, db: mockDb() }, 60_000);
+    await new Promise(r => setTimeout(r, 50));
+
+    const res = mockRes();
+    healthHandler({} as Request, res);
+
+    const payload = (res.json as any).mock.calls[0][0];
+    expect(payload.probes.mcp.error).toContain("1 of 2 MCP providers unreachable");
+    expect(payload.probes.mcp.error).toContain("MCP server returned no tools");
   });
 });
 

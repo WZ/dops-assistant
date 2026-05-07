@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import type { Request, Response } from "express";
 import { createLogger } from "../logger.js";
 import type { MastraProvider } from "../mcp/provider.js";
+import type { ProviderInfo } from "../mcp/provider-registry.js";
 import type { Database } from "./db.js";
 import { eventLog } from "./event-log.js";
 
@@ -58,7 +59,36 @@ let cachedStatus: HealthStatus = {
   lastCheck: new Date().toISOString(),
 };
 
-async function probeMcp(providers: MastraProvider[]): Promise<ProbeResult> {
+/**
+ * Derive an MCP probe result from registry state. Preferred over
+ * `probeMcpLegacy` because @mastra/mcp's MCPClient.listTools() catches
+ * per-server connection failures and silently returns {} — meaning a
+ * direct listTools() call always says "ok" even when every upstream is
+ * dead. The registry already reconciles this (see provider-registry's
+ * "0 tools = error" heuristic), so reading its status is authoritative.
+ */
+function probeMcpFromRegistry(infos: ProviderInfo[]): ProbeResult {
+  if (infos.length === 0) return { status: "ok", latencyMs: 0 };
+
+  const errored = infos.filter((p) => p.status === "error");
+  const usable = infos.filter((p) => p.status === "connected" && p.toolCount > 0);
+
+  if (errored.length === 0 && usable.length > 0) {
+    return { status: "ok", latencyMs: 0 };
+  }
+
+  const total = infos.length;
+  const summary = errored.length === total
+    ? `all ${total} MCP provider${total !== 1 ? "s" : ""} unreachable`
+    : `${errored.length} of ${total} MCP providers unreachable`;
+  // Keep the count-based summary first; individual registry errors are often
+  // generic ("MCP server returned no tools") and otherwise hide the outage size.
+  const providerError = errored.find((p) => p.error)?.error;
+  const error = providerError ? `${summary}: ${providerError}` : summary;
+  return { status: "error", latencyMs: 0, error };
+}
+
+async function probeMcpLegacy(providers: MastraProvider[]): Promise<ProbeResult> {
   if (providers.length === 0) return { status: "ok", latencyMs: 0 };
   const start = Date.now();
   try {
@@ -88,7 +118,13 @@ export interface HealthMonitorDeps {
 
 /** Alternative deps that accept a StackManager for multi-stack support */
 export interface HealthMonitorStackDeps {
-  stackManager: { getDefaultContext(): { providerRegistry: { getProviders(): MastraProvider[] } } };
+  stackManager: {
+    getDefaultContext(): {
+      providerRegistry: {
+        getAll(): ProviderInfo[];
+      };
+    };
+  };
   db: Database;
 }
 
@@ -97,18 +133,24 @@ let intervalHandle: ReturnType<typeof setInterval> | undefined;
 const prevProbeStatus: Record<string, "ok" | "error"> = {};
 
 export function startHealthMonitor(deps: HealthMonitorDeps | HealthMonitorStackDeps, intervalMs = 30_000): void {
-  let resolveProviders: () => MastraProvider[];
+  // Two probe sources: the production path reads registry status (which
+  // already accounts for "0 tools = unreachable" after PR #183), while the
+  // legacy MastraProvider[] path is kept for callers that don't have a
+  // registry handy (notably tests pre-dating the registry-backed setup).
+  let resolveMcpProbe: () => Promise<ProbeResult>;
   if ("stackManager" in deps) {
-    resolveProviders = () => deps.stackManager.getDefaultContext().providerRegistry.getProviders();
+    resolveMcpProbe = async () =>
+      probeMcpFromRegistry(deps.stackManager.getDefaultContext().providerRegistry.getAll());
   } else {
-    resolveProviders = typeof deps.providers === "function"
+    const resolveProviders: () => MastraProvider[] = typeof deps.providers === "function"
       ? deps.providers
       : () => deps.providers as MastraProvider[];
+    resolveMcpProbe = () => probeMcpLegacy(resolveProviders());
   }
 
   const runProbes = async () => {
     const [mcp, db] = await Promise.all([
-      probeMcp(resolveProviders()),
+      resolveMcpProbe(),
       Promise.resolve(probeDb(deps.db)),
     ]);
 
