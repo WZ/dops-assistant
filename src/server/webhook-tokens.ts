@@ -45,6 +45,7 @@ export function hashWebhookToken(token: string): string {
 /** Format a token for read-only display in the GUI. The prefix is stored
  *  separately so we don't have to keep the plaintext to render the mask. */
 export function maskStoredToken(prefix: string): string {
+  if (prefix === "legacy") return "legacy…";
   return `${WEBHOOK_TOKEN_PREFIX}${prefix}…`;
 }
 

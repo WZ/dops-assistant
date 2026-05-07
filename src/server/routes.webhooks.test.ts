@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import express, { type Express } from "express";
+import express, { type Express, type RequestHandler } from "express";
 import request from "supertest";
 import { registerRoutes } from "./routes.js";
 import { Database } from "./db.js";
@@ -49,6 +49,7 @@ interface MakeAppOptions {
   services?: Array<{ name: string; metrics?: Array<{ query: string; description: string }>; logLabels?: Record<string, string> }>;
   appBaseUrl?: string;
   dedupAllowed?: boolean;
+  webhookTestLimiter?: RequestHandler;
 }
 
 function makeApp(opts: MakeAppOptions = {}): TestCtx {
@@ -113,6 +114,7 @@ function makeApp(opts: MakeAppOptions = {}): TestCtx {
       getActiveCount: () => 0,
     } as any,
     llmModel: {} as any,
+    webhookTestLimiter: opts.webhookTestLimiter,
   });
 
   return {
@@ -239,6 +241,20 @@ describe("POST /api/webhooks/test", () => {
   let ctx: TestCtx;
   afterEach(() => { ctx?.cleanup(); });
 
+  it("runs the webhook test limiter before auth", async () => {
+    const limitedPaths: string[] = [];
+    ctx = makeApp({
+      webhookTestLimiter: (req, res) => {
+        limitedPaths.push(req.path);
+        res.status(429).json({ error: "limited" });
+      },
+    });
+
+    await request(ctx.app).post("/api/webhooks/test").send({}).expect(429);
+
+    expect(limitedPaths).toEqual(["/api/webhooks/test"]);
+  });
+
   it("rejects when no token is supplied", async () => {
     ctx = makeApp({ services: [{ name: "checkout" }], hasProviders: true });
     await request(ctx.app).post("/api/webhooks/test").send({}).expect(401);
@@ -322,6 +338,20 @@ describe("POST /api/webhooks/loopback-test", () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
     ctx?.cleanup();
+  });
+
+  it("runs the webhook test limiter before auth", async () => {
+    const limitedPaths: string[] = [];
+    ctx = makeApp({
+      webhookTestLimiter: (req, res) => {
+        limitedPaths.push(req.path);
+        res.status(429).json({ error: "limited" });
+      },
+    });
+
+    await request(ctx.app).post("/api/webhooks/loopback-test").send({}).expect(429);
+
+    expect(limitedPaths).toEqual(["/api/webhooks/loopback-test"]);
   });
 
   it("returns 412 when appBaseUrl is unset (the loopback target is undefined)", async () => {

@@ -146,7 +146,9 @@ branding:
 # Alert webhook — receives Alertmanager payloads to trigger auto-investigations
 webhook:
   # Bearer tokens are generated in Settings -> Alert Webhooks.
-  # Legacy yaml-managed webhook.secret / webhook.tokens entries are rejected at startup.
+  # Deprecated yaml-managed webhook.secret / webhook.tokens entries are imported
+  # into the DB at startup for migration; remove them after alert senders use
+  # DB-backed tokens.
   dedupWindowSeconds: 300                # Skip repeat alerts for same service within this window
   maxConcurrent: 3                       # Max simultaneous webhook-triggered investigations
   defaultTemplate: standard              # quick | standard | full

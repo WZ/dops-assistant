@@ -46,6 +46,7 @@ import { buildInvestigationMessage } from "./anomaly-probe.js";
 import nodemailer, { type Transporter } from "nodemailer";
 import { notifyEmail } from "./email-notifier.js";
 import { ulid } from "ulid";
+import { importLegacyWebhookTokens } from "./webhook-token-migration.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const logger = createLogger();
@@ -60,6 +61,15 @@ async function main() {
 
   const dbPath = process.env["DB_PATH"] ?? "dops.sqlite";
   const db = new Database(dbPath);
+  const configuredLegacyWebhookTokens = Object.keys(config.webhook.legacyTokens).length;
+  const importedLegacyWebhookTokens = importLegacyWebhookTokens(db, config.webhook.legacyTokens);
+  if (configuredLegacyWebhookTokens > 0) {
+    logger.warn(
+      { configuredLegacyWebhookTokens, importedLegacyWebhookTokens },
+      "Imported deprecated YAML webhook tokens into DB-backed webhook tokens; remove legacy webhook config after alert senders are updated"
+    );
+    config.webhook.legacyTokens = {};
+  }
 
   // Wire the EventLog ring to also persist to the DB. After this call, every
   // `eventLog.append(...)` writes a row into the `events` table — that's

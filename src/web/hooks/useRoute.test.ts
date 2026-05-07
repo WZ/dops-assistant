@@ -179,6 +179,10 @@ describe("parseUrl", () => {
     expect(parseUrl("/settings/notifications")).toEqual({ type: "settings", initialTab: "notifications" });
   });
 
+  it("parses /settings/webhooks as the alert webhooks tab", () => {
+    expect(parseUrl("/settings/webhooks")).toEqual({ type: "settings", initialTab: "webhooks" });
+  });
+
   it("parses /scan/runs/:id as scanrun", () => {
     expect(parseUrl("/scan/runs/run_01J")).toEqual({ type: "scanrun", runId: "run_01J" });
   });
@@ -317,6 +321,7 @@ describe("roundtrip", () => {
       { type: "services" as const, initialService: "my-svc" },
       { type: "settings" as const },
       { type: "settings" as const, initialTab: "providers" as const },
+      { type: "settings" as const, initialTab: "webhooks" as const },
       { type: "scanrun" as const, runId: "run_01J" },
       // notfound preserves the user-typed path verbatim so reload stays on
       // the 404 page instead of bouncing back to the dashboard.
@@ -384,6 +389,7 @@ describe("useRoute — sub-path deploy (BASE_URL='/dops/')", () => {
     expect(mod.parseUrl("/dops/patterns/pat_123")).toEqual({ type: "pattern", id: "pat_123" });
     expect(mod.parseUrl("/dops/services/api")).toEqual({ type: "services", initialService: "api" });
     expect(mod.parseUrl("/dops/settings/providers")).toEqual({ type: "settings", initialTab: "providers" });
+    expect(mod.parseUrl("/dops/settings/webhooks")).toEqual({ type: "settings", initialTab: "webhooks" });
   });
 
   it("parseUrl returns notfound for paths that don't start with the base", async () => {
@@ -407,7 +413,7 @@ describe("useRoute — sub-path deploy (BASE_URL='/dops/')", () => {
     expect(mod.viewToUrl({ type: "pattern", id: "pat_1" })).toBe("/dops/patterns/pat_1");
     expect(mod.viewToUrl({ type: "services" })).toBe("/dops/services");
     expect(mod.viewToUrl({ type: "services", initialService: "api" })).toBe("/dops/services/api");
-    expect(mod.viewToUrl({ type: "settings", initialTab: "skills" })).toBe("/dops/settings/skills");
+    expect(mod.viewToUrl({ type: "settings", initialTab: "webhooks" })).toBe("/dops/settings/webhooks");
   });
 
   it("parseUrl(viewToUrl(view)) roundtrip holds under sub-path", async () => {
@@ -420,6 +426,7 @@ describe("useRoute — sub-path deploy (BASE_URL='/dops/')", () => {
       { type: "pattern" as const, id: "pat_123" },
       { type: "services" as const, initialService: "api" },
       { type: "settings" as const, initialTab: "providers" as const },
+      { type: "settings" as const, initialTab: "webhooks" as const },
     ];
     for (const view of views) {
       expect(mod.parseUrl(mod.viewToUrl(view))).toEqual(view);

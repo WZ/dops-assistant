@@ -1,4 +1,4 @@
-import type { Express, Request, Response } from "express";
+import type { Express, Request, RequestHandler, Response } from "express";
 import { createLogger } from "../logger.js";
 import type { Database } from "./db.js";
 import type { ServiceConfig, Config, ProviderConfig } from "../config/schema.js";
@@ -38,6 +38,7 @@ import { parseInvestigationFilters } from "./investigation-filters.js";
 import { sendSlackScanRunPost } from "./slack-notifier.js";
 import { ALL_SOURCES } from "../types/notifications.js";
 import { buildPatternCluster } from "./pattern-similarity.js";
+import { strictLimiter } from "./rate-limit.js";
 
 /**
  * Zod schema for PUT /api/scan/settings body.
@@ -97,6 +98,8 @@ export interface RouteDeps {
    *  participates in the same notification pipeline as real webhook
    *  deliveries. Optional — passed through from index.ts. */
   globalOnComplete?: import("./investigation-runner.js").RunnerDeps["globalOnComplete"];
+  /** Injectable for route tests; production uses the strict LLM-route limiter. */
+  webhookTestLimiter?: RequestHandler;
 }
 
 /**
@@ -262,6 +265,7 @@ const logger = createLogger("routes");
 export function registerRoutes(app: Express, deps: RouteDeps): void {
   const { db, stackManager, config } = deps;
   const skillStore = deps.skillStore;
+  const webhookTestLimiter = deps.webhookTestLimiter ?? strictLimiter;
 
   // ── Stack middleware — resolve stack for all /api routes ──────────────
   //
@@ -2124,7 +2128,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   // test if you can already fire a real one. Prevents anonymous-on-VPN
   // abuse from draining the LLM budget.
 
-  app.post("/api/webhooks/test", async (req: Request, res: Response) => {
+  app.post("/api/webhooks/test", webhookTestLimiter, async (req: Request, res: Response) => {
     const { token, severity, service: serviceName } = (req.body ?? {}) as {
       token?: unknown; severity?: unknown; service?: unknown;
     };
@@ -2178,8 +2182,8 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     db.markWebhookTokenUsed(tokenRow.id);
 
     // Build a one-shot per-stack runner the same way the stack-scoped
-    // webhook factory does. Cheap enough at test cadence (rate-limited
-    // 1/min/stack via strictLimiter); avoiding a long-lived cache keeps
+    // webhook factory does. Strict route limiting keeps this path aligned
+    // with other LLM-triggering endpoints; avoiding a long-lived cache keeps
     // this route free of stack-context lifecycle bugs.
     const stackAdapters = await createMastraAdapters({
       config,
@@ -2237,7 +2241,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   // end-to-end — the path real Grafana traffic takes. The internal /test
   // endpoint validates the app-side investigation pipeline only; this
   // one validates the network-facing reality.
-  app.post("/api/webhooks/loopback-test", async (req: Request, res: Response) => {
+  app.post("/api/webhooks/loopback-test", webhookTestLimiter, async (req: Request, res: Response) => {
     const appBaseUrl = config.notifications?.email?.appBaseUrl?.trim();
     if (!appBaseUrl) {
       res.status(412).json({

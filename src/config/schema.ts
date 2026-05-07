@@ -183,6 +183,10 @@ export const InvestigationTemplateSchema = z.enum(["quick", "standard", "full"])
 export type InvestigationTemplate = z.infer<typeof InvestigationTemplateSchema>;
 
 const WebhookSchema = z.object({
+  /** @deprecated Migrated at startup into DB-backed webhook tokens. */
+  secret: z.string().optional(),
+  /** @deprecated Migrated at startup into DB-backed webhook tokens. */
+  tokens: z.record(z.string()).optional(),
   /** Dedup window in seconds — skip alerts for the same service within this period */
   dedupWindowSeconds: z.number().default(300),
   /** Max concurrent investigations triggered by webhooks */
@@ -197,6 +201,17 @@ const WebhookSchema = z.object({
   }),
   /** Slack incoming webhook URL for investigation completion notifications */
   slackWebhookUrl: z.string().url().optional(),
+}).transform(({ secret, tokens, ...webhook }) => {
+  const legacyTokens: Record<string, string> = {};
+  if (typeof secret === "string" && secret.trim().length > 0) {
+    legacyTokens["legacy-secret"] = secret;
+  }
+  for (const [name, token] of Object.entries(tokens ?? {})) {
+    if (typeof token === "string" && token.trim().length > 0) {
+      legacyTokens[name] = token;
+    }
+  }
+  return { ...webhook, legacyTokens };
 });
 
 /**

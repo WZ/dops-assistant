@@ -146,6 +146,7 @@ export function parseUrl(pathname: string, search: string = ""): LeftPaneView {
       rawTab === "skills" ||
       rawTab === "stacks" ||
       rawTab === "scan" ||
+      rawTab === "webhooks" ||
       rawTab === "notifications"
     ) {
       return { type: "settings", initialTab: rawTab };
