@@ -54,6 +54,12 @@ export function useStacks(): UseStacksResult {
 
   useEffect(() => {
     fetchStacks();
+    // Periodic refetch keeps `providerHealth` (added in PR #184) live for
+    // consumers like the header status strip and the StackSwitcher dropdown.
+    // Pinned to the same 30s cadence as useHealthPolling so the strip's
+    // mcp:ok / mcp:— indicator updates roughly in sync with /api/health.
+    const handle = setInterval(() => { void fetchStacks(); }, 30_000);
+    return () => clearInterval(handle);
   }, [fetchStacks]);
 
   // Mirror `stacks` into a ref so switchStack can validate against the

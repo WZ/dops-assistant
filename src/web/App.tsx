@@ -16,7 +16,7 @@ import { Sidebar } from "./components/Sidebar";
 import type { SidebarPage } from "./components/Sidebar";
 import { ServicesPage } from "./components/ServicesPage";
 import { SettingsPage } from "./components/SettingsPage";
-import { ScanActivityBadge } from "./components/ScanActivityBadge";
+import { HeaderStatusStrip } from "./components/HeaderStatusStrip";
 import { SetupStepper } from "./components/SetupStepper";
 import { DemoBanner } from "./components/DemoBanner";
 import { useRoute, viewToUrl, parseUrl } from "./hooks/useRoute";
@@ -32,15 +32,6 @@ import { useSetupStage } from "./hooks/useSetupStage";
 import { useHealthPolling } from "./components/dashboard/useHealthPolling";
 import { createStackFetch } from "./lib/createStackFetch";
 import type { ValidatedServiceConfig } from "../types/discovery-types.js";
-
-function formatUptime(seconds: number): string {
-  const days = Math.floor(seconds / 86400);
-  const hours = Math.floor((seconds % 86400) / 3600);
-  const mins = Math.floor((seconds % 3600) / 60);
-  if (days > 0) return `${days}d ${hours}h`;
-  if (hours > 0) return `${hours}h ${mins}m`;
-  return `${mins}m`;
-}
 
 /** Tab inside the unified Activity page. New tabs add cases without churning the LeftPaneView union. */
 export type ActivityTab = "investigations" | "scans" | "events" | "patterns";
@@ -510,40 +501,11 @@ export function App() {
               onNewStackRequested={() => setLeftPane({ type: "settings", initialTab: "stacks" })}
             />
           </div>
-          <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-secondary/30">
-            {/* Health status cluster */}
-            <div className={`w-1.5 h-1.5 rounded-full transition-colors ${
-              health.connectionState === "connected" && health.health?.status === "healthy"
-                ? "bg-success"
-                : health.health?.status === "degraded"
-                ? "bg-warning"
-                : health.connectionState === "unreachable"
-                ? "bg-destructive"
-                : "bg-muted-foreground/30"
-            }`} />
-            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/75">
-              {health.connectionState === "connected" && health.health?.status === "healthy"
-                ? "HEALTHY"
-                : health.health?.status === "degraded"
-                ? "DEGRADED"
-                : health.connectionState === "unreachable"
-                ? "UNREACHABLE"
-                : "UNKNOWN"}
-            </span>
-            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/75">
-              {health.health ? formatUptime(health.health.uptime) : "\u2014"}
-            </span>
-            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/75">
-              {health.health ? (health.health.probes.mcp.status === "ok" ? "mcp:ok" : "mcp:\u2014") : "mcp:\u2014"}
-            </span>
-            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/75">
-              {health.health ? (health.health.probes.db.status === "ok" ? "db:ok" : "db:\u2014") : "db:\u2014"}
-            </span>
-            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/75">
-              {health.health?.version ? `v${health.health.version}` : "v\u2014"}
-            </span>
-            <ScanActivityBadge onNavigate={() => setLeftPane({ type: "settings", initialTab: "scan" })} />
-          </div>
+          <HeaderStatusStrip
+            activeStack={activeStack}
+            health={health}
+            onScanClick={() => setLeftPane({ type: "settings", initialTab: "scan" })}
+          />
         </header>
 
         {/* Setup stepper */}
