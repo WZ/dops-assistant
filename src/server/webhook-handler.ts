@@ -22,6 +22,8 @@ import { matchServiceFromText } from "../agents/intent.js";
 import { AlertPayloadSchema, type ValidatedAlertPayload } from "./sanitize.js";
 import { wrapUntrusted } from "../agents/shared/prompt-helpers.js";
 import { eventLog } from "./event-log.js";
+import { hashWebhookToken } from "./webhook-tokens.js";
+import type { Database } from "./db.js";
 
 const logger = createLogger();
 
@@ -247,6 +249,11 @@ export interface WebhookHandlerDeps {
   runner: InvestigationRunner;
   config: WebhookConfig;
   services: ServiceConfig[];
+  /** Database — used to look up bearer tokens by sha256 hash and bump
+   *  last_used_at on every accepted webhook. UI-managed tokens are the
+   *  only source of truth (yaml `webhook.tokens` was dropped in favour
+   *  of Settings → Alert Webhooks). */
+  db: Database;
   /** Stack ID for multi-stack data isolation */
   stackId?: string;
   /** Optional shared dedup instance. If not provided, one is created internally. */
@@ -256,72 +263,77 @@ export interface WebhookHandlerDeps {
 }
 
 /**
- * AP9: Shared 503 body for the "webhook auth is unset" path. Exported so
- * `src/server/index.ts`'s fallback stub (the route registered when neither
- * `webhook.secret` nor `webhook.tokens` is configured) emits the same
- * operator-facing hint as this handler. Two sources of truth for
- * operator-facing text always drift.
- *
- * The hint mentions both forms because the legacy single-token path
- * (`webhook.secret`) and the per-sender path (`webhook.tokens.<name>`) are
- * both supported — operators can use either or both.
+ * Operator-facing hint when no webhook tokens are configured at all. Returned
+ * with 503 so a misconfigured Grafana doesn't get the misleading "auth failed"
+ * message. The hint points at the GUI rather than config.yaml — yaml-managed
+ * tokens were dropped in favour of UI-managed ones (Settings → Alert Webhooks).
  */
 export const WEBHOOK_NOT_CONFIGURED_BODY = {
   error: "Webhook not configured",
-  hint: "Set webhook.secret (or webhook.tokens.<sender>) in config.yaml under the webhook section and restart the server",
+  hint: "Generate a webhook token in Settings → Alert Webhooks before pointing Grafana at /api/webhook/alert",
 } as const;
-
-/** True when at least one auth credential (legacy `secret` or named token) is configured. */
-export function isWebhookAuthConfigured(config: WebhookConfig): boolean {
-  if (config.secret) return true;
-  return Boolean(config.tokens && Object.keys(config.tokens).length > 0);
-}
-
-/**
- * Mask a webhook bearer token for display in the GUI. Schema floor of 16 chars
- * (see WebhookSchema in src/config/schema.ts) means `${first4}…${last4}` always
- * leaves an 8-char gap minimum. The legacy `secret` is exempt from min(16) for
- * backwards compatibility with existing deployments — short legacy secrets get
- * the full-hide treatment.
- */
-export function maskToken(token: string): string {
-  if (token.length < 16) return "<short token, edit config.yaml to view>";
-  return `${token.slice(0, 4)}…${token.slice(-4)}`;
-}
 
 /**
  * The label keys the alertname-extraction routine probes when matching a
- * service. Exported for `/api/webhooks/info` so the GUI renders the
- * actual contract operators must label their alerts with —
+ * service. Exported for `/api/webhooks/info` so the GUI's "What dops expects"
+ * panel renders the actual contract operators must label their alerts with —
  * pre-fix the only way to know was reading webhook-handler source.
  */
 export const SERVICE_LABEL_KEYS = ["service", "service_name", "app", "job", "deployment"] as const;
 
 /**
- * Resolve the bearer header to a sender name, or null if the token is not
- * recognised. The legacy `secret` resolves to the sender name "default";
- * tokens in `webhook.tokens` resolve to their map key. Used to attribute
- * webhook calls in logs and the event log so a noisy source can be traced
- * and revoked without rotating tokens for everyone.
- *
- * Plain `===` rather than constant-time compare, matching the rest of the
- * auth posture in this server. Bearer tokens are random ≥32-byte strings,
- * so timing leakage is bounded by the longest matching prefix.
+ * Build a synthetic Alertmanager v4 payload for test endpoints (`/test`,
+ * `/loopback-test`). Validates against the same schema real Grafana
+ * payloads must satisfy so synthesis can never produce something the
+ * webhook handler would reject — drift between "fake test" and "real
+ * traffic" is exactly the bug class test-mode is supposed to prevent.
  */
-function resolveSender(authHeader: string | undefined, config: WebhookConfig): string | null {
+export function synthesizeTestPayload(args: {
+  service: string;
+  severity?: string;
+  alertName?: string;
+  tokenName?: string;
+}): ValidatedAlertPayload {
+  const sev = args.severity?.length ? args.severity : "warning";
+  return AlertPayloadSchema.parse({
+    alerts: [{
+      status: "firing",
+      labels: {
+        alertname: args.alertName ?? "DopsTestAlert",
+        severity: sev,
+        service: args.service,
+      },
+      annotations: {
+        summary: args.tokenName
+          ? `Synthetic test alert dispatched from Settings → Alert Webhooks (token: ${args.tokenName})`
+          : "Synthetic test alert dispatched from Settings → Alert Webhooks",
+      },
+      startsAt: new Date().toISOString(),
+      endsAt: "0001-01-01T00:00:00Z",
+    }],
+  });
+}
+
+/**
+ * Resolve the bearer header to a token row, or null if the token is not
+ * recognised. We sha256 the presented bearer and look it up via a UNIQUE
+ * index on `webhook_tokens.token_hash` — O(1), constant-time-equivalent
+ * (sha256 + index lookup is data-independent at the API surface). Returns
+ * the token row's id + name so the caller can attribute the webhook in
+ * logs/eventLog and bump last_used_at.
+ */
+export function resolveTokenRow(
+  authHeader: string | undefined,
+  db: Database,
+): { id: string; name: string } | null {
   if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
   const presented = authHeader.slice("Bearer ".length);
-  if (config.secret && presented === config.secret) return "default";
-  if (config.tokens) {
-    for (const [name, token] of Object.entries(config.tokens)) {
-      if (presented === token) return name;
-    }
-  }
-  return null;
+  const hash = hashWebhookToken(presented);
+  return db.findWebhookTokenByHash(hash);
 }
 
 export function createWebhookHandler(deps: WebhookHandlerDeps) {
-  const { runner, config } = deps;
+  const { runner, config, db } = deps;
   const stackId = deps.stackId ?? "";
   const dedup = deps.dedup ?? new InvestigationDedup({
     dedupWindowSeconds: config.dedupWindowSeconds,
@@ -329,16 +341,21 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
   });
 
   return async (req: Request, res: Response): Promise<void> => {
-    // 1. Validate bearer token.
-    if (!isWebhookAuthConfigured(config)) {
+    // 1. Validate bearer against the DB token store. If no tokens exist at
+    //    all, return 503 with a hint that points the operator at the GUI
+    //    (matches the post-yaml setup flow).
+    const tokenList = db.listWebhookTokens();
+    if (tokenList.length === 0) {
       res.status(503).json(WEBHOOK_NOT_CONFIGURED_BODY);
       return;
     }
-    const sender = resolveSender(req.headers.authorization, config);
-    if (!sender) {
+    const tokenRow = resolveTokenRow(req.headers.authorization, db);
+    if (!tokenRow) {
       res.status(401).json({ error: "Invalid or missing authorization token" });
       return;
     }
+    db.markWebhookTokenUsed(tokenRow.id);
+    const sender = tokenRow.name;
 
     // 2. Parse and validate payload through Zod schema
     let payload: ValidatedAlertPayload;

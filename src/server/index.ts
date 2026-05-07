@@ -30,7 +30,7 @@ import { loadConfig } from "../config/loader.js";
 import { SkillStore } from "../skills/store.js";
 import { createModel } from "../mastra/index.js";
 import { InvestigationRunner } from "./investigation-runner.js";
-import { createWebhookHandler, WEBHOOK_NOT_CONFIGURED_BODY, isWebhookAuthConfigured } from "./webhook-handler.js";
+import { createWebhookHandler, WEBHOOK_NOT_CONFIGURED_BODY } from "./webhook-handler.js";
 import { InvestigationDedup } from "./investigation-dedup.js";
 import { createApiKeyMiddleware } from "./auth-middleware.js";
 import { globalLimiter, strictLimiter, moderateLimiter } from "./rate-limit.js";
@@ -453,7 +453,7 @@ async function main() {
     }
   };
 
-  registerRoutes(app, { db, stackManager, config, skillStore, sharedDedup, llmModel: model });
+  registerRoutes(app, { db, stackManager, config, skillStore, sharedDedup, llmModel: model, globalOnComplete });
 
   // Health check endpoint with background DB monitoring.
   // In demo mode the endpoint still works (for liveness probes / banner
@@ -478,7 +478,7 @@ async function main() {
   // demo-mode middleware would reject it anyway, but treating it as unconfigured
   // keeps the startup path free of adapter construction (which would try to
   // connect to stub MCP providers).
-  if (isWebhookAuthConfigured(config.webhook) && !isDemoMode()) {
+  if (!isDemoMode()) {
     const defaultStackId = stackManager.getDefaultStackId();
     const defaultCtx = stackManager.getDefaultContext();
     const providers = defaultCtx.providerRegistry.getProviders();
@@ -489,6 +489,7 @@ async function main() {
       runner,
       config: config.webhook,
       services: config.services,
+      db,
       stackId: defaultStackId,
       dedup: sharedDedup,
       getHiddenServices: () => db.getHiddenServices(defaultStackId),
@@ -502,7 +503,7 @@ async function main() {
 
     registerStackScopedWebhookRoute(app, { db, stackManager, config, skillStore, sharedDedup, globalOnComplete });
 
-    logger.info("Alert webhook enabled at POST /api/webhook/alert");
+    logger.info("Alert webhook enabled at POST /api/webhook/alert (tokens managed via Settings → Alert Webhooks)");
   } else {
     // No webhook auth configured: register 503 stubs at both the default and
     // stack-scoped routes so clients receive a structured JSON error.

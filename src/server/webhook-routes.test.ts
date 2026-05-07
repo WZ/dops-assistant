@@ -3,6 +3,7 @@ import type { Request, Response } from "express";
 import { InvestigationDedup } from "./investigation-dedup.js";
 import { eventLog } from "./event-log.js";
 import { createStackScopedWebhookHandler } from "./webhook-routes.js";
+import { hashWebhookToken } from "./webhook-tokens.js";
 import type { Config, ServiceConfig } from "../config/schema.js";
 
 const SERVICES: ServiceConfig[] = [
@@ -12,7 +13,6 @@ const SERVICES: ServiceConfig[] = [
 const CONFIG = {
   services: SERVICES,
   webhook: {
-    secret: "test-secret",
     dedupWindowSeconds: 300,
     maxConcurrent: 3,
     defaultTemplate: "standard",
@@ -20,9 +20,14 @@ const CONFIG = {
   },
 } as unknown as Config;
 
+// Long enough to satisfy any reasonable mask format. Tests only need the
+// sha256(token) → row mapping to work; the plaintext shape doesn't matter
+// beyond that.
+const TEST_TOKEN_PLAINTEXT = "test-secret-aaaaaaaaaaaaaaaa";
+
 const authScheme = ["Bear", "er"].join("");
 
-function mockReqRes(body: unknown, authHeader = `${authScheme} test-secret`) {
+function mockReqRes(body: unknown, authHeader = `${authScheme} ${TEST_TOKEN_PLAINTEXT}`) {
   const req = {
     params: { stackSlug: "east" },
     body,
@@ -33,6 +38,19 @@ function mockReqRes(body: unknown, authHeader = `${authScheme} test-secret`) {
     json: vi.fn().mockReturnThis(),
   } as unknown as Response;
   return { req, res };
+}
+
+/** Mock DB with a single seeded webhook token plus the stack-scoped route's
+ *  required getStackBySlug + getHiddenServices methods. */
+function mockDbWithToken() {
+  const seededHash = hashWebhookToken(TEST_TOKEN_PLAINTEXT);
+  return {
+    listWebhookTokens: () => [{ id: "id-default", name: "default", prefix: "test-sec", createdAt: "now", lastUsedAt: null }],
+    findWebhookTokenByHash: (h: string) => h === seededHash ? { id: "id-default", name: "default", prefix: "test-sec" } : null,
+    markWebhookTokenUsed: vi.fn(),
+    getStackBySlug: vi.fn().mockReturnValue({ id: "stack-east", slug: "east" }),
+    getHiddenServices: vi.fn().mockReturnValue(new Set<string>()),
+  };
 }
 
 describe("stack-scoped alert webhook route", () => {
@@ -47,10 +65,7 @@ describe("stack-scoped alert webhook route", () => {
     const createAdapters = vi.fn().mockResolvedValue({ investigationAgent: {} });
     const runner = { run: vi.fn() };
     const handler = createStackScopedWebhookHandler({
-      db: {
-        getStackBySlug: vi.fn().mockReturnValue({ id: "stack-east", slug: "east" }),
-        getHiddenServices: vi.fn().mockReturnValue(new Set<string>()),
-      } as any,
+      db: mockDbWithToken() as any,
       stackManager: {
         bumpActivity: vi.fn(),
         getContext: vi.fn().mockReturnValue({

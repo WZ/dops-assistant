@@ -60,6 +60,7 @@ export function createStackScopedWebhookHandler(deps: StackScopedWebhookHandlerD
         ...deps.config.services,
         ...ctx.serviceRegistry.load().filter(s => !deps.config.services.some(c => c.name === s.name)),
       ],
+      db: deps.db,
       stackId: stackRow.id,
       dedup: deps.sharedDedup,
       getHiddenServices: () => deps.db.getHiddenServices(stackRow.id),
