@@ -282,6 +282,39 @@ export const WEBHOOK_NOT_CONFIGURED_BODY = {
 export const SERVICE_LABEL_KEYS = ["service", "service_name", "app", "job", "deployment"] as const;
 
 /**
+ * Build a synthetic Alertmanager v4 payload for test endpoints (`/test`,
+ * `/loopback-test`). Validates against the same schema real Grafana
+ * payloads must satisfy so synthesis can never produce something the
+ * webhook handler would reject — drift between "fake test" and "real
+ * traffic" is exactly the bug class test-mode is supposed to prevent.
+ */
+export function synthesizeTestPayload(args: {
+  service: string;
+  severity?: string;
+  alertName?: string;
+  tokenName?: string;
+}): ValidatedAlertPayload {
+  const sev = args.severity?.length ? args.severity : "warning";
+  return AlertPayloadSchema.parse({
+    alerts: [{
+      status: "firing",
+      labels: {
+        alertname: args.alertName ?? "DopsTestAlert",
+        severity: sev,
+        service: args.service,
+      },
+      annotations: {
+        summary: args.tokenName
+          ? `Synthetic test alert dispatched from Settings → Alert Webhooks (token: ${args.tokenName})`
+          : "Synthetic test alert dispatched from Settings → Alert Webhooks",
+      },
+      startsAt: new Date().toISOString(),
+      endsAt: "0001-01-01T00:00:00Z",
+    }],
+  });
+}
+
+/**
  * Resolve the bearer header to a token row, or null if the token is not
  * recognised. We sha256 the presented bearer and look it up via a UNIQUE
  * index on `webhook_tokens.token_hash` — O(1), constant-time-equivalent
