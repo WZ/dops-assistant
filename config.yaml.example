@@ -1,6 +1,5 @@
 llm:
   model: gpt-4
-  maxTokens: 4096
   apiKey: "${OPENAI_API_KEY}"
   # baseURL: "https://your-compatible-endpoint/v1"  # Optional: override for gpt-oss-120b etc.
 

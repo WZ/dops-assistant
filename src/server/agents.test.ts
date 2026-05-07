@@ -487,7 +487,7 @@ describe("createMastraAdapters", () => {
 
     await createMastraAdapters({
       config: {
-        llm: { model: "gpt-4.1", maxTokens: 4096, apiKey: "test-key" },
+        llm: { model: "gpt-4.1", apiKey: "test-key" },
         providers: [],
         services: [],
         agent: {
@@ -524,7 +524,7 @@ describe("createMastraAdapters", () => {
   });
 
   const baseConfig = {
-    llm: { model: "gpt-4o", maxTokens: 4096, apiKey: "test-key" },
+    llm: { model: "gpt-4o", apiKey: "test-key" },
     agent: { maxIterations: 10 },
     services: [{ name: "svc", metrics: [], logLabels: {} }],
   } as any;

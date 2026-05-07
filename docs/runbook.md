@@ -28,9 +28,6 @@ llm:
   # Which model to use. Any OpenAI-compatible model name works.
   model: gpt-4
 
-  # Max tokens per LLM response.
-  maxTokens: 4096
-
   # Your API key. Use ${OPENAI_API_KEY} to read from env.
   apiKey: "${OPENAI_API_KEY}"
 

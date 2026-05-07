@@ -24,7 +24,7 @@ function makeScanConfig(overrides: Partial<ScanConfig> = {}): ScanConfig {
 
 function makeConfig(scanOverrides: Partial<ScanConfig> = {}): Config {
   return {
-    llm: { apiKey: "k", model: "gpt-4", maxTokens: 1000 },
+    llm: { apiKey: "k", model: "gpt-4" },
     providers: [],
     services: [],
     serviceAliases: {},

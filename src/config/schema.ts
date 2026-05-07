@@ -91,7 +91,6 @@ const LlmRetrySchema = z.object({
 
 const LlmSchema = z.object({
   model: z.string().default("gpt-4"),
-  maxTokens: z.number().default(4096),
   apiKey: z.string(),
   baseURL: z.string().optional(),
   retry: LlmRetrySchema,

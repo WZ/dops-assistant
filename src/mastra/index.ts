@@ -10,11 +10,15 @@ export function createModel(llmConfig: Config["llm"]) {
   });
   const baseModel = provider.chatModel(llmConfig.model);
 
-  // Use a moderate default (4096) instead of config.maxTokens (10000).
-  // 10000 causes "max_tokens must be at least 1, got -N" errors when input
-  // context is large (chat follow-ups after Deep investigations with 100K+ tokens).
-  // 4096 fits within available budget even with very large inputs, while still
-  // being enough for chat responses and investigation synthesis.
+  // Default to 4096 output tokens. Higher values risk "max_tokens must be at
+  // least 1, got -N" errors when the input context is large (chat follow-ups
+  // after Deep investigations push prompt_tokens past
+  // (max_model_len - max_tokens), and the upstream gateway clips negative).
+  // 4096 fits within available budget even with very large inputs while
+  // still being enough for chat responses and investigation synthesis.
+  // Discovery overrides this per-call via discovery.maxOutputTokens because
+  // its JSON output for large stacks needs a larger budget — see
+  // src/workflows/steps/discover.ts.
   return wrapLanguageModel({
     model: baseModel,
     middleware: {
