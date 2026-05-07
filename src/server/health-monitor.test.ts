@@ -75,14 +75,19 @@ describe("health monitor", () => {
     }));
   });
 
-  it("returns degraded when MCP probe fails", async () => {
+  it("returns 200 with degraded body when MCP probe fails", async () => {
+    // The endpoint always returns 200 because k8s readiness/liveness probes
+    // hit it — flipping to 503 on a downstream MCP outage takes the entire
+    // pod NotReady (regression: PR #184 caused a self-inflicted prod outage
+    // when the registry-aware probe correctly detected unreachable MCP
+    // servers and the endpoint then 503'd every request, including the UI).
     startHealthMonitor({ providers: [mockProvider(true)], db: mockDb() }, 60_000);
     await new Promise(r => setTimeout(r, 50));
 
     const res = mockRes();
     healthHandler({} as Request, res);
 
-    expect(res.status).toHaveBeenCalledWith(503);
+    expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
       status: "degraded",
       probes: expect.objectContaining({
@@ -106,7 +111,7 @@ describe("health monitor", () => {
   // per-server connection failures inside listTools, so the probe always
   // reported "ok" even when every upstream was dead. Now the probe reads
   // the registry's reconciled status and reports error correctly.
-  it("returns degraded when stackManager registry shows all providers errored", async () => {
+  it("returns 200 with degraded body when stackManager registry shows all providers errored", async () => {
     const stackManager = mockStackManager([
       makeInfo({ name: "grafana", status: "error", toolCount: 0, error: "MCP server returned no tools" }),
       makeInfo({ name: "loki", status: "error", toolCount: 0, error: "MCP server returned no tools" }),
@@ -117,7 +122,7 @@ describe("health monitor", () => {
     const res = mockRes();
     healthHandler({} as Request, res);
 
-    expect(res.status).toHaveBeenCalledWith(503);
+    expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
       status: "degraded",
       probes: expect.objectContaining({
@@ -147,7 +152,7 @@ describe("health monitor", () => {
     }));
   });
 
-  it("flags partial outage as error with a count summary", async () => {
+  it("flags partial outage as error in body with a count summary (status 200)", async () => {
     const stackManager = mockStackManager([
       makeInfo({ name: "grafana", status: "connected", toolCount: 5 }),
       makeInfo({ name: "loki", status: "error", toolCount: 0 }),
@@ -158,8 +163,9 @@ describe("health monitor", () => {
     const res = mockRes();
     healthHandler({} as Request, res);
 
-    expect(res.status).toHaveBeenCalledWith(503);
+    expect(res.status).toHaveBeenCalledWith(200);
     const payload = (res.json as any).mock.calls[0][0];
+    expect(payload.status).toBe("degraded");
     expect(payload.probes.mcp.status).toBe("error");
     expect(payload.probes.mcp.error).toMatch(/1 of 2/);
   });
