@@ -2517,7 +2517,7 @@ export class Database {
   // persisted. The webhook handler hashes incoming bearers and looks them up
   // here. Rotation is "create new + revoke old after Grafana side has been
   // updated" — there is no rotate-in-place pattern, which avoids the silent
-  // window where Grafana keeps using a token that no longer exists in dops.
+  // window where Grafana keeps using a token that no longer exists.
 
   private migrateWebhookTokens(): void {
     this.db.prepare(`

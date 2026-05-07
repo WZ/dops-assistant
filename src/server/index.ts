@@ -467,8 +467,8 @@ async function main() {
   app.get("/api/health", healthHandler);
 
   // Alert webhook endpoint.
-  // The route is always registered. When neither `webhook.secret` nor
-  // `webhook.tokens` is set, the handler itself returns a structured 503 with
+  // The route is always registered. When no DB-managed webhook tokens exist,
+  // the handler itself returns a structured 503 with
   // a hint, so operators posting to this URL see a meaningful error instead
   // of Express's default HTML 404 ("Cannot POST /api/webhook/alert"). When
   // any auth credential IS set, we eagerly build the runner/adapters so the
@@ -512,7 +512,7 @@ async function main() {
     };
     app.post("/api/webhook/alert", notConfiguredResponse);
     app.post("/api/webhook/alert/:stackSlug", notConfiguredResponse);
-    logger.warn("Alert webhook registered but DISABLED: neither webhook.secret nor webhook.tokens is configured — POST /api/webhook/alert will return 503");
+    logger.warn("Alert webhook registered but DISABLED in demo mode — POST /api/webhook/alert will return 503");
   }
 
   setupWebSocket(server, {

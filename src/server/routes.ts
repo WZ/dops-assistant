@@ -2205,13 +2205,27 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       sender: tokenRow.name,
     }, { hiddenServices: db.getHiddenServices(stackId) });
 
-    res.json({
+    const investigationStarted = result.deliveryStatus === "investigated";
+    const statusCode = (() => {
+      switch (result.deliveryStatus) {
+        case "investigated": return 202;
+        case "concurrency_skipped": return 429;
+        case "no_service_match": return 422;
+        case "failed": return 500;
+        case "deduplicated":
+        case "no_firing":
+          return 409;
+      }
+    })();
+
+    res.status(statusCode).json({
       deliveryStatus: result.deliveryStatus,
       service: result.service,
       alertName: result.alertName,
       template: result.template,
       tokenName: tokenRow.name,
-      investigationStarted: result.deliveryStatus === "investigated",
+      investigationStarted,
+      ...(!investigationStarted ? { error: `Test alert did not start an investigation: ${result.deliveryStatus}` } : {}),
       ...(result.activeCount !== undefined ? { activeCount: result.activeCount, maxConcurrent: result.maxConcurrent } : {}),
     });
   });
@@ -2221,14 +2235,14 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   // Server makes an outbound HTTP request to its own public URL with the
   // supplied bearer. Exercises DNS / TLS / firewall / auth / parsing
   // end-to-end — the path real Grafana traffic takes. The internal /test
-  // endpoint validates the dops-side investigation pipeline only; this
+  // endpoint validates the app-side investigation pipeline only; this
   // one validates the network-facing reality.
   app.post("/api/webhooks/loopback-test", async (req: Request, res: Response) => {
     const appBaseUrl = config.notifications?.email?.appBaseUrl?.trim();
     if (!appBaseUrl) {
       res.status(412).json({
         error: "Loopback test requires notifications.email.appBaseUrl in config",
-        hint: "Set it to the public URL operators reach the dops UI through (e.g. https://dops.example.com). Falls back to the internal Send Test if you can't.",
+        hint: "Set it to the public URL operators reach the UI through (e.g. https://alerts.example.com). Falls back to the internal Send Test if you can't.",
       });
       return;
     }
@@ -2277,7 +2291,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       service: chosen.name,
       severity: typeof severity === "string" ? severity : undefined,
       tokenName: tokenRow.name,
-      alertName: "DopsLoopbackTest",
+      alertName: "WebhookLoopbackTest",
     });
 
     const start = Date.now();
@@ -2445,7 +2459,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         {
           service: "Test Service",
           severity: "low",
-          summary: "This is a test notification from dops-assistant.",
+          summary: "This is a test notification from the assistant.",
           rootCause: "Test notification — no actual incident.",
           confidenceScore: 1.0,
           confidence: "high",

@@ -145,7 +145,8 @@ branding:
 
 # Alert webhook — receives Alertmanager payloads to trigger auto-investigations
 webhook:
-  # secret: "${WEBHOOK_SECRET}"          # Bearer token for authentication (required for production)
+  # Bearer tokens are generated in Settings -> Alert Webhooks.
+  # Legacy yaml-managed webhook.secret / webhook.tokens entries are rejected at startup.
   dedupWindowSeconds: 300                # Skip repeat alerts for same service within this window
   maxConcurrent: 3                       # Max simultaneous webhook-triggered investigations
   defaultTemplate: standard              # quick | standard | full

@@ -1,9 +1,9 @@
 /**
  * Webhook token generation + hashing.
  *
- * Token shape: `dops_<32 hex chars>` (16 bytes of crypto random). Operators
- * see the `dops_` prefix in masks (`dops_eeb2278c…`) so they can tell at a
- * glance which secrets in their Grafana config belong to dops-assistant.
+ * Token shape: `hook_<32 hex chars>` (16 bytes of crypto random). Operators
+ * see the `hook_` prefix in masks (`hook_eeb2278c...`) so they can tell at a
+ * glance which secrets in their Grafana config belong to this webhook integration.
  *
  * We store sha256(token) at rest. Webhook tokens are high-entropy random
  * strings, so a fast cryptographic hash is fine — bcrypt would just slow
@@ -14,7 +14,7 @@
 import { randomBytes, createHash } from "node:crypto";
 import { ulid } from "ulid";
 
-export const WEBHOOK_TOKEN_PREFIX = "dops_";
+export const WEBHOOK_TOKEN_PREFIX = "hook_";
 
 export interface GeneratedWebhookToken {
   /** ULID, primary key in webhook_tokens table */
@@ -23,7 +23,7 @@ export interface GeneratedWebhookToken {
   token: string;
   /** sha256 of `token`, what we store */
   tokenHash: string;
-  /** First 8 chars of the random portion (after `dops_`); rendered alongside the masked tail in the UI */
+  /** First 8 chars of the random portion (after `hook_`); rendered alongside the masked tail in the UI */
   prefix: string;
 }
 

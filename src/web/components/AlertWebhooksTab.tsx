@@ -199,7 +199,8 @@ export function AlertWebhooksTab() {
       } else if (mode === "internal") {
         const status = typeof body["deliveryStatus"] === "string" ? body["deliveryStatus"] : "unknown";
         const svc = typeof body["service"] === "string" ? body["service"] : "?";
-        setTestResult({ ok: true, message: `Test ${status} for service "${svc}"` });
+        const started = status === "investigated";
+        setTestResult({ ok: started, message: `Test ${status} for service "${svc}"` });
       } else {
         const upstreamStatus = typeof body["status"] === "number" ? body["status"] : 0;
         const upstreamOk = body["ok"] === true;
@@ -242,7 +243,7 @@ export function AlertWebhooksTab() {
       </section>
 
       <section className="space-y-3 rounded-md border border-border/50 bg-card/30 p-4">
-        <div className={LABEL_CLASS}>What dops expects from Grafana</div>
+        <div className={LABEL_CLASS}>What alert sources must send</div>
         <div className="space-y-2 text-[11px] font-body text-foreground/80">
           <div>
             <span className="text-muted-foreground/60">Service label keys: </span>
@@ -339,17 +340,17 @@ Authorization Header: Bearer ${snippetTokenPlaceholder}`} />
               <div className={`${LABEL_CLASS} mt-2`}>Prometheus Alertmanager — webhook_configs</div>
               <CodeBlock value={`# Option 1: bearer in a file (recommended for IaC, doesn't leak in your repo)
 receivers:
-  - name: dops-assistant
+  - name: webhook-receiver
     webhook_configs:
       - url: ${fullUrl}
         http_config:
           authorization:
             type: Bearer
-            credentials_file: /etc/alertmanager/dops-token  # file contains the raw token
+            credentials_file: /etc/alertmanager/webhook-token  # file contains the raw token
 
 # Option 2: bearer inline (simpler for one-off tests; commit-and-rotate carefully)
 receivers:
-  - name: dops-assistant
+  - name: webhook-receiver
     webhook_configs:
       - url: ${fullUrl}
         http_config:
@@ -372,7 +373,7 @@ receivers:
       <section className="space-y-3 rounded-md border border-border/50 bg-card/30 p-4">
         <div className={LABEL_CLASS}>Send test alert</div>
         <p className="text-[11px] font-body text-muted-foreground/60">
-          Two modes. <strong>Internal</strong> synthesizes a payload and runs it through the same handler real traffic hits — validates the dops side. <strong>Loopback</strong> dispatches a real outbound HTTP call to your public URL — validates DNS, TLS, ingress, auth end-to-end. Paste a token to authorize either; same trust model as production Grafana.
+          Two modes. <strong>Internal</strong> synthesizes a payload and runs it through the same handler real traffic hits — validates the app side. <strong>Loopback</strong> dispatches a real outbound HTTP call to your public URL — validates DNS, TLS, ingress, auth end-to-end. Paste a token to authorize either; same trust model as production Grafana.
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           <input
