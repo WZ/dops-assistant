@@ -11,9 +11,8 @@ import type { SkillStore } from "../skills/store.js";
 import type { ProviderInfo } from "../mcp/provider-registry.js";
 import type { StackManager } from "./stack-manager.js";
 import type { InvestigationDedup } from "./investigation-dedup.js";
-import { SERVICE_LABEL_KEYS, processFiringAlert } from "./webhook-handler.js";
+import { SERVICE_LABEL_KEYS, processFiringAlert, synthesizeTestPayload } from "./webhook-handler.js";
 import { generateWebhookToken, hashWebhookToken, maskStoredToken, isValidTokenName } from "./webhook-tokens.js";
-import { AlertPayloadSchema } from "./sanitize.js";
 import { ulid } from "ulid";
 import { createMastraAdapters } from "./agents.js";
 import { InvestigationRunner } from "./investigation-runner.js";
@@ -2174,19 +2173,10 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       return;
     }
 
-    const sev = (typeof severity === "string" && severity.length > 0) ? severity : "warning";
-    const synthesized = AlertPayloadSchema.parse({
-      alerts: [{
-        status: "firing",
-        labels: {
-          alertname: "DopsTestAlert",
-          severity: sev,
-          service: chosen.name,
-        },
-        annotations: { summary: `Synthetic test alert dispatched from Settings → Alert Webhooks (token: ${tokenRow.name})` },
-        startsAt: new Date().toISOString(),
-        endsAt: "0001-01-01T00:00:00Z",
-      }],
+    const synthesized = synthesizeTestPayload({
+      service: chosen.name,
+      severity: typeof severity === "string" ? severity : undefined,
+      tokenName: tokenRow.name,
     });
 
     db.markWebhookTokenUsed(tokenRow.id);
@@ -2231,6 +2221,133 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       // ws stream. Adding an id pipe is an obvious follow-up.
       investigationStarted: result.deliveryStatus === "investigated",
       ...(result.activeCount !== undefined ? { activeCount: result.activeCount, maxConcurrent: result.maxConcurrent } : {}),
+    });
+  });
+
+  // ── Loopback test ────────────────────────────────────────────────────
+  //
+  // Server makes an outbound HTTP request to its own public URL with the
+  // supplied bearer. Exercises DNS / TLS / firewall / auth / parsing
+  // end-to-end — the full path real Grafana traffic takes. The internal
+  // /test endpoint validates the dops-side investigation pipeline only;
+  // this one validates the network-facing reality. Use after Grafana
+  // setup to confirm "yes, your pasted URL is reachable from inside the
+  // cluster with this exact bearer."
+  //
+  // Auth + abuse: rate-limited like /test (strictLimiter at the app
+  // level), token must match a configured one (no anon-on-VPN abuse),
+  // pre-flight requires `appBaseUrl` to be set so we don't accidentally
+  // hammer localhost:3000 in production where ingress would reject it.
+  app.post("/api/webhooks/loopback-test", async (req: Request, res: Response) => {
+    const appBaseUrl = config.notifications?.email?.appBaseUrl?.trim();
+    if (!appBaseUrl) {
+      res.status(412).json({
+        error: "Loopback test requires notifications.email.appBaseUrl in config",
+        hint: "Set it to the public URL your operators reach the dops UI through (e.g. https://dops.example.com). Falls back to the internal Send Test if you can't.",
+      });
+      return;
+    }
+
+    const { token, severity, service: serviceName } = (req.body ?? {}) as {
+      token?: unknown; severity?: unknown; service?: unknown;
+    };
+    if (typeof token !== "string" || token.length === 0) {
+      res.status(401).json({ error: "Missing token. Paste a configured webhook token to authorize the loopback test." });
+      return;
+    }
+    const tokenRow = db.findWebhookTokenByHash(hashWebhookToken(token));
+    if (!tokenRow) {
+      res.status(401).json({ error: "Token not recognized." });
+      return;
+    }
+
+    const ctx = req.stackContext;
+    if (!ctx) {
+      res.status(500).json({ error: "Stack context unavailable" });
+      return;
+    }
+
+    // Pick a service the same way /test does.
+    const allServices = [
+      ...config.services,
+      ...ctx.serviceRegistry.load().filter((s: ServiceConfig) => !config.services.some((c) => c.name === s.name)),
+    ];
+    let chosen: ServiceConfig | undefined;
+    if (typeof serviceName === "string" && serviceName.length > 0) {
+      chosen = allServices.find((s) => s.name === serviceName);
+      if (!chosen) {
+        res.status(404).json({ error: `Service "${serviceName}" not found in this stack.` });
+        return;
+      }
+    } else {
+      chosen = allServices[0];
+    }
+    if (!chosen) {
+      res.status(409).json({ error: "No services configured for this stack — investigation would have no target." });
+      return;
+    }
+
+    const stackSlug = ctx.slug ?? DEFAULT_STACK_SLUG;
+    const targetUrl = `${appBaseUrl.replace(/\/+$/, "")}/api/webhook/alert/${encodeURIComponent(stackSlug)}`;
+    const payload = synthesizeTestPayload({
+      service: chosen.name,
+      severity: typeof severity === "string" ? severity : undefined,
+      tokenName: tokenRow.name,
+      alertName: "DopsLoopbackTest",
+    });
+
+    const start = Date.now();
+    // Local alias because `Response` in this file already refers to
+    // express.Response — `fetchResp` keeps the two type universes apart.
+    let fetchResp: globalThis.Response | undefined;
+    let fetchError: string | undefined;
+    try {
+      fetchResp = await fetch(targetUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          // Trust on first use: the server is calling its own public URL
+          // through whatever ingress proxies sit in front. Bearer is the
+          // operator-supplied token, validated upstream as if it came from
+          // Grafana — same code path, same trust model.
+          "Authorization": `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch (err) {
+      fetchError = err instanceof Error ? err.message : String(err);
+    }
+    const latencyMs = Date.now() - start;
+
+    if (fetchError || !fetchResp) {
+      res.status(502).json({
+        targetUrl,
+        latencyMs,
+        error: `Loopback fetch failed: ${fetchError ?? "no response"}`,
+        hint: "Check that appBaseUrl resolves from inside the cluster and that ingress / TLS aren't blocking the request. The curl snippet from a workstation will tell you whether the network path works at all.",
+      });
+      return;
+    }
+
+    // Cap the relayed body — the webhook handler returns small JSON, but
+    // a misconfigured ingress might serve a 5MB HTML 404 page and we don't
+    // want to forward all of it back through the API.
+    const rawBody = await fetchResp.text().catch(() => "");
+    const body = rawBody.length > 4_000 ? rawBody.slice(0, 4_000) + "…[truncated]" : rawBody;
+
+    res.json({
+      targetUrl,
+      tokenName: tokenRow.name,
+      status: fetchResp.status,
+      statusText: fetchResp.statusText,
+      latencyMs,
+      // The /api/webhook/alert handler replies with JSON, but in the
+      // failure-path cases (404 from ingress, 502 from upstream proxy,
+      // etc.) the body might be HTML — let the GUI render it as plain
+      // text either way.
+      body,
+      ok: fetchResp.ok,
     });
   });
 

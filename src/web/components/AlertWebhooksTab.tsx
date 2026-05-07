@@ -44,6 +44,29 @@ function absoluteUrl(path: string): string {
   return `${window.location.origin}${trimmedBase}${path}`;
 }
 
+/** SQLite's `datetime('now')` returns `YYYY-MM-DD HH:MM:SS` in UTC. JS's
+ *  `new Date(...)` parses that as local time, off by the local offset.
+ *  Coerce to ISO with explicit `Z`. */
+function parseUtcDatetime(s: string): Date {
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) {
+    return new Date(s.replace(" ", "T") + "Z");
+  }
+  return new Date(s);
+}
+
+function relativeTime(iso: string | null): string {
+  if (!iso) return "never used";
+  const date = parseUtcDatetime(iso);
+  const ms = Date.now() - date.getTime();
+  if (Number.isNaN(ms)) return iso;
+  if (ms < 0) return "just now";
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return "just now";
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+  return `${Math.floor(sec / 86400)}d ago`;
+}
+
 function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -158,12 +181,13 @@ export function AlertWebhooksTab() {
     await fetchInfo();
   };
 
-  const sendTest = async () => {
+  const sendTest = async (mode: "internal" | "loopback") => {
     if (!testToken.trim() || testing) return;
     setTestResult(null);
     setTesting(true);
     try {
-      const res = await stackFetch("/api/webhooks/test", {
+      const path = mode === "internal" ? "/api/webhooks/test" : "/api/webhooks/loopback-test";
+      const res = await stackFetch(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -174,11 +198,24 @@ export function AlertWebhooksTab() {
       });
       const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) {
-        setTestResult({ ok: false, message: typeof body["error"] === "string" ? body["error"] : `HTTP ${res.status}` });
-      } else {
+        const errMsg = typeof body["error"] === "string" ? body["error"] : `HTTP ${res.status}`;
+        const hint = typeof body["hint"] === "string" ? ` (${body["hint"]})` : "";
+        setTestResult({ ok: false, message: `${errMsg}${hint}` });
+      } else if (mode === "internal") {
         const status = typeof body["deliveryStatus"] === "string" ? body["deliveryStatus"] : "unknown";
         const svc = typeof body["service"] === "string" ? body["service"] : "?";
         setTestResult({ ok: true, message: `Test ${status} for service "${svc}"` });
+      } else {
+        // Loopback test result has a different shape: forwards upstream
+        // status. ok=true means our outbound fetch completed; the actual
+        // webhook response status lives in body.status.
+        const upstreamStatus = typeof body["status"] === "number" ? body["status"] : 0;
+        const upstreamOk = body["ok"] === true;
+        const latency = typeof body["latencyMs"] === "number" ? body["latencyMs"] : null;
+        setTestResult({
+          ok: upstreamOk,
+          message: `Loopback ${upstreamOk ? "✓" : "✗"} — upstream HTTP ${upstreamStatus}${latency != null ? ` (${latency}ms)` : ""}`,
+        });
       }
     } finally {
       setTesting(false);
@@ -260,8 +297,11 @@ export function AlertWebhooksTab() {
               <div key={t.id} className="flex items-center gap-3 px-3 py-2 rounded-md border border-border/40 bg-card/30">
                 <span className="font-body text-[12px] font-medium text-foreground/90 flex-1 truncate">{t.name}</span>
                 <span className="font-mono text-[10px] text-muted-foreground/60">{t.masked}</span>
-                <span className="font-mono text-[10px] text-muted-foreground/40 min-w-[140px] text-right">
-                  {t.lastUsedAt ? `last used ${t.lastUsedAt}` : "never used"}
+                <span
+                  className="font-mono text-[10px] text-muted-foreground/40 min-w-[140px] text-right"
+                  title={t.lastUsedAt ?? "never used"}
+                >
+                  {t.lastUsedAt ? `last used ${relativeTime(t.lastUsedAt)}` : "never used"}
                 </span>
                 <Button
                   type="button"
@@ -310,14 +350,25 @@ Authorization Header: Bearer ${snippetTokenPlaceholder}`} />
 
             <div className="space-y-2">
               <div className={`${LABEL_CLASS} mt-2`}>Prometheus Alertmanager — webhook_configs</div>
-              <CodeBlock value={`receivers:
+              <CodeBlock value={`# Option 1: bearer in a file (recommended for IaC, doesn't leak in your repo)
+receivers:
   - name: dops-assistant
     webhook_configs:
       - url: ${fullUrl}
         http_config:
           authorization:
             type: Bearer
-            credentials_file: /etc/alertmanager/dops-token  # contains: ${snippetTokenPlaceholder}`} />
+            credentials_file: /etc/alertmanager/dops-token  # file contains the raw token
+
+# Option 2: bearer inline (simpler for one-off tests; commit-and-rotate carefully)
+receivers:
+  - name: dops-assistant
+    webhook_configs:
+      - url: ${fullUrl}
+        http_config:
+          authorization:
+            type: Bearer
+            credentials: ${snippetTokenPlaceholder}`} />
             </div>
 
             <div className="space-y-2">
@@ -335,7 +386,7 @@ Authorization Header: Bearer ${snippetTokenPlaceholder}`} />
       <section className="space-y-3 rounded-md border border-border/50 bg-card/30 p-4">
         <div className={LABEL_CLASS}>Send test alert</div>
         <p className="text-[11px] font-body text-muted-foreground/60">
-          Synthesizes an Alertmanager payload and runs it through the same handler real Grafana traffic hits. Paste a token to authorize — same trust model as production.
+          Two modes. <strong>Internal</strong> synthesizes a payload and runs it through the same handler real traffic hits — validates the dops side. <strong>Loopback</strong> dispatches a real outbound HTTP call to your public URL — validates DNS, TLS, ingress, auth end-to-end. Paste a token to authorize either; same trust model as production Grafana.
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           <input
@@ -353,7 +404,7 @@ Authorization Header: Bearer ${snippetTokenPlaceholder}`} />
             className="font-mono text-[11px] bg-secondary/30 border border-border/50 rounded-md px-2 py-1.5"
           />
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <select
             value={testSeverity}
             onChange={(e) => setTestSeverity(e.target.value)}
@@ -365,11 +416,20 @@ Authorization Header: Bearer ${snippetTokenPlaceholder}`} />
           </select>
           <Button
             type="button"
-            onClick={sendTest}
+            onClick={() => sendTest("internal")}
             disabled={testing || !testToken.trim()}
             className="font-mono text-[10px] h-7 px-3"
           >
-            {testing ? "Sending…" : "Send test"}
+            {testing ? "Sending…" : "Send test (internal)"}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => sendTest("loopback")}
+            disabled={testing || !testToken.trim()}
+            className="font-mono text-[10px] h-7 px-3"
+          >
+            {testing ? "Sending…" : "Send test (loopback)"}
           </Button>
           {testResult && (
             <span className={`font-mono text-[10px] ${testResult.ok ? "text-success" : "text-destructive"}`}>

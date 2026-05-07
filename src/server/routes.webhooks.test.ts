@@ -34,6 +34,8 @@ interface MakeAppOptions {
   hasProviders?: boolean;
   /** Services configured for the test stack. Default empty. */
   services?: Array<{ name: string; metrics?: Array<{ query: string; description: string }>; logLabels?: Record<string, string> }>;
+  /** appBaseUrl for /loopback-test. When unset, /loopback-test returns 412. */
+  appBaseUrl?: string;
 }
 
 function makeApp(opts: MakeAppOptions = {}): TestCtx {
@@ -91,7 +93,7 @@ function makeApp(opts: MakeAppOptions = {}): TestCtx {
     stackManager: mockStackManager,
     config: {
       services,
-      notifications: {},
+      notifications: opts.appBaseUrl ? { email: { appBaseUrl: opts.appBaseUrl } } : {},
       webhook: {
         severityTemplateMap: { critical: "full", warning: "standard", info: "quick" },
         defaultTemplate: "standard",
@@ -305,6 +307,148 @@ describe("POST /api/webhooks/test", () => {
       .send({ token: t.token, service: "not-a-real-service" })
       .expect(404);
     expect(res.body.error).toMatch(/not found/i);
+  });
+});
+
+describe("POST /api/webhooks/loopback-test", () => {
+  let ctx: TestCtx;
+  let originalFetch: typeof fetch;
+  beforeEach(() => { originalFetch = globalThis.fetch; });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    ctx?.cleanup();
+  });
+
+  it("returns 412 when appBaseUrl is unset (the loopback target is undefined)", async () => {
+    const t = generateWebhookToken();
+    ctx = makeApp({ services: [{ name: "checkout" }], hasProviders: true });
+    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix });
+
+    const res = await request(ctx.app)
+      .post("/api/webhooks/loopback-test")
+      .send({ token: t.token })
+      .expect(412);
+    expect(res.body.error).toMatch(/appBaseUrl/i);
+  });
+
+  it("rejects when no token is supplied", async () => {
+    ctx = makeApp({ services: [{ name: "checkout" }], hasProviders: true, appBaseUrl: "https://dops.example" });
+    await request(ctx.app).post("/api/webhooks/loopback-test").send({}).expect(401);
+  });
+
+  it("rejects unrecognized tokens with 401", async () => {
+    ctx = makeApp({ services: [{ name: "checkout" }], hasProviders: true, appBaseUrl: "https://dops.example" });
+    await request(ctx.app)
+      .post("/api/webhooks/loopback-test")
+      .send({ token: "dops_unknown_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" })
+      .expect(401);
+  });
+
+  it("returns 404 when the requested service isn't in the stack", async () => {
+    const t = generateWebhookToken();
+    ctx = makeApp({ services: [{ name: "checkout" }], hasProviders: true, appBaseUrl: "https://dops.example" });
+    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix });
+
+    await request(ctx.app)
+      .post("/api/webhooks/loopback-test")
+      .send({ token: t.token, service: "no-such-service" })
+      .expect(404);
+  });
+
+  it("dispatches an HTTP POST to appBaseUrl + the stack-scoped webhook path with the supplied bearer", async () => {
+    const t = generateWebhookToken();
+    ctx = makeApp({
+      stacks: [{ id: "stack-east", slug: "us-east" }],
+      services: [{ name: "checkout" }],
+      hasProviders: true,
+      appBaseUrl: "https://dops.example.com",
+    });
+    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix });
+
+    let capturedUrl: string | undefined;
+    let capturedHeaders: Record<string, string> | undefined;
+    let capturedBody: unknown;
+    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+      capturedUrl = String(input);
+      capturedHeaders = init?.headers as Record<string, string>;
+      capturedBody = init?.body ? JSON.parse(String(init.body)) : undefined;
+      return new Response(JSON.stringify({ message: "Investigation started" }), {
+        status: 202,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const res = await request(ctx.app)
+      .post("/api/webhooks/loopback-test")
+      .set("X-Stack-Id", "stack-east")
+      .send({ token: t.token, severity: "critical" })
+      .expect(200);
+
+    expect(capturedUrl).toBe("https://dops.example.com/api/webhook/alert/us-east");
+    expect(capturedHeaders?.["Authorization"]).toBe(`Bearer ${t.token}`);
+    expect(capturedBody).toMatchObject({
+      alerts: [{ status: "firing", labels: { service: "checkout", severity: "critical" } }],
+    });
+    expect(res.body).toMatchObject({
+      targetUrl: "https://dops.example.com/api/webhook/alert/us-east",
+      status: 202,
+      ok: true,
+      tokenName: "grafana",
+    });
+    expect(res.body.latencyMs).toBeTypeOf("number");
+  });
+
+  it("returns 502 with a hint when the loopback fetch fails", async () => {
+    const t = generateWebhookToken();
+    ctx = makeApp({ services: [{ name: "checkout" }], hasProviders: true, appBaseUrl: "https://dops.example.com" });
+    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix });
+
+    globalThis.fetch = (async () => { throw new Error("ENOTFOUND"); }) as typeof fetch;
+
+    const res = await request(ctx.app)
+      .post("/api/webhooks/loopback-test")
+      .send({ token: t.token })
+      .expect(502);
+
+    expect(res.body.error).toMatch(/ENOTFOUND/);
+    expect(res.body.targetUrl).toBe("https://dops.example.com/api/webhook/alert/default");
+    expect(res.body.hint).toMatch(/curl/);
+  });
+
+  it("relays whatever status the upstream webhook handler returned, including non-OK", async () => {
+    const t = generateWebhookToken();
+    ctx = makeApp({ services: [{ name: "checkout" }], hasProviders: true, appBaseUrl: "https://dops.example.com" });
+    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix });
+
+    globalThis.fetch = (async () => new Response(
+      JSON.stringify({ error: "Could not identify service from alert labels" }),
+      { status: 422, headers: { "Content-Type": "application/json" } },
+    )) as typeof fetch;
+
+    const res = await request(ctx.app)
+      .post("/api/webhooks/loopback-test")
+      .send({ token: t.token })
+      .expect(200);
+
+    expect(res.body.status).toBe(422);
+    expect(res.body.ok).toBe(false);
+    expect(res.body.body).toContain("Could not identify service");
+  });
+
+  it("trims trailing slashes off appBaseUrl so the assembled URL is well-formed", async () => {
+    const t = generateWebhookToken();
+    ctx = makeApp({ services: [{ name: "checkout" }], hasProviders: true, appBaseUrl: "https://dops.example.com///" });
+    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix });
+
+    let capturedUrl: string | undefined;
+    globalThis.fetch = (async (input: string | URL) => {
+      capturedUrl = String(input);
+      return new Response("{}", { status: 202 });
+    }) as typeof fetch;
+
+    await request(ctx.app).post("/api/webhooks/loopback-test").send({ token: t.token }).expect(200);
+    // Single slash between appBaseUrl and the path — no `https://host///api/...`.
+    expect(capturedUrl).toBe("https://dops.example.com/api/webhook/alert/default");
   });
 });
 
