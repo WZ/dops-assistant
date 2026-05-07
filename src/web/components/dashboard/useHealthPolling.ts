@@ -12,8 +12,7 @@ export interface HealthStatus {
   uptime: number; // seconds
   version: string;
   probes: {
-    // Server-level probes only — MCP health is per-stack, sourced from
-    // /api/stacks → activeStack.providerHealth instead. See HeaderStatusStrip.
+    mcp: ProbeResult;
     db: ProbeResult;
   };
   lastCheck: string; // ISO 8601

@@ -2,14 +2,47 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import type { Request, Response } from "express";
 import { startHealthMonitor, stopHealthMonitor, healthHandler } from "./health-monitor.js";
 import type { Database } from "./db.js";
+import type { MastraProvider } from "../mcp/provider.js";
+import type { ProviderInfo } from "../mcp/provider-registry.js";
 import { eventLog } from "./event-log.js";
 
-function mockDb(shouldFail = false): Database {
+function mockDb(): Database {
+  return { listInvestigations: vi.fn().mockReturnValue([]) } as unknown as Database;
+}
+
+function mockProvider(shouldFail = false): MastraProvider {
   return {
-    listInvestigations: shouldFail
-      ? vi.fn().mockImplementation(() => { throw new Error("DB locked"); })
-      : vi.fn().mockReturnValue([]),
-  } as unknown as Database;
+    name: "test",
+    roles: ["metrics"],
+    client: {
+      listTools: shouldFail
+        ? vi.fn().mockRejectedValue(new Error("MCP unreachable"))
+        : vi.fn().mockResolvedValue({}),
+    },
+  } as unknown as MastraProvider;
+}
+
+function makeInfo(overrides: Partial<ProviderInfo> & { name?: string }): ProviderInfo {
+  const { name = "p", ...rest } = overrides;
+  return {
+    provider: { name, roles: ["metrics"], client: {} as never },
+    config: { name, roles: ["metrics"], mcpServer: { transport: "http", url: "http://x" } },
+    source: "config",
+    status: "connected",
+    toolCount: 1,
+    enabledToolCount: 1,
+    ...rest,
+  } as ProviderInfo;
+}
+
+function mockStackManager(infos: ProviderInfo[]) {
+  return {
+    getDefaultContext: () => ({
+      providerRegistry: {
+        getAll: () => infos,
+      },
+    }),
+  };
 }
 
 function mockRes() {
@@ -24,95 +57,162 @@ afterEach(() => {
 });
 
 describe("health monitor", () => {
-  it("returns 200 with healthy body when DB probe passes", async () => {
-    startHealthMonitor({ db: mockDb() }, 60_000);
-    await new Promise((r) => setTimeout(r, 50));
+  it("returns healthy when all probes pass", async () => {
+    startHealthMonitor({ providers: [mockProvider()], db: mockDb() }, 60_000);
+    // Wait for initial probe to complete
+    await new Promise(r => setTimeout(r, 50));
 
     const res = mockRes();
     healthHandler({} as Request, res);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: "healthy",
-        probes: expect.objectContaining({
-          db: expect.objectContaining({ status: "ok" }),
-        }),
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      status: "healthy",
+      probes: expect.objectContaining({
+        mcp: expect.objectContaining({ status: "ok" }),
+        db: expect.objectContaining({ status: "ok" }),
       }),
-    );
+    }));
   });
 
-  it("returns 200 with degraded body when DB probe fails", async () => {
-    // Always 200 — k8s readiness/liveness probes hit /api/health and we don't
-    // want a DB hiccup to take the pod NotReady. Status flag in the body
-    // tells operators something's wrong without the cluster yanking traffic.
-    // (Regression: PR #184 caused a self-inflicted prod outage by 503'ing
-    // here when MCP went unreachable; PR #185 made the endpoint always 200
-    // and this cleanup removed MCP from the probe entirely.)
-    startHealthMonitor({ db: mockDb(true) }, 60_000);
-    await new Promise((r) => setTimeout(r, 50));
+  it("returns 200 with degraded body when MCP probe fails", async () => {
+    // The endpoint always returns 200 because k8s readiness/liveness probes
+    // hit it — flipping to 503 on a downstream MCP outage takes the entire
+    // pod NotReady (regression: PR #184 caused a self-inflicted prod outage
+    // when the registry-aware probe correctly detected unreachable MCP
+    // servers and the endpoint then 503'd every request, including the UI).
+    startHealthMonitor({ providers: [mockProvider(true)], db: mockDb() }, 60_000);
+    await new Promise(r => setTimeout(r, 50));
 
     const res = mockRes();
     healthHandler({} as Request, res);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: "degraded",
-        probes: expect.objectContaining({
-          db: expect.objectContaining({ status: "error", error: "DB locked" }),
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      status: "degraded",
+      probes: expect.objectContaining({
+        mcp: expect.objectContaining({ status: "error" }),
+      }),
+    }));
+  });
+
+  it("returns healthy with no providers configured", async () => {
+    startHealthMonitor({ providers: [], db: mockDb() }, 60_000);
+    await new Promise(r => setTimeout(r, 50));
+
+    const res = mockRes();
+    healthHandler({} as Request, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  // Registry-aware probe path (the production wiring). Pre-fix, the probe
+  // called listTools() on providers[0] — and @mastra/mcp swallows
+  // per-server connection failures inside listTools, so the probe always
+  // reported "ok" even when every upstream was dead. Now the probe reads
+  // the registry's reconciled status and reports error correctly.
+  it("returns 200 with degraded body when stackManager registry shows all providers errored", async () => {
+    const stackManager = mockStackManager([
+      makeInfo({ name: "grafana", status: "error", toolCount: 0, error: "MCP server returned no tools" }),
+      makeInfo({ name: "loki", status: "error", toolCount: 0, error: "MCP server returned no tools" }),
+    ]);
+    startHealthMonitor({ stackManager, db: mockDb() }, 60_000);
+    await new Promise(r => setTimeout(r, 50));
+
+    const res = mockRes();
+    healthHandler({} as Request, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      status: "degraded",
+      probes: expect.objectContaining({
+        mcp: expect.objectContaining({
+          status: "error",
+          error: expect.stringContaining("all 2 MCP providers unreachable"),
         }),
       }),
-    );
+    }));
   });
 
-  it("does not include an MCP probe in the response body", async () => {
-    // MCP health is per-stack and lives on /api/stacks → providerHealth.
-    // /api/health is server-level (default-stack only would lie anyway), so
-    // the field was removed entirely. If this test fails, someone re-added
-    // it without checking the consumers — the UI strip and StackSwitcher
-    // both already source MCP from the per-stack endpoint.
-    startHealthMonitor({ db: mockDb() }, 60_000);
-    await new Promise((r) => setTimeout(r, 50));
+  it("returns healthy when registry has at least one connected provider with tools", async () => {
+    const stackManager = mockStackManager([
+      makeInfo({ name: "grafana", status: "connected", toolCount: 5 }),
+    ]);
+    startHealthMonitor({ stackManager, db: mockDb() }, 60_000);
+    await new Promise(r => setTimeout(r, 50));
+
+    const res = mockRes();
+    healthHandler({} as Request, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      probes: expect.objectContaining({
+        mcp: expect.objectContaining({ status: "ok" }),
+      }),
+    }));
+  });
+
+  it("flags partial outage as error in body with a count summary (status 200)", async () => {
+    const stackManager = mockStackManager([
+      makeInfo({ name: "grafana", status: "connected", toolCount: 5 }),
+      makeInfo({ name: "loki", status: "error", toolCount: 0 }),
+    ]);
+    startHealthMonitor({ stackManager, db: mockDb() }, 60_000);
+    await new Promise(r => setTimeout(r, 50));
+
+    const res = mockRes();
+    healthHandler({} as Request, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    const payload = (res.json as any).mock.calls[0][0];
+    expect(payload.status).toBe("degraded");
+    expect(payload.probes.mcp.status).toBe("error");
+    expect(payload.probes.mcp.error).toMatch(/1 of 2/);
+  });
+
+  it("keeps the provider-count summary when registry errors are generic", async () => {
+    const stackManager = mockStackManager([
+      makeInfo({ name: "grafana", status: "connected", toolCount: 5 }),
+      makeInfo({
+        name: "loki",
+        status: "error",
+        toolCount: 0,
+        error: "MCP server returned no tools (likely unreachable or misconfigured)",
+      }),
+    ]);
+    startHealthMonitor({ stackManager, db: mockDb() }, 60_000);
+    await new Promise(r => setTimeout(r, 50));
 
     const res = mockRes();
     healthHandler({} as Request, res);
 
     const payload = (res.json as any).mock.calls[0][0];
-    expect(payload.probes).not.toHaveProperty("mcp");
-  });
-
-  it("includes server-level metadata (uptime, version) in the body", async () => {
-    startHealthMonitor({ db: mockDb() }, 60_000);
-    await new Promise((r) => setTimeout(r, 50));
-
-    const res = mockRes();
-    healthHandler({} as Request, res);
-
-    const payload = (res.json as any).mock.calls[0][0];
-    expect(payload).toHaveProperty("uptime");
-    expect(typeof payload.uptime).toBe("number");
-    expect(payload).toHaveProperty("version");
+    expect(payload.probes.mcp.error).toContain("1 of 2 MCP providers unreachable");
+    expect(payload.probes.mcp.error).toContain("MCP server returned no tools");
   });
 });
 
 describe("health monitor eventLog integration", () => {
-  it("emits provider_health_changed when DB transitions from ok to error", async () => {
-    // Cycle 1: healthy probe — seeds prevDbStatus = "ok" (no event emitted on first run)
-    startHealthMonitor({ db: mockDb(false) }, 60_000);
-    await new Promise((r) => setTimeout(r, 50));
+  afterEach(() => {
+    stopHealthMonitor();
+  });
+
+  it("emits provider_health_changed when probe transitions from ok to error", async () => {
+    // Cycle 1: healthy probe — seeds prevProbeStatus["mcp"] = "ok" (no event emitted on first run)
+    startHealthMonitor({ providers: [mockProvider(false)], db: mockDb() }, 60_000);
+    await new Promise(r => setTimeout(r, 50));
     stopHealthMonitor();
 
     // Reset eventLog so we only see events from cycle 2
     eventLog.reset();
 
-    // Cycle 2: failing probe — prevDbStatus is now "ok", next is "error" → transition
-    startHealthMonitor({ db: mockDb(true) }, 60_000);
-    await new Promise((r) => setTimeout(r, 50));
+    // Cycle 2: failing probe — prevProbeStatus["mcp"] is now "ok", next is "error" → transition
+    startHealthMonitor({ providers: [mockProvider(true)], db: mockDb() }, 60_000);
+    await new Promise(r => setTimeout(r, 50));
 
     const { events } = eventLog.recent(10);
     const transition = events.find((e) => e.kind === "provider_health_changed");
     expect(transition).toBeDefined();
-    expect(transition!.meta).toMatchObject({ provider: "db", from: "ok", to: "error" });
+    expect(transition!.meta).toMatchObject({ provider: "mcp", from: "ok", to: "error" });
   });
 });

@@ -14,13 +14,12 @@ interface DerivedStatus {
   dbOk: boolean | null;
 }
 
-/** Compute the strip's overall + per-component status from active-stack and server health.
+/** Compute the strip's overall + per-component status from active-stack and global health.
  *
- *  MCP follows the active stack's `providerHealth` (added in PR #184). DB and version
- *  come from `/api/health`, which is now server-level only — MCP probing was removed
- *  in the health-monitor cleanup since it was load-bearing for nothing useful and
- *  previously caused a 503 outage. When the active stack hasn't reported yet we show
- *  `mcp:—` (unknown) rather than guessing from another stack.
+ *  Pre-fix, the strip read `health.health.probes.mcp.status` directly. That probe is global
+ *  (default-stack only), so switching stacks left the indicator pinned. Now MCP follows
+ *  the active stack's `providerHealth` (added in PR #184) when available, falling back
+ *  to the global probe for stacks that haven't been initialized yet.
  *
  *  Exported for unit tests.
  */
@@ -43,11 +42,8 @@ export function deriveStatus(
     // No providers configured → not an error, but not "ok" either.
     mcpOk = ph.total === 0 ? null : ph.ok > 0;
   } else {
-    // Stack hasn't reported per-stack data yet (just-created or list still
-    // loading). Show the indicator as "unknown" rather than guessing from a
-    // global probe — `/api/health` no longer carries MCP state, and inferring
-    // it from another stack would lie about the active one.
-    mcpOk = null;
+    // Stack hasn't reported per-stack data yet — fall back to the global probe.
+    mcpOk = health.health.probes.mcp.status === "ok";
   }
 
   const mcpDegraded = mcpOk === false;

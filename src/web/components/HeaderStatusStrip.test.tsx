@@ -26,6 +26,7 @@ function makeHealth(
       uptime: 60,
       version: "0.4.3.1",
       probes: {
+        mcp: { status: "ok", latencyMs: 10 },
         db: { status: "ok", latencyMs: 5 },
       },
       lastCheck: new Date().toISOString(),
@@ -37,12 +38,13 @@ function makeHealth(
 }
 
 describe("HeaderStatusStrip.deriveStatus", () => {
-  it("reads MCP from the active stack's providerHealth", () => {
+  it("reads MCP from the active stack's providerHealth, not the global probe", () => {
     // Regression: pre-fix the strip read health.probes.mcp directly. That probe
-    // was global (default-stack only), so switching to a stack with all-dead
+    // is global (default-stack only), so switching to a stack with all-dead
     // providers left the indicator showing mcp:ok from the default stack.
     const activeStack = makeStack({ providerHealth: { ok: 0, error: 3, total: 3 } });
-    const result = deriveStatus(activeStack, makeHealth());
+    const health = makeHealth(); // global probe still says mcp:ok
+    const result = deriveStatus(activeStack, health);
     expect(result.mcpOk).toBe(false);
     expect(result.overall).toBe("degraded");
   });
@@ -63,21 +65,27 @@ describe("HeaderStatusStrip.deriveStatus", () => {
     expect(result.overall).toBe("healthy");
   });
 
-  it("shows mcp:— (unknown) when active stack has no providerHealth field yet", () => {
-    // Newly-created stack or list still loading: there's no per-stack data,
-    // and /api/health no longer carries an MCP probe to fall back on. Show
-    // the indicator as unknown rather than guessing — overall stays healthy
-    // since "unknown" isn't an outage.
+  it("falls back to global probe when active stack has no providerHealth field yet", () => {
+    // Newly-created stack: registry hasn't reported back yet, no providerHealth
+    // on the StackSummary. Use the global /api/health probe as a stand-in.
     const activeStack = makeStack({ providerHealth: undefined });
-    const result = deriveStatus(activeStack, makeHealth());
-    expect(result.mcpOk).toBeNull();
-    expect(result.overall).toBe("healthy");
+    const result = deriveStatus(activeStack, makeHealth({
+      probes: {
+        mcp: { status: "error", latencyMs: 0, error: "boom" },
+        db: { status: "ok", latencyMs: 5 },
+      },
+    }));
+    expect(result.mcpOk).toBe(false);
+    expect(result.overall).toBe("degraded");
   });
 
   it("reports DB failure as degraded regardless of MCP state", () => {
     const activeStack = makeStack({ providerHealth: { ok: 2, error: 0, total: 2 } });
     const result = deriveStatus(activeStack, makeHealth({
-      probes: { db: { status: "error", latencyMs: 0, error: "locked" } },
+      probes: {
+        mcp: { status: "ok", latencyMs: 0 },
+        db: { status: "error", latencyMs: 0, error: "locked" },
+      },
     }));
     expect(result.dbOk).toBe(false);
     expect(result.overall).toBe("degraded");

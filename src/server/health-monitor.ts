@@ -1,15 +1,11 @@
 /**
- * Background health monitor — probes DB connectivity on a 30-second interval.
- * The GET /api/health endpoint reads the cached status (instant) and always
- * returns 200; component status lives in the JSON body.
+ * Background health monitor — probes MCP, LLM, and DB connectivity on a
+ * 30-second interval. The GET /api/health endpoint reads cached status (instant).
  *
- * MCP probing was removed in the health-monitor cleanup — `/api/health` is a
- * server-level liveness signal (k8s readiness/liveness probes hit it), and
- * MCP health is per-stack. The UI reads `activeStack.providerHealth` from
- * `/api/stacks` for that. Letting MCP failures flip the cached status here
- * was load-bearing for nothing useful and previously caused a self-inflicted
- * 503 outage when the registry-aware probe (PR #184) correctly detected
- * unreachable upstreams.
+ * Probe results:
+ *   "healthy"  — all probes pass
+ *   "degraded" — one or more probes fail but the server is running
+ *   "unhealthy"— critical failure
  */
 
 import { readFileSync } from "node:fs";
@@ -17,6 +13,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Request, Response } from "express";
 import { createLogger } from "../logger.js";
+import type { MastraProvider } from "../mcp/provider.js";
+import type { ProviderInfo } from "../mcp/provider-registry.js";
 import type { Database } from "./db.js";
 import { eventLog } from "./event-log.js";
 
@@ -43,6 +41,7 @@ export interface HealthStatus {
   uptime: number;
   version: string;
   probes: {
+    mcp: ProbeResult;
     db: ProbeResult;
   };
   lastCheck: string;
@@ -54,10 +53,52 @@ let cachedStatus: HealthStatus = {
   uptime: 0,
   version: VERSION,
   probes: {
+    mcp: { status: "ok", latencyMs: 0 },
     db: { status: "ok", latencyMs: 0 },
   },
   lastCheck: new Date().toISOString(),
 };
+
+/**
+ * Derive an MCP probe result from registry state. Preferred over
+ * `probeMcpLegacy` because @mastra/mcp's MCPClient.listTools() catches
+ * per-server connection failures and silently returns {} — meaning a
+ * direct listTools() call always says "ok" even when every upstream is
+ * dead. The registry already reconciles this (see provider-registry's
+ * "0 tools = error" heuristic), so reading its status is authoritative.
+ */
+function probeMcpFromRegistry(infos: ProviderInfo[]): ProbeResult {
+  if (infos.length === 0) return { status: "ok", latencyMs: 0 };
+
+  const errored = infos.filter((p) => p.status === "error");
+  const usable = infos.filter((p) => p.status === "connected" && p.toolCount > 0);
+
+  if (errored.length === 0 && usable.length > 0) {
+    return { status: "ok", latencyMs: 0 };
+  }
+
+  const total = infos.length;
+  const summary = errored.length === total
+    ? `all ${total} MCP provider${total !== 1 ? "s" : ""} unreachable`
+    : `${errored.length} of ${total} MCP providers unreachable`;
+  // Keep the count-based summary first; individual registry errors are often
+  // generic ("MCP server returned no tools") and otherwise hide the outage size.
+  const providerError = errored.find((p) => p.error)?.error;
+  const error = providerError ? `${summary}: ${providerError}` : summary;
+  return { status: "error", latencyMs: 0, error };
+}
+
+async function probeMcpLegacy(providers: MastraProvider[]): Promise<ProbeResult> {
+  if (providers.length === 0) return { status: "ok", latencyMs: 0 };
+  const start = Date.now();
+  try {
+    // Try to list tools from the first provider — proves MCP connectivity
+    await providers[0]!.client.listTools();
+    return { status: "ok", latencyMs: Date.now() - start };
+  } catch (err) {
+    return { status: "error", latencyMs: Date.now() - start, error: err instanceof Error ? err.message : String(err) };
+  }
+}
 
 function probeDb(db: Database): ProbeResult {
   const start = Date.now();
@@ -71,38 +112,71 @@ function probeDb(db: Database): ProbeResult {
 }
 
 export interface HealthMonitorDeps {
+  providers: MastraProvider[] | (() => MastraProvider[]);
+  db: Database;
+}
+
+/** Alternative deps that accept a StackManager for multi-stack support */
+export interface HealthMonitorStackDeps {
+  stackManager: {
+    getDefaultContext(): {
+      providerRegistry: {
+        getAll(): ProviderInfo[];
+      };
+    };
+  };
   db: Database;
 }
 
 let intervalHandle: ReturnType<typeof setInterval> | undefined;
-// Track previous DB status for transition detection (one entry; preserved
-// across runs so the first cycle after a restart doesn't emit a spurious event).
-let prevDbStatus: "ok" | "error" | undefined;
+// Track previous probe statuses for transition detection (one entry per named probe)
+const prevProbeStatus: Record<string, "ok" | "error"> = {};
 
-export function startHealthMonitor(deps: HealthMonitorDeps, intervalMs = 30_000): void {
+export function startHealthMonitor(deps: HealthMonitorDeps | HealthMonitorStackDeps, intervalMs = 30_000): void {
+  // Two probe sources: the production path reads registry status (which
+  // already accounts for "0 tools = unreachable" after PR #183), while the
+  // legacy MastraProvider[] path is kept for callers that don't have a
+  // registry handy (notably tests pre-dating the registry-backed setup).
+  let resolveMcpProbe: () => Promise<ProbeResult>;
+  if ("stackManager" in deps) {
+    resolveMcpProbe = async () =>
+      probeMcpFromRegistry(deps.stackManager.getDefaultContext().providerRegistry.getAll());
+  } else {
+    const resolveProviders: () => MastraProvider[] = typeof deps.providers === "function"
+      ? deps.providers
+      : () => deps.providers as MastraProvider[];
+    resolveMcpProbe = () => probeMcpLegacy(resolveProviders());
+  }
+
   const runProbes = async () => {
-    const db = probeDb(deps.db);
+    const [mcp, db] = await Promise.all([
+      resolveMcpProbe(),
+      Promise.resolve(probeDb(deps.db)),
+    ]);
 
+    const anyError = mcp.status === "error" || db.status === "error";
     cachedStatus = {
-      status: db.status === "error" ? "degraded" : "healthy",
+      status: anyError ? "degraded" : "healthy",
       uptime: Math.floor((Date.now() - startTime) / 1000),
       version: VERSION,
-      probes: { db },
+      probes: { mcp, db },
       lastCheck: new Date().toISOString(),
     };
 
-    // DB transition events. (Per-stack MCP transitions live in the registry —
-    // see ProviderRegistry's onChange listeners.)
-    const nextState = db.status;
-    if (prevDbStatus !== undefined && prevDbStatus !== nextState) {
-      eventLog.append({
-        kind: "provider_health_changed",
-        severity: nextState === "error" ? "error" : "success",
-        summary: `provider db: ${prevDbStatus} → ${nextState}`,
-        meta: { provider: "db", from: prevDbStatus, to: nextState },
-      });
+    // Emit events for probe status transitions (only on actual state change)
+    for (const [providerName, probeResult] of [["mcp", mcp], ["db", db]] as [string, ProbeResult][]) {
+      const prevState = prevProbeStatus[providerName];
+      const nextState = probeResult.status;
+      if (prevState !== undefined && prevState !== nextState) {
+        eventLog.append({
+          kind: "provider_health_changed",
+          severity: nextState === "error" ? "error" : "success",
+          summary: `provider ${providerName}: ${prevState} → ${nextState}`,
+          meta: { provider: providerName, from: prevState, to: nextState },
+        });
+      }
+      prevProbeStatus[providerName] = nextState;
     }
-    prevDbStatus = nextState;
   };
 
   // Run immediately on startup, then on interval
@@ -117,14 +191,16 @@ export function stopHealthMonitor(): void {
     clearInterval(intervalHandle);
     intervalHandle = undefined;
   }
-  // prevDbStatus deliberately persists across stop/start so a transient
-  // restart doesn't emit a spurious "first cycle" transition event.
 }
 
 export function healthHandler(_req: Request, res: Response): void {
   cachedStatus.uptime = Math.floor((Date.now() - startTime) / 1000);
-  // Always 200 — the server is up and serving the response right now, which
-  // is what the k8s readiness/liveness probes ask. Component status is data
-  // for the UI strip, not a kill switch.
+  // Always return 200 — the server is up and serving the response right now,
+  // which is what the k8s readiness/liveness probes ask. Component status
+  // (MCP unreachable, DB hiccup) lives in the JSON body for ops/UI consumers.
+  // Pre-fix this returned 503 on "degraded", which let the registry-aware MCP
+  // probe in PR #184 take the entire pod NotReady the moment any upstream MCP
+  // server died — the ingress then 503'd every request, including the UI
+  // itself, which doesn't depend on MCP at all.
   res.status(200).json(cachedStatus);
 }
