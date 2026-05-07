@@ -30,6 +30,9 @@ export function deriveStatus(
   if (health.connectionState === "unreachable") {
     return { overall: "unreachable", mcpOk: null, dbOk: null };
   }
+  if (health.connectionState === "unknown") {
+    return { overall: "unknown", mcpOk: null, dbOk: null };
+  }
   if (!health.health) {
     return { overall: "unknown", mcpOk: null, dbOk: null };
   }

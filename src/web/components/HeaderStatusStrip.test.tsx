@@ -110,4 +110,18 @@ describe("HeaderStatusStrip.deriveStatus", () => {
     });
     expect(result.overall).toBe("unknown");
   });
+
+  it("reports unknown during transient polling failures even with stale health data", () => {
+    // useHealthPolling keeps the last successful body for the first two failed
+    // polls, but the strip should still show the connection state honestly.
+    const activeStack = makeStack({ providerHealth: { ok: 3, error: 0, total: 3 } });
+    const result = deriveStatus(activeStack, {
+      ...makeHealth(),
+      connectionState: "unknown",
+      consecutiveFailures: 1,
+    });
+    expect(result.overall).toBe("unknown");
+    expect(result.mcpOk).toBeNull();
+    expect(result.dbOk).toBeNull();
+  });
 });
