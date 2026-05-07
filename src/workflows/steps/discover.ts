@@ -300,7 +300,19 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
   const { hintBlock: datasourceHints, uidMap: datasourceUidMap } =
     await fetchDatasourceHintsForDiscover(discoveryTools);
 
-  const tools = wrapToolsWithCallbacks(discoveryTools, wrappedOnToolCall, "discovery", datasourceUidMap);
+  // Cap each tool result so accumulated history doesn't blow past the model's
+  // context window and trigger "max_tokens must be at least 1, got -N" from
+  // the OpenAI-compatible gateway. 0 disables the cap (legacy behaviour).
+  const maxToolResultChars = config.discoveryConfig.maxToolResultChars > 0
+    ? config.discoveryConfig.maxToolResultChars
+    : undefined;
+  const tools = wrapToolsWithCallbacks(
+    discoveryTools,
+    wrappedOnToolCall,
+    "discovery",
+    datasourceUidMap,
+    maxToolResultChars,
+  );
 
   // Build recipe hints (skills + recipes). Datasource UIDs are passed
   // separately as a strict "CRITICAL" block in the agent's system prompt.
@@ -352,7 +364,9 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
             : undefined;
           return agent.generate(discoverPrompt, {
             abortSignal,
-            providerOptions: { "openai-compatible": { max_tokens: 32768 } },
+            providerOptions: {
+              "openai-compatible": { max_tokens: config.discoveryConfig.maxOutputTokens },
+            },
             onStepFinish: (step: any) => {
               if (!step.toolResults?.length) return;
               for (const tr of step.toolResults) {

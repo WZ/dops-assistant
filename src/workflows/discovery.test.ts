@@ -360,4 +360,21 @@ describe("runDiscoverStep — adversarial-review fixes (2026-04-22)", () => {
       abortedOnEntry: false,
     });
   });
+
+  // Regression: the OpenAI-compatible gateway rejects requests with
+  // "max_tokens must be at least 1, got -N" when prompt_tokens plus the
+  // requested max_tokens overflow the model's context window. Earlier code
+  // hard-coded 32768 here, which overflowed once discovery accumulated
+  // enough tool-result history. The cap is now sourced from
+  // `discoveryConfig.maxOutputTokens` so operators can tune per stack.
+  it("forwards discoveryConfig.maxOutputTokens to the agent's providerOptions", async () => {
+    lastDiscoverGenerateOpts.value = undefined;
+    await runDiscovery({
+      ...baseConfig,
+      discoveryConfig: { ...baseConfig.discoveryConfig, maxOutputTokens: 4096 },
+    });
+    const opts = lastDiscoverGenerateOpts.value;
+    expect(opts).toBeDefined();
+    expect(opts.providerOptions?.["openai-compatible"]?.max_tokens).toBe(4096);
+  });
 });
