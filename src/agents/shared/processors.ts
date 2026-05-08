@@ -128,6 +128,8 @@ function recoverTruncatedServicesObject(
   const arrayStartMatch = text.match(/"services"\s*:\s*\[/);
   if (!arrayStartMatch || arrayStartMatch.index === undefined) return null;
   const arrayStart = arrayStartMatch.index + arrayStartMatch[0].length;
+  const objectStart = findEnclosingObjectStart(text, arrayStartMatch.index);
+  if (objectStart < 0) return null;
 
   let depth = 1; // we're now positioned right after the opening `[`
   let inString = false;
@@ -163,7 +165,7 @@ function recoverTruncatedServicesObject(
 
   if (lastGoodEnd < 0) return null;
 
-  const reconstructed = text.slice(0, lastGoodEnd) + "]}";
+  const reconstructed = text.slice(objectStart, lastGoodEnd) + "]}";
   try {
     const parsed = JSON.parse(stripJsoncComments(reconstructed));
     if (!parsed || typeof parsed !== "object") return null;
@@ -173,6 +175,33 @@ function recoverTruncatedServicesObject(
   } catch {
     return null;
   }
+}
+
+function findEnclosingObjectStart(text: string, beforeIndex: number): number {
+  const objectStack: number[] = [];
+  let inString = false;
+  let escape = false;
+
+  for (let i = 0; i < beforeIndex; i++) {
+    const c = text[i]!;
+    if (escape) { escape = false; continue; }
+    if (inString) {
+      if (c === "\\") { escape = true; continue; }
+      if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') { inString = true; continue; }
+    if (c === "{") {
+      objectStack.push(i);
+      continue;
+    }
+    if (c === "}") {
+      objectStack.pop();
+    }
+  }
+
+  if (inString || objectStack.length === 0) return -1;
+  return objectStack[objectStack.length - 1]!;
 }
 
 /**

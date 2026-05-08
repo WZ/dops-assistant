@@ -157,12 +157,12 @@ describe("safeJsonParse", () => {
     expect(result).toBeNull();
   });
 
-  // Regression: discover-agent output for large stacks (e.g. FAZBD-59 with
-  // 94 services) overflows the maxOutputTokens budget. Truncation lands
-  // mid-probeRule, deep inside an unfinished service. The bare-array
-  // recovery path closes the wrong brace and produces invalid JSON;
-  // recoverTruncatedServicesObject walks the services array with depth
-  // tracking and returns the prefix that fully serialized.
+  // Regression: discover-agent output for large stacks can overflow the
+  // maxOutputTokens budget. Truncation lands mid-probeRule, deep inside an
+  // unfinished service. The bare-array recovery path closes the wrong brace
+  // and produces invalid JSON; recoverTruncatedServicesObject walks the
+  // services array with depth tracking and returns the prefix that fully
+  // serialized.
   it("recovers a truncated discover object by finding complete services", () => {
     const text = `{
   "services": [
@@ -225,5 +225,19 @@ describe("safeJsonParse", () => {
     expect(result).toBeDefined();
     expect(result.services).toHaveLength(1);
     expect(result.services[0].name).toBe("svc-a");
+  });
+
+  it("recovers a truncated discover object wrapped in prose", () => {
+    const text = `Discovery output:
+{
+  "services": [
+    {"name": "svc-a", "metrics": [{"query": "up{a=\\"1\\"}", "description": ""}], "probeRules": []},
+    {"name": "svc-b", "metrics": [{"query": "up{b=\\"1\\"}", "description": ""}], "probeRules": [
+      {"name": "service_availability", "query": "up{b=\\"1\\"}", "threshold": {"op": "lt"`;
+    const result = safeJsonParse(text);
+    expect(result).toBeDefined();
+    expect(result.services).toHaveLength(1);
+    expect(result.services[0].name).toBe("svc-a");
+    expect(result.globalProbeRules).toEqual([]);
   });
 });

@@ -11,7 +11,7 @@ import type { Skill } from "../../skills/store.js";
 import type { LlmRetryConfig } from "../../agents/shared/llm-retry.js";
 import { withLlmRetry, safeAgentRetryConfig } from "../../agents/shared/llm-retry.js";
 import { LlmUnavailableError } from "../../agents/shared/llm-errors.js";
-import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
+import { UNTRUSTED_DATA_NOTICE, wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
 import { logLlmCall, logLlmCallStart, logToolCall, newCallId, type ToolCallEvent } from "../../server/llm-logger.js";
 import { createLogger } from "../../logger.js";
 
@@ -65,6 +65,7 @@ const STALL_RECOVERY_PROMPT_HEADER =
   "Use the exact JSON shape from your original instructions: " +
   '{"services": [...], "globalProbeRules": [...]}. ' +
   "Each service object must include name, metrics, logLabels, and probeRules. " +
+  `${UNTRUSTED_DATA_NOTICE} ` +
   "Output JSON only — no prose, no markdown fences.";
 
 const DEFAULT_PROMETHEUS_RECIPE: DiscoveryRecipe = {
@@ -313,7 +314,13 @@ function formatRecoveryToolHistory(history: RecoveryToolEntry[]): string {
   return history
     .map((entry, idx) => {
       const header = `### Tool call ${idx + 1}: ${entry.tool}`;
-      return `${header}\nArgs: ${entry.args}\nResult:\n${entry.result}`;
+      return [
+        header,
+        "Args:",
+        wrapUntrusted("tool_args", entry.args),
+        "Result:",
+        wrapUntrusted("tool_result", entry.result),
+      ].join("\n");
     })
     .join("\n\n---\n\n");
 }

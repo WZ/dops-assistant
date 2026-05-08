@@ -46,7 +46,7 @@ const discoverGenerateSignalStates: Array<{ sameAsFirst: boolean; abortedOnEntry
 // runDiscoverStep). Each call also records its options so the test can
 // assert toolChoice: "none" on the recovery turn.
 let mockDiscoverStallThenRecover = false;
-const discoverGenerateCalls: Array<{ promptType: "primary" | "recovery"; opts: any }> = [];
+const discoverGenerateCalls: Array<{ promptType: "primary" | "recovery"; prompt: string; opts: any }> = [];
 
 vi.mock("@mastra/core/agent", () => ({
   Agent: class MockAgent {
@@ -61,7 +61,7 @@ vi.mock("@mastra/core/agent", () => ({
           // primary prompt is the bare "Discover all monitored services..."
           // sentence the production code passes to agent.generate().
           const isRecovery = prompt.startsWith("You previously made");
-          discoverGenerateCalls.push({ promptType: isRecovery ? "recovery" : "primary", opts });
+          discoverGenerateCalls.push({ promptType: isRecovery ? "recovery" : "primary", prompt, opts });
           if (!isRecovery) {
             // Simulate a tool call via onStepFinish so recoveryToolHistory
             // populates — the recovery path requires non-empty history to
@@ -415,6 +415,8 @@ describe("runDiscoverStep — adversarial-review fixes (2026-04-22)", () => {
       // intervention; the model already decided not to call more tools and
       // we don't want to give it the option to backtrack.
       expect(discoverGenerateCalls[1]!.opts?.toolChoice).toBe("none");
+      expect(discoverGenerateCalls[1]!.prompt).toContain("<untrusted_tool_result>");
+      expect(discoverGenerateCalls[1]!.prompt).toContain("</untrusted_tool_result>");
       // Service recovered from the synthetic JSON.
       expect(result.services).toHaveLength(1);
       expect(result.services[0]!.name).toBe("recovered-svc");
