@@ -2526,6 +2526,7 @@ export class Database {
         name         TEXT NOT NULL,
         token_hash   TEXT NOT NULL UNIQUE,
         prefix       TEXT NOT NULL,
+        stack_id     TEXT,
         created_at   TEXT NOT NULL DEFAULT (datetime('now')),
         last_used_at TEXT
       )
@@ -2533,18 +2534,57 @@ export class Database {
     this.db.prepare(
       "CREATE INDEX IF NOT EXISTS idx_webhook_tokens_hash ON webhook_tokens (token_hash)"
     ).run();
-  }
 
-  createWebhookToken(args: { id: string; name: string; tokenHash: string; prefix: string }): void {
+    // Existing deployments may have webhook_tokens predating per-stack scoping
+    // (the column was added after the table). ALTER on miss; SQLite's
+    // pragma_table_info lets us check without a try/catch.
+    const cols = this.db.prepare("PRAGMA table_info(webhook_tokens)").all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "stack_id")) {
+      this.db.prepare("ALTER TABLE webhook_tokens ADD COLUMN stack_id TEXT").run();
+    }
+
+    // Composite index for the per-stack auth lookup. Token hash collision is
+    // already vanishingly unlikely at sha256, but the auth path now filters
+    // on (token_hash, stack_id) so the lookup must be cheap regardless of
+    // stack count.
     this.db.prepare(
-      "INSERT INTO webhook_tokens (id, name, token_hash, prefix) VALUES (?, ?, ?, ?)"
-    ).run(args.id, args.name, args.tokenHash, args.prefix);
+      "CREATE INDEX IF NOT EXISTS idx_webhook_tokens_hash_stack ON webhook_tokens (token_hash, stack_id)"
+    ).run();
+    this.db.prepare(
+      "CREATE INDEX IF NOT EXISTS idx_webhook_tokens_stack ON webhook_tokens (stack_id)"
+    ).run();
+
+    // Backfill existing tokens to the default stack so legacy rows from
+    // pre-scoping deploys keep working. We can't always know the right stack
+    // — operators created tokens before the concept existed — but defaulting
+    // to "default" matches the most common single-stack case. Operators with
+    // multi-stack deployments who upgrade through this path can re-issue
+    // tokens scoped to the correct stack via the GUI.
+    const defaultStack = this.db.prepare(
+      "SELECT id FROM stacks WHERE slug = ? LIMIT 1"
+    ).get("default") as { id: string } | undefined;
+    if (defaultStack) {
+      this.db.prepare(
+        "UPDATE webhook_tokens SET stack_id = ? WHERE stack_id IS NULL"
+      ).run(defaultStack.id);
+    }
   }
 
-  findWebhookTokenByHash(tokenHash: string): { id: string; name: string; prefix: string } | null {
+  createWebhookToken(args: { id: string; name: string; tokenHash: string; prefix: string; stackId: string }): void {
+    this.db.prepare(
+      "INSERT INTO webhook_tokens (id, name, token_hash, prefix, stack_id) VALUES (?, ?, ?, ?, ?)"
+    ).run(args.id, args.name, args.tokenHash, args.prefix, args.stackId);
+  }
+
+  /** Resolve a hashed bearer to a token row scoped to a specific stack.
+   *  Returns null when the hash is unknown OR when the matching token is
+   *  scoped to a different stack — operators using a token minted for stack
+   *  A against stack B's webhook URL get a 401, not silent privilege
+   *  escalation across stacks. */
+  findWebhookTokenByHash(tokenHash: string, stackId: string): { id: string; name: string; prefix: string } | null {
     const row = this.db.prepare(
-      "SELECT id, name, prefix FROM webhook_tokens WHERE token_hash = ?"
-    ).get(tokenHash) as { id: string; name: string; prefix: string } | undefined;
+      "SELECT id, name, prefix FROM webhook_tokens WHERE token_hash = ? AND stack_id = ?"
+    ).get(tokenHash, stackId) as { id: string; name: string; prefix: string } | undefined;
     return row ?? null;
   }
 
@@ -2554,7 +2594,7 @@ export class Database {
     ).run(id);
   }
 
-  listWebhookTokens(): Array<{
+  listWebhookTokens(stackId: string): Array<{
     id: string;
     name: string;
     prefix: string;
@@ -2562,8 +2602,8 @@ export class Database {
     lastUsedAt: string | null;
   }> {
     const rows = this.db.prepare(
-      "SELECT id, name, prefix, created_at, last_used_at FROM webhook_tokens ORDER BY created_at DESC"
-    ).all() as Array<Record<string, unknown>>;
+      "SELECT id, name, prefix, created_at, last_used_at FROM webhook_tokens WHERE stack_id = ? ORDER BY created_at DESC"
+    ).all(stackId) as Array<Record<string, unknown>>;
     return rows.map((r) => ({
       id: r["id"] as string,
       name: r["name"] as string,
@@ -2573,8 +2613,13 @@ export class Database {
     }));
   }
 
-  deleteWebhookToken(id: string): boolean {
-    const info = this.db.prepare("DELETE FROM webhook_tokens WHERE id = ?").run(id);
+  /** Delete scoped to stackId so a stack-A operator can't revoke a stack-B
+   *  token by guessing its id. Returns false when no row matched (id
+   *  unknown OR id belongs to a different stack — both treated as 404). */
+  deleteWebhookToken(id: string, stackId: string): boolean {
+    const info = this.db.prepare(
+      "DELETE FROM webhook_tokens WHERE id = ? AND stack_id = ?"
+    ).run(id, stackId);
     return info.changes > 0;
   }
 

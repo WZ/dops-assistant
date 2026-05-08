@@ -2026,10 +2026,12 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     const stackId = req.stackId;
     const stackSlug = req.stackContext?.slug ?? DEFAULT_STACK_SLUG;
 
-    // Token list comes from the DB store. Plaintext tokens are never held
-    // server-side after creation; the GUI reads only the prefix + the
-    // last_used_at signal it needs to render rotation hygiene.
-    const tokens = db.listWebhookTokens().map((t) => ({
+    // Token list comes from the DB store, scoped to THIS stack. Plaintext
+    // tokens are never held server-side after creation; the GUI reads only
+    // the prefix + the last_used_at signal it needs to render rotation
+    // hygiene. Per-stack scoping prevents a stack-A operator from seeing
+    // (or revoking) a stack-B token.
+    const tokens = db.listWebhookTokens(stackId).map((t) => ({
       id: t.id,
       name: t.name,
       masked: maskStoredToken(t.prefix),
@@ -2071,8 +2073,8 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   // than creating stacks or providers, both of which already follow this
   // posture.
 
-  app.get("/api/webhooks/tokens", (_req: Request, res: Response) => {
-    const tokens = db.listWebhookTokens().map((t) => ({
+  app.get("/api/webhooks/tokens", (req: Request, res: Response) => {
+    const tokens = db.listWebhookTokens(req.stackId).map((t) => ({
       id: t.id,
       name: t.name,
       masked: maskStoredToken(t.prefix),
@@ -2084,7 +2086,8 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
   // POST returns the plaintext token EXACTLY ONCE in the body. The UI
   // displays it in a one-time-reveal modal and discards on close. Future
-  // GETs see only the masked form.
+  // GETs see only the masked form. The token is bound to the active
+  // stack; using it against a different stack's webhook URL returns 401.
   app.post("/api/webhooks/tokens", (req: Request, res: Response) => {
     const { name } = (req.body ?? {}) as { name?: unknown };
     if (typeof name !== "string" || !isValidTokenName(name)) {
@@ -2098,6 +2101,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       name: trimmed,
       tokenHash: generated.tokenHash,
       prefix: generated.prefix,
+      stackId: req.stackId,
     });
     res.status(201).json({
       id: generated.id,
@@ -2111,7 +2115,10 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
   app.delete("/api/webhooks/tokens/:id", (req: Request, res: Response) => {
     const id = req.params["id"] as string;
-    const ok = db.deleteWebhookToken(id);
+    // Stack-scoped delete: a stack-A operator can't revoke a stack-B
+    // token by guessing its id. Mismatched stack → 404 (same shape as
+    // unknown id, no information leak about other stacks' tokens).
+    const ok = db.deleteWebhookToken(id, req.stackId);
     if (!ok) {
       res.status(404).json({ error: "Token not found" });
       return;
@@ -2136,13 +2143,15 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       res.status(401).json({ error: "Missing token. Paste a configured webhook token to authorize the test." });
       return;
     }
-    const tokenRow = db.findWebhookTokenByHash(hashWebhookToken(token));
+    const stackId = req.stackId;
+    // Token must belong to THIS stack — otherwise the test would simulate a
+    // cross-stack delivery the real webhook handler would refuse with 401.
+    const tokenRow = db.findWebhookTokenByHash(hashWebhookToken(token), stackId);
     if (!tokenRow) {
-      res.status(401).json({ error: "Token not recognized." });
+      res.status(401).json({ error: "Token not recognized for this stack." });
       return;
     }
 
-    const stackId = req.stackId;
     const ctx = req.stackContext;
     if (!ctx) {
       res.status(500).json({ error: "Stack context unavailable" });
@@ -2258,9 +2267,13 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       res.status(401).json({ error: "Missing token. Paste a configured webhook token to authorize the loopback test." });
       return;
     }
-    const tokenRow = db.findWebhookTokenByHash(hashWebhookToken(token));
+    // Token must belong to THIS stack. Loopback dispatches against the
+    // stack-scoped public URL; using a stack-A token here would 401 at the
+    // upstream webhook handler anyway, but failing fast at this layer
+    // saves the round trip + makes the error message clearer.
+    const tokenRow = db.findWebhookTokenByHash(hashWebhookToken(token), req.stackId);
     if (!tokenRow) {
-      res.status(401).json({ error: "Token not recognized." });
+      res.status(401).json({ error: "Token not recognized for this stack." });
       return;
     }
 

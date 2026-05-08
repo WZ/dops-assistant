@@ -40,11 +40,13 @@ function mockTokenDb(plaintextTokens: Record<string, string>): Database {
   for (const [tok, name] of Object.entries(plaintextTokens)) {
     byHash.set(hashWebhookToken(tok), { id: `id-${name}`, name, prefix: tok.slice(0, 8) });
   }
+  // Mock ignores stackId — handler tests verify the auth flow, not the
+  // DB-side stack scoping (which has its own tests against a real DB).
   return {
-    listWebhookTokens: () => Array.from(byHash.values()).map((v) => ({
+    listWebhookTokens: (_stackId: string) => Array.from(byHash.values()).map((v) => ({
       id: v.id, name: v.name, prefix: v.prefix, createdAt: "now", lastUsedAt: null,
     })),
-    findWebhookTokenByHash: (hash: string) => byHash.get(hash) ?? null,
+    findWebhookTokenByHash: (hash: string, _stackId: string) => byHash.get(hash) ?? null,
     markWebhookTokenUsed: vi.fn(),
   } as unknown as Database;
 }
