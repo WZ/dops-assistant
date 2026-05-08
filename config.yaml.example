@@ -158,7 +158,9 @@ branding:
 
 # Alert webhook — receives Alertmanager payloads to trigger auto-investigations
 webhook:
-  # Bearer tokens are generated in Settings -> Alert Webhooks.
+  # Bearer tokens are generated in Settings -> Alert Webhooks and scoped to
+  # the active stack. Use the URL shown there; non-default stacks post to
+  # /api/webhook/alert/<stack-slug>.
   # Deprecated yaml-managed webhook.secret / webhook.tokens entries are imported
   # into the DB at startup for migration; remove them after alert senders use
   # DB-backed tokens.

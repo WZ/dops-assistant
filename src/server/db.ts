@@ -1043,6 +1043,7 @@ export class Database {
     this.db.prepare(`UPDATE incident_patterns SET stack_id = ? WHERE stack_id IS NULL OR stack_id = ''`).run(defaultStackId);
     this.db.prepare(`UPDATE hidden_services SET stack_id = ? WHERE stack_id = ''`).run(defaultStackId);
     this.db.prepare(`UPDATE service_metadata SET stack_id = ? WHERE stack_id = ''`).run(defaultStackId);
+    this.db.prepare(`UPDATE webhook_tokens SET stack_id = ? WHERE stack_id IS NULL OR stack_id = ''`).run(defaultStackId);
   }
 
   // ── Stack CRUD ───────────────────────────────────────────────────────────
