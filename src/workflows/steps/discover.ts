@@ -11,7 +11,7 @@ import type { Skill } from "../../skills/store.js";
 import type { LlmRetryConfig } from "../../agents/shared/llm-retry.js";
 import { withLlmRetry, safeAgentRetryConfig } from "../../agents/shared/llm-retry.js";
 import { LlmUnavailableError } from "../../agents/shared/llm-errors.js";
-import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
+import { UNTRUSTED_DATA_NOTICE, wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
 import { logLlmCall, logLlmCallStart, logToolCall, newCallId, type ToolCallEvent } from "../../server/llm-logger.js";
 import { createLogger } from "../../logger.js";
 
@@ -41,6 +41,32 @@ export interface DiscoverStepConfig {
 }
 
 const MAX_RETRIES = 3;
+
+/**
+ * Per-tool-result budget retained for the stall-recovery follow-up prompt.
+ * Larger than the 500-char observability slice (which only feeds logs and the
+ * UI tool-call panel) because the recovery prompt needs enough context for
+ * the model to actually synthesize JSON from the prior tool data.
+ */
+const RECOVERY_TOOL_RESULT_CHARS = 4000;
+
+/**
+ * Per-attempt timeout for the stall-recovery `agent.generate` call. Recovery
+ * runs with toolChoice: "none", so it can't go on a tool-calling jaunt — a
+ * single forward pass is enough. 60s leaves room for slow first-token times
+ * on busy gateways without inheriting the 120s exploration budget.
+ */
+const RECOVERY_TIMEOUT_MS = 60_000;
+
+const STALL_RECOVERY_PROMPT_HEADER =
+  "You previously made the following tool calls during service discovery. " +
+  "Based ONLY on this data, output the services list as JSON now. " +
+  "Do NOT call more tools. " +
+  "Use the exact JSON shape from your original instructions: " +
+  '{"services": [...], "globalProbeRules": [...]}. ' +
+  "Each service object must include name, metrics, logLabels, and probeRules. " +
+  `${UNTRUSTED_DATA_NOTICE} ` +
+  "Output JSON only — no prose, no markdown fences.";
 
 const DEFAULT_PROMETHEUS_RECIPE: DiscoveryRecipe = {
   providerType: "prometheus-k8s",
@@ -250,6 +276,55 @@ function backfillServiceAvailability(
   logger.debug({ service: serviceName, query }, "discovery: backfilled service_availability rule from metrics[0]");
 }
 
+/**
+ * Try every parse path the discover agent's response could take and return
+ * a non-empty DiscoverStepResult, or null if nothing usable was found.
+ * Shared between the primary attempt and the stall-recovery follow-up so
+ * both go through identical validation.
+ */
+function tryParseDiscoverResponse(text: string | undefined): DiscoverStepResult | null {
+  if (!text) return null;
+  const parsed = safeJsonParse(text);
+  if (Array.isArray(parsed) && parsed.length > 0) {
+    return { services: parsed as ServiceConfig[], globalProbeRules: [] };
+  }
+  if (parsed && typeof parsed === "object") {
+    const rawServices = Array.isArray(parsed.services) ? parsed.services : [];
+    const rawGlobals = Array.isArray(parsed.globalProbeRules) ? parsed.globalProbeRules : [];
+    const globalProbeRules = validateDiscoveredRules(rawGlobals, "globalProbeRules");
+    const services = validateDiscoveredServices(rawServices);
+    if (services.length > 0 || globalProbeRules.length > 0) {
+      return { services, globalProbeRules };
+    }
+  }
+  return null;
+}
+
+interface RecoveryToolEntry {
+  tool: string;
+  args: string;
+  result: string;
+}
+
+/**
+ * Format the captured tool history for inline inclusion in the stall-recovery
+ * prompt. Each entry is a self-contained block so the model can scan top-down.
+ */
+function formatRecoveryToolHistory(history: RecoveryToolEntry[]): string {
+  return history
+    .map((entry, idx) => {
+      const header = `### Tool call ${idx + 1}: ${entry.tool}`;
+      return [
+        header,
+        "Args:",
+        wrapUntrusted("tool_args", entry.args),
+        "Result:",
+        wrapUntrusted("tool_result", entry.result),
+      ].join("\n");
+    })
+    .join("\n\n---\n\n");
+}
+
 export async function runDiscoverStep(config: DiscoverStepConfig): Promise<DiscoverStepResult> {
   let discoveryTools: Record<string, any>;
   try {
@@ -345,6 +420,10 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
     const discoverPrompt = "Discover all monitored services using the available tools. Return the complete list as JSON.";
     const discoverStartMs = Date.now();
     const discoverToolCalls: ToolCallEvent[] = [];
+    // Captured tool history with a larger per-result budget than the 500-char
+    // observability slice. Used only by the stall-recovery follow-up prompt
+    // when the agent's primary call returns 0 chars of synthesis text.
+    const recoveryToolHistory: RecoveryToolEntry[] = [];
     logLlmCallStart({
       callId: discoverCallId,
       agent: "discover",
@@ -388,6 +467,11 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
                   };
                   discoverToolCalls.push(toolEvent);
                   logToolCall(discoverCallId, "discover", toolEvent);
+                  recoveryToolHistory.push({
+                    tool: toolName,
+                    args: argsStr.slice(0, 500),
+                    result: resultStr.slice(0, RECOVERY_TOOL_RESULT_CHARS),
+                  });
                 } catch (err) {
                   // Never let observability crash the discover step.
                   logger.warn({ err }, "discover: onStepFinish failed to record tool call");
@@ -424,24 +508,107 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
         toolCalls: discoverToolCalls,
       });
 
-      const parsed = safeJsonParse(result.text);
-      // Backward-compat: bare array → treat as {services, globalProbeRules: []}
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return { services: parsed as ServiceConfig[], globalProbeRules: [] };
-      }
-      // New object form: {services, globalProbeRules?}. Accept when EITHER
-      // services or globalProbeRules is non-empty — a discovery run that
-      // only succeeded at label-key introspection (globals populated, zero
-      // services found) is still a valid, useful result.
-      if (parsed && typeof parsed === "object") {
-        const rawServices = Array.isArray(parsed.services) ? parsed.services : [];
-        const rawGlobals = Array.isArray(parsed.globalProbeRules) ? parsed.globalProbeRules : [];
-        const globalProbeRules = validateDiscoveredRules(rawGlobals, "globalProbeRules");
-        const services = validateDiscoveredServices(rawServices);
-        if (services.length > 0 || globalProbeRules.length > 0) {
-          return { services, globalProbeRules };
+      // Reasoning models (gpt-oss) sometimes emit JSON into `reasoning_content`
+      // instead of `content`. The AI SDK surfaces that as `reasoningText`.
+      // Try the regular text first; fall back to reasoning text if empty.
+      const reasoningText = (result as any).reasoningText ?? (result as any).reasoning;
+      const primary =
+        tryParseDiscoverResponse(result.text) ??
+        tryParseDiscoverResponse(typeof reasoningText === "string" ? reasoningText : undefined);
+      if (primary) return primary;
+
+      // Stall recovery: gpt-oss-120b on saturated context sometimes stops
+      // calling tools AND emits 0 chars of synthesis text. The prepareStep
+      // wind-down can't help — the model voluntarily exits at step 6-9, well
+      // before maxSteps-2 fires the wind-down. Manually invoke a follow-up
+      // turn with the captured tool data inline and toolChoice forced off.
+      const responseEmpty = !result.text || result.text.trim().length === 0;
+      if (responseEmpty && recoveryToolHistory.length > 0) {
+        const recoveryCallId = newCallId();
+        const recoveryStartMs = Date.now();
+        const historyBlock = formatRecoveryToolHistory(recoveryToolHistory);
+        const recoveryPrompt = `${STALL_RECOVERY_PROMPT_HEADER}\n\n${historyBlock}`;
+        logger.warn(
+          { attempt, toolCallCount: recoveryToolHistory.length, recoveryCallId },
+          "discovery: empty synthesis after tool-using session — invoking stall-recovery",
+        );
+        logLlmCallStart({
+          callId: recoveryCallId,
+          agent: "discover",
+          phase: `attempt-${attempt}-recovery`,
+          promptChars: recoveryPrompt.length,
+          prompt: recoveryPrompt,
+        });
+        try {
+          const recoveryResult = await withLlmRetry(
+            () => agent.generate(recoveryPrompt, {
+              abortSignal: AbortSignal.timeout(RECOVERY_TIMEOUT_MS),
+              providerOptions: {
+                "openai-compatible": {
+                  max_tokens: config.discoveryConfig.maxOutputTokens,
+                  reasoning_effort: "low",
+                },
+              },
+              toolChoice: "none",
+            } as any),
+            safeAgentRetryConfig(config.llmRetry, true),
+          );
+
+          const recoveryUsage = (recoveryResult as any).totalUsage ?? (recoveryResult as any).usage;
+          const recoveryInTok = recoveryUsage?.inputTokens ?? 0;
+          const recoveryOutTok = recoveryUsage?.outputTokens ?? 0;
+          if (recoveryUsage && config.onTokenUsage) {
+            config.onTokenUsage({ inputTokens: recoveryInTok, outputTokens: recoveryOutTok });
+          }
+          logLlmCall({
+            callId: recoveryCallId,
+            agent: "discover",
+            phase: `attempt-${attempt}-recovery`,
+            promptChars: recoveryPrompt.length,
+            prompt: recoveryPrompt,
+            responseChars: recoveryResult.text?.length ?? 0,
+            response: recoveryResult.text,
+            inputTokens: recoveryInTok,
+            outputTokens: recoveryOutTok,
+            durationMs: Date.now() - recoveryStartMs,
+            toolCalls: [],
+          });
+
+          const recoveryReasoning = (recoveryResult as any).reasoningText ?? (recoveryResult as any).reasoning;
+          const recovered =
+            tryParseDiscoverResponse(recoveryResult.text) ??
+            tryParseDiscoverResponse(typeof recoveryReasoning === "string" ? recoveryReasoning : undefined);
+          if (recovered) {
+            logger.info(
+              { attempt, recoveredServiceCount: recovered.services.length },
+              "discovery: stall-recovery succeeded",
+            );
+            return recovered;
+          }
+          logger.warn(
+            { attempt, recoveryResponseChars: recoveryResult.text?.length ?? 0 },
+            "discovery: stall-recovery returned unparseable output",
+          );
+        } catch (err) {
+          const recoveryMessage = err instanceof Error ? err.message : String(err);
+          logLlmCall({
+            callId: recoveryCallId,
+            agent: "discover",
+            phase: `attempt-${attempt}-recovery`,
+            promptChars: recoveryPrompt.length,
+            prompt: recoveryPrompt,
+            responseChars: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            durationMs: Date.now() - recoveryStartMs,
+            toolCalls: [],
+            error: recoveryMessage,
+          });
+          logger.warn({ attempt, err: recoveryMessage }, "discovery: stall-recovery threw");
+          if (err instanceof LlmUnavailableError) throw err;
         }
       }
+
       const respLen = result.text?.length ?? 0;
       const first200 = result.text?.slice(0, 200) ?? "";
       const last200 = result.text?.slice(-200) ?? "";

@@ -156,4 +156,88 @@ describe("safeJsonParse", () => {
     const result = safeJsonParse("This is just plain text with no JSON at all.");
     expect(result).toBeNull();
   });
+
+  // Regression: discover-agent output for large stacks can overflow the
+  // maxOutputTokens budget. Truncation lands mid-probeRule, deep inside an
+  // unfinished service. The bare-array recovery path closes the wrong brace
+  // and produces invalid JSON; recoverTruncatedServicesObject walks the
+  // services array with depth tracking and returns the prefix that fully
+  // serialized.
+  it("recovers a truncated discover object by finding complete services", () => {
+    const text = `{
+  "services": [
+    {
+      "name": "svc-a",
+      "metrics": [{"query": "up{a=\\"1\\"}", "description": ""}],
+      "probeRules": [
+        {"name": "service_availability", "query": "up{a=\\"1\\"}", "threshold": {"op": "lt", "value": 1}, "consecutiveTicks": 3, "source": "metrics"}
+      ]
+    },
+    {
+      "name": "svc-b",
+      "metrics": [{"query": "up{b=\\"1\\"}", "description": ""}],
+      "probeRules": [
+        {"name": "service_availability", "query": "up{b=\\"1\\"}", "threshold": {"op": "lt", "value": 1}, "consecutiveTicks": 3, "source": "metrics"}
+      ]
+    },
+    {
+      "name": "svc-c",
+      "metrics": [{"query": "up{c=\\"1\\"}", "description": ""}],
+      "probeRules": [
+        {"name": "service_availability", "query": "up{c=\\"1\\"}", "threshold": {"op": "lt", "va`;
+    const result = safeJsonParse(text);
+    expect(result).toBeDefined();
+    expect(result.services).toHaveLength(2);
+    expect(result.services[0].name).toBe("svc-a");
+    expect(result.services[1].name).toBe("svc-b");
+    expect(result.globalProbeRules).toEqual([]);
+  });
+
+  it("returns null when truncation lands before the first complete service", () => {
+    // No service ever finished — nothing to recover.
+    const text = `{"services":[{"name":"svc-a","metrics":[{"query":"sum(rate(http_requests_total{service=\\"`;
+    const result = safeJsonParse(text);
+    expect(result).toBeNull();
+  });
+
+  it("does not mangle a fully-serialized {services, globalProbeRules} object", () => {
+    const text = JSON.stringify({
+      services: [{ name: "svc-a", metrics: [], logLabels: {} }],
+      globalProbeRules: [
+        { name: "app_availability", query: 'up{app="{service}"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 3, source: "metrics" },
+      ],
+    });
+    const result = safeJsonParse(text);
+    expect(result.services).toHaveLength(1);
+    expect(result.globalProbeRules).toHaveLength(1);
+    expect(result.globalProbeRules[0].name).toBe("app_availability");
+  });
+
+  it("does not trip on a brace inside a string literal", () => {
+    // The truncation falls right after a `}` that's INSIDE a JSON string —
+    // the depth tracker must respect string boundaries or it'll cut here
+    // and produce invalid JSON.
+    const text = `{
+  "services": [
+    {"name": "svc-a", "metrics": [{"query": "up{a=\\"1\\"}", "description": ""}], "probeRules": []},
+    {"name": "svc-b", "metrics": [{"query": "sum(count_over_time({app=\\"web\\"} |= \`error\`}[15m]))", "description": "this } is in a string"`;
+    const result = safeJsonParse(text);
+    expect(result).toBeDefined();
+    expect(result.services).toHaveLength(1);
+    expect(result.services[0].name).toBe("svc-a");
+  });
+
+  it("recovers a truncated discover object wrapped in prose", () => {
+    const text = `Discovery output:
+{
+  "services": [
+    {"name": "svc-a", "metrics": [{"query": "up{a=\\"1\\"}", "description": ""}], "probeRules": []},
+    {"name": "svc-b", "metrics": [{"query": "up{b=\\"1\\"}", "description": ""}], "probeRules": [
+      {"name": "service_availability", "query": "up{b=\\"1\\"}", "threshold": {"op": "lt"`;
+    const result = safeJsonParse(text);
+    expect(result).toBeDefined();
+    expect(result.services).toHaveLength(1);
+    expect(result.services[0].name).toBe("svc-a");
+    expect(result.globalProbeRules).toEqual([]);
+  });
 });

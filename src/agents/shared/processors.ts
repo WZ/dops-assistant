@@ -48,6 +48,15 @@ export function safeJsonParse(text: string): any | null {
   const truncated = recoverTruncatedJsonArray(text);
   if (truncated) return truncated;
 
+  // 4b. Truncated discover-style object recovery: the discover agent emits
+  // {"services": [...], "globalProbeRules": [...]}. When the LLM exhausts
+  // its output budget mid-service, the bare-array recovery in (4) closes
+  // the wrong brace (it closes services with whatever the last `}` happens
+  // to be, even if that's a probeRule deep inside an unfinished service).
+  // This recovers any complete services that DID serialize before truncation.
+  const truncatedObj = recoverTruncatedServicesObject(text);
+  if (truncatedObj) return truncatedObj;
+
   // 5. Extract the LAST top-level {...} object. Agents are instructed to end
   // their response with JSON, so the last complete object is most likely
   // the structured output. Objects are checked before arrays because most
@@ -93,6 +102,106 @@ function recoverTruncatedJsonArray(text: string): any[] | null {
   try { return JSON.parse(stripJsoncComments(candidate)); } catch { /* fall through */ }
   try { return JSON.parse(candidate); } catch { /* fall through */ }
   return null;
+}
+
+/**
+ * Recover a truncated discover-agent object of the shape
+ *   {"services": [ {...}, {...}, ...truncated... ], ...}
+ *
+ * Scans the `services` array with depth + string tracking and finds the
+ * boundary between fully-serialized service objects and the partial one
+ * the LLM was emitting when it hit max_tokens. Returns
+ *   { services: <complete entries>, globalProbeRules: [] }
+ * on success, or null if no recoverable prefix exists.
+ *
+ * `globalProbeRules` is intentionally always set to `[]` here — by the time
+ * the LLM has truncated inside `services`, it has not yet emitted the
+ * `globalProbeRules` block at all. Returning `[]` is safe: the discover
+ * step's caller treats empty globals as "fall through to config defaults".
+ */
+function recoverTruncatedServicesObject(
+  text: string,
+): { services: unknown[]; globalProbeRules: unknown[] } | null {
+  // Look for the discover agent's specific object shape. Anchored to a
+  // top-level "services" key — anything else is somebody else's JSON and
+  // shouldn't be mangled by this recovery.
+  const arrayStartMatch = text.match(/"services"\s*:\s*\[/);
+  if (!arrayStartMatch || arrayStartMatch.index === undefined) return null;
+  const arrayStart = arrayStartMatch.index + arrayStartMatch[0].length;
+  const objectStart = findEnclosingObjectStart(text, arrayStartMatch.index);
+  if (objectStart < 0) return null;
+
+  let depth = 1; // we're now positioned right after the opening `[`
+  let inString = false;
+  let escape = false;
+  // Position immediately after the close of the most recent depth==1 service
+  // object — i.e., a safe truncation boundary.
+  let lastGoodEnd = -1;
+
+  for (let i = arrayStart; i < text.length; i++) {
+    const c = text[i]!;
+    if (escape) { escape = false; continue; }
+    if (inString) {
+      if (c === "\\") { escape = true; continue; }
+      if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') { inString = true; continue; }
+    if (c === "{" || c === "[") { depth++; continue; }
+    if (c === "}" || c === "]") {
+      depth--;
+      if (depth === 1 && c === "}") {
+        // Just closed a top-level service object inside the array.
+        lastGoodEnd = i + 1;
+      }
+      if (depth === 0) {
+        // The services array closed cleanly — not a truncation case for
+        // this recovery path. Let strategies further down the chain handle it.
+        return null;
+      }
+      continue;
+    }
+  }
+
+  if (lastGoodEnd < 0) return null;
+
+  const reconstructed = text.slice(objectStart, lastGoodEnd) + "]}";
+  try {
+    const parsed = JSON.parse(stripJsoncComments(reconstructed));
+    if (!parsed || typeof parsed !== "object") return null;
+    const services = Array.isArray(parsed.services) ? parsed.services : [];
+    if (services.length === 0) return null;
+    return { services, globalProbeRules: [] };
+  } catch {
+    return null;
+  }
+}
+
+function findEnclosingObjectStart(text: string, beforeIndex: number): number {
+  const objectStack: number[] = [];
+  let inString = false;
+  let escape = false;
+
+  for (let i = 0; i < beforeIndex; i++) {
+    const c = text[i]!;
+    if (escape) { escape = false; continue; }
+    if (inString) {
+      if (c === "\\") { escape = true; continue; }
+      if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') { inString = true; continue; }
+    if (c === "{") {
+      objectStack.push(i);
+      continue;
+    }
+    if (c === "}") {
+      objectStack.pop();
+    }
+  }
+
+  if (inString || objectStack.length === 0) return -1;
+  return objectStack[objectStack.length - 1]!;
 }
 
 /**
