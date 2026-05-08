@@ -62,14 +62,6 @@ async function main() {
   const dbPath = process.env["DB_PATH"] ?? "dops.sqlite";
   const db = new Database(dbPath);
   const configuredLegacyWebhookTokens = Object.keys(config.webhook.legacyTokens).length;
-  const importedLegacyWebhookTokens = importLegacyWebhookTokens(db, config.webhook.legacyTokens);
-  if (configuredLegacyWebhookTokens > 0) {
-    logger.warn(
-      { configuredLegacyWebhookTokens, importedLegacyWebhookTokens },
-      "Imported deprecated YAML webhook tokens into DB-backed webhook tokens; remove legacy webhook config after alert senders are updated"
-    );
-    config.webhook.legacyTokens = {};
-  }
 
   // Wire the EventLog ring to also persist to the DB. After this call, every
   // `eventLog.append(...)` writes a row into the `events` table — that's
@@ -95,6 +87,22 @@ async function main() {
   // Initialize StackManager — replaces singleton registryStore, ProviderRegistry, memory, healthPoller
   const stackManager = new StackManager(db, config);
   await stackManager.initialize();
+
+  // Legacy yaml-token migration runs AFTER StackManager — the default stack
+  // must exist before we can scope imported tokens to it. Re-running is
+  // safe (lookup-by-hash short-circuits duplicates).
+  if (configuredLegacyWebhookTokens > 0) {
+    const importedLegacyWebhookTokens = importLegacyWebhookTokens(
+      db,
+      config.webhook.legacyTokens,
+      stackManager.getDefaultStackId(),
+    );
+    logger.warn(
+      { configuredLegacyWebhookTokens, importedLegacyWebhookTokens },
+      "Imported deprecated YAML webhook tokens into DB-backed webhook tokens (default stack); remove legacy webhook config after alert senders are updated"
+    );
+    config.webhook.legacyTokens = {};
+  }
 
   const model = createModel(config.llm);
   stackManager.setLlmModel(model);

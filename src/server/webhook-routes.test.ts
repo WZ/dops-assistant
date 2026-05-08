@@ -45,8 +45,10 @@ function mockReqRes(body: unknown, authHeader = `${authScheme} ${TEST_TOKEN_PLAI
 function mockDbWithToken() {
   const seededHash = hashWebhookToken(TEST_TOKEN_PLAINTEXT);
   return {
-    listWebhookTokens: () => [{ id: "id-default", name: "default", prefix: "test-sec", createdAt: "now", lastUsedAt: null }],
-    findWebhookTokenByHash: (h: string) => h === seededHash ? { id: "id-default", name: "default", prefix: "test-sec" } : null,
+    // Mock ignores stackId — this test exercises the route, not the DB
+    // scoping (which has dedicated tests in routes.webhooks.test.ts).
+    listWebhookTokens: (_stackId: string) => [{ id: "id-default", name: "default", prefix: "test-sec", createdAt: "now", lastUsedAt: null }],
+    findWebhookTokenByHash: (h: string, _stackId: string) => h === seededHash ? { id: "id-default", name: "default", prefix: "test-sec" } : null,
     markWebhookTokenUsed: vi.fn(),
     getStackBySlug: vi.fn().mockReturnValue({ id: "stack-east", slug: "east" }),
     getHiddenServices: vi.fn().mockReturnValue(new Set<string>()),

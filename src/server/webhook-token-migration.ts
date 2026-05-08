@@ -18,19 +18,29 @@ function normalizeLegacyTokenName(name: string): string {
 /**
  * One-release migration bridge for deprecated YAML webhook tokens. Re-running
  * is safe while operators remove old config fields because lookup is by hash.
+ *
+ * yaml-managed tokens predate per-stack scoping, so they're imported into
+ * the default stack. Operators with multi-stack deployments who relied on
+ * yaml tokens routing to non-default stacks need to re-mint tokens scoped
+ * to the right stack via the GUI after upgrade.
  */
-export function importLegacyWebhookTokens(db: Database, legacyTokens: Record<string, string> | undefined): number {
+export function importLegacyWebhookTokens(
+  db: Database,
+  legacyTokens: Record<string, string> | undefined,
+  defaultStackId: string,
+): number {
   let imported = 0;
   for (const [rawName, rawToken] of Object.entries(legacyTokens ?? {})) {
     const token = rawToken.trim();
     if (!token) continue;
     const tokenHash = hashWebhookToken(token);
-    if (db.findWebhookTokenByHash(tokenHash)) continue;
+    if (db.findWebhookTokenByHash(tokenHash, defaultStackId)) continue;
     db.createWebhookToken({
       id: ulid(),
       name: normalizeLegacyTokenName(rawName),
       tokenHash,
       prefix: legacyTokenPrefix(token),
+      stackId: defaultStackId,
     });
     imported += 1;
   }

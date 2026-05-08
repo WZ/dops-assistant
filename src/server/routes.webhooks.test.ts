@@ -136,8 +136,8 @@ describe("GET /api/webhooks/info", () => {
     const t1 = generateWebhookToken();
     const t2 = generateWebhookToken();
     ctx = makeApp({});
-    ctx.db.createWebhookToken({ id: t1.id, name: "grafana", tokenHash: t1.tokenHash, prefix: t1.prefix });
-    ctx.db.createWebhookToken({ id: t2.id, name: "datadog", tokenHash: t2.tokenHash, prefix: t2.prefix });
+    ctx.db.createWebhookToken({ id: t1.id, name: "grafana", tokenHash: t1.tokenHash, prefix: t1.prefix, stackId: ctx.defaultStackId });
+    ctx.db.createWebhookToken({ id: t2.id, name: "datadog", tokenHash: t2.tokenHash, prefix: t2.prefix, stackId: ctx.defaultStackId });
 
     const res = await request(ctx.app).get("/api/webhooks/info").expect(200);
 
@@ -271,7 +271,7 @@ describe("POST /api/webhooks/test", () => {
   it("returns 409 when stack has no providers", async () => {
     const t = generateWebhookToken();
     ctx = makeApp({ services: [{ name: "checkout" }], hasProviders: false });
-    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix });
+    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix, stackId: ctx.defaultStackId });
 
     const res = await request(ctx.app)
       .post("/api/webhooks/test")
@@ -283,7 +283,7 @@ describe("POST /api/webhooks/test", () => {
   it("returns 409 when stack has no services", async () => {
     const t = generateWebhookToken();
     ctx = makeApp({ services: [], hasProviders: true });
-    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix });
+    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix, stackId: ctx.defaultStackId });
 
     const res = await request(ctx.app)
       .post("/api/webhooks/test")
@@ -295,7 +295,7 @@ describe("POST /api/webhooks/test", () => {
   it("returns 404 when the requested service isn't in the stack", async () => {
     const t = generateWebhookToken();
     ctx = makeApp({ services: [{ name: "checkout" }], hasProviders: true });
-    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix });
+    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix, stackId: ctx.defaultStackId });
 
     const res = await request(ctx.app)
       .post("/api/webhooks/test")
@@ -307,7 +307,7 @@ describe("POST /api/webhooks/test", () => {
   it("returns 202 only when the synthetic alert starts an investigation", async () => {
     const t = generateWebhookToken();
     ctx = makeApp({ services: [{ name: "checkout" }], hasProviders: true });
-    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix });
+    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix, stackId: ctx.defaultStackId });
 
     const res = await request(ctx.app)
       .post("/api/webhooks/test")
@@ -320,7 +320,7 @@ describe("POST /api/webhooks/test", () => {
   it("returns 409 when the synthetic alert is deduplicated instead of showing a successful test", async () => {
     const t = generateWebhookToken();
     ctx = makeApp({ services: [{ name: "checkout" }], hasProviders: true, dedupAllowed: false });
-    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix });
+    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix, stackId: ctx.defaultStackId });
 
     const res = await request(ctx.app)
       .post("/api/webhooks/test")
@@ -357,7 +357,7 @@ describe("POST /api/webhooks/loopback-test", () => {
   it("returns 412 when appBaseUrl is unset (the loopback target is undefined)", async () => {
     const t = generateWebhookToken();
     ctx = makeApp({ services: [{ name: "checkout" }], hasProviders: true });
-    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix });
+    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix, stackId: ctx.defaultStackId });
 
     const res = await request(ctx.app)
       .post("/api/webhooks/loopback-test")
@@ -379,7 +379,7 @@ describe("POST /api/webhooks/loopback-test", () => {
       hasProviders: true,
       appBaseUrl: "https://alerts.example.com",
     });
-    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix });
+    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix, stackId: ctx.defaultStackId });
 
     let capturedUrl: string | undefined;
     let capturedHeaders: Record<string, string> | undefined;
@@ -417,7 +417,7 @@ describe("POST /api/webhooks/loopback-test", () => {
   it("returns 502 with a hint when the loopback fetch fails", async () => {
     const t = generateWebhookToken();
     ctx = makeApp({ services: [{ name: "checkout" }], hasProviders: true, appBaseUrl: "https://alerts.example.com" });
-    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix });
+    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix, stackId: ctx.defaultStackId });
 
     globalThis.fetch = (async () => { throw new Error("ENOTFOUND"); }) as typeof fetch;
 
@@ -434,7 +434,7 @@ describe("POST /api/webhooks/loopback-test", () => {
   it("relays whatever status the upstream webhook handler returned, including non-OK", async () => {
     const t = generateWebhookToken();
     ctx = makeApp({ services: [{ name: "checkout" }], hasProviders: true, appBaseUrl: "https://alerts.example.com" });
-    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix });
+    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix, stackId: ctx.defaultStackId });
 
     globalThis.fetch = (async () => new Response(
       JSON.stringify({ error: "Could not identify service from alert labels" }),
@@ -454,7 +454,7 @@ describe("POST /api/webhooks/loopback-test", () => {
   it("trims trailing slashes off appBaseUrl so the assembled URL is well-formed", async () => {
     const t = generateWebhookToken();
     ctx = makeApp({ services: [{ name: "checkout" }], hasProviders: true, appBaseUrl: "https://alerts.example.com///" });
-    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix });
+    ctx.db.createWebhookToken({ id: t.id, name: "grafana", tokenHash: t.tokenHash, prefix: t.prefix, stackId: ctx.defaultStackId });
 
     let capturedUrl: string | undefined;
     globalThis.fetch = (async (input: string | URL) => {

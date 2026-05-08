@@ -325,11 +325,12 @@ export function synthesizeTestPayload(args: {
 export function resolveTokenRow(
   authHeader: string | undefined,
   db: Database,
+  stackId: string,
 ): { id: string; name: string } | null {
   if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
   const presented = authHeader.slice("Bearer ".length);
   const hash = hashWebhookToken(presented);
-  return db.findWebhookTokenByHash(hash);
+  return db.findWebhookTokenByHash(hash, stackId);
 }
 
 export function createWebhookHandler(deps: WebhookHandlerDeps) {
@@ -341,15 +342,16 @@ export function createWebhookHandler(deps: WebhookHandlerDeps) {
   });
 
   return async (req: Request, res: Response): Promise<void> => {
-    // 1. Validate bearer against the DB token store. If no tokens exist at
-    //    all, return 503 with a hint that points the operator at the GUI
-    //    (matches the post-yaml setup flow).
-    const tokenList = db.listWebhookTokens();
+    // 1. Validate bearer against the DB token store, scoped to THIS stack.
+    //    If this stack has no tokens, return 503 (not 401) so operators
+    //    setting up a fresh stack see "configure a token" rather than
+    //    "wrong token" — they're different problems.
+    const tokenList = db.listWebhookTokens(stackId);
     if (tokenList.length === 0) {
       res.status(503).json(WEBHOOK_NOT_CONFIGURED_BODY);
       return;
     }
-    const tokenRow = resolveTokenRow(req.headers.authorization, db);
+    const tokenRow = resolveTokenRow(req.headers.authorization, db, stackId);
     if (!tokenRow) {
       res.status(401).json({ error: "Invalid or missing authorization token" });
       return;

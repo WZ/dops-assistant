@@ -933,6 +933,22 @@ describe("Database", () => {
       expect(db.getHiddenServices("default-stack-id").has("kafka")).toBe(true);
       expect(db.getServiceMetadata("default-stack-id", "svc")).toBeDefined();
     });
+
+    it("backfills existing webhook tokens so pre-scoping tokens continue authenticating", () => {
+      db.raw().prepare(
+        "INSERT INTO webhook_tokens (id, name, token_hash, prefix) VALUES (?, ?, ?, ?)"
+      ).run("tok_legacy", "grafana", "legacy-hash", "legacy");
+
+      expect(db.findWebhookTokenByHash("legacy-hash", "default-stack-id")).toBeNull();
+
+      db.backfillDefaultStack("default-stack-id");
+
+      expect(db.findWebhookTokenByHash("legacy-hash", "default-stack-id")).toMatchObject({
+        id: "tok_legacy",
+        name: "grafana",
+        prefix: "legacy",
+      });
+    });
   });
 
   // ── Stack isolation ───────────────────────────────────────────────────
