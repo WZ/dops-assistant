@@ -40,6 +40,14 @@ let mockDiscoverTimeoutFirstGenerate = false;
 const discoverGenerateSignals: AbortSignal[] = [];
 const discoverGenerateSignalStates: Array<{ sameAsFirst: boolean; abortedOnEntry: boolean }> = [];
 
+// Stall-recovery test plumbing. When `mockDiscoverStallThenRecover` is true,
+// the FIRST discover.generate() call returns empty text (the stall failure
+// mode); the SECOND returns parseable JSON (the recovery turn invoked by
+// runDiscoverStep). Each call also records its options so the test can
+// assert toolChoice: "none" on the recovery turn.
+let mockDiscoverStallThenRecover = false;
+const discoverGenerateCalls: Array<{ promptType: "primary" | "recovery"; opts: any }> = [];
+
 vi.mock("@mastra/core/agent", () => ({
   Agent: class MockAgent {
     id: string;
@@ -48,6 +56,34 @@ vi.mock("@mastra/core/agent", () => ({
     async generate(prompt: string, opts?: any) {
       if (this.id === "discover") {
         lastDiscoverGenerateOpts.value = opts;
+        if (mockDiscoverStallThenRecover) {
+          // Recovery prompt is recognizable by its leading sentence — the
+          // primary prompt is the bare "Discover all monitored services..."
+          // sentence the production code passes to agent.generate().
+          const isRecovery = prompt.startsWith("You previously made");
+          discoverGenerateCalls.push({ promptType: isRecovery ? "recovery" : "primary", opts });
+          if (!isRecovery) {
+            // Simulate a tool call via onStepFinish so recoveryToolHistory
+            // populates — the recovery path requires non-empty history to
+            // fire.
+            opts?.onStepFinish?.({
+              toolResults: [{
+                toolName: "fake_tool",
+                args: { q: "x" },
+                result: { content: [{ text: '{"data":[{"metric":{"deployment":"svc-a"}}]}' }] },
+              }],
+            });
+            return { text: "" };
+          }
+          return {
+            text: JSON.stringify({
+              services: [
+                { name: "recovered-svc", metrics: [{ query: 'up{a="1"}', description: "" }], logLabels: {} },
+              ],
+              globalProbeRules: [],
+            }),
+          };
+        }
         if (mockDiscoverTimeoutFirstGenerate) {
           const signal = opts?.abortSignal as AbortSignal | undefined;
           if (signal) {
@@ -359,6 +395,33 @@ describe("runDiscoverStep — adversarial-review fixes (2026-04-22)", () => {
       sameAsFirst: false,
       abortedOnEntry: false,
     });
+  });
+
+  // Regression: gpt-oss-120b on saturated context sometimes stops calling
+  // tools AND emits 0 chars of synthesis text. The prepareStep wind-down
+  // doesn't help (model exits the agent loop before the wind-down step
+  // fires), so runDiscoverStep manually invokes a follow-up call with
+  // toolChoice: "none" and the captured tool data inline.
+  it("invokes a stall-recovery follow-up when the primary attempt returns empty text", async () => {
+    mockDiscoverStallThenRecover = true;
+    discoverGenerateCalls.length = 0;
+    try {
+      const result = await runDiscovery(baseConfig);
+      // Both calls fired: primary (empty) + recovery (JSON).
+      expect(discoverGenerateCalls).toHaveLength(2);
+      expect(discoverGenerateCalls[0]!.promptType).toBe("primary");
+      expect(discoverGenerateCalls[1]!.promptType).toBe("recovery");
+      // Recovery turn must disable tools — that's the whole point of the
+      // intervention; the model already decided not to call more tools and
+      // we don't want to give it the option to backtrack.
+      expect(discoverGenerateCalls[1]!.opts?.toolChoice).toBe("none");
+      // Service recovered from the synthetic JSON.
+      expect(result.services).toHaveLength(1);
+      expect(result.services[0]!.name).toBe("recovered-svc");
+    } finally {
+      mockDiscoverStallThenRecover = false;
+      discoverGenerateCalls.length = 0;
+    }
   });
 
   // Regression: the OpenAI-compatible gateway rejects requests with
