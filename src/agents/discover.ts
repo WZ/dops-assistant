@@ -14,7 +14,13 @@ export interface DiscoverAgentConfig {
   discoveryRecipes?: string;
 }
 
-export function createDiscoverAgent(config: DiscoverAgentConfig) {
+/**
+ * Build the discovery agent's instruction prompt. Exported for unit testing
+ * so prompt-content regressions (e.g. the bad-availability-metric trap that
+ * shipped before 2026-04-25) surface as fast assertions instead of waiting
+ * for a full discover-eval run.
+ */
+export function buildDiscoverInstructions(config: DiscoverAgentConfig): string {
   const excludeList = config.excludeServices?.length
     ? `\n\nEXCLUDE these services from your results (case-insensitive): ${config.excludeServices.join(", ")}`
     : "";
@@ -40,10 +46,7 @@ ${config.discoveryRecipes}
 These are suggestions — also use your own discovery strategies based on available tools.`
     : "";
 
-  return new Agent({
-    id: "discover",
-    name: "discover",
-    instructions: () => `You are a service discovery agent. Your job is to find ALL monitored services — both application services AND infrastructure — using the available metric and service catalog tools.
+  return `You are a service discovery agent. Your job is to find ALL monitored services — both application services AND infrastructure — using the available metric and service catalog tools.
 
 ## IMPORTANT: Use metric, infrastructure, and service catalog tools — do NOT use log search tools.
 
@@ -156,12 +159,40 @@ Each service in "services" must have:
           "source": "metrics"
         }
 
-      The health-check queries you're writing in \`metrics\` are 0-or-higher
-      gauge indicators — \`up{...}\`, \`kube_deployment_status_replicas{...}\`,
-      \`consul_catalog_service_node_healthy{...}\`, etc. \`lt 1\` trips when the
-      indicator drops to 0 (full unavailability). consecutiveTicks: 3 matches
-      the globalProbeRule hysteresis so the signal isn't noisier than the
-      global-track equivalent.
+      The health-check query MUST be a true ready/available indicator that
+      actually drops to 0 when the service is failing. \`lt 1\` only trips
+      when the value reaches 0, so a "desired-replica-count" metric is NOT
+      a valid health check — those stay >0 even when every pod is in
+      CrashLoopBackOff, ImagePullBackOff, or Pending. Pick a metric that
+      reflects real readiness:
+
+        Workload kind            USE                                          DO NOT USE
+        ─────────────────────    ───────────────────────────────────────────  ──────────────────────────────────
+        Deployment               kube_deployment_status_replicas_available    kube_deployment_status_replicas
+                                 kube_deployment_status_replicas_ready        kube_deployment_spec_replicas
+        StatefulSet              kube_statefulset_status_replicas_ready       kube_statefulset_status_replicas
+                                                                              kube_statefulset_replicas
+        DaemonSet                kube_daemonset_status_number_ready           kube_daemonset_status_desired_number_scheduled
+                                                                              kube_daemonset_status_current_number_scheduled
+        Service-level / app      up{...}                                      n/a (\`up\` is the canonical readiness gauge — \`lt 1\` already encodes "drops to 0 = down", do NOT add \`=1\` to the query)
+        Consul                   consul_catalog_service_node_healthy          n/a
+
+      Why: \`kube_*_status_replicas\` reports \`.status.replicas\` (total
+      non-terminated pods, including unhealthy ones). It only drops below 1
+      when you scale to 0 or delete the workload — so it silently misses
+      every real outage. Same trap for \`kube_daemonset_status_desired_number_scheduled\`
+      (count of nodes that *should* run a pod, not how many actually are).
+      Always reach for the \`_available\` / \`_ready\` / \`number_ready\`
+      variant.
+
+      The \`service_availability\` rule reuses \`metrics[0].query\` verbatim.
+      That means \`metrics[0].query\` itself MUST be a real readiness gauge —
+      do not write a desired-count query into \`metrics[0]\` either. If you
+      need to query both ready and desired counts as separate metrics, make
+      sure the FIRST metric in the array is the readiness one.
+
+      consecutiveTicks: 3 matches the globalProbeRule hysteresis so the
+      signal isn't noisier than the global-track equivalent.
 
       Only omit this rule if \`metrics\` is empty — i.e. you couldn't find
       ANY query that identifies this service. That is rare and indicates the
@@ -170,21 +201,61 @@ Each service in "services" must have:
   (2) pod_restarts (source: "metrics") — EMIT whenever you know the service's
       namespace OR a workload selector (deployment/statefulset/daemonset name).
       You almost always know at least one of these from your discovery queries
-      — \`kube_pod_info\`, \`kube_deployment_status_replicas\`, pod lists, etc.
-      all carry a namespace label.
+      — \`kube_pod_info\`, \`kube_deployment_status_replicas_available\`, pod
+      lists, etc. all carry a namespace label.
+
+      Service-specific selector required when feasible. A namespace-only
+      selector counts restarts from EVERY pod in the namespace and attributes
+      them to this one service — when multiple services share a namespace
+      (e.g. several DBs in \`namespace="db"\`), one bad pod fires
+      \`pod_restarts\` for every service in the namespace, and they all blame
+      each other. Always narrow further when you have the data.
+
+      Selector priority (use the FIRST that applies):
+
+        1. \`{deployment="<name>"}\`, \`{statefulset="<name>"}\`,
+           \`{daemonset="<name>"}\` — kube-state-metrics emits
+           \`kube_pod_container_status_restarts_total\` joined with these
+           workload labels via recording rules on most stacks. Exact
+           match, no prefix-overlap risk. If the label is present in
+           your stack's metrics, prefer it.
+        2. \`{namespace="<ns>",container="<workload>"}\` — the
+           \`container\` label is the workload's container name and is
+           an exact match. Use this when workload labels are not
+           available but the container name is known.
+        3. \`{namespace="<ns>",pod=~"<workload>-[a-f0-9]+-[a-z0-9]+$"}\`
+           for Deployments (ReplicaSet hash + pod hash suffix), or
+           \`{namespace="<ns>",pod=~"<workload>-[0-9]+$"}\` for
+           StatefulSets (ordinal suffix). The trailing \`$\` anchor is
+           CRITICAL — without it, a service \`api\` would match
+           \`api-internal-7f8c-xyz\` pods belonging to a sibling
+           service. Bare \`<workload>-.*\` is NOT safe when sibling
+           services share a name prefix.
+        4. \`{namespace="<ns>"}\` — last-resort fallback when none of
+           the above is available. Use this ONLY when the namespace
+           contains exactly one workload — otherwise restarts in
+           sibling pods get attributed to this service.
+
+      Examples:
+
+        Best:    rate(kube_pod_container_status_restarts_total{deployment="checkout-api"}[5m])
+        Good:    rate(kube_pod_container_status_restarts_total{namespace="checkout",container="checkout-api"}[5m])
+        OK:      rate(kube_pod_container_status_restarts_total{namespace="checkout",pod=~"checkout-api-[a-f0-9]+-[a-z0-9]+$"}[5m])
+        Avoid:   rate(kube_pod_container_status_restarts_total{namespace="checkout"}[5m])
+        Wrong:   rate(kube_pod_container_status_restarts_total{namespace="checkout",pod=~"api-.*"}[5m])  # also matches api-internal-* pods
+
+      Rule shape:
 
         {
           "name": "pod_restarts",
-          "query": "rate(kube_pod_container_status_restarts_total{namespace=\"<ns>\"}[5m])",
+          "query": "<one of the forms above>",
           "threshold": { "op": "gt", "value": 0.033 },
           "consecutiveTicks": 2,
           "source": "metrics"
         }
 
-      Selector priority: prefer \`namespace="..."\` (broadest + most reliably
-      available). If the service is narrowed by \`statefulset="..."\` or
-      \`daemonset="..."\`, use that instead. 0.033 per second ≈ 2 restarts per
-      minute — the first-level trip threshold.
+      0.033 per second ≈ 2 restarts per minute — the first-level trip
+      threshold.
 
       Only omit this rule if you truly could not identify a namespace NOR a
       workload selector for this service. That is rare — state it explicitly
@@ -269,7 +340,15 @@ OUTPUT STRICTNESS: Return PURE JSON only. Do NOT include JavaScript-style
 comments (// or /* */), trailing commas, or section headers inside any array.
 If you want to group services conceptually, use an extra field like
 "category": "deployment" | "statefulset" | "daemonset" | "container" on
-the service object itself — do not use inline comments as dividers.${excludeList}`,
+the service object itself — do not use inline comments as dividers.${excludeList}`;
+}
+
+export function createDiscoverAgent(config: DiscoverAgentConfig) {
+  const instructions = buildDiscoverInstructions(config);
+  return new Agent({
+    id: "discover",
+    name: "discover",
+    instructions: () => instructions,
     model: config.model as any,
     tools: config.tools ?? {},
     defaultOptions: {

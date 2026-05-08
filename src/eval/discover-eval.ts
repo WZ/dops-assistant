@@ -33,7 +33,7 @@
 import { readFileSync, existsSync } from "fs";
 import { resolve } from "path";
 import { parse as parseYaml } from "yaml";
-import type { ProbeMetricRule, ServiceConfig } from "../config/schema.js";
+import type { ProbeMetricRule, ServiceConfig, Threshold } from "../config/schema.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -88,6 +88,87 @@ export function loadInput(path: string, fixture: boolean = false): DiscoverInput
 // Catches common LLM placeholder strings that slip through the prompt —
 // discovery should never emit these literally.
 const PLACEHOLDER_RE = /YOUR_|REPLACE_ME|TODO|PLACEHOLDER|\$\{[^}]*\}|<[a-z_]+>/i;
+
+/**
+ * kube-state-metrics gauges that report desired / scheduled / total counts —
+ * NOT actual readiness. They stay >0 during CrashLoopBackOff, ImagePullBackOff,
+ * and Pending, so a `lt 1` threshold against them silently never trips.
+ *
+ * Exported so the prompt's DO NOT USE table and this set can be cross-checked
+ * by a unit test (drift between the two would let a regression slip through).
+ */
+export const AVAILABILITY_ANTIPATTERN_METRICS = new Set<string>([
+  "kube_deployment_status_replicas",
+  "kube_deployment_spec_replicas",
+  "kube_deployment_status_replicas_updated",
+  "kube_statefulset_status_replicas",
+  "kube_statefulset_replicas",
+  "kube_statefulset_status_replicas_current",
+  "kube_statefulset_status_replicas_updated",
+  "kube_daemonset_status_desired_number_scheduled",
+  "kube_daemonset_status_current_number_scheduled",
+]);
+
+/** `_unavailable` metrics are inverted — they go UP during outages.
+ * Pairing them with the standard `lt 1` availability threshold makes the
+ * rule trip on healthy clusters, not unhealthy ones. */
+const UNAVAILABLE_METRIC_RE = /^kube_[a-z0-9_]+_unavailable$/;
+
+const METRIC_NAME_RE = /\bkube_[a-z0-9_]+\b/g;
+const READINESS_SIGNAL_SOURCE = String.raw`\bkube_[a-z0-9_]*(?:_available|_ready|number_ready)\b\s*(?:\{[^}]*\})?`;
+
+function isInvertedUnavailableThreshold(threshold?: Threshold): boolean {
+  // No threshold means the detector is being called directly, so preserve the
+  // previous conservative behavior and flag `_unavailable` as an antipattern.
+  return !threshold || threshold.op === "lt" || threshold.op === "lte";
+}
+
+function isScaleToZeroGuardOccurrence(query: string, metric: string, index: number): boolean {
+  const afterName = query.slice(index + metric.length);
+  const comparedToPositive = /^\s*(?:\{[^}]*\})?\s*>\s*0(?:\.0+)?\b/.test(afterName);
+  if (!comparedToPositive) return false;
+
+  const before = query.slice(0, index);
+  if (new RegExp(`${READINESS_SIGNAL_SOURCE}[\\s\\S]*\\band\\s*$`).test(before)) {
+    return true;
+  }
+
+  const comparisonEnd = afterName.match(/^\s*(?:\{[^}]*\})?\s*>\s*0(?:\.0+)?\b/)![0].length;
+  const afterComparison = query.slice(index + metric.length + comparisonEnd);
+  return new RegExp(`^\\s*\\band\\b[\\s\\S]*${READINESS_SIGNAL_SOURCE}`).test(afterComparison);
+}
+
+/**
+ * Detect "desired-not-ready" availability antipatterns. Returns the offending
+ * metric name when the query uses a kube-state-metrics counter that reflects
+ * desired/total replica state rather than actual readiness, or an
+ * `_unavailable` variant whose semantics are inverted relative to the
+ * standard `lt 1` threshold.
+ *
+ * Used for availability-named rules only (`isAvailabilityRule`). Other rule
+ * names intentionally use desired-style or unrelated metrics — we don't flag
+ * those. When a desired-count metric is used in the standard scale-to-zero
+ * guard shape (`readiness_metric and desired_count_metric > 0`), that specific
+ * desired-count occurrence is treated as a guard, not an alarm signal.
+ *
+ * Returns null when the query is acceptable.
+ */
+export function detectAvailabilityAntipattern(query: string, threshold?: Threshold): string | null {
+  if (!query) return null;
+  const matches = [...query.matchAll(METRIC_NAME_RE)];
+  if (matches.length === 0) return null;
+  for (const m of matches) {
+    const name = m[0];
+    if (AVAILABILITY_ANTIPATTERN_METRICS.has(name)) {
+      if (!isScaleToZeroGuardOccurrence(query, name, m.index!)) return name;
+      continue;
+    }
+    if (UNAVAILABLE_METRIC_RE.test(name) && isInvertedUnavailableThreshold(threshold)) {
+      return name;
+    }
+  }
+  return null;
+}
 
 /**
  * Lightweight PromQL syntax check. Not a real parser — just catches the
@@ -174,6 +255,20 @@ function allLogRules(input: DiscoverInput): ProbeMetricRule[] {
   return out;
 }
 
+/**
+ * A rule name suggests it's measuring availability/health. Used to scope the
+ * desired-vs-ready antipattern check. We deliberately match more than just
+ * `availability` because the LLM is not strictly bound to the prompt's
+ * `service_availability` name — `service_health`, `liveness`, `readiness`,
+ * and bare `up`-style names are plausible renames that should still be checked.
+ * Rules whose names suggest other concerns (`pod_restarts`, `error_rate`,
+ * `latency`, `cpu_*`) are not flagged — they intentionally use desired-style
+ * or unrelated metrics.
+ */
+function isAvailabilityRule(ruleName: string): boolean {
+  return /availab|health|liveness|readiness/i.test(ruleName) || /^up(_|$)/i.test(ruleName);
+}
+
 export function scorePromQLParses(input: DiscoverInput): DimensionScore {
   const rules = allMetricRules(input);
   if (rules.length === 0) {
@@ -184,7 +279,17 @@ export function scorePromQLParses(input: DiscoverInput): DimensionScore {
   const failures: string[] = [];
   for (const r of rules) {
     const check = parsesAsPromQL(r.query);
-    if (!check.ok) failures.push(`${r.name}: ${check.reason}`);
+    if (!check.ok) {
+      failures.push(`${r.name}: ${check.reason}`);
+      continue;
+    }
+    // For availability rules, also flag desired-not-ready antipatterns: the
+    // query parses syntactically but uses a metric that never drops to 0 on
+    // real outages, so the `lt 1` threshold silently never trips.
+    if (isAvailabilityRule(r.name)) {
+      const bad = detectAvailabilityAntipattern(r.query, r.threshold);
+      if (bad) failures.push(`${r.name}: uses ${bad} (desired-count, not readiness — switch to *_available / *_ready / number_ready)`);
+    }
   }
   const score = failures.length === 0
     ? 25
