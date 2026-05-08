@@ -33,7 +33,7 @@
 import { readFileSync, existsSync } from "fs";
 import { resolve } from "path";
 import { parse as parseYaml } from "yaml";
-import type { ProbeMetricRule, ServiceConfig } from "../config/schema.js";
+import type { ProbeMetricRule, ServiceConfig, Threshold } from "../config/schema.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -109,16 +109,34 @@ export const AVAILABILITY_ANTIPATTERN_METRICS = new Set<string>([
   "kube_daemonset_status_current_number_scheduled",
 ]);
 
-/** True readiness signals — when present in a query, bare desired-count
- * metrics in the same expression are likely arithmetic guards, not the
- * primary alarm signal. The default config in `src/config/schema.ts` uses
- * `replicas_available{} and spec_replicas{} > 0` as a scale-to-zero guard. */
-const READINESS_SIGNAL_RE = /(?:_available|_ready|number_ready)\b/;
-
 /** `_unavailable` metrics are inverted — they go UP during outages.
  * Pairing them with the standard `lt 1` availability threshold makes the
  * rule trip on healthy clusters, not unhealthy ones. */
 const UNAVAILABLE_METRIC_RE = /^kube_[a-z0-9_]+_unavailable$/;
+
+const METRIC_NAME_RE = /\bkube_[a-z0-9_]+\b/g;
+const READINESS_SIGNAL_SOURCE = String.raw`\bkube_[a-z0-9_]*(?:_available|_ready|number_ready)\b\s*(?:\{[^}]*\})?`;
+
+function isInvertedUnavailableThreshold(threshold?: Threshold): boolean {
+  // No threshold means the detector is being called directly, so preserve the
+  // previous conservative behavior and flag `_unavailable` as an antipattern.
+  return !threshold || threshold.op === "lt" || threshold.op === "lte";
+}
+
+function isScaleToZeroGuardOccurrence(query: string, metric: string, index: number): boolean {
+  const afterName = query.slice(index + metric.length);
+  const comparedToPositive = /^\s*(?:\{[^}]*\})?\s*>\s*0(?:\.0+)?\b/.test(afterName);
+  if (!comparedToPositive) return false;
+
+  const before = query.slice(0, index);
+  if (new RegExp(`${READINESS_SIGNAL_SOURCE}[\\s\\S]*\\band\\s*$`).test(before)) {
+    return true;
+  }
+
+  const comparisonEnd = afterName.match(/^\s*(?:\{[^}]*\})?\s*>\s*0(?:\.0+)?\b/)![0].length;
+  const afterComparison = query.slice(index + metric.length + comparisonEnd);
+  return new RegExp(`^\\s*\\band\\b[\\s\\S]*${READINESS_SIGNAL_SOURCE}`).test(afterComparison);
+}
 
 /**
  * Detect "desired-not-ready" availability antipatterns. Returns the offending
@@ -129,22 +147,25 @@ const UNAVAILABLE_METRIC_RE = /^kube_[a-z0-9_]+_unavailable$/;
  *
  * Used for availability-named rules only (`isAvailabilityRule`). Other rule
  * names intentionally use desired-style or unrelated metrics — we don't flag
- * those. When a query references a true readiness signal alongside a bare
- * desired-count metric (the standard scale-to-zero guard pattern), the bare
- * metric is treated as a guard, not an alarm signal.
+ * those. When a desired-count metric is used in the standard scale-to-zero
+ * guard shape (`readiness_metric and desired_count_metric > 0`), that specific
+ * desired-count occurrence is treated as a guard, not an alarm signal.
  *
  * Returns null when the query is acceptable.
  */
-export function detectAvailabilityAntipattern(query: string): string | null {
+export function detectAvailabilityAntipattern(query: string, threshold?: Threshold): string | null {
   if (!query) return null;
-  const matches = query.match(/\bkube_[a-z0-9_]+\b/g);
-  if (!matches) return null;
-  // Guarded form: the query also references a real readiness signal, so any
-  // bare desired-count references are arithmetic guards (e.g. scale-to-zero).
-  if (matches.some((name) => READINESS_SIGNAL_RE.test(name))) return null;
-  for (const name of matches) {
-    if (AVAILABILITY_ANTIPATTERN_METRICS.has(name)) return name;
-    if (UNAVAILABLE_METRIC_RE.test(name)) return name;
+  const matches = [...query.matchAll(METRIC_NAME_RE)];
+  if (matches.length === 0) return null;
+  for (const m of matches) {
+    const name = m[0];
+    if (AVAILABILITY_ANTIPATTERN_METRICS.has(name)) {
+      if (!isScaleToZeroGuardOccurrence(query, name, m.index!)) return name;
+      continue;
+    }
+    if (UNAVAILABLE_METRIC_RE.test(name) && isInvertedUnavailableThreshold(threshold)) {
+      return name;
+    }
   }
   return null;
 }
@@ -266,7 +287,7 @@ export function scorePromQLParses(input: DiscoverInput): DimensionScore {
     // query parses syntactically but uses a metric that never drops to 0 on
     // real outages, so the `lt 1` threshold silently never trips.
     if (isAvailabilityRule(r.name)) {
-      const bad = detectAvailabilityAntipattern(r.query);
+      const bad = detectAvailabilityAntipattern(r.query, r.threshold);
       if (bad) failures.push(`${r.name}: uses ${bad} (desired-count, not readiness — switch to *_available / *_ready / number_ready)`);
     }
   }

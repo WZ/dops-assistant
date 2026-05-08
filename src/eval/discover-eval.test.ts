@@ -248,6 +248,14 @@ describe("discover-eval / detectAvailabilityAntipattern", () => {
     ).toBeNull();
   });
 
+  it("flags compound expressions that mix readiness and bad desired-count metrics outside the guard pattern", () => {
+    expect(
+      detectAvailabilityAntipattern(
+        'kube_deployment_status_replicas_available{deployment="x"} + kube_deployment_spec_replicas{deployment="x"}',
+      ),
+    ).toBe("kube_deployment_spec_replicas");
+  });
+
   it("flags compound queries that reference only bad metrics (no readiness signal)", () => {
     // No `_available` / `_ready` / `number_ready` in the expression — the
     // query is genuinely measuring desired counts, so the antipattern stands.
@@ -384,6 +392,29 @@ describe("discover-eval / scorePromQLParses flags availability antipatterns", ()
       });
       expect(result.score, `rule "${ruleName}" should be flagged`).toBeLessThan(25);
     }
+  });
+
+  it("allows *_unavailable metrics when the threshold trips on unavailable pods", () => {
+    const result = scorePromQLParses({
+      services: [
+        {
+          name: "x",
+          metrics: [],
+          logLabels: {},
+          probeRules: [
+            {
+              name: "service_availability",
+              query: 'kube_deployment_status_replicas_unavailable{deployment="x"}',
+              threshold: { op: "gt", value: 0 },
+              consecutiveTicks: 1,
+              source: "metrics",
+            },
+          ],
+        },
+      ],
+      globalProbeRules: [],
+    });
+    expect(result.score).toBe(25);
   });
 
   it("does not false-positive on rules whose names happen to contain `health` substrings unrelated to availability", () => {
