@@ -37,6 +37,7 @@ let mockDiscoverReplyOverride: string | null = null;
 // call, so abortSignal-plumbing tests can introspect it.
 const lastDiscoverGenerateOpts: { value: any } = { value: undefined };
 let mockDiscoverTimeoutFirstGenerate = false;
+let mockDiscoverNeverSettles = false;
 const discoverGenerateSignals: AbortSignal[] = [];
 const discoverGenerateSignalStates: Array<{ sameAsFirst: boolean; abortedOnEntry: boolean }> = [];
 
@@ -46,6 +47,7 @@ const discoverGenerateSignalStates: Array<{ sameAsFirst: boolean; abortedOnEntry
 // runDiscoverStep). Each call also records its options so the test can
 // assert toolChoice: "none" on the recovery turn.
 let mockDiscoverStallThenRecover = false;
+let mockDiscoverEmptyArrayThenRecover = false;
 const discoverGenerateCalls: Array<{ promptType: "primary" | "recovery"; prompt: string; opts: any }> = [];
 
 vi.mock("@mastra/core/agent", () => ({
@@ -56,7 +58,7 @@ vi.mock("@mastra/core/agent", () => ({
     async generate(prompt: string, opts?: any) {
       if (this.id === "discover") {
         lastDiscoverGenerateOpts.value = opts;
-        if (mockDiscoverStallThenRecover) {
+        if (mockDiscoverStallThenRecover || mockDiscoverEmptyArrayThenRecover) {
           // Recovery prompt is recognizable by its leading sentence — the
           // primary prompt is the bare "Discover all monitored services..."
           // sentence the production code passes to agent.generate().
@@ -73,7 +75,7 @@ vi.mock("@mastra/core/agent", () => ({
                 result: { content: [{ text: '{"data":[{"metric":{"deployment":"svc-a"}}]}' }] },
               }],
             });
-            return { text: "" };
+            return { text: mockDiscoverEmptyArrayThenRecover ? "[]" : "" };
           }
           return {
             text: JSON.stringify({
@@ -83,6 +85,9 @@ vi.mock("@mastra/core/agent", () => ({
               globalProbeRules: [],
             }),
           };
+        }
+        if (mockDiscoverNeverSettles) {
+          return new Promise(() => {});
         }
         if (mockDiscoverTimeoutFirstGenerate) {
           const signal = opts?.abortSignal as AbortSignal | undefined;
@@ -254,8 +259,11 @@ describe("runDiscoverStep — adversarial-review fixes (2026-04-22)", () => {
   afterEach(() => {
     mockDiscoverReplyOverride = null;
     mockDiscoverTimeoutFirstGenerate = false;
+    mockDiscoverNeverSettles = false;
+    mockDiscoverEmptyArrayThenRecover = false;
     discoverGenerateSignals.length = 0;
     discoverGenerateSignalStates.length = 0;
+    vi.useRealTimers();
   });
 
   it("B — accepts object form when globalProbeRules is non-empty even if services is empty", async () => {
@@ -300,6 +308,69 @@ describe("runDiscoverStep — adversarial-review fixes (2026-04-22)", () => {
     const result = await runDiscovery(baseConfig);
     // Bad-op rule dropped. Services list retained.
     expect(result.globalProbeRules).toEqual([]);
+  });
+
+  it("backfills a global availability rule from repeated up labels", async () => {
+    mockDiscoverReplyOverride = JSON.stringify({
+      services: [
+        { name: "svc-a", metrics: [{ query: 'up{app="svc-a"}', description: "" }], logLabels: {}, probeRules: [] },
+        { name: "svc-b", metrics: [{ query: 'up{app="svc-b"}', description: "" }], logLabels: {}, probeRules: [] },
+        { name: "svc-c", metrics: [{ query: 'up{app="svc-c"} == 1', description: "" }], logLabels: {}, probeRules: [] },
+      ],
+      globalProbeRules: [],
+    });
+    const result = await runDiscovery(baseConfig);
+    expect(result.globalProbeRules).toHaveLength(1);
+    expect(result.globalProbeRules[0]).toMatchObject({
+      name: "app_availability",
+      query: 'up{app="{service}"}',
+      threshold: { op: "lt", value: 1 },
+      consecutiveTicks: 3,
+      source: "metrics",
+    });
+  });
+
+  it("backfills a global availability rule after validation repairs metric queries", async () => {
+    const { getToolsByRole } = await import("../mcp/provider.js");
+    const mocked = vi.mocked(getToolsByRole);
+    const promTool = {
+      execute: vi.fn(async (args: Record<string, unknown>) => {
+        const query = String(args.expr ?? args.query ?? "");
+        const ok = query === 'up{app="svc-a"}' || query === 'up{app="svc-b"}';
+        return { status: "success", data: { result: ok ? [{ metric: {}, value: [0, "1"] }] : [] } };
+      }),
+    };
+
+    mockDiscoverReplyOverride = JSON.stringify({
+      services: [
+        { name: "svc-a", metrics: [{ query: 'missing_metric{service="svc-a"}', description: "" }], logLabels: {}, probeRules: [] },
+        { name: "svc-b", metrics: [{ query: 'missing_metric{service="svc-b"}', description: "" }], logLabels: {}, probeRules: [] },
+      ],
+      globalProbeRules: [],
+    });
+
+    mocked.mockImplementation(async (_providers, role) => {
+      if (role === "metrics") return { grafana_query_prometheus: promTool as any };
+      return {};
+    });
+    try {
+      const result = await runDiscovery(baseConfig);
+      expect(result.services.map((svc) => svc.metrics[0]?.query)).toEqual([
+        'up{app="svc-a"}',
+        'up{app="svc-b"}',
+      ]);
+      expect(result.globalProbeRules).toHaveLength(1);
+      expect(result.globalProbeRules[0]).toMatchObject({
+        name: "app_availability",
+        query: 'up{app="{service}"}',
+        threshold: { op: "lt", value: 1 },
+        consecutiveTicks: 3,
+        source: "metrics",
+      });
+    } finally {
+      mocked.mockReset();
+      mocked.mockResolvedValue({ grafana_query_prometheus: {} });
+    }
   });
 
   it("backfills service_availability when the LLM omits it but metrics[0] exists", async () => {
@@ -397,6 +468,24 @@ describe("runDiscoverStep — adversarial-review fixes (2026-04-22)", () => {
     });
   });
 
+  it("hard-times out when the discover agent ignores the abort signal", async () => {
+    vi.useFakeTimers();
+    mockDiscoverNeverSettles = true;
+    const phases: string[] = [];
+    const promise = runDiscovery({
+      ...baseConfig,
+      llmRetry: { maxAttempts: 1, initialDelayMs: 1, maxDelayMs: 1, jitterPercent: 0 },
+      llmCallMs: 10,
+      onPhase: (phase) => phases.push(phase),
+    });
+    const assertion = expect(promise).rejects.toThrow("LLM unavailable after retries");
+
+    await vi.advanceTimersByTimeAsync(11);
+
+    await assertion;
+    expect(phases[phases.length - 1]).toBe("complete-failed");
+  });
+
   // Regression: gpt-oss-120b on saturated context sometimes stops calling
   // tools AND emits 0 chars of synthesis text. The prepareStep wind-down
   // doesn't help (model exits the agent loop before the wind-down step
@@ -422,6 +511,21 @@ describe("runDiscoverStep — adversarial-review fixes (2026-04-22)", () => {
       expect(result.services[0]!.name).toBe("recovered-svc");
     } finally {
       mockDiscoverStallThenRecover = false;
+      discoverGenerateCalls.length = 0;
+    }
+  });
+
+  it("invokes recovery when a tool-using primary attempt returns an empty array", async () => {
+    mockDiscoverEmptyArrayThenRecover = true;
+    discoverGenerateCalls.length = 0;
+    try {
+      const result = await runDiscovery(baseConfig);
+      expect(result.services).toHaveLength(1);
+      expect(result.services[0]!.name).toBe("recovered-svc");
+      expect(discoverGenerateCalls.map((c) => c.promptType)).toEqual(["primary", "recovery"]);
+      expect(discoverGenerateCalls[1]!.opts?.toolChoice).toBe("none");
+    } finally {
+      mockDiscoverEmptyArrayThenRecover = false;
       discoverGenerateCalls.length = 0;
     }
   });

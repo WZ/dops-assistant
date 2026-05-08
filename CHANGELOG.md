@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.4.0] - 2026-05-08
+
+### Added
+- Repeatable discovery benchmark runner with 20-iteration scoring for service recall, probe-rule coverage, validation confidence, and terminal workflow phases.
+
+### Fixed
+- Service discovery now exits stalled LLM calls with a hard wall-clock timeout instead of relying solely on cooperative abort handling.
+- Discovery recovery now re-synthesizes services from captured tool output when the model returns an unusable empty payload after gathering evidence.
+- Global availability rules are backfilled deterministically when discovered services share a verified `up{label="<service>"}` convention.
+
 ## [0.4.3.1] - 2026-05-06
 
 ### Added

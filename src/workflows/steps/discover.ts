@@ -58,6 +58,49 @@ const RECOVERY_TOOL_RESULT_CHARS = 4000;
  */
 const RECOVERY_TIMEOUT_MS = 60_000;
 
+function createLlmTimeoutError(timeoutMs: number): Error {
+  const err = new Error(`LLM call timed out after ${timeoutMs}ms`);
+  err.name = "TimeoutError";
+  return err;
+}
+
+/**
+ * `AbortSignal` is cooperative: it only helps if every layer in Mastra, the AI
+ * SDK, undici, and the upstream gateway settles the promise on abort. Keep a
+ * hard wall-clock timeout around the call so discovery can always leave the
+ * "LLM is analyzing" state even when one layer ignores cancellation.
+ */
+async function runWithHardTimeout<T>(
+  timeoutMs: number | undefined,
+  run: (abortSignal?: AbortSignal) => Promise<T>,
+): Promise<T> {
+  if (!timeoutMs || timeoutMs <= 0) return run(undefined);
+
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      const err = createLlmTimeoutError(timeoutMs);
+      controller.abort(err);
+      reject(err);
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => run(controller.signal)),
+      timeoutPromise,
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+function discoverRetryConfig(config: DiscoverStepConfig): LlmRetryConfig {
+  const base = safeAgentRetryConfig(config.llmRetry, true);
+  return config.onRetry ? { ...base, onRetry: config.onRetry } : base;
+}
+
 const STALL_RECOVERY_PROMPT_HEADER =
   "You previously made the following tool calls during service discovery. " +
   "Based ONLY on this data, output the services list as JSON now. " +
@@ -276,6 +319,75 @@ function backfillServiceAvailability(
   logger.debug({ service: serviceName, query }, "discovery: backfilled service_availability rule from metrics[0]");
 }
 
+const PROM_LABEL_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function decodePromLabelValue(rawValue: string): string {
+  try {
+    return JSON.parse(`"${rawValue}"`) as string;
+  } catch {
+    return rawValue.replace(/\\"/g, "\"").replace(/\\\\/g, "\\");
+  }
+}
+
+function extractUpLabelValues(query: string): Array<{ label: string; value: string }> {
+  const out: Array<{ label: string; value: string }> = [];
+  const selectorRe = /\bup\s*\{([^}]*)\}/g;
+  let selectorMatch: RegExpExecArray | null;
+  while ((selectorMatch = selectorRe.exec(query)) !== null) {
+    const selector = selectorMatch[1] ?? "";
+    const labelRe = /\b([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"((?:\\.|[^"\\])*)"/g;
+    let labelMatch: RegExpExecArray | null;
+    while ((labelMatch = labelRe.exec(selector)) !== null) {
+      out.push({
+        label: labelMatch[1]!,
+        value: decodePromLabelValue(labelMatch[2] ?? ""),
+      });
+    }
+  }
+  return out;
+}
+
+export function backfillGlobalAvailabilityRules(
+  services: ServiceConfig[],
+  globalProbeRules: ProbeMetricRule[],
+): void {
+  if (services.length < 2) return;
+  if (globalProbeRules.some((rule) => rule.query.includes("{service}"))) return;
+
+  const counts = new Map<string, number>();
+  for (const service of services) {
+    const seenForService = new Set<string>();
+    for (const metric of service.metrics ?? []) {
+      for (const { label, value } of extractUpLabelValues(metric.query)) {
+        if (value === service.name) seenForService.add(label);
+      }
+    }
+    for (const label of seenForService) {
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+  }
+
+  const minimumMatches = Math.max(2, Math.ceil(services.length * 0.5));
+  const best = [...counts.entries()]
+    .filter(([label, count]) => PROM_LABEL_NAME_RE.test(label) && count >= minimumMatches)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
+  if (!best) return;
+
+  const [label, matchedServices] = best;
+  const name = `${label}_availability`;
+  if (globalProbeRules.some((rule) => rule.name === name)) return;
+
+  const query = `up{${label}="{service}"}`;
+  globalProbeRules.unshift({
+    name,
+    query,
+    threshold: { op: "lt", value: 1 },
+    consecutiveTicks: 3,
+    source: "metrics",
+  });
+  logger.debug({ rule: name, query, matchedServices, serviceCount: services.length }, "discovery: backfilled global availability rule");
+}
+
 /**
  * Try every parse path the discover agent's response could take and return
  * a non-empty DiscoverStepResult, or null if nothing usable was found.
@@ -286,13 +398,17 @@ function tryParseDiscoverResponse(text: string | undefined): DiscoverStepResult 
   if (!text) return null;
   const parsed = safeJsonParse(text);
   if (Array.isArray(parsed) && parsed.length > 0) {
-    return { services: parsed as ServiceConfig[], globalProbeRules: [] };
+    const services = validateDiscoveredServices(parsed);
+    const globalProbeRules: ProbeMetricRule[] = [];
+    backfillGlobalAvailabilityRules(services, globalProbeRules);
+    return { services, globalProbeRules };
   }
   if (parsed && typeof parsed === "object") {
     const rawServices = Array.isArray(parsed.services) ? parsed.services : [];
     const rawGlobals = Array.isArray(parsed.globalProbeRules) ? parsed.globalProbeRules : [];
     const globalProbeRules = validateDiscoveredRules(rawGlobals, "globalProbeRules");
     const services = validateDiscoveredServices(rawServices);
+    backfillGlobalAvailabilityRules(services, globalProbeRules);
     if (services.length > 0 || globalProbeRules.length > 0) {
       return { services, globalProbeRules };
     }
@@ -434,14 +550,8 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
 
     try {
       const result = await withLlmRetry(
-        () => {
-          // Per-attempt abort signal — the AI SDK has no idle timeout, so a
-          // silently-stalled stream (e.g. mid-stream socket reset that doesn't
-          // surface as an error) hangs the call forever. Bound it here.
-          const abortSignal = config.llmCallMs && config.llmCallMs > 0
-            ? AbortSignal.timeout(config.llmCallMs)
-            : undefined;
-          return agent.generate(discoverPrompt, {
+        () => runWithHardTimeout(config.llmCallMs, (abortSignal) =>
+          agent.generate(discoverPrompt, {
             abortSignal,
             providerOptions: {
               "openai-compatible": { max_tokens: config.discoveryConfig.maxOutputTokens },
@@ -478,13 +588,13 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
                 }
               }
             }
-          } as any);
-        },
+          } as any),
+        ),
         // Discovery's tool surface is read-only by convention (Prometheus
         // metric/label queries), so enable retry. If a write tool gets added
         // here, add a `readOnlyTools` flag to DiscoverStepConfig and route it
         // through safeAgentRetryConfig.
-        safeAgentRetryConfig(config.llmRetry, true),
+        discoverRetryConfig(config),
       );
 
       const usage = (result as any).totalUsage ?? (result as any).usage;
@@ -518,19 +628,19 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
       if (primary) return primary;
 
       // Stall recovery: gpt-oss-120b on saturated context sometimes stops
-      // calling tools AND emits 0 chars of synthesis text. The prepareStep
-      // wind-down can't help — the model voluntarily exits at step 6-9, well
-      // before maxSteps-2 fires the wind-down. Manually invoke a follow-up
-      // turn with the captured tool data inline and toolChoice forced off.
-      const responseEmpty = !result.text || result.text.trim().length === 0;
-      if (responseEmpty && recoveryToolHistory.length > 0) {
+      // calling tools and emits either 0 chars or a syntactically valid but
+      // unusable empty payload (`[]`). The prepareStep wind-down can't help
+      // when the model voluntarily exits at step 6-9, well before maxSteps-2
+      // fires the wind-down. Manually invoke a follow-up turn with the
+      // captured tool data inline and toolChoice forced off.
+      if (recoveryToolHistory.length > 0) {
         const recoveryCallId = newCallId();
         const recoveryStartMs = Date.now();
         const historyBlock = formatRecoveryToolHistory(recoveryToolHistory);
         const recoveryPrompt = `${STALL_RECOVERY_PROMPT_HEADER}\n\n${historyBlock}`;
         logger.warn(
-          { attempt, toolCallCount: recoveryToolHistory.length, recoveryCallId },
-          "discovery: empty synthesis after tool-using session — invoking stall-recovery",
+          { attempt, toolCallCount: recoveryToolHistory.length, responseChars: result.text?.length ?? 0, recoveryCallId },
+          "discovery: unusable synthesis after tool-using session — invoking stall-recovery",
         );
         logLlmCallStart({
           callId: recoveryCallId,
@@ -541,8 +651,8 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
         });
         try {
           const recoveryResult = await withLlmRetry(
-            () => agent.generate(recoveryPrompt, {
-              abortSignal: AbortSignal.timeout(RECOVERY_TIMEOUT_MS),
+            () => runWithHardTimeout(RECOVERY_TIMEOUT_MS, (abortSignal) => agent.generate(recoveryPrompt, {
+              abortSignal,
               providerOptions: {
                 "openai-compatible": {
                   max_tokens: config.discoveryConfig.maxOutputTokens,
@@ -550,8 +660,8 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
                 },
               },
               toolChoice: "none",
-            } as any),
-            safeAgentRetryConfig(config.llmRetry, true),
+            } as any)),
+            discoverRetryConfig(config),
           );
 
           const recoveryUsage = (recoveryResult as any).totalUsage ?? (recoveryResult as any).usage;

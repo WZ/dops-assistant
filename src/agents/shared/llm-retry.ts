@@ -8,6 +8,7 @@ export interface LlmRetryConfig {
   initialDelayMs?: number;
   maxDelayMs?: number;
   jitterPercent?: number;
+  onRetry?: (attempt: number, maxAttempts: number, reason: string) => void;
 }
 
 /**
@@ -49,6 +50,8 @@ export async function withLlmRetry<T>(
       lastErr = err;
       if (!isLlmUnavailable(err)) throw err;
       if (attempt === maxAttempts) break;
+      const reason = err instanceof Error ? err.message : String(err);
+      config.onRetry?.(attempt, maxAttempts, reason);
       const baseDelay = Math.min(initialDelayMs * 2 ** (attempt - 1), maxDelayMs);
       const jitter = Math.random() * jitterPercent * baseDelay;
       const delayMs = baseDelay + jitter;
