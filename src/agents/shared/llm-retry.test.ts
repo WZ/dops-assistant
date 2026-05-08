@@ -48,6 +48,24 @@ describe("withLlmRetry", () => {
     expect(fn).toHaveBeenCalledTimes(3);
   });
 
+  it("notifies before retrying a transient error", async () => {
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("ECONNREFUSED"))
+      .mockResolvedValue("ok");
+    const onRetry = vi.fn();
+    const p = withLlmRetry(fn, {
+      maxAttempts: 3,
+      initialDelayMs: 10,
+      maxDelayMs: 100,
+      jitterPercent: 0,
+      onRetry,
+    });
+    await vi.runAllTimersAsync();
+    await expect(p).resolves.toBe("ok");
+    expect(onRetry).toHaveBeenCalledWith(1, 3, "ECONNREFUSED");
+  });
+
   it("rethrows non-transient errors immediately without retry", async () => {
     const appErr = new SyntaxError("Unexpected token");
     const fn = vi.fn().mockRejectedValue(appErr);

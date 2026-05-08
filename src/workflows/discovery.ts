@@ -1,4 +1,4 @@
-import { runDiscoverStep } from "./steps/discover.js";
+import { backfillGlobalAvailabilityRules, runDiscoverStep } from "./steps/discover.js";
 import { runValidateStep } from "./steps/validate.js";
 import { createLogger } from "../logger.js";
 import type { LanguageModel } from "ai";
@@ -99,7 +99,9 @@ export async function runDiscovery(config: DiscoveryWorkflowConfig): Promise<Dis
         onIteration: config.onIteration,
         onTokenUsage: config.onTokenUsage,
       });
-      result = { services: validated, globalProbeRules: discovered.globalProbeRules };
+      const globalProbeRules = [...discovered.globalProbeRules];
+      backfillGlobalAvailabilityRules(validated, globalProbeRules);
+      result = { services: validated, globalProbeRules };
       terminalPhase = "complete";
     } catch (err) {
       // Preserve the full Error (including stack) via pino's default
