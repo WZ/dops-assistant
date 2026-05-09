@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { SkillsPage } from "./SkillsPage";
 import { StackProvider } from "../contexts/StackContext";
@@ -119,5 +119,53 @@ describe("SkillsPage", () => {
       expect(screen.queryByText("Alpha Skill")).toBeNull();
       expect(screen.getByText("Beta Skill")).toBeTruthy();
     });
+  });
+
+  it("lets discovery-scoped skills opt into discovery injection", async () => {
+    fetchImpl.mockImplementation((url, init) => {
+      if (String(url).endsWith("/api/skills")) {
+        return Promise.resolve(new Response(JSON.stringify([
+          {
+            id: "consul-bare-metal",
+            title: "Consul Bare Metal",
+            services: [],
+            alerts: [],
+            tags: [],
+            scope: ["discovery"],
+            enabled: true,
+          },
+        ]), { status: 200 }));
+      }
+      if (String(url).endsWith("/api/discovery/skills") && (init as RequestInit | undefined)?.method === "PUT") {
+        return Promise.resolve(new Response(JSON.stringify({ enabledSkillIds: ["consul-bare-metal"] }), { status: 200 }));
+      }
+      if (String(url).endsWith("/api/discovery/skills")) {
+        return Promise.resolve(new Response(JSON.stringify({ enabledSkillIds: [] }), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
+    });
+
+    render(
+      <Wrapper stackId="alpha">
+        <SkillsPage />
+      </Wrapper>,
+    );
+
+    const discoverySwitch = await screen.findByRole("switch", { name: "Use Consul Bare Metal in discovery" });
+    expect(discoverySwitch.getAttribute("aria-checked")).toBe("false");
+
+    fireEvent.click(discoverySwitch);
+
+    await waitFor(() => {
+      const putCall = fetchImpl.mock.calls.find(([url, init]) =>
+        String(url).endsWith("/api/discovery/skills")
+        && (init as RequestInit | undefined)?.method === "PUT",
+      );
+      expect(putCall).toBeTruthy();
+      expect(JSON.parse(String((putCall![1] as RequestInit).body))).toEqual({
+        enabledSkillIds: ["consul-bare-metal"],
+      });
+    });
+    expect(discoverySwitch.getAttribute("aria-checked")).toBe("true");
   });
 });

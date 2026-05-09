@@ -37,6 +37,7 @@ let mockDiscoverReplyOverride: string | null = null;
 // call, so abortSignal-plumbing tests can introspect it.
 const lastDiscoverGenerateOpts: { value: any } = { value: undefined };
 let mockDiscoverTimeoutFirstGenerate = false;
+let mockDiscoverTimeoutAfterToolData = false;
 let mockDiscoverNeverSettles = false;
 const discoverGenerateSignals: AbortSignal[] = [];
 const discoverGenerateSignalStates: Array<{ sameAsFirst: boolean; abortedOnEntry: boolean }> = [];
@@ -54,10 +55,39 @@ vi.mock("@mastra/core/agent", () => ({
   Agent: class MockAgent {
     id: string;
     name: string;
-    constructor(opts: any) { this.id = opts.id; this.name = opts.name; }
+    tools: Record<string, any>;
+    constructor(opts: any) { this.id = opts.id; this.name = opts.name; this.tools = opts.tools ?? {}; }
     async generate(prompt: string, opts?: any) {
       if (this.id === "discover") {
         lastDiscoverGenerateOpts.value = opts;
+        if (mockDiscoverTimeoutAfterToolData) {
+          opts?.onStepFinish?.({
+            toolResults: [{
+              toolName: "grafana_query_prometheus",
+              args: {
+                datasourceUid: "prometheus",
+                expr: "count by (deployment) (kube_deployment_status_replicas_available)",
+                queryType: "instant",
+                startTime: "now",
+                endTime: "now",
+                stepSeconds: 0,
+              },
+              result: {
+                content: [{
+                  type: "text",
+                  text: '{"data":[{"metric":{"deployment":"svc-timeout","namespace":"apps"},"value":[1,"1"]}]}',
+                }],
+              },
+            }],
+          });
+          const signal = opts?.abortSignal as AbortSignal | undefined;
+          if (signal) {
+            await new Promise<void>((resolve) => {
+              signal.addEventListener("abort", () => resolve(), { once: true });
+            });
+            throw signal.reason;
+          }
+        }
         if (mockDiscoverStallThenRecover || mockDiscoverEmptyArrayThenRecover) {
           // Recovery prompt is recognizable by its leading sentence — the
           // primary prompt is the bare "Discover all monitored services..."
@@ -259,6 +289,7 @@ describe("runDiscoverStep — adversarial-review fixes (2026-04-22)", () => {
   afterEach(() => {
     mockDiscoverReplyOverride = null;
     mockDiscoverTimeoutFirstGenerate = false;
+    mockDiscoverTimeoutAfterToolData = false;
     mockDiscoverNeverSettles = false;
     mockDiscoverEmptyArrayThenRecover = false;
     discoverGenerateSignals.length = 0;
@@ -452,20 +483,16 @@ describe("runDiscoverStep — adversarial-review fixes (2026-04-22)", () => {
     expect(opts.abortSignal).toBeUndefined();
   });
 
-  it("uses a fresh AbortSignal for the retry after a timeout", async () => {
+  it("fails fast when the primary discovery LLM times out before tool data is captured", async () => {
     mockDiscoverTimeoutFirstGenerate = true;
-    await runDiscovery({
+    await expect(runDiscovery({
       ...baseConfig,
       llmRetry: { maxAttempts: 2, initialDelayMs: 1, maxDelayMs: 1, jitterPercent: 0 },
       llmCallMs: 1,
-    });
+    })).rejects.toThrow("LLM call timed out after 1ms");
 
-    expect(discoverGenerateSignals).toHaveLength(2);
+    expect(discoverGenerateSignals).toHaveLength(1);
     expect(discoverGenerateSignals[0]!.aborted).toBe(true);
-    expect(discoverGenerateSignalStates[1]).toEqual({
-      sameAsFirst: false,
-      abortedOnEntry: false,
-    });
   });
 
   it("hard-times out when the discover agent ignores the abort signal", async () => {
@@ -478,12 +505,26 @@ describe("runDiscoverStep — adversarial-review fixes (2026-04-22)", () => {
       llmCallMs: 10,
       onPhase: (phase) => phases.push(phase),
     });
-    const assertion = expect(promise).rejects.toThrow("LLM unavailable after retries");
+    const assertion = expect(promise).rejects.toThrow("LLM call timed out after 10ms");
 
     await vi.advanceTimersByTimeAsync(11);
 
     await assertion;
     expect(phases[phases.length - 1]).toBe("complete-failed");
+  });
+
+  it("returns deterministic candidates when the primary discovery LLM times out after tool data", async () => {
+    vi.useFakeTimers();
+    mockDiscoverTimeoutAfterToolData = true;
+    const promise = runDiscovery({
+      ...baseConfig,
+      llmCallMs: 10,
+    });
+
+    await vi.advanceTimersByTimeAsync(11);
+    const result = await promise;
+
+    expect(result.services.some((service) => service.name === "svc-timeout")).toBe(true);
   });
 
   // Regression: gpt-oss-120b on saturated context sometimes stops calling

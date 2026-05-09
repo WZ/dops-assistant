@@ -64,6 +64,10 @@ function createLlmTimeoutError(timeoutMs: number): Error {
   return err;
 }
 
+function isLlmTimeoutError(err: unknown): boolean {
+  return err instanceof Error && err.name === "TimeoutError";
+}
+
 /**
  * `AbortSignal` is cooperative: it only helps if every layer in Mastra, the AI
  * SDK, undici, and the upstream gateway settles the promise on abort. Keep a
@@ -422,6 +426,282 @@ interface RecoveryToolEntry {
   result: string;
 }
 
+interface DiscoveryCandidate {
+  name: string;
+  source: "deployment" | "statefulset" | "daemonset" | "consul";
+  namespace?: string;
+  metricQuery: string;
+  metricDescription: string;
+  logLabels: Record<string, string>;
+  restartQuery?: string;
+}
+
+const CANDIDATE_SOURCE_PRIORITY: Record<DiscoveryCandidate["source"], number> = {
+  deployment: 4,
+  statefulset: 3,
+  daemonset: 3,
+  consul: 2,
+};
+
+function promLabelEscape(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function selector(labels: Record<string, string | undefined>): string {
+  const parts = Object.entries(labels)
+    .filter((entry): entry is [string, string] => Boolean(entry[1]))
+    .map(([key, value]) => `${key}="${promLabelEscape(value)}"`);
+  return `{${parts.join(",")}}`;
+}
+
+function logSelector(labels: Record<string, string>): string {
+  return Object.entries(labels)
+    .map(([key, value]) => `${key}="${promLabelEscape(value)}"`)
+    .join(",");
+}
+
+function normalizeServiceName(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+function isExcludedService(name: string, excludeServices: string[] | undefined): boolean {
+  const normalized = normalizeServiceName(name);
+  return (excludeServices ?? []).some((excluded) => normalizeServiceName(excluded) === normalized);
+}
+
+function candidateKey(name: string): string {
+  return normalizeServiceName(name);
+}
+
+function candidateProbeRules(candidate: DiscoveryCandidate): ProbeMetricRule[] {
+  const rules: ProbeMetricRule[] = [{
+    name: "service_availability",
+    query: candidate.metricQuery,
+    threshold: { op: "lt", value: 1 },
+    consecutiveTicks: 3,
+    source: "metrics",
+  }];
+
+  if (candidate.restartQuery) {
+    rules.push({
+      name: "pod_restarts",
+      query: candidate.restartQuery,
+      threshold: { op: "gt", value: 0.033 },
+      consecutiveTicks: 2,
+      source: "metrics",
+    });
+  }
+
+  if (Object.keys(candidate.logLabels).length > 0) {
+    rules.push({
+      name: "log_errors",
+      query: `sum(count_over_time({${logSelector(candidate.logLabels)}} |= \`error\` or \`fatal\` [15m]))`,
+      threshold: { op: "gt", value: 75 },
+      consecutiveTicks: 2,
+      source: "logs",
+    });
+  }
+
+  return rules;
+}
+
+function serviceQueries(service: ServiceConfig): string {
+  return (service.metrics ?? []).map((metric) => metric.query).join("\n").toLowerCase();
+}
+
+function isDaemonSetBackedService(service: ServiceConfig): boolean {
+  const queries = serviceQueries(service);
+  return queries.includes("kube_daemonset_") || queries.includes("daemonset=");
+}
+
+function isStatefulSetBackedService(service: ServiceConfig): boolean {
+  const queries = serviceQueries(service);
+  return queries.includes("kube_statefulset_") || queries.includes("statefulset=");
+}
+
+function isLowSignalInfrastructureService(service: ServiceConfig): boolean {
+  const name = normalizeServiceName(service.name);
+  if (isStatefulSetBackedService(service) && /-shard\d+$/.test(name)) return true;
+  if (!isDaemonSetBackedService(service)) return false;
+  return (
+    /^kube-(proxy|flannel(?:-ds-.+)?)$/.test(name) ||
+    /^openebs-/.test(name) ||
+    name === "promtail" ||
+    name === "prometheus-node-exporter" ||
+    name === "process-exporter" ||
+    name === "speaker" ||
+    name.endsWith("-node-agent")
+  );
+}
+
+function serviceFromCandidate(candidate: DiscoveryCandidate): ServiceConfig {
+  return {
+    name: candidate.name,
+    metrics: [{ query: candidate.metricQuery, description: candidate.metricDescription }],
+    logLabels: candidate.logLabels,
+    probeRules: candidateProbeRules(candidate),
+  };
+}
+
+function addCandidate(
+  candidates: Map<string, DiscoveryCandidate>,
+  candidate: DiscoveryCandidate,
+  excludeServices: string[] | undefined,
+): void {
+  if (!candidate.name || isExcludedService(candidate.name, excludeServices)) return;
+  const key = candidateKey(candidate.name);
+  const existing = candidates.get(key);
+  if (!existing || CANDIDATE_SOURCE_PRIORITY[candidate.source] > CANDIDATE_SOURCE_PRIORITY[existing.source]) {
+    candidates.set(key, candidate);
+  }
+}
+
+function parsePrometheusMetricRows(resultText: string): Array<Record<string, string>> {
+  try {
+    const parsed = JSON.parse(resultText) as unknown;
+    const rows =
+      Array.isArray((parsed as { data?: unknown })?.data)
+        ? (parsed as { data: unknown[] }).data
+        : Array.isArray((parsed as { data?: { result?: unknown[] } })?.data?.result)
+          ? (parsed as { data: { result: unknown[] } }).data.result
+          : Array.isArray((parsed as { result?: unknown[] })?.result)
+            ? (parsed as { result: unknown[] }).result
+            : [];
+    return rows
+      .map((row) => (row && typeof row === "object" ? (row as { metric?: unknown }).metric : undefined))
+      .filter((metric): metric is Record<string, string> => {
+        if (!metric || typeof metric !== "object") return false;
+        return Object.values(metric).every((value) => typeof value === "string");
+      });
+  } catch {
+    return [];
+  }
+}
+
+function extractDiscoveryCandidates(
+  args: Record<string, unknown>,
+  resultText: string,
+  excludeServices: string[] | undefined,
+): DiscoveryCandidate[] {
+  const expr = String(args["expr"] ?? args["query"] ?? "");
+  if (!expr) return [];
+  const metrics = parsePrometheusMetricRows(resultText);
+  const out: DiscoveryCandidate[] = [];
+
+  for (const metric of metrics) {
+    const namespace = metric["namespace"];
+    if (metric["deployment"]) {
+      const name = metric["deployment"];
+      out.push({
+        name,
+        source: "deployment",
+        namespace,
+        metricQuery: `kube_deployment_status_replicas_available${selector({ deployment: name, namespace })}`,
+        metricDescription: "Deployment available replicas",
+        logLabels: namespace ? { namespace, container_name: name } : { container_name: name },
+        restartQuery: `rate(kube_pod_container_status_restarts_total${selector({ deployment: name })}[5m])`,
+      });
+    } else if (metric["statefulset"]) {
+      const name = metric["statefulset"];
+      out.push({
+        name,
+        source: "statefulset",
+        namespace,
+        metricQuery: `kube_statefulset_status_replicas_ready${selector({ statefulset: name, namespace })}`,
+        metricDescription: "StatefulSet ready replicas",
+        logLabels: namespace ? { namespace, container_name: name } : { container_name: name },
+        restartQuery: `rate(kube_pod_container_status_restarts_total${selector({ statefulset: name })}[5m])`,
+      });
+    } else if (metric["daemonset"]) {
+      const name = metric["daemonset"];
+      out.push({
+        name,
+        source: "daemonset",
+        namespace,
+        metricQuery: `kube_daemonset_status_number_ready${selector({ daemonset: name, namespace })}`,
+        metricDescription: "DaemonSet ready pods",
+        logLabels: namespace ? { namespace, container_name: name } : { container_name: name },
+        restartQuery: `rate(kube_pod_container_status_restarts_total${selector({ daemonset: name })}[5m])`,
+      });
+    } else if (expr.includes("consul_catalog_service_node_healthy") && metric["service_name"]) {
+      const type = metric["type"] ?? metric["service_type"] ?? metric["service_kind"] ?? metric["kubernetes_service_type"];
+      if (type && type !== "ExternalName") continue;
+      const name = metric["service_name"];
+      out.push({
+        name,
+        source: "consul",
+        metricQuery: `consul_catalog_service_node_healthy${selector({ service_name: name })}`,
+        metricDescription: "Consul health status",
+        logLabels: {},
+      });
+    }
+  }
+
+  return out.filter((candidate) => !isExcludedService(candidate.name, excludeServices));
+}
+
+function mergeCandidatesIntoDiscoveryResult(
+  result: DiscoverStepResult,
+  candidates: Map<string, DiscoveryCandidate>,
+  excludeServices: string[] | undefined,
+): DiscoverStepResult {
+  const droppedFromLlm = result.services.filter((service) => isLowSignalInfrastructureService(service));
+  const services = result.services.filter((service) =>
+    !isExcludedService(service.name, excludeServices) &&
+    !isLowSignalInfrastructureService(service)
+  );
+  const existing = new Set(services.map((service) => candidateKey(service.name)));
+  const added: ServiceConfig[] = [];
+  const sourceCounts = [...candidates.values()].reduce((counts, candidate) => {
+    counts.set(candidate.source, (counts.get(candidate.source) ?? 0) + 1);
+    return counts;
+  }, new Map<DiscoveryCandidate["source"], number>());
+
+  for (const candidate of [...candidates.values()].sort((a, b) => a.name.localeCompare(b.name))) {
+    const key = candidateKey(candidate.name);
+    if (existing.has(key)) continue;
+    const sourceCount = sourceCounts.get(candidate.source) ?? 0;
+    if ((candidate.source === "statefulset" || candidate.source === "daemonset") && sourceCount > 10) {
+      continue;
+    }
+    const service = serviceFromCandidate(candidate);
+    if (isLowSignalInfrastructureService(service)) continue;
+    existing.add(key);
+    added.push(service);
+  }
+
+  if (droppedFromLlm.length > 0) {
+    logger.warn(
+      {
+        droppedServiceCount: droppedFromLlm.length,
+        examples: droppedFromLlm.slice(0, 10).map((service) => service.name),
+      },
+      "discovery: dropped low-signal infrastructure services from LLM output",
+    );
+  }
+
+  if (added.length > 0) {
+    logger.warn(
+      {
+        llmServiceCount: result.services.length,
+        addedServiceCount: added.length,
+        candidateServiceCount: candidates.size,
+      },
+      "discovery: added services deterministically from observed metric/catalog rows",
+    );
+  }
+
+  return {
+    services: [...services, ...added],
+    globalProbeRules: result.globalProbeRules,
+  };
+}
+
+export const discoverStepTestHooks = {
+  extractDiscoveryCandidates,
+  mergeCandidatesIntoDiscoveryResult,
+};
+
 /**
  * Format the captured tool history for inline inclusion in the stall-recovery
  * prompt. Each entry is a self-contained block so the model can scan top-down.
@@ -472,6 +752,7 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
 
   // Wrap tools with callbacks and emit synthetic iteration events based on tool call count
   let toolCallCount = 0;
+  const discoveredCandidates = new Map<string, DiscoveryCandidate>();
   const wrappedOnToolCall: typeof config.onToolCall = config.onToolCall
     ? (name, args, result, durationMs, error, phase) => {
         toolCallCount++;
@@ -479,6 +760,12 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
         config.onToolCall!(name, args, result, durationMs, error, phase);
       }
     : undefined;
+  const recordRawDiscoveryToolResult = (name: string, args: Record<string, unknown>, result: string) => {
+    if (!name.includes("query_prometheus")) return;
+    for (const candidate of extractDiscoveryCandidates(args, result, config.discoveryConfig.excludeServices)) {
+      addCandidate(discoveredCandidates, candidate, config.discoveryConfig.excludeServices);
+    }
+  };
 
   // Always wrap the discovery tools — wrapToolsWithCallbacks applies
   // coercePrometheusArgs and coerceLokiArgs inside the execute path, and
@@ -503,6 +790,7 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
     "discovery",
     datasourceUidMap,
     maxToolResultChars,
+    recordRawDiscoveryToolResult,
   );
 
   // Build recipe hints (skills + recipes). Datasource UIDs are passed
@@ -549,52 +837,46 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
     });
 
     try {
-      const result = await withLlmRetry(
-        () => runWithHardTimeout(config.llmCallMs, (abortSignal) =>
-          agent.generate(discoverPrompt, {
-            abortSignal,
-            providerOptions: {
-              "openai-compatible": { max_tokens: config.discoveryConfig.maxOutputTokens },
-            },
-            onStepFinish: (step: any) => {
-              if (!step.toolResults?.length) return;
-              for (const tr of step.toolResults) {
-                try {
-                  const payload = tr.payload ?? tr;
-                  const toolName = payload.toolName ?? payload.name ?? tr.toolName ?? "unknown";
-                  const nestedContent = payload.result?.content?.[0]?.text;
-                  const rawResult = nestedContent ?? payload.result ?? tr.result ?? tr.output ?? "";
-                  const resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
-                  // JSON.stringify can throw on BigInt / circular / exotic return types.
-                  // Slice args/results to 500 chars to bound memory on long discovery runs.
-                  const argsStr = JSON.stringify(payload.args ?? {});
-                  const toolEvent: ToolCallEvent = {
-                    tool: toolName,
-                    argsChars: argsStr.length,
-                    args: argsStr.slice(0, 500),
-                    resultChars: resultStr.length,
-                    result: resultStr.slice(0, 500),
-                  };
-                  discoverToolCalls.push(toolEvent);
-                  logToolCall(discoverCallId, "discover", toolEvent);
-                  recoveryToolHistory.push({
-                    tool: toolName,
-                    args: argsStr.slice(0, 500),
-                    result: resultStr.slice(0, RECOVERY_TOOL_RESULT_CHARS),
-                  });
-                } catch (err) {
-                  // Never let observability crash the discover step.
-                  logger.warn({ err }, "discover: onStepFinish failed to record tool call");
-                }
+      const result = await runWithHardTimeout(config.llmCallMs, (abortSignal) =>
+        agent.generate(discoverPrompt, {
+          abortSignal,
+          providerOptions: {
+            "openai-compatible": { max_tokens: config.discoveryConfig.maxOutputTokens },
+          },
+          onStepFinish: (step: any) => {
+            if (!step.toolResults?.length) return;
+            for (const tr of step.toolResults) {
+              try {
+                const payload = tr.payload ?? tr;
+                const toolName = payload.toolName ?? payload.name ?? tr.toolName ?? "unknown";
+                const nestedContent = payload.result?.content?.[0]?.text;
+                const rawResult = nestedContent ?? payload.result ?? tr.result ?? tr.output ?? "";
+                const resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
+                // JSON.stringify can throw on BigInt / circular / exotic return types.
+                // Slice args/results to 500 chars to bound memory on long discovery runs.
+                const argsStr = JSON.stringify(payload.args ?? {});
+                recordRawDiscoveryToolResult(toolName, payload.args ?? {}, resultStr);
+                const toolEvent: ToolCallEvent = {
+                  tool: toolName,
+                  argsChars: argsStr.length,
+                  args: argsStr.slice(0, 500),
+                  resultChars: resultStr.length,
+                  result: resultStr.slice(0, 500),
+                };
+                discoverToolCalls.push(toolEvent);
+                logToolCall(discoverCallId, "discover", toolEvent);
+                recoveryToolHistory.push({
+                  tool: toolName,
+                  args: argsStr.slice(0, 500),
+                  result: resultStr.slice(0, RECOVERY_TOOL_RESULT_CHARS),
+                });
+              } catch (err) {
+                // Never let observability crash the discover step.
+                logger.warn({ err }, "discover: onStepFinish failed to record tool call");
               }
             }
-          } as any),
-        ),
-        // Discovery's tool surface is read-only by convention (Prometheus
-        // metric/label queries), so enable retry. If a write tool gets added
-        // here, add a `readOnlyTools` flag to DiscoverStepConfig and route it
-        // through safeAgentRetryConfig.
-        discoverRetryConfig(config),
+          }
+        } as any),
       );
 
       const usage = (result as any).totalUsage ?? (result as any).usage;
@@ -625,7 +907,13 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
       const primary =
         tryParseDiscoverResponse(result.text) ??
         tryParseDiscoverResponse(typeof reasoningText === "string" ? reasoningText : undefined);
-      if (primary) return primary;
+      if (primary) {
+        return mergeCandidatesIntoDiscoveryResult(
+          primary,
+          discoveredCandidates,
+          config.discoveryConfig.excludeServices,
+        );
+      }
 
       // Stall recovery: gpt-oss-120b on saturated context sometimes stops
       // calling tools and emits either 0 chars or a syntactically valid but
@@ -689,11 +977,16 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
             tryParseDiscoverResponse(recoveryResult.text) ??
             tryParseDiscoverResponse(typeof recoveryReasoning === "string" ? recoveryReasoning : undefined);
           if (recovered) {
+            const completed = mergeCandidatesIntoDiscoveryResult(
+              recovered,
+              discoveredCandidates,
+              config.discoveryConfig.excludeServices,
+            );
             logger.info(
-              { attempt, recoveredServiceCount: recovered.services.length },
+              { attempt, recoveredServiceCount: completed.services.length },
               "discovery: stall-recovery succeeded",
             );
-            return recovered;
+            return completed;
           }
           logger.warn(
             { attempt, recoveryResponseChars: recoveryResult.text?.length ?? 0 },
@@ -742,10 +1035,27 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
         toolCalls: discoverToolCalls,
         error: message,
       });
+      if (isLlmTimeoutError(err)) {
+        if (discoveredCandidates.size > 0) {
+          logger.warn(
+            { attempt, candidateServiceCount: discoveredCandidates.size },
+            "discovery: primary LLM timed out after tool data was captured — returning deterministic candidates instead of replaying discovery",
+          );
+          return mergeCandidatesIntoDiscoveryResult(
+            { services: [], globalProbeRules: [] },
+            discoveredCandidates,
+            config.discoveryConfig.excludeServices,
+          );
+        }
+        logger.warn(
+          { attempt, err: message },
+          "discovery: primary LLM timed out before usable tool data was captured — failing fast",
+        );
+        throw err;
+      }
       logger.warn({ attempt, err: message }, "discovery attempt failed");
-      // LLM-unavailable already retried inside withLlmRetry — bypass the
-      // outer parse-retry loop (parse-retry is for malformed JSON, not
-      // for sustained network outages).
+      // Tool-less recovery still uses withLlmRetry. Do not send those
+      // sustained upstream failures through the outer parse-retry loop.
       if (err instanceof LlmUnavailableError) throw err;
       if (attempt === MAX_RETRIES) throw err;
     }
@@ -755,5 +1065,16 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
     { maxRetries: MAX_RETRIES },
     "discovery: agent returned no parseable services after all retries — returning empty list (likely causes: LLM produced empty array, wrapped result in unexpected shape, or exhausted iterations without JSON output)",
   );
+  if (discoveredCandidates.size > 0) {
+    logger.warn(
+      { candidateServiceCount: discoveredCandidates.size },
+      "discovery: returning deterministic candidates after all LLM parse attempts failed",
+    );
+    return mergeCandidatesIntoDiscoveryResult(
+      { services: [], globalProbeRules: [] },
+      discoveredCandidates,
+      config.discoveryConfig.excludeServices,
+    );
+  }
   return { services: [], globalProbeRules: [] };
 }

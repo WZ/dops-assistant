@@ -8,15 +8,17 @@ import { stringify, parse } from "yaml";
 import type { IDiscoverAgent } from "../../types/agent-interfaces.js";
 import type { ValidatedServiceConfig } from "../../types/discovery-types.js";
 import type { ServiceConfig, DiscoveryConfig, ProbeMetricRule } from "../../config/schema.js";
+import type { Skill } from "../../skills/store.js";
 
 type Phase = "running" | "review" | "editing" | "done";
 
 interface DiscoverAppProps {
   agent: IDiscoverAgent;
   config: DiscoveryConfig;
+  skills?: Skill[];
 }
 
-function DiscoverApp({ agent, config }: DiscoverAppProps) {
+function DiscoverApp({ agent, config, skills }: DiscoverAppProps) {
   const { exit } = useApp();
   const [phase, setPhase] = useState<Phase>("running");
   const [currentPhase, setCurrentPhase] = useState<string>("discovery");
@@ -36,6 +38,8 @@ function DiscoverApp({ agent, config }: DiscoverAppProps) {
           const argsStr = JSON.stringify(args).slice(0, 80);
           setToolCalls((prev) => [...prev.slice(-20), `→ ${name}(${argsStr})`]);
         },
+        undefined,
+        skills,
       )
       .then((result) => {
         setServices(result.services);
@@ -145,7 +149,7 @@ function DiscoverApp({ agent, config }: DiscoverAppProps) {
   return <Text color="green">Done.</Text>;
 }
 
-export async function runDiscover(agent: IDiscoverAgent, config: DiscoveryConfig): Promise<void> {
-  const { waitUntilExit } = render(<DiscoverApp agent={agent} config={config} />);
+export async function runDiscover(agent: IDiscoverAgent, config: DiscoveryConfig, skills?: Skill[]): Promise<void> {
+  const { waitUntilExit } = render(<DiscoverApp agent={agent} config={config} skills={skills} />);
   await waitUntilExit();
 }

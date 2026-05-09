@@ -40,9 +40,11 @@ import type { LanguageModel } from "ai";
 import { getEffectiveScanConfig } from "./scan-settings.js";
 import { getEffectiveK8sEventsConfig } from "./k8s-events-settings.js";
 import type { Database } from "./db.js";
+import type { SkillStore } from "../skills/store.js";
 import type { StackRow, StackSummary, StackConfig } from "../types/stack-types.js";
 import { DEFAULT_STACK_SLUG } from "../types/stack-types.js";
 import { clearStackCaches } from "./ws-handler.js";
+import { resolveDiscoverySkills } from "./discovery-skill-selection.js";
 import * as slackNotifier from "./slack-notifier.js";
 import * as emailNotifier from "./email-notifier.js";
 import type { EmailNotifierDeps } from "./email-notifier.js";
@@ -96,6 +98,7 @@ export class StackManager {
    * model is provided).
    */
   private llmModel: LanguageModel | null = null;
+  private skillStore: SkillStore | undefined;
 
   constructor(db: Database, config: Config) {
     this.db = db;
@@ -105,6 +108,11 @@ export class StackManager {
   /** Wire the LLM model (called from index.ts after createModel). */
   setLlmModel(model: LanguageModel): void {
     this.llmModel = model;
+  }
+
+  /** Wire skills after index.ts loads the SkillStore. Periodic discovery closures read this lazily. */
+  setSkillStore(skillStore: SkillStore): void {
+    this.skillStore = skillStore;
   }
 
   /**
@@ -272,6 +280,12 @@ export class StackManager {
           providers: args.providers,
           discoveryConfig: args.discoveryConfig,
           onTokenUsage: args.onTokenUsage,
+          skills: resolveDiscoverySkills({
+            skillStore: this.skillStore,
+            db: this.db,
+            stackId: row.id,
+            discoveryConfig: args.discoveryConfig,
+          }),
           llmRetry: args.llmRetry,
         });
       },

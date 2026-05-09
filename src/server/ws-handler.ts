@@ -23,6 +23,7 @@ import { wrapUntrusted } from "../agents/shared/prompt-helpers.js";
 import { WsRateLimiter, classifyWsMessage } from "./rate-limit.js";
 import { isDemoMode } from "./demo-mode.js";
 import { TERMINAL_DISCOVERY_PHASES } from "../workflows/discovery.js";
+import { resolveDiscoverySkills } from "./discovery-skill-selection.js";
 
 const logger = createLogger();
 
@@ -274,8 +275,21 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
       try {
         const agents = await getOrCreateAgents(stackId, ctx, deps.config, deps.db);
         if (agents.discoverAgent) {
+          const discoverySkills = resolveDiscoverySkills({
+            skillStore: deps.skillStore,
+            db: deps.db,
+            stackId,
+            discoveryConfig,
+          });
           agents.discoverAgent
-            .discover(discoveryConfig)
+            .discover(
+              discoveryConfig,
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              discoverySkills.length > 0 ? discoverySkills : undefined,
+            )
             .then((result) => {
               pendingDiscovery = result;
               if (result.services.length > 0) {
@@ -748,14 +762,17 @@ export async function handleClientMessage(
 
     try {
       const discoveryConfig = deps.config.discovery;
-      // Load discovery-scoped skills (filtered by per-stack toggles)
-      const disabledSkillIds = deps.db.getDisabledSkills(stackId);
-      const discoverySkills = deps.skillStore?.getAllForScopeEnabled("discovery", disabledSkillIds) ?? [];
+      const discoverySkills = resolveDiscoverySkills({
+        skillStore: deps.skillStore,
+        db: deps.db,
+        stackId,
+        discoveryConfig,
+      });
       if (discoverySkills.length > 0) {
         logger.debug({ skillCount: discoverySkills.length, skills: discoverySkills.map(s => s.id) }, "Injecting discovery skills");
       }
       const result = await agents.discoverAgent.discover(
-        discoveryConfig ?? { autoRefresh: false, excludeServices: [], maxIterations: 40, discoveryRecipes: [] },
+        discoveryConfig ?? { autoRefresh: false, excludeServices: [], maxIterations: 40, discoveryRecipes: [], maxToolResultChars: 30_000, maxOutputTokens: 8192 },
         (phase) => {
           // AP2: runDiscovery emits terminal phases (TERMINAL_DISCOVERY_PHASES)
           // via its finally block. Those signals are for in-process observers;

@@ -111,6 +111,7 @@ async function main() {
   // Initialize skill store
   const skillStore = new SkillStore(config.skills);
   await skillStore.loadAll();
+  stackManager.setSkillStore(skillStore);
 
   const app = express();
   // Trust proxy configuration for Express.

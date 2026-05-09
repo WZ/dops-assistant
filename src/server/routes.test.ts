@@ -9,6 +9,8 @@ import { unlinkSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { exportProviderConfig, validateImportProviders, categorizeImportActions, type ImportDryRunResult } from "./routes.js";
+import type { Skill } from "../skills/store.js";
+import { DISCOVERY_ENABLED_SKILL_IDS_KEY } from "./discovery-skill-selection.js";
 
 /**
  * Route handler tests — the old buildHandlers wrapper was removed in the
@@ -373,6 +375,116 @@ describe("import confirm logic", () => {
       { config: providers[2], action: "skip", reason: "Cannot overwrite config provider" },
       { config: providers[3], action: "skip", reason: "Conflict not in overwrite list" },
     ]);
+  });
+});
+
+// ── Discovery skill selection endpoints ────────────────────────────────────
+
+function makeSkill(id: string, scope: Skill["scope"]): Skill {
+  return {
+    id,
+    title: id,
+    services: [],
+    alerts: [],
+    tags: [],
+    scope,
+    filePath: `${id}.md`,
+    body: "body",
+  };
+}
+
+function makeDiscoverySkillsApp(opts?: { configEnabledSkillIds?: string[] }) {
+  const dbPath = join(tmpdir(), `routes-discovery-skills-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`);
+  const db = new Database(dbPath);
+  const app = express();
+  app.use(express.json());
+  const skills = [
+    makeSkill("consul-bare-metal", ["discovery"]),
+    makeSkill("chat-only", ["chat"]),
+  ];
+  const skillStore = {
+    getAll: () => skills.map(({ body: _body, ...meta }) => meta),
+    getById: (id: string) => skills.find((s) => s.id === id),
+    getAllForScopeEnabled: (scope: string, disabledIds: Set<string>) =>
+      skills.filter((s) => s.scope.includes(scope as Skill["scope"][number]) && !disabledIds.has(s.id)),
+  };
+  const mockStackContext = {
+    slug: "default",
+    serviceRegistry: { load: () => [] },
+    providerRegistry: { getAll: () => [], getProviders: () => [], getToolsForProvider: async () => [], updateEnabledTools: async () => {} },
+    investigationStore: {},
+    scanScheduler: null,
+  } as any;
+  const mockStackManager = {
+    resolveStackIdWithFallback: () => ({ id: "default", fallback: false }),
+    getContext: () => mockStackContext,
+    bumpActivity: () => {},
+  } as any;
+  registerRoutes(app, {
+    db,
+    stackManager: mockStackManager,
+    config: {
+      discovery: opts?.configEnabledSkillIds === undefined ? {} : { enabledSkillIds: opts.configEnabledSkillIds },
+      notifications: {},
+      webhook: {},
+    } as any,
+    skillStore: skillStore as any,
+    sharedDedup: {} as any,
+    llmModel: {} as any,
+  });
+  return { app, db, cleanup: () => { db.close(); try { unlinkSync(dbPath); } catch {} } };
+}
+
+describe("discovery skill selection routes", () => {
+  let ctx: ReturnType<typeof makeDiscoverySkillsApp>;
+
+  afterEach(() => {
+    ctx?.cleanup();
+  });
+
+  it("returns stack-enabled discovery-scoped skills as discovery-enabled by default", async () => {
+    ctx = makeDiscoverySkillsApp();
+
+    const res = await request(ctx.app).get("/api/discovery/skills").expect(200);
+
+    expect(res.body.enabledSkillIds).toEqual(["consul-bare-metal"]);
+    expect(res.body.skills).toHaveLength(1);
+    expect(res.body.skills[0]).toMatchObject({
+      id: "consul-bare-metal",
+      enabled: true,
+      discoveryEnabled: true,
+    });
+  });
+
+  it("persists explicit discovery skill selection per stack", async () => {
+    ctx = makeDiscoverySkillsApp();
+
+    await request(ctx.app)
+      .put("/api/discovery/skills")
+      .send({ enabledSkillIds: [" consul-bare-metal ", "consul-bare-metal", ""] })
+      .expect(200)
+      .expect((res) => {
+        expect(res.body.enabledSkillIds).toEqual(["consul-bare-metal"]);
+      });
+
+    expect(ctx.db.getStackSetting("default", DISCOVERY_ENABLED_SKILL_IDS_KEY))
+      .toBe(JSON.stringify(["consul-bare-metal"]));
+
+    const res = await request(ctx.app).get("/api/discovery/skills").expect(200);
+    expect(res.body.enabledSkillIds).toEqual(["consul-bare-metal"]);
+    expect(res.body.skills[0]).toMatchObject({ id: "consul-bare-metal", discoveryEnabled: true });
+  });
+
+  it("rejects non-discovery skills", async () => {
+    ctx = makeDiscoverySkillsApp();
+
+    await request(ctx.app)
+      .put("/api/discovery/skills")
+      .send({ enabledSkillIds: ["chat-only"] })
+      .expect(400)
+      .expect((res) => {
+        expect(res.body.invalid).toEqual(["chat-only"]);
+      });
   });
 });
 

@@ -38,6 +38,7 @@ import { parseInvestigationFilters } from "./investigation-filters.js";
 import { sendSlackScanRunPost } from "./slack-notifier.js";
 import { ALL_SOURCES } from "../types/notifications.js";
 import { buildPatternCluster } from "./pattern-similarity.js";
+import { DISCOVERY_ENABLED_SKILL_IDS_KEY, resolveDiscoverySkills } from "./discovery-skill-selection.js";
 import { strictLimiter } from "./rate-limit.js";
 
 /**
@@ -68,6 +69,10 @@ const ScanSettingsUpdateSchema = z.object({
   k8sEvents: z.object({
     enabled: z.union([z.boolean(), z.null()]).optional(),
   }).strict().optional(),
+}).strict();
+
+const DiscoverySkillSelectionSchema = z.object({
+  enabledSkillIds: z.array(z.string()).default([]),
 }).strict();
 
 export interface DependencyNode {
@@ -1342,6 +1347,47 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     app.get("/api/skills", (req: Request, res: Response) => {
       const disabledIds = db.getDisabledSkills(req.stackId!);
       res.json(skillStore.getAll().map(s => ({ ...s, enabled: !disabledIds.has(s.id) })));
+    });
+
+    app.get("/api/discovery/skills", (req: Request, res: Response) => {
+      const disabledIds = db.getDisabledSkills(req.stackId!);
+      const enabledDiscoveryIds = new Set(resolveDiscoverySkills({
+        skillStore,
+        db,
+        stackId: req.stackId!,
+        discoveryConfig: config.discovery,
+      }).map((s) => s.id));
+      res.json({
+        enabledSkillIds: [...enabledDiscoveryIds],
+        skills: skillStore.getAll()
+          .filter((s) => s.scope.includes("discovery"))
+          .map((s) => ({
+            ...s,
+            enabled: !disabledIds.has(s.id),
+            discoveryEnabled: enabledDiscoveryIds.has(s.id),
+          })),
+      });
+    });
+
+    app.put("/api/discovery/skills", (req: Request, res: Response) => {
+      const parsed = DiscoverySkillSelectionSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: "Invalid discovery skill selection", details: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) });
+        return;
+      }
+
+      const requested = [...new Set(parsed.data.enabledSkillIds.map((id) => id.trim()).filter(Boolean))];
+      const invalid = requested.filter((id) => {
+        const skill = skillStore.getById(id);
+        return !skill || !skill.scope.includes("discovery");
+      });
+      if (invalid.length > 0) {
+        res.status(400).json({ error: "All enabledSkillIds must reference discovery-scoped skills", invalid });
+        return;
+      }
+
+      db.setStackSetting(req.stackId!, DISCOVERY_ENABLED_SKILL_IDS_KEY, JSON.stringify(requested));
+      res.json({ enabledSkillIds: requested });
     });
 
     app.get("/api/skills/:id", (req: Request, res: Response) => {
