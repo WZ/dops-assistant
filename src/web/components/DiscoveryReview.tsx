@@ -35,10 +35,16 @@ export function DiscoveryReview({ services: initialServices, onAccept, onReject,
   const diff = useMemo(() => {
     const currentNames = new Set(currentServices.map(s => s.name));
     const discoveredNames = new Set(services.map(s => s.name));
-    const added = services.filter(s => !currentNames.has(s.name)).length;
-    const removed = currentServices.filter(s => !discoveredNames.has(s.name)).length;
+    const addedServices = services.filter(s => !currentNames.has(s.name));
+    const removedServices = currentServices.filter(s => !discoveredNames.has(s.name));
     const unchanged = services.filter(s => currentNames.has(s.name)).length;
-    return { added, removed, unchanged };
+    return {
+      added: addedServices.length,
+      removed: removedServices.length,
+      unchanged,
+      addedNames: addedServices.map(s => s.name).sort(),
+      removedNames: removedServices.map(s => s.name).sort(),
+    };
   }, [services, currentServices]);
 
   const verified = services.filter((s) => s.confidence === "verified").length;
@@ -79,11 +85,45 @@ export function DiscoveryReview({ services: initialServices, onAccept, onReject,
       <div className="rounded-lg border bg-card/40 p-4 mb-4">
         <h3 className="font-semibold text-sm mb-3">Discovery Complete</h3>
         {currentServices.length > 0 && (
-          <div className="flex items-center gap-3 mb-3 font-mono text-[11px]">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-3 font-mono text-[11px]">
             {diff.added > 0 && <span className="text-success/70">+{diff.added} new</span>}
             {diff.removed > 0 && <span className="text-destructive/70">&minus;{diff.removed} removed</span>}
             {diff.unchanged > 0 && <span className="text-muted-foreground/50">{diff.unchanged} unchanged</span>}
             {diff.added === 0 && diff.removed === 0 && <span className="text-muted-foreground/50">no changes from current registry</span>}
+          </div>
+        )}
+        {currentServices.length > 0 && (diff.added > 0 || diff.removed > 0) && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-4">
+            {diff.added > 0 && (
+              <div className="rounded-md border border-success/20 bg-success/5 overflow-hidden" aria-label="New services">
+                <div className="px-3 py-2 border-b border-success/15 flex items-center justify-between gap-3">
+                  <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-success/80">New services</span>
+                  <span className="font-mono text-[10px] text-success/70">{diff.added}</span>
+                </div>
+                <div className="max-h-36 overflow-y-auto divide-y divide-border/10">
+                  {diff.addedNames.map((name) => (
+                    <div key={name} className="px-3 py-1.5 font-mono text-xs text-foreground/90 truncate" title={name}>
+                      {name}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {diff.removed > 0 && (
+              <div className="rounded-md border border-destructive/20 bg-destructive/5 overflow-hidden" aria-label="Removed services">
+                <div className="px-3 py-2 border-b border-destructive/15 flex items-center justify-between gap-3">
+                  <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-destructive/80">Removed services</span>
+                  <span className="font-mono text-[10px] text-destructive/70">{diff.removed}</span>
+                </div>
+                <div className="max-h-36 overflow-y-auto divide-y divide-border/10">
+                  {diff.removedNames.map((name) => (
+                    <div key={name} className="px-3 py-1.5 font-mono text-xs text-foreground/90 truncate" title={name}>
+                      {name}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
         <div className="flex gap-6 text-center">
@@ -146,8 +186,12 @@ export function DiscoveryReview({ services: initialServices, onAccept, onReject,
           <span className="text-[10px] text-muted-foreground/70">Click to expand and edit before accepting</span>
         </Button>
         {showEditor && (
-          <div className="max-h-80 overflow-y-auto">
-            <YamlEditor value={yamlValue} onChange={setYamlValue} />
+          <div className="h-[48vh] min-h-[420px] max-h-[72vh] resize-y overflow-auto p-3 bg-background/35">
+            <YamlEditor
+              value={yamlValue}
+              onChange={setYamlValue}
+              className="h-full [&_.cm-editor]:h-full [&_.cm-editor]:min-h-full [&_.cm-scroller]:h-full [&_.cm-scroller]:min-h-full"
+            />
           </div>
         )}
       </div>
