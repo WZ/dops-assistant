@@ -497,31 +497,51 @@ async function main() {
   // keeps the startup path free of adapter construction (which would try to
   // connect to stub MCP providers).
   if (!isDemoMode()) {
-    const defaultStackId = stackManager.getDefaultStackId();
-    const defaultCtx = stackManager.getDefaultContext();
-    const providers = defaultCtx.providerRegistry.getProviders();
-    const { investigationAgent } = await createMastraAdapters({ config, providers, registryStore: defaultCtx.serviceRegistry, datasourceUidMap: defaultCtx.providerRegistry.buildDatasourceUidMap(), db, stackId: defaultStackId });
-    const runner = new InvestigationRunner({ db, investigationAgent, skillStore, globalOnComplete });
-
-    const webhookHandler = createWebhookHandler({
-      runner,
-      config: config.webhook,
-      services: config.services,
-      db,
-      stackId: defaultStackId,
-      dedup: sharedDedup,
-      getHiddenServices: () => db.getHiddenServices(defaultStackId),
-    });
+    // Adapter construction calls into Mastra, which builds MCP clients that
+    // try SSE then HTTP transports against every configured upstream. When
+    // an upstream is slow/unreachable (cold start, network blip), each retry
+    // backs off for 10s+. Awaiting that here used to block server.listen()
+    // long enough for kubelet's readiness probe to fail and the pod to
+    // CrashLoopBackOff. Defer to a background init so the HTTP server starts
+    // accepting /api/health immediately; the webhook returns a structured 503
+    // until the adapter is ready.
+    let defaultWebhookDelegate: (req: Request, res: Response) => void | Promise<void> = (_req, res) => {
+      res.status(503).json({ error: "service warming up — webhook adapter still initializing", retryAfterSeconds: 5 });
+    };
     // strictLimiter (60 req/min/IP) sits in front of the webhook routes
     // because each accepted call can fan out into a full investigation
     // (multiple LLM agents). The global moderate limiter (120/min on /api)
     // already applies; layering strict on top means the tighter bucket wins
     // for this specific endpoint without affecting GUI traffic.
-    app.post("/api/webhook/alert", strictLimiter, webhookHandler);
+    app.post("/api/webhook/alert", strictLimiter, (req, res) => defaultWebhookDelegate(req, res));
 
+    // Stack-scoped variant builds adapters lazily per-request, so registering
+    // it here does not block boot.
     registerStackScopedWebhookRoute(app, { db, stackManager, config, skillStore, sharedDedup, globalOnComplete });
 
-    logger.info("Alert webhook enabled at POST /api/webhook/alert (tokens managed via Settings → Alert Webhooks)");
+    void (async () => {
+      try {
+        const defaultStackId = stackManager.getDefaultStackId();
+        const defaultCtx = stackManager.getDefaultContext();
+        const providers = defaultCtx.providerRegistry.getProviders();
+        const { investigationAgent } = await createMastraAdapters({ config, providers, registryStore: defaultCtx.serviceRegistry, datasourceUidMap: defaultCtx.providerRegistry.buildDatasourceUidMap(), db, stackId: defaultStackId });
+        const runner = new InvestigationRunner({ db, investigationAgent, skillStore, globalOnComplete });
+        defaultWebhookDelegate = createWebhookHandler({
+          runner,
+          config: config.webhook,
+          services: config.services,
+          db,
+          stackId: defaultStackId,
+          dedup: sharedDedup,
+          getHiddenServices: () => db.getHiddenServices(defaultStackId),
+        });
+        logger.info("Alert webhook adapter ready (POST /api/webhook/alert)");
+      } catch (err) {
+        logger.error({ err }, "Alert webhook adapter init failed; default-stack webhook stays in 503 mode");
+      }
+    })();
+
+    logger.info("Alert webhook route registered at POST /api/webhook/alert (tokens managed via Settings → Alert Webhooks)");
   } else {
     // No webhook auth configured: register 503 stubs at both the default and
     // stack-scoped routes so clients receive a structured JSON error.
