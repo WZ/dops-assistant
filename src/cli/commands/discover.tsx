@@ -30,17 +30,15 @@ function DiscoverApp({ agent, config, skills }: DiscoverAppProps) {
 
   useEffect(() => {
     agent
-      .discover(
-        config,
-        (p) => setCurrentPhase(p),
-        (_phase, current, max, label) => setIteration({ current, max, label }),
-        (name, args) => {
+      .discover(config, {
+        onPhase: (p) => setCurrentPhase(p),
+        onIteration: (_phase, current, max, label) => setIteration({ current, max, label }),
+        onToolCall: (name, args) => {
           const argsStr = JSON.stringify(args).slice(0, 80);
           setToolCalls((prev) => [...prev.slice(-20), `→ ${name}(${argsStr})`]);
         },
-        undefined,
         skills,
-      )
+      })
       .then((result) => {
         setServices(result.services);
         setGlobalProbeRules(result.globalProbeRules);

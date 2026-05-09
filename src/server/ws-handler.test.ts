@@ -684,7 +684,9 @@ describe("handleClientMessage — discovery skill injection", () => {
     await callHandler({ type: "discover" }, (m) => sent.push(m), deps);
 
     expect(discover).toHaveBeenCalled();
-    expect(discover.mock.calls[0]![5]).toEqual([expect.objectContaining({ id: consulSkill.id })]);
+    expect(discover.mock.calls[0]![1]).toMatchObject({
+      skills: [expect.objectContaining({ id: consulSkill.id })],
+    });
   });
 
 });
