@@ -4,14 +4,11 @@ import type { Skill, SkillStore } from "../skills/store.js";
 
 const logger = createLogger("discovery-skill-selection");
 
-export const DISCOVERY_ENABLED_SKILL_IDS_KEY = "discovery.enabledSkillIds";
-
 interface DiscoverySkillSettingsStore {
-  getStackSetting?: (stackId: string, key: string) => string | undefined;
   getDisabledSkills?: (stackId: string) => Set<string>;
 }
 
-export interface DiscoverySkillSelectionInput {
+export interface DiscoverySkillResolutionInput {
   skillStore?: SkillStore;
   db?: DiscoverySkillSettingsStore;
   stackId?: string;
@@ -30,25 +27,7 @@ function uniqueIds(ids: string[]): string[] {
   return out;
 }
 
-export function parseDiscoverySkillIds(raw: string | undefined): string[] | null {
-  if (raw === undefined) return null;
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return null;
-    return uniqueIds(parsed.filter((id): id is string => typeof id === "string"));
-  } catch {
-    return null;
-  }
-}
-
-export function getConfiguredDiscoverySkillIds(input: DiscoverySkillSelectionInput): string[] | null {
-  if (input.db && input.stackId) {
-    const stackIds = parseDiscoverySkillIds(
-      input.db.getStackSetting?.(input.stackId, DISCOVERY_ENABLED_SKILL_IDS_KEY),
-    );
-    if (stackIds !== null) return stackIds;
-  }
-
+export function getConfiguredDiscoverySkillIds(input: DiscoverySkillResolutionInput): string[] | null {
   if (input.discoveryConfig?.enabledSkillIds !== undefined) {
     return uniqueIds(input.discoveryConfig.enabledSkillIds);
   }
@@ -56,16 +35,22 @@ export function getConfiguredDiscoverySkillIds(input: DiscoverySkillSelectionInp
   return null;
 }
 
-function getDisabledSkillIds(input: DiscoverySkillSelectionInput): Set<string> {
+function getDisabledSkillIds(input: DiscoverySkillResolutionInput): Set<string> {
   return input.db && input.stackId
     ? input.db.getDisabledSkills?.(input.stackId) ?? new Set<string>()
     : new Set<string>();
 }
 
-export function resolveDiscoverySkills(input: DiscoverySkillSelectionInput): Skill[] {
+export function resolveDiscoverySkills(input: DiscoverySkillResolutionInput): Skill[] {
   if (!input.skillStore) return [];
 
   const disabledIds = getDisabledSkillIds(input);
+  // GUI-managed stacks use the normal stack-level skill enable/disable toggle:
+  // every enabled skill whose scope includes "discovery" is injected.
+  //
+  // Config-only deployments can optionally narrow or disable discovery skills
+  // via discovery.enabledSkillIds. This is intentionally not backed by a
+  // separate GUI toggle; scope + stack enabled state is the runtime contract.
   const ids = getConfiguredDiscoverySkillIds(input);
   if (ids === null) {
     return input.skillStore.getAllForScopeEnabled("discovery", disabledIds);
@@ -94,5 +79,3 @@ export function resolveDiscoverySkills(input: DiscoverySkillSelectionInput): Ski
 
   return out;
 }
-
-export const resolveExplicitDiscoverySkills = resolveDiscoverySkills;

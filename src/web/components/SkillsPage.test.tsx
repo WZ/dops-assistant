@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { SkillsPage } from "./SkillsPage";
 import { StackProvider } from "../contexts/StackContext";
@@ -121,8 +121,8 @@ describe("SkillsPage", () => {
     });
   });
 
-  it("lets discovery-scoped skills opt into discovery injection", async () => {
-    fetchImpl.mockImplementation((url, init) => {
+  it("does not render a separate discovery injection toggle", async () => {
+    fetchImpl.mockImplementation((url) => {
       if (String(url).endsWith("/api/skills")) {
         return Promise.resolve(new Response(JSON.stringify([
           {
@@ -136,12 +136,6 @@ describe("SkillsPage", () => {
           },
         ]), { status: 200 }));
       }
-      if (String(url).endsWith("/api/discovery/skills") && (init as RequestInit | undefined)?.method === "PUT") {
-        return Promise.resolve(new Response(JSON.stringify({ enabledSkillIds: ["consul-bare-metal"] }), { status: 200 }));
-      }
-      if (String(url).endsWith("/api/discovery/skills")) {
-        return Promise.resolve(new Response(JSON.stringify({ enabledSkillIds: [] }), { status: 200 }));
-      }
       return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
     });
 
@@ -151,21 +145,13 @@ describe("SkillsPage", () => {
       </Wrapper>,
     );
 
-    const discoverySwitch = await screen.findByRole("switch", { name: "Use Consul Bare Metal in discovery" });
-    expect(discoverySwitch.getAttribute("aria-checked")).toBe("false");
+    await screen.findByText("Consul Bare Metal");
+    expect(screen.queryByRole("switch", { name: "Use Consul Bare Metal in discovery" })).toBeNull();
+    expect(screen.getByText("discovery")).toBeTruthy();
 
-    fireEvent.click(discoverySwitch);
-
-    await waitFor(() => {
-      const putCall = fetchImpl.mock.calls.find(([url, init]) =>
-        String(url).endsWith("/api/discovery/skills")
-        && (init as RequestInit | undefined)?.method === "PUT",
-      );
-      expect(putCall).toBeTruthy();
-      expect(JSON.parse(String((putCall![1] as RequestInit).body))).toEqual({
-        enabledSkillIds: ["consul-bare-metal"],
-      });
-    });
-    expect(discoverySwitch.getAttribute("aria-checked")).toBe("true");
+    const discoveryApiCalls = fetchImpl.mock.calls.filter(([url]) =>
+      String(url).endsWith("/api/discovery/skills"),
+    );
+    expect(discoveryApiCalls).toHaveLength(0);
   });
 });

@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Skill, SkillStore } from "../skills/store.js";
 import {
-  DISCOVERY_ENABLED_SKILL_IDS_KEY,
   getConfiguredDiscoverySkillIds,
   resolveDiscoverySkills,
 } from "./discovery-skill-selection.js";
@@ -48,19 +47,9 @@ describe("discovery skill selection", () => {
     expect(selected.map((s) => s.id)).toEqual(["consul-bare-metal"]);
   });
 
-  it("lets stack settings override config defaults, including explicit empty", () => {
-    const db = {
-      getStackSetting: vi.fn((stackId: string, key: string) => {
-        expect(stackId).toBe("stack-1");
-        expect(key).toBe(DISCOVERY_ENABLED_SKILL_IDS_KEY);
-        return "[]";
-      }),
-    };
-
+  it("supports explicit empty config override for config-only deployments", () => {
     const ids = getConfiguredDiscoverySkillIds({
-      db,
-      stackId: "stack-1",
-      discoveryConfig: { enabledSkillIds: ["consul-bare-metal"] },
+      discoveryConfig: { enabledSkillIds: [] },
     });
 
     expect(ids).toEqual([]);

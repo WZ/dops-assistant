@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { Compass, FilePlus, Plus } from "lucide-react";
+import { FilePlus, Plus } from "lucide-react";
 import { SkillEditor } from "./SkillEditor";
 import { useStackContext } from "../contexts/StackContext";
 
@@ -17,10 +17,6 @@ interface SkillMeta {
 
 interface SkillFull extends SkillMeta {
   body: string;
-}
-
-interface DiscoverySkillSelection {
-  enabledSkillIds: string[];
 }
 
 const SCOPE_COLORS: Record<string, string> = {
@@ -91,7 +87,6 @@ Infrastructure-level issues suspected.
 export function SkillsPage() {
   const { activeStackId, stackFetch } = useStackContext();
   const [skills, setSkills] = useState<SkillMeta[]>([]);
-  const [discoveryEnabledSkillIds, setDiscoveryEnabledSkillIds] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<SkillFull | null>(null);
   const [creating, setCreating] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
@@ -100,25 +95,15 @@ export function SkillsPage() {
   const fetchSkills = useCallback(async () => {
     const requestId = ++skillsRequestRef.current;
     try {
-      const [skillsRes, discoveryRes] = await Promise.all([
-        stackFetch("/api/skills"),
-        stackFetch("/api/discovery/skills"),
-      ]);
+      const skillsRes = await stackFetch("/api/skills");
       const nextSkills = skillsRes.ok ? await skillsRes.json() : [];
-      const discoverySelection = discoveryRes.ok
-        ? await discoveryRes.json() as DiscoverySkillSelection
-        : { enabledSkillIds: [] };
       if (requestId !== skillsRequestRef.current) return;
       setSkills(Array.isArray(nextSkills) ? nextSkills : []);
-      setDiscoveryEnabledSkillIds(new Set(
-        Array.isArray(discoverySelection.enabledSkillIds) ? discoverySelection.enabledSkillIds : [],
-      ));
     } catch { /* ignore */ }
   }, [stackFetch]);
 
   useEffect(() => {
     setSkills([]);
-    setDiscoveryEnabledSkillIds(new Set());
     setEditing(null);
     setCreating(false);
     void fetchSkills();
@@ -178,29 +163,6 @@ export function SkillsPage() {
       });
       setSkills(prev => prev.map(s => s.id === id ? { ...s, enabled: !currentEnabled } : s));
     } catch { /* ignore */ }
-  };
-
-  const handleToggleDiscovery = async (id: string) => {
-    const previous = new Set(discoveryEnabledSkillIds);
-    const next = new Set(discoveryEnabledSkillIds);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    setDiscoveryEnabledSkillIds(next);
-
-    try {
-      const res = await stackFetch("/api/discovery/skills", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabledSkillIds: [...next] }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const saved = await res.json() as DiscoverySkillSelection;
-      setDiscoveryEnabledSkillIds(new Set(
-        Array.isArray(saved.enabledSkillIds) ? saved.enabledSkillIds : [...next],
-      ));
-    } catch {
-      setDiscoveryEnabledSkillIds(previous);
-    }
   };
 
   if (editing) {
@@ -278,8 +240,6 @@ export function SkillsPage() {
             <div className="grid gap-3 sm:grid-cols-2">
               {skills.map((skill) => {
                 const enabled = skill.enabled !== false;
-                const isDiscoverySkill = skill.scope?.includes("discovery") ?? false;
-                const discoveryEnabled = discoveryEnabledSkillIds.has(skill.id);
                 return (
                   <div
                     key={skill.id}
@@ -309,23 +269,6 @@ export function SkillsPage() {
                         className="shrink-0"
                       />
                     </div>
-                    {isDiscoverySkill && (
-                      <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-border/30 bg-secondary/20 px-3 py-2">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <Compass size={13} strokeWidth={1.7} className="shrink-0 text-primary/70" />
-                          <span className={`truncate text-[11px] font-mono ${enabled ? "text-foreground/70" : "text-muted-foreground/50"}`}>
-                            Use in discovery
-                          </span>
-                        </div>
-                        <Switch
-                          checked={discoveryEnabled}
-                          disabled={!enabled}
-                          onCheckedChange={() => handleToggleDiscovery(skill.id)}
-                          aria-label={`Use ${skill.title} in discovery`}
-                          className="shrink-0"
-                        />
-                      </div>
-                    )}
                     <button onClick={() => handleEdit(skill.id)} className="text-left w-full">
                       {skill.services.length > 0 && (
                         <div className="flex flex-wrap gap-1 mb-2">
