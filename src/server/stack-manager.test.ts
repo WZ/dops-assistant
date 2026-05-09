@@ -588,52 +588,6 @@ describe("StackManager", () => {
       }));
     });
 
-    it("injects explicitly enabled discovery skills into periodic discovery", async () => {
-      config = makeConfig({
-        discovery: {
-          autoRefresh: false,
-          excludeServices: [],
-          maxIterations: 40,
-          enabledSkillIds: ["consul-bare-metal"],
-          discoveryRecipes: [],
-          periodic: {
-            enabled: true,
-            cron: "0 0 * * *",
-            timezone: "UTC",
-            consensusRuns: 1,
-            consensusRunsForRemovals: 1,
-          },
-          maxToolResultChars: 30_000,
-          maxOutputTokens: 8192,
-        },
-      });
-      vi.mocked(runDiscovery).mockResolvedValue({ services: [], globalProbeRules: [] } as any);
-
-      manager = new StackManager(db, config);
-      await manager.initialize();
-      manager.setLlmModel({} as any);
-      const consulSkill = {
-        id: "consul-bare-metal",
-        title: "Consul Bare Metal",
-        services: [],
-        alerts: [],
-        tags: [],
-        scope: ["discovery"],
-        filePath: "consul-bare-metal.md",
-        body: "consul_catalog_service_node_healthy",
-      };
-      manager.setSkillStore({
-        getById: vi.fn((id: string) => id === consulSkill.id ? consulSkill : undefined),
-        getAllForScopeEnabled: vi.fn(() => [consulSkill]),
-      } as any);
-
-      await manager.getDefaultContext().periodicDiscoveryScheduler.tickOnce();
-
-      expect(runDiscovery).toHaveBeenCalledWith(expect.objectContaining({
-        skills: [expect.objectContaining({ id: "consul-bare-metal" })],
-      }));
-    });
-
     it("sends email through periodic-discovery recipients before marking the channel successful", async () => {
       config = makeConfig({
         discovery: {

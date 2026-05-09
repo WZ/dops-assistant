@@ -279,7 +279,6 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
             skillStore: deps.skillStore,
             db: deps.db,
             stackId,
-            discoveryConfig,
           });
           agents.discoverAgent
             .discover(
@@ -766,7 +765,6 @@ export async function handleClientMessage(
         skillStore: deps.skillStore,
         db: deps.db,
         stackId,
-        discoveryConfig,
       });
       if (discoverySkills.length > 0) {
         logger.debug({ skillCount: discoverySkills.length, skills: discoverySkills.map(s => s.id) }, "Injecting discovery skills");

@@ -687,24 +687,4 @@ describe("handleClientMessage — discovery skill injection", () => {
     expect(discover.mock.calls[0]![5]).toEqual([expect.objectContaining({ id: consulSkill.id })]);
   });
 
-  it("injects only explicitly enabled discovery skills", async () => {
-    clearStackCaches(S);
-    const deps = mockDeps();
-    deps.config.discovery = {
-      ...deps.config.discovery,
-      enabledSkillIds: [consulSkill.id],
-    };
-    deps.skillStore = {
-      getById: vi.fn((id: string) => id === consulSkill.id ? consulSkill : undefined),
-    } as any;
-    const discover = vi.fn().mockResolvedValue({ services: [], globalProbeRules: [] });
-    (createMastraAdapters as ReturnType<typeof vi.fn>).mockReset();
-    (createMastraAdapters as ReturnType<typeof vi.fn>).mockResolvedValue(discoverAdapters(discover));
-
-    const sent: ServerMessage[] = [];
-    await callHandler({ type: "discover" }, (m) => sent.push(m), deps);
-
-    expect(discover).toHaveBeenCalled();
-    expect(discover.mock.calls[0]![5]).toEqual([expect.objectContaining({ id: consulSkill.id })]);
-  });
 });

@@ -174,12 +174,6 @@ const DiscoverySchema = z.object({
   autoRefresh: z.boolean().default(false),
   excludeServices: z.array(z.string()).default([]),
   maxIterations: z.number().default(40),
-  /**
-   * Optional config-only discovery-skill injection override. When unset,
-   * discovery uses stack-enabled skills whose scope includes "discovery".
-   * Set to [] to disable discovery skill injection without using the GUI.
-   */
-  enabledSkillIds: z.array(z.string()).optional(),
   discoveryRecipes: z.array(DiscoveryRecipeSchema).optional().default([]),
   periodic: PeriodicDiscoverySchema.optional().default({}),
   /**

@@ -82,21 +82,6 @@ describe("ConfigSchema – defaults", () => {
     if (result.success) {
       expect(result.data.discovery.autoRefresh).toBe(false);
       expect(result.data.discovery.excludeServices).toEqual(["consul", "prometheus"]);
-      expect(result.data.discovery.enabledSkillIds).toBeUndefined();
-    }
-  });
-
-  it("accepts explicitly enabled discovery skill ids", () => {
-    const result = ConfigSchema.safeParse({
-      llm,
-      providers: [grafanaProvider],
-      discovery: {
-        enabledSkillIds: ["consul-bare-metal"],
-      },
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.discovery.enabledSkillIds).toEqual(["consul-bare-metal"]);
     }
   });
 });

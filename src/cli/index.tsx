@@ -124,7 +124,6 @@ async function dispatch(): Promise<void> {
     await skillStore.loadAll();
     const discoverySkills = resolveDiscoverySkills({
       skillStore,
-      discoveryConfig: config.discovery,
     });
 
     return runDiscover(discoverAgent, config.discovery, discoverySkills);

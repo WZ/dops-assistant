@@ -284,7 +284,6 @@ export class StackManager {
             skillStore: this.skillStore,
             db: this.db,
             stackId: row.id,
-            discoveryConfig: args.discoveryConfig,
           }),
           llmRetry: args.llmRetry,
         });
