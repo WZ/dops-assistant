@@ -645,3 +645,48 @@ describe("handleClientMessage — scan:trigger", () => {
     }
   });
 });
+
+describe("handleClientMessage — discovery skill injection", () => {
+  function discoverAdapters(discover: ReturnType<typeof vi.fn>) {
+    return {
+      chatAgent: { chat: vi.fn() },
+      investigationAgent: { investigate: vi.fn() },
+      discoverAgent: {
+        discover,
+        accept: vi.fn(),
+      },
+    };
+  }
+
+  const consulSkill = {
+    id: "consul-bare-metal",
+    title: "Consul Bare Metal",
+    services: [],
+    alerts: [],
+    tags: [],
+    scope: ["discovery"],
+    filePath: "consul-bare-metal.md",
+    body: "```promql\ncount by (service_name) (consul_catalog_service_node_healthy)\n```",
+  };
+
+  it("injects stack-enabled discovery-scoped skills by default", async () => {
+    clearStackCaches(S);
+    const deps = mockDeps();
+    deps.skillStore = {
+      getById: vi.fn((id: string) => id === consulSkill.id ? consulSkill : undefined),
+      getAllForScopeEnabled: vi.fn(() => [consulSkill]),
+    } as any;
+    const discover = vi.fn().mockResolvedValue({ services: [], globalProbeRules: [] });
+    (createMastraAdapters as ReturnType<typeof vi.fn>).mockReset();
+    (createMastraAdapters as ReturnType<typeof vi.fn>).mockResolvedValue(discoverAdapters(discover));
+
+    const sent: ServerMessage[] = [];
+    await callHandler({ type: "discover" }, (m) => sent.push(m), deps);
+
+    expect(discover).toHaveBeenCalled();
+    expect(discover.mock.calls[0]![1]).toMatchObject({
+      skills: [expect.objectContaining({ id: consulSkill.id })],
+    });
+  });
+
+});

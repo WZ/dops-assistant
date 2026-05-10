@@ -61,15 +61,19 @@ export interface DiscoveryResult {
   globalProbeRules: ProbeMetricRule[];
 }
 
+export interface DiscoverOptions {
+  onPhase?: (phase: string) => void;
+  onIteration?: OnIteration;
+  onToolCall?: OnToolCallEnriched;
+  onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
+  skills?: Skill[];
+  onRetry?: (attempt: number, maxRetries: number, reason: string) => void;
+}
+
 export interface IDiscoverAgent {
   discover(
     config: DiscoveryConfig,
-    onPhase?: (phase: string) => void,
-    onIteration?: OnIteration,
-    onToolCall?: OnToolCallEnriched,
-    onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void,
-    skills?: Skill[],
-    onRetry?: (attempt: number, maxRetries: number, reason: string) => void,
+    options?: DiscoverOptions,
   ): Promise<DiscoveryResult>;
 
   /**

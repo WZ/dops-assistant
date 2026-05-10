@@ -120,4 +120,38 @@ describe("SkillsPage", () => {
       expect(screen.getByText("Beta Skill")).toBeTruthy();
     });
   });
+
+  it("does not render a separate discovery injection toggle", async () => {
+    fetchImpl.mockImplementation((url) => {
+      if (String(url).endsWith("/api/skills")) {
+        return Promise.resolve(new Response(JSON.stringify([
+          {
+            id: "consul-bare-metal",
+            title: "Consul Bare Metal",
+            services: [],
+            alerts: [],
+            tags: [],
+            scope: ["discovery"],
+            enabled: true,
+          },
+        ]), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
+    });
+
+    render(
+      <Wrapper stackId="alpha">
+        <SkillsPage />
+      </Wrapper>,
+    );
+
+    await screen.findByText("Consul Bare Metal");
+    expect(screen.queryByRole("switch", { name: "Use Consul Bare Metal in discovery" })).toBeNull();
+    expect(screen.getByText("discovery")).toBeTruthy();
+
+    const discoveryApiCalls = fetchImpl.mock.calls.filter(([url]) =>
+      String(url).endsWith("/api/discovery/skills"),
+    );
+    expect(discoveryApiCalls).toHaveLength(0);
+  });
 });

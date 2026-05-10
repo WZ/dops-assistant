@@ -3,14 +3,16 @@ import { EditorView, basicSetup } from "codemirror";
 import { EditorState } from "@codemirror/state";
 import { yaml } from "@codemirror/lang-yaml";
 import { oneDark } from "@codemirror/theme-one-dark";
+import { cn } from "@/lib/utils";
 
 interface YamlEditorProps {
   value: string;
   onChange?: (value: string) => void;
   readOnly?: boolean;
+  className?: string;
 }
 
-export function YamlEditor({ value, onChange, readOnly }: YamlEditorProps) {
+export function YamlEditor({ value, onChange, readOnly, className }: YamlEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
@@ -54,7 +56,12 @@ export function YamlEditor({ value, onChange, readOnly }: YamlEditorProps) {
   return (
     <div
       ref={containerRef}
-      className="border border-border rounded-md overflow-hidden [&_.cm-editor]:!bg-transparent [&_.cm-gutters]:!bg-card/30"
+      className={cn(
+        "w-full min-w-0 border border-border rounded-md overflow-hidden",
+        "[&_.cm-editor]:!bg-transparent [&_.cm-editor]:min-h-[260px]",
+        "[&_.cm-scroller]:min-h-[260px] [&_.cm-gutters]:!bg-card/30",
+        className,
+      )}
     />
   );
 }

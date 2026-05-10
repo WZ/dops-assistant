@@ -23,6 +23,7 @@ import { wrapUntrusted } from "../agents/shared/prompt-helpers.js";
 import { WsRateLimiter, classifyWsMessage } from "./rate-limit.js";
 import { isDemoMode } from "./demo-mode.js";
 import { TERMINAL_DISCOVERY_PHASES } from "../workflows/discovery.js";
+import { resolveDiscoverySkills } from "./discovery-skill-selection.js";
 
 const logger = createLogger();
 
@@ -274,8 +275,15 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
       try {
         const agents = await getOrCreateAgents(stackId, ctx, deps.config, deps.db);
         if (agents.discoverAgent) {
+          const discoverySkills = resolveDiscoverySkills({
+            skillStore: deps.skillStore,
+            db: deps.db,
+            stackId,
+          });
           agents.discoverAgent
-            .discover(discoveryConfig)
+            .discover(discoveryConfig, {
+              skills: discoverySkills.length > 0 ? discoverySkills : undefined,
+            })
             .then((result) => {
               pendingDiscovery = result;
               if (result.services.length > 0) {
@@ -748,55 +756,59 @@ export async function handleClientMessage(
 
     try {
       const discoveryConfig = deps.config.discovery;
-      // Load discovery-scoped skills (filtered by per-stack toggles)
-      const disabledSkillIds = deps.db.getDisabledSkills(stackId);
-      const discoverySkills = deps.skillStore?.getAllForScopeEnabled("discovery", disabledSkillIds) ?? [];
+      const discoverySkills = resolveDiscoverySkills({
+        skillStore: deps.skillStore,
+        db: deps.db,
+        stackId,
+      });
       if (discoverySkills.length > 0) {
         logger.debug({ skillCount: discoverySkills.length, skills: discoverySkills.map(s => s.id) }, "Injecting discovery skills");
       }
       const result = await agents.discoverAgent.discover(
-        discoveryConfig ?? { autoRefresh: false, excludeServices: [], maxIterations: 40, discoveryRecipes: [] },
-        (phase) => {
-          // AP2: runDiscovery emits terminal phases (TERMINAL_DISCOVERY_PHASES)
-          // via its finally block. Those signals are for in-process observers;
-          // the WS protocol already signals terminal state via its own emits
-          // at the end of this block (discover:phase+complete /
-          // discover:complete / discover:error). Forwarding the terminal
-          // phases here would produce a spurious `status: "running"` event
-          // the UI then has to overwrite — skip them cleanly instead.
-          if ((TERMINAL_DISCOVERY_PHASES as readonly string[]).includes(phase)) return;
-          // Emit usage for the phase that just ended
-          if (phaseTokens.inputTokens > 0 || phaseTokens.outputTokens > 0) {
+        discoveryConfig ?? { autoRefresh: false, excludeServices: [], maxIterations: 40, discoveryRecipes: [], maxToolResultChars: 30_000, maxOutputTokens: 8192 },
+        {
+          onPhase: (phase) => {
+            // AP2: runDiscovery emits terminal phases (TERMINAL_DISCOVERY_PHASES)
+            // via its finally block. Those signals are for in-process observers;
+            // the WS protocol already signals terminal state via its own emits
+            // at the end of this block (discover:phase+complete /
+            // discover:complete / discover:error). Forwarding the terminal
+            // phases here would produce a spurious `status: "running"` event
+            // the UI then has to overwrite — skip them cleanly instead.
+            if ((TERMINAL_DISCOVERY_PHASES as readonly string[]).includes(phase)) return;
+            // Emit usage for the phase that just ended
+            if (phaseTokens.inputTokens > 0 || phaseTokens.outputTokens > 0) {
+              send({
+                type: "discover:phase_usage",
+                phase: currentPhase,
+                inputTokens: phaseTokens.inputTokens,
+                outputTokens: phaseTokens.outputTokens,
+                durationMs: Date.now() - phaseStartMs,
+              });
+            }
+            phaseTokens.inputTokens = 0;
+            phaseTokens.outputTokens = 0;
+            currentPhase = phase;
+            phaseStartMs = Date.now();
+            send({ type: "discover:phase", phase, status: "running" });
+          },
+          onIteration: (phase, iteration, maxIterations, description) =>
+            send({ type: "discover:iteration", phase, iteration, maxIterations, description }),
+          onToolCall: (name, args, result, durationMs, error, phase) =>
             send({
-              type: "discover:phase_usage",
-              phase: currentPhase,
-              inputTokens: phaseTokens.inputTokens,
-              outputTokens: phaseTokens.outputTokens,
-              durationMs: Date.now() - phaseStartMs,
-            });
-          }
-          phaseTokens.inputTokens = 0;
-          phaseTokens.outputTokens = 0;
-          currentPhase = phase;
-          phaseStartMs = Date.now();
-          send({ type: "discover:phase", phase, status: "running" });
-        },
-        (phase, iteration, maxIterations, description) =>
-          send({ type: "discover:iteration", phase, iteration, maxIterations, description }),
-        (name, args, result, durationMs, error, phase) =>
-          send({
-            type: "discover:tool_call",
-            phase: phase ?? "discovery",
-            tool: name,
-            args,
-            status: error ? "error" : result ? "success" : "calling",
-            result,
-            durationMs,
-          }),
-        onTokenUsage,
-        discoverySkills.length > 0 ? discoverySkills : undefined,
-        (attempt, maxRetries, reason) => {
-          send({ type: "discover:retry", attempt, maxRetries, reason });
+              type: "discover:tool_call",
+              phase: phase ?? "discovery",
+              tool: name,
+              args,
+              status: error ? "error" : result ? "success" : "calling",
+              result,
+              durationMs,
+            }),
+          onTokenUsage,
+          skills: discoverySkills.length > 0 ? discoverySkills : undefined,
+          onRetry: (attempt, maxRetries, reason) => {
+            send({ type: "discover:retry", attempt, maxRetries, reason });
+          },
         },
       );
       // Stash the full DiscoveryResult so the `discover:accept` handler

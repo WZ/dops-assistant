@@ -89,6 +89,8 @@ services:
 discovery:
   autoRefresh: false          # Set to true to re-discover on server start
   maxIterations: 40           # Max agent iterations during discovery
+  # Discovery skills are controlled by Settings > Skills: scope includes
+  # discovery, and the skill is enabled for the current stack.
   # Cap each MCP tool result before it enters the discover agent's message
   # history. Bounds prompt growth across iterations so accumulated context
   # plus the reserved completion budget stays under the model's context

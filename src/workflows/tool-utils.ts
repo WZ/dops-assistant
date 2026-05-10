@@ -192,6 +192,7 @@ export function wrapToolsWithCallbacks(
   phase?: string,
   datasourceUidMap?: Map<string, string>,
   maxToolResultChars?: number,
+  onRawToolResult?: (toolName: string, args: Record<string, unknown>, result: string, phase?: string) => void,
 ): Record<string, any> {
   const needsDatasourceCoercion = (n: string) =>
     n.includes("query_prometheus") || n.includes("query_loki") ||
@@ -242,7 +243,10 @@ export function wrapToolsWithCallbacks(
         }
         const start = Date.now();
         try {
-          let result = await tool.execute(...execArgs);
+          const rawResult = await tool.execute(...execArgs);
+          const rawResultStr = unwrapMcpResult(rawResult);
+          onRawToolResult?.(stripToolPrefix(name), execArgs[0] ?? {}, rawResultStr, phase);
+          let result = rawResult;
           if (maxToolResultChars) result = truncateMcpResult(result, maxToolResultChars);
           const resultStr = unwrapMcpResult(result);
           onToolCall?.(stripToolPrefix(name), execArgs[0] ?? {}, resultStr, Date.now() - start, undefined, phase);

@@ -21,7 +21,7 @@ import type { RcaReport } from "../types/rca-types.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("mastra-chat");
-import type { IDiscoverAgent, OnToolCallEnriched, OnIteration } from "../types/agent-interfaces.js";
+import type { DiscoverOptions, IDiscoverAgent, OnToolCallEnriched, OnIteration } from "../types/agent-interfaces.js";
 import type { InvestigationTemplate } from "../config/schema.js";
 import type { ChatRequest, ChatResponse, ImageAttachment } from "../types/agent-types.js";
 import type { TokenUsage } from "../types/llm-types.js";
@@ -440,23 +440,18 @@ export class MastraDiscoverAdapter implements IDiscoverAgent {
 
   async discover(
     config: DiscoveryConfig,
-    onPhase?: (phase: string) => void,
-    onIteration?: OnIteration,
-    onToolCall?: OnToolCallEnriched,
-    onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void,
-    skills?: import("../skills/store.js").Skill[],
-    onRetry?: (attempt: number, maxRetries: number, reason: string) => void,
+    options: DiscoverOptions = {},
   ): Promise<DiscoveryResult> {
     return runDiscovery({
       model: this.deps.model,
       providers: this.deps.providers,
       discoveryConfig: config,
-      onPhase,
-      onIteration,
-      onToolCall,
-      onTokenUsage,
-      skills,
-      onRetry,
+      onPhase: options.onPhase,
+      onIteration: options.onIteration,
+      onToolCall: options.onToolCall,
+      onTokenUsage: options.onTokenUsage,
+      skills: options.skills,
+      onRetry: options.onRetry,
       llmRetry: this.deps.llmRetry,
       llmCallMs: this.deps.llmCallMs,
     });

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { Plus, FilePlus } from "lucide-react";
+import { FilePlus, Plus } from "lucide-react";
 import { SkillEditor } from "./SkillEditor";
 import { useStackContext } from "../contexts/StackContext";
 
@@ -95,9 +95,10 @@ export function SkillsPage() {
   const fetchSkills = useCallback(async () => {
     const requestId = ++skillsRequestRef.current;
     try {
-      const res = await stackFetch("/api/skills");
-      const nextSkills = res.ok ? await res.json() : [];
-      if (requestId === skillsRequestRef.current) setSkills(nextSkills);
+      const skillsRes = await stackFetch("/api/skills");
+      const nextSkills = skillsRes.ok ? await skillsRes.json() : [];
+      if (requestId !== skillsRequestRef.current) return;
+      setSkills(Array.isArray(nextSkills) ? nextSkills : []);
     } catch { /* ignore */ }
   }, [stackFetch]);
 
@@ -140,7 +141,7 @@ export function SkillsPage() {
       });
       setEditing(null);
       setCreating(false);
-      fetchSkills();
+      void fetchSkills();
     } catch { /* ignore */ }
   };
 
@@ -149,7 +150,7 @@ export function SkillsPage() {
       await stackFetch(`/api/skills/${id}`, { method: "DELETE" });
       setEditing(null);
       setCreating(false);
-      fetchSkills();
+      void fetchSkills();
     } catch { /* ignore */ }
   };
 

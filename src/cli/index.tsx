@@ -109,6 +109,8 @@ async function dispatch(): Promise<void> {
     const { ServiceRegistryStore } = await import("../services/registry.js");
     const { getServicesFilePath } = await import("../config/loader.js");
     const { runDiscover } = await import("./commands/discover.js");
+    const { SkillStore } = await import("../skills/store.js");
+    const { resolveDiscoverySkills } = await import("../server/discovery-skill-selection.js");
 
     const servicesPath = getServicesFilePath(parsed.flags.config);
     const registryStore = new ServiceRegistryStore(servicesPath);
@@ -118,7 +120,13 @@ async function dispatch(): Promise<void> {
       return writeOutput({ command: "discover", status: "error", error: "No MCP providers configured" }, 1);
     }
 
-    return runDiscover(discoverAgent, config.discovery);
+    const skillStore = new SkillStore(config.skills);
+    await skillStore.loadAll();
+    const discoverySkills = resolveDiscoverySkills({
+      skillStore,
+    });
+
+    return runDiscover(discoverAgent, config.discovery, discoverySkills);
   }
 
   if (parsed.command === "e2e") {
