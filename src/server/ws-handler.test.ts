@@ -703,7 +703,7 @@ describe("handleClientMessage — discovery skill injection", () => {
     tags: [],
     scope: ["discovery"],
     filePath: "consul-bare-metal.md",
-    body: "```promql\ncount by (service_name) (consul_catalog_service_node_healthy)\n```",
+    body: "```promql\ncount by (service_name) (consul_health_service_status)\n```",
   };
 
   it("injects stack-enabled discovery-scoped skills by default", async () => {

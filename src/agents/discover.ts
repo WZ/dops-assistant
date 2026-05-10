@@ -175,7 +175,7 @@ Each service in "services" must have:
         DaemonSet                kube_daemonset_status_number_ready           kube_daemonset_status_desired_number_scheduled
                                                                               kube_daemonset_status_current_number_scheduled
         Service-level / app      up{...}                                      n/a (\`up\` is the canonical readiness gauge — \`lt 1\` already encodes "drops to 0 = down", do NOT add \`=1\` to the query)
-        Consul                   consul_catalog_service_node_healthy          n/a
+        Consul                   consul_health_service_status                 n/a
 
       Why: \`kube_*_status_replicas\` reports \`.status.replicas\` (total
       non-terminated pods, including unhealthy ones). It only drops below 1

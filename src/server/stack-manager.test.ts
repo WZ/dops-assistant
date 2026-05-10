@@ -574,7 +574,7 @@ describe("StackManager", () => {
         tags: [],
         scope: ["discovery"],
         filePath: "consul-bare-metal.md",
-        body: "consul_catalog_service_node_healthy",
+        body: "consul_health_service_status",
       };
       manager.setSkillStore({
         getById: vi.fn((id: string) => id === consulSkill.id ? consulSkill : undefined),

@@ -15,7 +15,7 @@ describe("discover deterministic candidate backfill", () => {
       [],
     );
     const catalog = discoverStepTestHooks.extractDiscoveryCandidates(
-      { expr: "count by (service_name) (consul_catalog_service_node_healthy)" },
+      { expr: "count by (service_name) (consul_health_service_status)" },
       promRows([{ service_name: "warehouse" }]),
       [],
     );
@@ -32,7 +32,7 @@ describe("discover deterministic candidate backfill", () => {
       expect.objectContaining({
         name: "warehouse",
         source: "consul",
-        metricQuery: 'consul_catalog_service_node_healthy{service_name="warehouse"}',
+        metricQuery: 'consul_health_service_status{service_name="warehouse"}',
         logLabels: {},
       }),
     ]);

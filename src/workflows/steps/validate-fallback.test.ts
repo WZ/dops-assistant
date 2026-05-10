@@ -39,18 +39,18 @@ function buildService(name: string, firstQuery: string, withAvailabilityRule: bo
 describe("runValidateStep — metric fallback when agent's pick returns empty", () => {
   it("repairs metrics[0] to a working candidate and updates the paired service_availability rule", async () => {
     // Original query returns empty (simulating the real-world pattern
-    // where the agent writes consul_catalog_service_node_healthy for a
+    // where the agent writes consul_health_service_status for a
     // service not actually in Consul). Second candidate in the fallback
     // list — kube_statefulset_status_replicas_ready — returns data.
     const execute = vi.fn(async ({ expr }: { expr: string }) => {
-      if (expr.includes("consul_catalog_service_node_healthy")) return PROM_EMPTY;
+      if (expr.includes("consul_health_service_status")) return PROM_EMPTY;
       if (expr.includes("kube_deployment_status_replicas_available")) return PROM_EMPTY;
       if (expr.includes("kube_statefulset_status_replicas_ready")) return promNonEmpty(3);
       return PROM_EMPTY;
     });
     scriptedMetricsTool = { execute };
 
-    const svc = buildService("hdfs-namenode", 'consul_catalog_service_node_healthy{service_name="hdfs-namenode"}', true);
+    const svc = buildService("hdfs-namenode", 'consul_health_service_status{service_name="hdfs-namenode"}', true);
     const result = await runValidateStep({ providers, services: [svc] });
 
     expect(result).toHaveLength(1);
@@ -87,7 +87,7 @@ describe("runValidateStep — metric fallback when agent's pick returns empty", 
     const execute = vi.fn(async () => PROM_EMPTY);
     scriptedMetricsTool = { execute };
 
-    const original = 'consul_catalog_service_node_healthy{service_name="genuinely-broken"}';
+    const original = 'consul_health_service_status{service_name="genuinely-broken"}';
     const svc = buildService("genuinely-broken", original, true);
     const result = await runValidateStep({ providers, services: [svc] });
 
