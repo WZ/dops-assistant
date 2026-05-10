@@ -452,6 +452,7 @@ export class MastraDiscoverAdapter implements IDiscoverAgent {
       onTokenUsage: options.onTokenUsage,
       skills: options.skills,
       onRetry: options.onRetry,
+      abortSignal: options.abortSignal,
       llmRetry: this.deps.llmRetry,
       llmCallMs: this.deps.llmCallMs,
     });

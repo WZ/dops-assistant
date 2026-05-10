@@ -527,6 +527,25 @@ describe("runDiscoverStep — adversarial-review fixes (2026-04-22)", () => {
     expect(result.services.some((service) => service.name === "svc-timeout")).toBe(true);
   });
 
+  it("aborts from the caller signal even when the discover agent never settles", async () => {
+    mockDiscoverNeverSettles = true;
+    const controller = new AbortController();
+    const phases: string[] = [];
+    const promise = runDiscovery({
+      ...baseConfig,
+      llmRetry: { maxAttempts: 1, initialDelayMs: 1, maxDelayMs: 1, jitterPercent: 0 },
+      llmCallMs: 60_000,
+      abortSignal: controller.signal,
+      onPhase: (phase) => phases.push(phase),
+    });
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    controller.abort(new Error("client closed"));
+
+    await expect(promise).rejects.toThrow("client closed");
+    expect(phases[phases.length - 1]).toBe("complete-failed");
+  });
+
   // Regression: gpt-oss-120b on saturated context sometimes stops calling
   // tools AND emits 0 chars of synthesis text. The prepareStep wind-down
   // doesn't help (model exits the agent loop before the wind-down step

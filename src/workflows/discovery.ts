@@ -35,6 +35,8 @@ export interface DiscoveryWorkflowConfig {
   skills?: Skill[];
   /** Retry config for transient LLM-call failures. Falls back to no-retry when omitted. */
   llmRetry?: LlmRetryConfig;
+  /** Caller cancellation signal (e.g. WebSocket disconnect, supersede-on-new-discover). */
+  abortSignal?: AbortSignal;
   /** Per-attempt timeout for the discover agent's LLM call. See DiscoverStepConfig.llmCallMs. */
   llmCallMs?: number;
 }
@@ -58,6 +60,7 @@ export async function runDiscovery(config: DiscoveryWorkflowConfig): Promise<Dis
       onRetry: config.onRetry,
       skills: config.skills,
       llmRetry: config.llmRetry,
+      abortSignal: config.abortSignal,
       llmCallMs: config.llmCallMs,
     });
 

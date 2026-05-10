@@ -29,6 +29,8 @@ export interface DiscoverStepConfig {
   maxCharsPerSkill?: number;
   /** Retry config for transient LLM-call failures. Falls back to no-retry when omitted. */
   llmRetry?: LlmRetryConfig;
+  /** Caller cancellation signal (e.g. WebSocket disconnect, supersede-on-new-discover). */
+  abortSignal?: AbortSignal;
   /**
    * Per-attempt timeout for the discover agent's `generate()` call. Without
    * this, a silently-stalled LLM stream (mid-stream socket reset with no
@@ -68,35 +70,68 @@ function isLlmTimeoutError(err: unknown): boolean {
   return err instanceof Error && err.name === "TimeoutError";
 }
 
+function createDiscoveryAbortError(reason: unknown): Error {
+  if (reason instanceof Error) return reason;
+  const err = new Error(typeof reason === "string" ? reason : "Discovery aborted");
+  err.name = "AbortError";
+  return err;
+}
+
+function throwIfDiscoveryAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw createDiscoveryAbortError(signal.reason);
+}
+
 /**
  * `AbortSignal` is cooperative: it only helps if every layer in Mastra, the AI
  * SDK, undici, and the upstream gateway settles the promise on abort. Keep a
  * hard wall-clock timeout around the call so discovery can always leave the
  * "LLM is analyzing" state even when one layer ignores cancellation.
+ *
+ * `parentSignal` chains a caller-owned signal (e.g. WebSocket disconnect)
+ * into the same race so callers can cancel even when the underlying agent
+ * never settles. Without it, `runDiscoverStep` would only honor the local
+ * timeout and ignore upstream cancellation.
  */
 async function runWithHardTimeout<T>(
   timeoutMs: number | undefined,
   run: (abortSignal?: AbortSignal) => Promise<T>,
+  parentSignal?: AbortSignal,
 ): Promise<T> {
-  if (!timeoutMs || timeoutMs <= 0) return run(undefined);
+  throwIfDiscoveryAborted(parentSignal);
+
+  const hasTimeout = timeoutMs !== undefined && timeoutMs > 0;
+  if (!hasTimeout && !parentSignal) return run(undefined);
 
   const controller = new AbortController();
   let timeout: ReturnType<typeof setTimeout> | undefined;
-  const timeoutPromise = new Promise<never>((_, reject) => {
+  let removeParentAbortListener: (() => void) | undefined;
+  const timeoutPromise = hasTimeout ? new Promise<never>((_, reject) => {
     timeout = setTimeout(() => {
-      const err = createLlmTimeoutError(timeoutMs);
+      const err = createLlmTimeoutError(timeoutMs!);
       controller.abort(err);
       reject(err);
-    }, timeoutMs);
-  });
+    }, timeoutMs!);
+  }) : undefined;
+  const parentAbortPromise = parentSignal ? new Promise<never>((_, reject) => {
+    const onAbort = () => {
+      const err = createDiscoveryAbortError(parentSignal.reason);
+      controller.abort(err);
+      reject(err);
+    };
+    parentSignal.addEventListener("abort", onAbort, { once: true });
+    removeParentAbortListener = () => parentSignal.removeEventListener("abort", onAbort);
+  }) : undefined;
 
   try {
-    return await Promise.race([
+    const contenders: Array<Promise<T> | Promise<never>> = [
       Promise.resolve().then(() => run(controller.signal)),
-      timeoutPromise,
-    ]);
+    ];
+    if (timeoutPromise) contenders.push(timeoutPromise);
+    if (parentAbortPromise) contenders.push(parentAbortPromise);
+    return await Promise.race(contenders);
   } finally {
     if (timeout) clearTimeout(timeout);
+    removeParentAbortListener?.();
   }
 }
 
@@ -725,6 +760,7 @@ function formatRecoveryToolHistory(history: RecoveryToolEntry[]): string {
 }
 
 export async function runDiscoverStep(config: DiscoverStepConfig): Promise<DiscoverStepResult> {
+  throwIfDiscoveryAborted(config.abortSignal);
   let discoveryTools: Record<string, any>;
   try {
     const [metrics, infra] = await Promise.all([
@@ -813,6 +849,7 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
   const fullHints = datasourceHints + recipeAndSkillHints;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    throwIfDiscoveryAborted(config.abortSignal);
     const agent = createDiscoverAgent({
       model: config.model,
       tools,
@@ -880,6 +917,7 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
             }
           }
         } as any),
+        config.abortSignal,
       );
 
       const usage = (result as any).totalUsage ?? (result as any).usage;
@@ -951,7 +989,7 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
                 },
               },
               toolChoice: "none",
-            } as any)),
+            } as any), config.abortSignal),
             discoverRetryConfig(config),
           );
 
@@ -1063,10 +1101,21 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
       if (attempt === MAX_RETRIES) throw err;
       // Primary path is no longer wrapped in withLlmRetry, so transient
       // upstream errors fall to the outer loop. Back off here so we don't
-      // hammer a flapping gateway in a tight 1-2-3 burst.
+      // hammer a flapping gateway in a tight 1-2-3 burst. Honor the caller
+      // abort signal so cancellation isn't delayed by up to 30s of sleep.
       const baseDelay = Math.min(2000 * 2 ** (attempt - 1), 30_000);
       const jitter = Math.random() * 0.3 * baseDelay;
-      await new Promise((r) => setTimeout(r, baseDelay + jitter));
+      await new Promise<void>((resolve, reject) => {
+        const t = setTimeout(resolve, baseDelay + jitter);
+        const onAbort = () => {
+          clearTimeout(t);
+          reject(createDiscoveryAbortError(config.abortSignal?.reason));
+        };
+        if (config.abortSignal) {
+          if (config.abortSignal.aborted) { clearTimeout(t); onAbort(); return; }
+          config.abortSignal.addEventListener("abort", onAbort, { once: true });
+        }
+      });
     }
   }
 
