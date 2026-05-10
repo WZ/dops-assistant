@@ -17,12 +17,13 @@ interface DiscoveryProgressProps {
   error?: string | null;
   retry?: { attempt: number; maxRetries: number; reason: string } | null;
   phaseTokens?: Record<string, { inputTokens: number; outputTokens: number; durationMs: number }>;
+  phaseTimings?: Record<string, number>;
   totalUsage?: { inputTokens: number; outputTokens: number; durationMs: number } | null;
   onRetry?: () => void;
   onBack: () => void;
 }
 
-export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, error, retry, phaseTokens, totalUsage, onRetry, onBack }: DiscoveryProgressProps) {
+export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, error, retry, phaseTokens, phaseTimings, totalUsage, onRetry, onBack }: DiscoveryProgressProps) {
   // Elapsed timer + LLM thinking detection
   const [startTime] = useState(() => Date.now());
   const [elapsed, setElapsed] = useState(0);
@@ -44,11 +45,20 @@ export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, er
   }, [startTime, lastToolCallAt, error, phaseStatus]);
 
   const elapsedStr = elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;
-  const isThinking = toolCalls.length > 0 && secondsSinceToolCall >= 5 && !error;
+  const isThinking = phase === "discovery" && toolCalls.length > 0 && secondsSinceToolCall >= 5 && !error;
 
   const toolCallLogRef = useAutoScroll([toolCalls.length, isThinking]);
   const phases = ["discovery", "validation", "review"];
   const currentIdx = phases.indexOf(phase);
+  const phaseMeta = (p: string) => {
+    const tokens = phaseTokens?.[p];
+    const durationMs = phaseTimings?.[p] ?? tokens?.durationMs;
+    if (!tokens && durationMs === undefined) return null;
+    const parts: string[] = [];
+    if (tokens) parts.push(`${formatTokens(tokens.inputTokens + tokens.outputTokens)} tok`);
+    if (durationMs !== undefined) parts.push(`${(durationMs / 1000).toFixed(1)}s`);
+    return parts.join(" · ");
+  };
 
   return (
     <div className="h-full overflow-y-auto p-6">
@@ -74,9 +84,9 @@ export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, er
             <span className={`text-xs ${i <= currentIdx ? "text-foreground" : "text-muted-foreground/50"}`}>
               {p.charAt(0).toUpperCase() + p.slice(1)}
             </span>
-            {phaseTokens?.[p] && (
+            {phaseMeta(p) && (
               <span className="text-[8px] font-mono text-muted-foreground/50">
-                {formatTokens(phaseTokens[p]!.inputTokens + phaseTokens[p]!.outputTokens)} tok · {(phaseTokens[p]!.durationMs / 1000).toFixed(1)}s
+                {phaseMeta(p)}
               </span>
             )}
           </div>

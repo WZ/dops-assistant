@@ -67,6 +67,60 @@ describe("wrapToolsWithCallbacks — end-to-end coercion", () => {
     expect(wt.execute).not.toBe(mcpLikeTool.execute);
   });
 
+  it("relaxes Prometheus defaulted fields in the LLM-facing schema", () => {
+    const wrapped = wrapToolsWithCallbacks(
+      {
+        grafana_query_prometheus: {
+          id: "grafana_query_prometheus",
+          inputSchema: {
+            type: "object",
+            required: ["datasourceUid", "expr", "startTime", "endTime", "stepSeconds", "queryType"],
+            properties: {
+              datasourceUid: { type: "string" },
+              expr: { type: "string" },
+              startTime: { type: "string" },
+              endTime: { type: "string" },
+              stepSeconds: { type: "integer" },
+              queryType: { type: "string" },
+            },
+          },
+          execute: vi.fn(),
+        },
+      },
+      undefined,
+      "test",
+    );
+
+    const schema = (wrapped.grafana_query_prometheus as any).inputSchema;
+    expect(schema.required).toEqual(["datasourceUid", "expr"]);
+    expect(schema.properties.startTime.type).toEqual(["string", "null"]);
+    expect(schema.properties.endTime.type).toEqual(["string", "null"]);
+    expect(schema.properties.stepSeconds.type).toEqual(["integer", "null"]);
+    expect(schema.properties.queryType.type).toEqual(["string", "null"]);
+    expect(schema.properties.expr.type).toBe("string");
+  });
+
+  it("does not relax non-Prometheus schemas", () => {
+    const inputSchema = {
+      type: "object",
+      required: ["startTime"],
+      properties: { startTime: { type: "string" } },
+    };
+    const wrapped = wrapToolsWithCallbacks(
+      {
+        grafana_query_loki_logs: {
+          id: "grafana_query_loki_logs",
+          inputSchema,
+          execute: vi.fn(),
+        },
+      },
+      undefined,
+      "test",
+    );
+
+    expect((wrapped.grafana_query_loki_logs as any).inputSchema).toBe(inputSchema);
+  });
+
   it("coerces hallucinated datasourceUid short name to real UID", async () => {
     const innerExecute = vi.fn(async (args: any) => ({ ok: true, sawArgs: args }));
     const tools = {

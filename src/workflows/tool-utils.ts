@@ -102,6 +102,71 @@ export function coercePrometheusArgs(args: Record<string, unknown>): Record<stri
   return coerced;
 }
 
+const PROMETHEUS_DEFAULTED_FIELDS = new Set([
+  "startTime",
+  "endTime",
+  "stepSeconds",
+  "queryType",
+]);
+
+function allowNullJsonSchemaProperty(prop: unknown): unknown {
+  if (!prop || typeof prop !== "object" || Array.isArray(prop)) return prop;
+  const next: Record<string, unknown> = { ...(prop as Record<string, unknown>) };
+  const type = next.type;
+  if (typeof type === "string") {
+    next.type = type === "null" ? type : [type, "null"];
+    return next;
+  }
+  if (Array.isArray(type)) {
+    next.type = type.includes("null") ? type : [...type, "null"];
+    return next;
+  }
+  if (Array.isArray(next.anyOf)) {
+    next.anyOf = next.anyOf.some((entry) => entry && typeof entry === "object" && (entry as any).type === "null")
+      ? next.anyOf
+      : [...next.anyOf, { type: "null" }];
+    return next;
+  }
+  if (Array.isArray(next.oneOf)) {
+    next.oneOf = next.oneOf.some((entry) => entry && typeof entry === "object" && (entry as any).type === "null")
+      ? next.oneOf
+      : [...next.oneOf, { type: "null" }];
+    return next;
+  }
+  next.anyOf = [{ ...next }, { type: "null" }];
+  delete next.type;
+  return next;
+}
+
+/**
+ * The AI SDK validates tool arguments against `inputSchema` before calling
+ * execute(). For Prometheus we intentionally repair null/omitted time args in
+ * execute(), so the schema must allow those values to reach the wrapper —
+ * otherwise the SDK rejects the LLM's call before our coercer can fix it.
+ */
+function relaxInputSchemaForWrapperCoercion(toolName: string, inputSchema: unknown): unknown {
+  if (!toolName.includes("query_prometheus")) return inputSchema;
+  if (!inputSchema || typeof inputSchema !== "object" || Array.isArray(inputSchema)) return inputSchema;
+  const schema = inputSchema as Record<string, unknown>;
+  const properties = schema.properties;
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) return inputSchema;
+
+  const nextProperties: Record<string, unknown> = { ...(properties as Record<string, unknown>) };
+  for (const field of PROMETHEUS_DEFAULTED_FIELDS) {
+    if (field in nextProperties) {
+      nextProperties[field] = allowNullJsonSchemaProperty(nextProperties[field]);
+    }
+  }
+
+  const next: Record<string, unknown> = { ...schema, properties: nextProperties };
+  if (Array.isArray(schema.required)) {
+    next.required = schema.required.filter((field) => (
+      typeof field !== "string" || !PROMETHEUS_DEFAULTED_FIELDS.has(field)
+    ));
+  }
+  return next;
+}
+
 /**
  * Override Loki query parameters that LLMs consistently get wrong.
  *
@@ -201,10 +266,12 @@ export function wrapToolsWithCallbacks(
   const wrapped: Record<string, any> = {};
   for (const [name, tool] of Object.entries(tools)) {
     // Spread everything, then explicitly drop the Mastra class marker and
-    // the output schema. inputSchema stays so the LLM-facing tool spec is
-    // unchanged — only the server-side input validation is bypassed.
+    // the output schema. Keep inputSchema visible to the model, but relax
+    // Prometheus fields the wrapper defaults so the AI SDK doesn't reject
+    // null/omitted args before our coercer can fix them.
     const { outputSchema: _outputSchema, ...toolRest } = tool;
     const wrappedTool: Record<string | symbol, any> = { ...toolRest };
+    wrappedTool.inputSchema = relaxInputSchemaForWrapperCoercion(name, tool.inputSchema);
     // Spread copies symbol-keyed properties; delete the marker explicitly.
     delete wrappedTool[MASTRA_TOOL_MARKER];
     wrapped[name] = {

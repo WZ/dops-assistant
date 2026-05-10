@@ -43,6 +43,7 @@ interface DiscoveryState {
   error: string | null;
   retry?: { attempt: number; maxRetries: number; reason: string } | null;
   phaseTokens: Record<string, { inputTokens: number; outputTokens: number; durationMs: number }>;
+  phaseTimings: Record<string, number>;
   totalUsage: { inputTokens: number; outputTokens: number; durationMs: number } | null;
 }
 
@@ -443,6 +444,7 @@ export function ServicesPage({
         error={discoveryState.error}
         retry={discoveryState.retry}
         phaseTokens={discoveryState.phaseTokens}
+        phaseTimings={discoveryState.phaseTimings}
         totalUsage={discoveryState.totalUsage}
         onRetry={onStartDiscovery}
         onBack={() => setSubView({ type: "grid" })}
