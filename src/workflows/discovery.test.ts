@@ -462,7 +462,7 @@ describe("runDiscoverStep — adversarial-review fixes (2026-04-22)", () => {
       services: [
         {
           name: "svc-from-consul",
-          metrics: [{ query: 'consul_catalog_service_node_healthy{service_name="svc-from-consul"}', description: "" }],
+          metrics: [{ query: 'consul_health_service_status{service_name="svc-from-consul"}', description: "" }],
           logLabels: { container: "svc-from-consul" },
           probeRules: [
             // LLM wrote log_errors but NOT service_availability.
@@ -479,7 +479,7 @@ describe("runDiscoverStep — adversarial-review fixes (2026-04-22)", () => {
     expect(names).toContain("service_availability");
     expect(names).toContain("log_errors");
     const availability = (svc.probeRules ?? []).find((r) => r.name === "service_availability")!;
-    expect(availability.query).toBe('consul_catalog_service_node_healthy{service_name="svc-from-consul"}');
+    expect(availability.query).toBe('consul_health_service_status{service_name="svc-from-consul"}');
     expect(availability.threshold).toEqual({ op: "lt", value: 1 });
     expect(availability.consecutiveTicks).toBe(3);
   });

@@ -665,14 +665,12 @@ function extractDiscoveryCandidates(
         metricDescription: "DaemonSet ready pods",
         logLabels: namespace ? { namespace, container_name: name } : { container_name: name },
       });
-    } else if (expr.includes("consul_catalog_service_node_healthy") && metric["service_name"]) {
-      const type = metric["type"] ?? metric["service_type"] ?? metric["service_kind"] ?? metric["kubernetes_service_type"];
-      if (type && type !== "ExternalName") continue;
+    } else if (expr.includes("consul_health_service_status") && metric["service_name"]) {
       const name = metric["service_name"];
       out.push({
         name,
         source: "consul",
-        metricQuery: `consul_catalog_service_node_healthy${selector({ service_name: name })}`,
+        metricQuery: `consul_health_service_status${selector({ service_name: name })}`,
         metricDescription: "Consul health status",
         logLabels: {},
       });

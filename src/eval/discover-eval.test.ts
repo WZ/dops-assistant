@@ -179,7 +179,7 @@ describe("discover-eval / detectAvailabilityAntipattern", () => {
 
   it("accepts up{} and other non-kube metrics", () => {
     expect(detectAvailabilityAntipattern('up{app="x"}')).toBeNull();
-    expect(detectAvailabilityAntipattern('consul_catalog_service_node_healthy{service="x"}')).toBeNull();
+    expect(detectAvailabilityAntipattern('consul_health_service_status{service="x"}')).toBeNull();
   });
 
   it("returns null for empty string", () => {
