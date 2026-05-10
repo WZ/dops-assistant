@@ -603,6 +603,10 @@ function extractDiscoveryCandidates(
       });
     } else if (metric["statefulset"]) {
       const name = metric["statefulset"];
+      // No restartQuery: kube_pod_container_status_restarts_total has no
+      // statefulset label by default (kube-state-metrics labels are
+      // namespace/pod/container/uid/node), so the rule would always read 0.
+      // Leave it to LLM-driven discovery to emit a per-cluster correct query.
       out.push({
         name,
         source: "statefulset",
@@ -610,10 +614,10 @@ function extractDiscoveryCandidates(
         metricQuery: `kube_statefulset_status_replicas_ready${selector({ statefulset: name, namespace })}`,
         metricDescription: "StatefulSet ready replicas",
         logLabels: namespace ? { namespace, container_name: name } : { container_name: name },
-        restartQuery: `rate(kube_pod_container_status_restarts_total${selector({ statefulset: name })}[5m])`,
       });
     } else if (metric["daemonset"]) {
       const name = metric["daemonset"];
+      // No restartQuery: see statefulset note above. Same label-shape problem.
       out.push({
         name,
         source: "daemonset",
@@ -621,7 +625,6 @@ function extractDiscoveryCandidates(
         metricQuery: `kube_daemonset_status_number_ready${selector({ daemonset: name, namespace })}`,
         metricDescription: "DaemonSet ready pods",
         logLabels: namespace ? { namespace, container_name: name } : { container_name: name },
-        restartQuery: `rate(kube_pod_container_status_restarts_total${selector({ daemonset: name })}[5m])`,
       });
     } else if (expr.includes("consul_catalog_service_node_healthy") && metric["service_name"]) {
       const type = metric["type"] ?? metric["service_type"] ?? metric["service_kind"] ?? metric["kubernetes_service_type"];
@@ -1058,6 +1061,12 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
       // sustained upstream failures through the outer parse-retry loop.
       if (err instanceof LlmUnavailableError) throw err;
       if (attempt === MAX_RETRIES) throw err;
+      // Primary path is no longer wrapped in withLlmRetry, so transient
+      // upstream errors fall to the outer loop. Back off here so we don't
+      // hammer a flapping gateway in a tight 1-2-3 burst.
+      const baseDelay = Math.min(2000 * 2 ** (attempt - 1), 30_000);
+      const jitter = Math.random() * 0.3 * baseDelay;
+      await new Promise((r) => setTimeout(r, baseDelay + jitter));
     }
   }
 

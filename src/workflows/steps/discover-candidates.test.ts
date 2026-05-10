@@ -76,6 +76,45 @@ describe("discover deterministic candidate backfill", () => {
     ]);
   });
 
+  it("omits pod_restarts from statefulset/daemonset candidates (no statefulset/daemonset label on the restart counter)", () => {
+    const stsCandidates = new Map<string, ReturnType<typeof discoverStepTestHooks.extractDiscoveryCandidates>[number]>();
+    for (const candidate of discoverStepTestHooks.extractDiscoveryCandidates(
+      { expr: "count by (namespace, statefulset) (kube_statefulset_status_replicas_ready)" },
+      promRows([{ namespace: "data", statefulset: "single-sts" }]),
+      [],
+    )) {
+      stsCandidates.set(candidate.name, candidate);
+    }
+    const dsCandidates = new Map<string, ReturnType<typeof discoverStepTestHooks.extractDiscoveryCandidates>[number]>();
+    for (const candidate of discoverStepTestHooks.extractDiscoveryCandidates(
+      { expr: "count by (namespace, daemonset) (kube_daemonset_status_number_ready)" },
+      promRows([{ namespace: "kube-system", daemonset: "telemetry-collector" }]),
+      [],
+    )) {
+      dsCandidates.set(candidate.name, candidate);
+    }
+
+    const stsMerged = discoverStepTestHooks.mergeCandidatesIntoDiscoveryResult(
+      { services: [], globalProbeRules: [] },
+      stsCandidates,
+      [],
+    );
+    const dsMerged = discoverStepTestHooks.mergeCandidatesIntoDiscoveryResult(
+      { services: [], globalProbeRules: [] },
+      dsCandidates,
+      [],
+    );
+
+    expect(stsMerged.services.find((s) => s.name === "single-sts")?.probeRules.map((r) => r.name)).toEqual([
+      "service_availability",
+      "log_errors",
+    ]);
+    expect(dsMerged.services.find((s) => s.name === "telemetry-collector")?.probeRules.map((r) => r.name)).toEqual([
+      "service_availability",
+      "log_errors",
+    ]);
+  });
+
   it("does not auto-add every StatefulSet from high-cardinality shard sweeps", () => {
     const candidates = new Map<string, ReturnType<typeof discoverStepTestHooks.extractDiscoveryCandidates>[number]>();
     const rows = Array.from({ length: 12 }, (_, i) => ({ namespace: "db", statefulset: `db-shard${i}` }));
