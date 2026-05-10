@@ -74,6 +74,7 @@ function renderPage(props: Partial<React.ComponentProps<typeof ServicesPage>> = 
       error: null,
       retry: null,
       phaseTokens: {},
+      phaseTimings: {},
       totalUsage: null,
     },
     onStartDiscovery: vi.fn(),

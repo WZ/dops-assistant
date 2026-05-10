@@ -94,6 +94,13 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
   const lokiTool = findToolBySuffix(logsTools, "query_loki_logs");
   const podsListTool = findToolBySuffix(infraTools, "pods_list");
 
+  logger.info({
+    serviceCount: config.services.length,
+    hasPrometheusTool: Boolean(promTool),
+    hasLokiTool: Boolean(lokiTool),
+    hasPodsListTool: Boolean(podsListTool),
+  }, "discovery validation: start");
+
   logger.debug(`Starting validation of ${config.services.length} services`);
   logger.debug(`Metrics tools: ${Object.keys(metricsTools).join(", ") || "(none)"}`);
   logger.debug(`Logs tools: ${Object.keys(logsTools).join(", ") || "(none)"}`);
@@ -207,6 +214,12 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
   const verified = results.filter((r) => r.confidence === "verified").length;
   const partial = results.filter((r) => r.confidence === "partial").length;
   const unverified = results.filter((r) => r.confidence === "unverified").length;
+  logger.info({
+    serviceCount: results.length,
+    verified,
+    partial,
+    unverified,
+  }, "discovery validation: complete");
   logger.debug(`Done: ${verified} verified, ${partial} partial, ${unverified} unverified`);
 
   return results;

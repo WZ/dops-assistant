@@ -84,6 +84,7 @@ function renderServicesPage(overrides?: Partial<React.ComponentProps<typeof Serv
       error: null,
       retry: null,
       phaseTokens: {},
+      phaseTimings: {},
       totalUsage: null,
     },
     onStartDiscovery: vi.fn(),

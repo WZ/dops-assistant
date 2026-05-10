@@ -94,6 +94,9 @@ export function logLlmCallFirstChunk(callId: string, agent: string, elapsedMs: n
 export function logLlmCall(event: LlmCallEvent): void {
   if (!llmLogger.isLevelEnabled("info")) return;
 
+  const toolArgsCharsTotal = event.toolCalls.reduce((sum, call) => sum + call.argsChars, 0);
+  const toolResultCharsTotal = event.toolCalls.reduce((sum, call) => sum + call.resultChars, 0);
+
   llmLogger.info({
     callId: event.callId,
     agent: event.agent,
@@ -104,6 +107,8 @@ export function logLlmCall(event: LlmCallEvent): void {
     outputTokens: event.outputTokens,
     durationMs: event.durationMs,
     toolCallCount: event.toolCalls.length,
+    toolArgsCharsTotal,
+    toolResultCharsTotal,
     error: event.error,
   }, `LLM ${event.agent}: ${event.inputTokens}in/${event.outputTokens}out ${event.durationMs}ms`);
 

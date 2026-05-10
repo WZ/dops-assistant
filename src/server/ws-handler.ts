@@ -746,12 +746,31 @@ export async function handleClientMessage(
     let currentPhase = "discovery";
     const discoveryStartMs = Date.now();
     let phaseStartMs = Date.now();
+    let phaseHasStarted = false;
 
     const onTokenUsage = (u: { inputTokens: number; outputTokens: number }) => {
       totalTokens.inputTokens += u.inputTokens;
       totalTokens.outputTokens += u.outputTokens;
       phaseTokens.inputTokens += u.inputTokens;
       phaseTokens.outputTokens += u.outputTokens;
+    };
+
+    // Phase accounting: timing always emits; usage only when the phase
+    // actually called the LLM. Splitting them lets the UI show timing for
+    // tool-only phases (e.g. validation) instead of a blank cell.
+    const emitPhaseAccounting = (phase: string, durationMs: number) => {
+      send({ type: "discover:phase_timing", phase, durationMs });
+      if (phaseTokens.inputTokens > 0 || phaseTokens.outputTokens > 0) {
+        send({
+          type: "discover:phase_usage",
+          phase,
+          inputTokens: phaseTokens.inputTokens,
+          outputTokens: phaseTokens.outputTokens,
+          durationMs,
+        });
+      }
+      phaseTokens.inputTokens = 0;
+      phaseTokens.outputTokens = 0;
     };
 
     try {
@@ -776,20 +795,13 @@ export async function handleClientMessage(
             // phases here would produce a spurious `status: "running"` event
             // the UI then has to overwrite — skip them cleanly instead.
             if ((TERMINAL_DISCOVERY_PHASES as readonly string[]).includes(phase)) return;
-            // Emit usage for the phase that just ended
-            if (phaseTokens.inputTokens > 0 || phaseTokens.outputTokens > 0) {
-              send({
-                type: "discover:phase_usage",
-                phase: currentPhase,
-                inputTokens: phaseTokens.inputTokens,
-                outputTokens: phaseTokens.outputTokens,
-                durationMs: Date.now() - phaseStartMs,
-              });
+            const now = Date.now();
+            if (phaseHasStarted && phase !== currentPhase) {
+              emitPhaseAccounting(currentPhase, now - phaseStartMs);
             }
-            phaseTokens.inputTokens = 0;
-            phaseTokens.outputTokens = 0;
             currentPhase = phase;
-            phaseStartMs = Date.now();
+            phaseStartMs = now;
+            phaseHasStarted = true;
             send({ type: "discover:phase", phase, status: "running" });
           },
           onIteration: (phase, iteration, maxIterations, description) =>
@@ -826,15 +838,9 @@ export async function handleClientMessage(
         send({ type: "discover:complete", services: result.services });
       }
 
-      // Emit usage for the final phase
-      if (phaseTokens.inputTokens > 0 || phaseTokens.outputTokens > 0) {
-        send({
-          type: "discover:phase_usage",
-          phase: currentPhase,
-          inputTokens: phaseTokens.inputTokens,
-          outputTokens: phaseTokens.outputTokens,
-          durationMs: Date.now() - phaseStartMs,
-        });
+      // Final phase accounting (timing always; usage only if LLM ran)
+      if (phaseHasStarted) {
+        emitPhaseAccounting(currentPhase, Date.now() - phaseStartMs);
       }
 
       send({

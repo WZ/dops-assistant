@@ -368,6 +368,43 @@ describe("handleClientMessage", () => {
     expect(deps.router.route).not.toHaveBeenCalled();
   });
 
+  it("emits discovery phase timing even when validation has no token usage", async () => {
+    const deps = mockDeps();
+    const ctx = mockCtx();
+    clearStackCaches(S);
+    const discover = vi.fn(async (
+      _config: unknown,
+      options?: {
+        onPhase?: (phase: string) => void;
+        onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
+      },
+    ) => {
+      options?.onPhase?.("discovery");
+      options?.onTokenUsage?.({ inputTokens: 10, outputTokens: 5 });
+      options?.onPhase?.("validation");
+      return {
+        services: [{ name: "svc", metrics: [], logLabels: {}, confidence: "verified", validationNotes: "ok" }],
+        globalProbeRules: [],
+      };
+    });
+    (createMastraAdapters as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      chatAgent: { chat: vi.fn() },
+      investigationAgent: { investigate: vi.fn() },
+      discoverAgent: { discover, accept: vi.fn() },
+    });
+
+    const sent: ServerMessage[] = [];
+    await callHandler({ type: "discover" }, (m) => sent.push(m), deps, ctx);
+
+    expect(sent).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "discover:phase_timing", phase: "discovery" }),
+      expect.objectContaining({ type: "discover:phase_usage", phase: "discovery", inputTokens: 10, outputTokens: 5 }),
+      expect.objectContaining({ type: "discover:phase_timing", phase: "validation" }),
+      expect.objectContaining({ type: "discover:phase", phase: "validation", status: "complete" }),
+      expect.objectContaining({ type: "discover:complete" }),
+    ]));
+  });
+
   it("chat:stream_end omits serviceContext when service is only resolvable from history", async () => {
     // Regression: when a user's previous chat was about service-A but the new
     // message names service-B (which isn't in the registry), we used to fall
