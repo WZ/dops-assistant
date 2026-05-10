@@ -101,12 +101,21 @@ export async function runDiscovery(config: DiscoveryWorkflowConfig): Promise<Dis
         onToolCall: config.onToolCall,
         onIteration: config.onIteration,
         onTokenUsage: config.onTokenUsage,
+        abortSignal: config.abortSignal,
       });
       const globalProbeRules = [...discovered.globalProbeRules];
       backfillGlobalAvailabilityRules(validated, globalProbeRules);
       result = { services: validated, globalProbeRules };
       terminalPhase = "complete";
     } catch (err) {
+      // AbortError must propagate so callers see the cancellation rather
+      // than a fake-success "validation failed, here are the unverified
+      // services" result. Without this, WS-disconnect during validation
+      // would silently complete the run on the server.
+      if (err instanceof Error && err.name === "AbortError") {
+        terminalPhase = "complete-failed";
+        throw err;
+      }
       // Preserve the full Error (including stack) via pino's default
       // `err` serializer rather than coercing to a string — losing the
       // stack here means the follow-up investigation starts blind.

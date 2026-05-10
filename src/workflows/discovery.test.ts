@@ -14,12 +14,27 @@ vi.mock("../mcp/provider.js", () => ({
 // delegating; otherwise the real runValidateStep runs so existing tests see
 // its actual behavior (unverified services under zero-provider conditions).
 let mockValidateThrows = false;
+// When true, runValidateStep hangs until config.abortSignal aborts, then
+// rethrows the abort reason. Lets us test that abort during validation
+// propagates as AbortError instead of being swallowed into "unverified".
+let mockValidateHangsForAbort = false;
 vi.mock("./steps/validate.js", async () => {
   const actual = await vi.importActual<typeof import("./steps/validate.js")>("./steps/validate.js");
   return {
     ...actual,
     runValidateStep: vi.fn(async (config: Parameters<typeof actual.runValidateStep>[0]) => {
       if (mockValidateThrows) throw new Error("validation stalled mid-flow");
+      if (mockValidateHangsForAbort) {
+        await new Promise<void>((_resolve, reject) => {
+          config.abortSignal?.addEventListener("abort", () => {
+            const reason = config.abortSignal!.reason;
+            const err = reason instanceof Error ? reason : new Error(String(reason ?? "aborted"));
+            err.name = "AbortError";
+            reject(err);
+          });
+        });
+        return [];
+      }
       return actual.runValidateStep(config);
     }),
   };
@@ -234,6 +249,40 @@ describe("runDiscovery", () => {
       expect(phases[phases.length - 1]).toBe("complete-validation-failed");
     } finally {
       mockValidateThrows = false;
+    }
+  });
+
+  it("propagates abort during the validation phase as a terminal 'complete-failed', not as unverified-success", async () => {
+    mockValidateHangsForAbort = true;
+    try {
+      const controller = new AbortController();
+      const phases: string[] = [];
+      const promise = runDiscovery({
+        model: fakeModel,
+        providers: [],
+        discoveryConfig: { autoRefresh: false, excludeServices: [], maxIterations: 5, discoveryRecipes: [] },
+        onPhase: (phase) => phases.push(phase),
+        abortSignal: controller.signal,
+      });
+
+      // Wait for validation phase to enter the hanging mock
+      await new Promise<void>((resolve) => {
+        const check = () => {
+          if (phases.includes("validation")) resolve();
+          else setTimeout(check, 5);
+        };
+        check();
+      });
+
+      controller.abort(new Error("client closed"));
+
+      await expect(promise).rejects.toThrow("client closed");
+      // Critical: validation-abort must surface as 'complete-failed', NOT as
+      // 'complete-validation-failed' (which would mean we silently returned
+      // unverified services and lied about cancellation).
+      expect(phases[phases.length - 1]).toBe("complete-failed");
+    } finally {
+      mockValidateHangsForAbort = false;
     }
   });
 

@@ -793,6 +793,13 @@ export async function handleClientMessage(
         discoveryConfig ?? { autoRefresh: false, excludeServices: [], maxIterations: 40, discoveryRecipes: [], maxToolResultChars: 30_000, maxOutputTokens: 8192 },
         {
           onPhase: (phase) => {
+            // Suppress emits from a superseded run. Mastra's agent loop is
+            // cooperative — after `discoveryAbort.abort()`, callbacks can
+            // still fire for several seconds while the previous run unwinds.
+            // Without this guard those events would interleave with the new
+            // run's events on the same WebSocket and the UI has no way to
+            // tell them apart (the protocol has no run-id).
+            if (discoveryAbort.signal.aborted) return;
             // AP2: runDiscovery emits terminal phases (TERMINAL_DISCOVERY_PHASES)
             // via its finally block. Those signals are for in-process observers;
             // the WS protocol already signals terminal state via its own emits
@@ -817,9 +824,12 @@ export async function handleClientMessage(
             phaseStartMs = Date.now();
             send({ type: "discover:phase", phase, status: "running" });
           },
-          onIteration: (phase, iteration, maxIterations, description) =>
-            send({ type: "discover:iteration", phase, iteration, maxIterations, description }),
-          onToolCall: (name, args, result, durationMs, error, phase) =>
+          onIteration: (phase, iteration, maxIterations, description) => {
+            if (discoveryAbort.signal.aborted) return;
+            send({ type: "discover:iteration", phase, iteration, maxIterations, description });
+          },
+          onToolCall: (name, args, result, durationMs, error, phase) => {
+            if (discoveryAbort.signal.aborted) return;
             send({
               type: "discover:tool_call",
               phase: phase ?? "discovery",
@@ -828,10 +838,12 @@ export async function handleClientMessage(
               status: error ? "error" : result ? "success" : "calling",
               result,
               durationMs,
-            }),
+            });
+          },
           onTokenUsage,
           skills: discoverySkills.length > 0 ? discoverySkills : undefined,
           onRetry: (attempt, maxRetries, reason) => {
+            if (discoveryAbort.signal.aborted) return;
             send({ type: "discover:retry", attempt, maxRetries, reason });
           },
           abortSignal: discoveryAbort.signal,

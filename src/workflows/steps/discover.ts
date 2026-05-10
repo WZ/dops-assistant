@@ -70,15 +70,19 @@ function isLlmTimeoutError(err: unknown): boolean {
   return err instanceof Error && err.name === "TimeoutError";
 }
 
-function createDiscoveryAbortError(reason: unknown): Error {
+export function createDiscoveryAbortError(reason: unknown): Error {
   if (reason instanceof Error) return reason;
   const err = new Error(typeof reason === "string" ? reason : "Discovery aborted");
   err.name = "AbortError";
   return err;
 }
 
-function throwIfDiscoveryAborted(signal?: AbortSignal): void {
+export function throwIfDiscoveryAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw createDiscoveryAbortError(signal.reason);
+}
+
+export function isAbortError(err: unknown): boolean {
+  return err instanceof Error && err.name === "AbortError";
 }
 
 /**
@@ -1106,14 +1110,17 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
       const baseDelay = Math.min(2000 * 2 ** (attempt - 1), 30_000);
       const jitter = Math.random() * 0.3 * baseDelay;
       await new Promise<void>((resolve, reject) => {
-        const t = setTimeout(resolve, baseDelay + jitter);
-        const onAbort = () => {
+        const signal = config.abortSignal;
+        const settle = (fn: () => void) => {
           clearTimeout(t);
-          reject(createDiscoveryAbortError(config.abortSignal?.reason));
+          if (signal) signal.removeEventListener("abort", onAbort);
+          fn();
         };
-        if (config.abortSignal) {
-          if (config.abortSignal.aborted) { clearTimeout(t); onAbort(); return; }
-          config.abortSignal.addEventListener("abort", onAbort, { once: true });
+        const onAbort = () => settle(() => reject(createDiscoveryAbortError(signal?.reason)));
+        const t = setTimeout(() => settle(resolve), baseDelay + jitter);
+        if (signal) {
+          if (signal.aborted) { onAbort(); return; }
+          signal.addEventListener("abort", onAbort, { once: true });
         }
       });
     }
