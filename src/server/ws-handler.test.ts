@@ -726,4 +726,106 @@ describe("handleClientMessage — discovery skill injection", () => {
     });
   });
 
+  it("supersedes an in-flight discover with a second request and suppresses the first run's events", async () => {
+    clearStackCaches(S);
+    const deps = mockDeps();
+    let firstAbortSignal: AbortSignal | undefined;
+    let firstOnPhase: ((p: string) => void) | undefined;
+    const discover = vi.fn()
+      .mockImplementationOnce(async (_cfg: unknown, opts: any) => {
+        firstAbortSignal = opts?.abortSignal;
+        firstOnPhase = opts?.onPhase;
+        // Hang until aborted (simulating a discovery the user superseded)
+        await new Promise<void>((_resolve, reject) => {
+          opts?.abortSignal?.addEventListener("abort", () => {
+            reject(opts.abortSignal!.reason ?? new Error("aborted"));
+          });
+        });
+        return { services: [], globalProbeRules: [] };
+      })
+      .mockImplementationOnce(async () => ({
+        services: [{ name: "second-run", metrics: [], logLabels: {}, confidence: "verified" as const, validationNotes: "ok" }],
+        globalProbeRules: [],
+      }));
+    (createMastraAdapters as ReturnType<typeof vi.fn>).mockReset();
+    (createMastraAdapters as ReturnType<typeof vi.fn>).mockResolvedValue(discoverAdapters(discover));
+
+    const sent: ServerMessage[] = [];
+    const send = (m: ServerMessage) => sent.push(m);
+    const ctx = mockCtx();
+    const activeDiscovery = { current: null as AbortController | null };
+
+    const first = handleClientMessage(
+      { type: "discover" } as any, send, deps, `stack_${S}_test`, S, ctx,
+      () => null, () => {}, () => {}, new Map(), activeDiscovery,
+    );
+    // Let the first call enter the agent.discover() await
+    await new Promise<void>((r) => setTimeout(r, 5));
+
+    // Fire the second discover. This should abort the first.
+    await handleClientMessage(
+      { type: "discover" } as any, send, deps, `stack_${S}_test`, S, ctx,
+      () => null, () => {}, () => {}, new Map(), activeDiscovery,
+    );
+    // First run's promise rejects, the catch sees signal.aborted and returns silently
+    await first;
+
+    expect(firstAbortSignal?.aborted).toBe(true);
+    expect(String(firstAbortSignal?.reason)).toMatch(/superseded/i);
+    // First run's onPhase callback fired now should not emit (it would interleave with the second run)
+    const sentBefore = sent.length;
+    firstOnPhase?.("validation");
+    expect(sent.length).toBe(sentBefore);
+    // No discover:error from the superseded first run
+    expect(sent.some((m) => m.type === "discover:error")).toBe(false);
+    // Second run completed normally
+    expect(sent.some((m) => m.type === "discover:complete")).toBe(true);
+  });
+
+  it("aborts in-flight discovery when the WebSocket closes", async () => {
+    clearStackCaches(S);
+    const deps = mockDeps();
+    let capturedSignal: AbortSignal | undefined;
+    const discover = vi.fn(async (_cfg: unknown, opts: any) => {
+      capturedSignal = opts?.abortSignal;
+      // Hang until aborted
+      await new Promise<void>((_resolve, reject) => {
+        opts?.abortSignal?.addEventListener("abort", () => {
+          reject(opts.abortSignal!.reason ?? new Error("aborted"));
+        });
+      });
+      return { services: [], globalProbeRules: [] };
+    });
+    (createMastraAdapters as ReturnType<typeof vi.fn>).mockReset();
+    (createMastraAdapters as ReturnType<typeof vi.fn>).mockResolvedValue(discoverAdapters(discover));
+
+    const server = createServer();
+    setupWebSocket(server, deps);
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test server did not bind to a port");
+
+    const client = new WebSocket(`ws://127.0.0.1:${address.port}/ws?stackId=${S}`);
+    await new Promise<void>((resolve) => client.on("open", resolve));
+    client.send(JSON.stringify({ type: "discover" }));
+
+    // Wait until discover() has been entered
+    await new Promise<void>((resolve) => {
+      const check = () => {
+        if (capturedSignal) resolve();
+        else setTimeout(check, 5);
+      };
+      check();
+    });
+
+    client.close();
+    // Give the close handler a tick to abort
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+
+    expect(capturedSignal?.aborted).toBe(true);
+    expect(String(capturedSignal?.reason)).toMatch(/disconnected/i);
+  });
+
 });

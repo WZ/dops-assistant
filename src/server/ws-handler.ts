@@ -255,6 +255,12 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
     // save both via registryStore.saveAll() atomically.
     let pendingDiscovery: DiscoveryResult | null = null;
 
+    // Per-connection in-flight discovery. New discover requests supersede
+    // any prior one (typing "again" before the first finishes shouldn't run
+    // both); WebSocket close aborts whatever is running so the agent loop
+    // can leave the LLM-analyzing state instead of stranding the request.
+    const activeDiscovery: { current: AbortController | null } = { current: null };
+
     // Per-connection pending dispatches: investigations that have emitted
     // `investigation:confirm_dispatch` but haven't yet entered the
     // multi-agent runner. The client can send `investigation:cancel_dispatch`
@@ -280,18 +286,27 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
             db: deps.db,
             stackId,
           });
+          activeDiscovery.current?.abort(new Error("Discovery superseded"));
+          const autoDiscoveryAbort = new AbortController();
+          activeDiscovery.current = autoDiscoveryAbort;
           agents.discoverAgent
             .discover(discoveryConfig, {
               skills: discoverySkills.length > 0 ? discoverySkills : undefined,
+              abortSignal: autoDiscoveryAbort.signal,
             })
             .then((result) => {
+              if (autoDiscoveryAbort.signal.aborted) return;
               pendingDiscovery = result;
               if (result.services.length > 0) {
                 send({ type: "discover:pending", services: result.services });
               }
             })
             .catch((err) => {
+              if (autoDiscoveryAbort.signal.aborted) return;
               logger.warn({ err }, "Auto-refresh discovery failed");
+            })
+            .finally(() => {
+              if (activeDiscovery.current === autoDiscoveryAbort) activeDiscovery.current = null;
             });
         }
       } catch (err) {
@@ -372,6 +387,7 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
           (result: DiscoveryResult) => { pendingDiscovery = result; },
           () => { pendingDiscovery = null; },
           pendingDispatches,
+          activeDiscovery,
         );
       } catch (err) {
         if (err instanceof LlmUnavailableError) {
@@ -394,6 +410,8 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
         controller.abort();
       }
       pendingDispatches.clear();
+      activeDiscovery.current?.abort(new Error("WebSocket disconnected"));
+      activeDiscovery.current = null;
       wsRateLimiter.destroy(threadId);
       logger.info({ threadId, stackId }, "WebSocket client disconnected");
     });
@@ -674,6 +692,7 @@ export async function handleClientMessage(
   setPendingDiscovery: (result: DiscoveryResult) => void,
   clearPendingDiscovery: () => void,
   pendingDispatches: Map<string, AbortController> = new Map(),
+  activeDiscovery: { current: AbortController | null } = { current: null },
 ): Promise<void> {
   const memory = ctx.conversationMemory;
 
@@ -741,6 +760,12 @@ export async function handleClientMessage(
   const agents = await getOrCreateAgents(stackId, ctx, deps.config, deps.db);
 
   if (msg.type === "discover" && agents.discoverAgent) {
+    // Supersede any in-flight discovery on this connection (auto-refresh on
+    // open or a previous explicit discover that hasn't returned yet). The
+    // user's most recent intent wins.
+    activeDiscovery.current?.abort(new Error("Discovery superseded"));
+    const discoveryAbort = new AbortController();
+    activeDiscovery.current = discoveryAbort;
     const totalTokens = { inputTokens: 0, outputTokens: 0 };
     const phaseTokens = { inputTokens: 0, outputTokens: 0 };
     let currentPhase = "discovery";
@@ -787,6 +812,13 @@ export async function handleClientMessage(
         discoveryConfig ?? { autoRefresh: false, excludeServices: [], maxIterations: 40, discoveryRecipes: [], maxToolResultChars: 30_000, maxOutputTokens: 8192 },
         {
           onPhase: (phase) => {
+            // Suppress emits from a superseded run. Mastra's agent loop is
+            // cooperative — after `discoveryAbort.abort()`, callbacks can
+            // still fire for several seconds while the previous run unwinds.
+            // Without this guard those events would interleave with the new
+            // run's events on the same WebSocket and the UI has no way to
+            // tell them apart (the protocol has no run-id).
+            if (discoveryAbort.signal.aborted) return;
             // AP2: runDiscovery emits terminal phases (TERMINAL_DISCOVERY_PHASES)
             // via its finally block. Those signals are for in-process observers;
             // the WS protocol already signals terminal state via its own emits
@@ -804,9 +836,12 @@ export async function handleClientMessage(
             phaseHasStarted = true;
             send({ type: "discover:phase", phase, status: "running" });
           },
-          onIteration: (phase, iteration, maxIterations, description) =>
-            send({ type: "discover:iteration", phase, iteration, maxIterations, description }),
-          onToolCall: (name, args, result, durationMs, error, phase) =>
+          onIteration: (phase, iteration, maxIterations, description) => {
+            if (discoveryAbort.signal.aborted) return;
+            send({ type: "discover:iteration", phase, iteration, maxIterations, description });
+          },
+          onToolCall: (name, args, result, durationMs, error, phase) => {
+            if (discoveryAbort.signal.aborted) return;
             send({
               type: "discover:tool_call",
               phase: phase ?? "discovery",
@@ -815,14 +850,18 @@ export async function handleClientMessage(
               status: error ? "error" : result ? "success" : "calling",
               result,
               durationMs,
-            }),
+            });
+          },
           onTokenUsage,
           skills: discoverySkills.length > 0 ? discoverySkills : undefined,
           onRetry: (attempt, maxRetries, reason) => {
+            if (discoveryAbort.signal.aborted) return;
             send({ type: "discover:retry", attempt, maxRetries, reason });
           },
+          abortSignal: discoveryAbort.signal,
         },
       );
+      if (discoveryAbort.signal.aborted) return;
       // Stash the full DiscoveryResult so the `discover:accept` handler
       // can pull globalProbeRules out (they don't round-trip over the WS
       // protocol — the UI only echoes back services).
@@ -850,7 +889,16 @@ export async function handleClientMessage(
         durationMs: Date.now() - discoveryStartMs,
       });
     } catch (err) {
+      if (discoveryAbort.signal.aborted) {
+        const reason = discoveryAbort.signal.reason instanceof Error
+          ? discoveryAbort.signal.reason.message
+          : String(discoveryAbort.signal.reason ?? "aborted");
+        logger.info({ reason }, "Discovery cancelled");
+        return;
+      }
       send({ type: "discover:error", message: friendlyError(err) });
+    } finally {
+      if (activeDiscovery.current === discoveryAbort) activeDiscovery.current = null;
     }
     return;
   }

@@ -68,6 +68,8 @@ export interface DiscoverOptions {
   onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
   skills?: Skill[];
   onRetry?: (attempt: number, maxRetries: number, reason: string) => void;
+  /** Caller cancellation signal (e.g. WebSocket disconnect, supersede-on-new-discover). */
+  abortSignal?: AbortSignal;
 }
 
 export interface IDiscoverAgent {

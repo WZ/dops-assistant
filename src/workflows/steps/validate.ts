@@ -5,6 +5,7 @@ import type { ValidatedServiceConfig } from "../../types/discovery-types.js";
 import type { OnToolCallEnriched, OnIteration } from "../../types/agent-interfaces.js";
 import type { Tool } from "@mastra/core/tools";
 import { createLogger } from "../../logger.js";
+import { throwIfDiscoveryAborted } from "./discover.js";
 
 const logger = createLogger("validate");
 
@@ -15,6 +16,8 @@ export interface ValidateStepConfig {
   onToolCall?: OnToolCallEnriched;
   onIteration?: OnIteration;
   onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
+  /** Caller cancellation signal (e.g. WebSocket disconnect, supersede-on-new-discover). */
+  abortSignal?: AbortSignal;
 }
 
 // Default Loki/Prometheus label keys for K8s environments.
@@ -78,6 +81,7 @@ function findToolBySuffix(tools: Record<string, Tool>, suffix: string): [string,
  * 3. Verify matched log labels return data
  */
 export async function runValidateStep(config: ValidateStepConfig): Promise<ValidatedServiceConfig[]> {
+  throwIfDiscoveryAborted(config.abortSignal);
   config.onIteration?.("validation", 0, config.services.length, "Resolving MCP tools...");
 
   // Resolve tools by role instead of scanning all providers
@@ -87,6 +91,7 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
     getToolsByRole(config.providers, "dashboards").catch(() => ({})),
     getToolsByRole(config.providers, "infrastructure").catch(() => ({})),
   ]);
+  throwIfDiscoveryAborted(config.abortSignal);
 
   const promTool = findToolBySuffix(metricsTools, "query_prometheus");
   const lokiLabelNamesTool = findToolBySuffix(logsTools, "list_loki_label_names");
@@ -119,15 +124,18 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
 
   // Phase 0: Enrich log labels from K8s pod data (ground truth — namespace + labels)
   const k8sEnriched = await enrichFromK8s(config.services, podsListTool, config);
+  throwIfDiscoveryAborted(config.abortSignal);
 
   // Phase 1: Enrich remaining empty logLabels by matching service names against Loki label values (fallback)
   const labelMap = await buildLabelMap(lokiLabelNamesTool, lokiLabelValuesTool, lokiDsUid, config, effectiveLabelKeys);
   const enriched = enrichLogLabels(k8sEnriched, labelMap);
+  throwIfDiscoveryAborted(config.abortSignal);
 
   // Phase 2: Validate metrics and logs for each service
   const results: ValidatedServiceConfig[] = [];
 
   for (let i = 0; i < enriched.length; i++) {
+    throwIfDiscoveryAborted(config.abortSignal);
     const service = enriched[i];
     let metricsOk = false;
     let logsOk = false;
