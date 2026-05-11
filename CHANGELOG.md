@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.4.1] - 2026-05-11
+
+### Fixed
+- Discovery no longer blanket-drops StatefulSets / DaemonSets on busy clusters. The deterministic candidate merge previously skipped every entry from a source whose total count exceeded 10, hiding kafka, zookeeper, redis-ha, prometheus-server, loki, stolon-keeper, and others from the registry. The anti-shard guard now relies on the existing `-shard\d+$` regex in `isLowSignalInfrastructureService` only. Also narrows the over-broad `/^openebs-/` low-signal pattern to exact-match `openebs-ndm`, so genuine controllers (e.g. `openebs-jiva-csi-controller`) flow through. (#205)
+
+### Changed
+- Discovery agent prompt restructured into 7 explicit layers (Identity, Constraints, Stack Hints, Process, Output Contract, Decision Guides, Output Strictness). Schema-before-rationale order; omission policy stated once; markdown tables instead of inline ASCII. Live 5-iter A/B confirmed 0 regressions, zero variance vs the prior under-enumeration floor. (#206)
+- `src/workflows/steps/discover.ts` (1136 lines, 5 concerns) split into 6 focused modules under `src/workflows/steps/discover/` (`index`, `context`, `candidates`, `parse`, `filters`, `stall-recovery`). Reusable abort + LLM-result + datasource-hints helpers extracted to `src/agents/shared/`. Pure refactor; 5-iter A/B confirmed 0 regressions, higher consistent set (72 vs 71), 7% faster. (#207)
+- Dead `discoveryRecipes` + recipe `labelKeys` config abstractions removed. Standard K8s sweep queries inlined into the agent prompt's Layer 4 — always present, no longer behind a config field production never set. (rolled into #206)
+
+### Added
+- `benchmark/` playbook with `run-ab-eval.sh` + `analyze-ab.py`: single-command A/B eval orchestrator for comparing two dops-assistant variants on the same live stack. Used as the gate for #207 going live. (#209)
+
 ## [0.4.4.0] - 2026-05-08
 
 ### Added
