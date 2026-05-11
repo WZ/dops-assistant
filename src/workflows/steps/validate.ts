@@ -1,6 +1,6 @@
 import { getToolsByRole } from "../../mcp/provider.js";
 import type { MastraProvider } from "../../mcp/provider.js";
-import type { ServiceConfig, DiscoveryRecipe } from "../../config/schema.js";
+import type { ServiceConfig } from "../../config/schema.js";
 import type { ValidatedServiceConfig } from "../../types/discovery-types.js";
 import type { OnToolCallEnriched, OnIteration } from "../../types/agent-interfaces.js";
 import type { Tool } from "@mastra/core/tools";
@@ -12,7 +12,6 @@ const logger = createLogger("validate");
 export interface ValidateStepConfig {
   providers: MastraProvider[];
   services: ServiceConfig[];
-  discoveryRecipes?: DiscoveryRecipe[];
   onToolCall?: OnToolCallEnriched;
   onIteration?: OnIteration;
   onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
@@ -20,8 +19,9 @@ export interface ValidateStepConfig {
   abortSignal?: AbortSignal;
 }
 
-// Default Loki/Prometheus label keys for K8s environments.
-// Discovery recipes (config.yaml labelKeys) override this list.
+// Default Loki/Prometheus label keys for K8s environments, used to match
+// discovered service names against Loki label values during the validate
+// phase's log-label enrichment fallback.
 const SERVICE_LABEL_KEYS = [
   "app",
   "container_name",
@@ -32,21 +32,6 @@ const SERVICE_LABEL_KEYS = [
   "chart",
   "release",
 ];
-
-/**
- * Compute effective label keys from discovery recipes.
- * If recipes provide labelKeys, merge and deduplicate them (preserving order).
- * Otherwise fall back to the hardcoded SERVICE_LABEL_KEYS.
- */
-function computeEffectiveLabelKeys(recipes?: DiscoveryRecipe[]): string[] {
-  if (!recipes || recipes.length === 0) return SERVICE_LABEL_KEYS;
-
-  const recipeKeys = recipes.flatMap((r) => r.labelKeys);
-  if (recipeKeys.length === 0) return SERVICE_LABEL_KEYS;
-
-  // Deduplicate while preserving order
-  return [...new Set(recipeKeys)];
-}
 
 /**
  * Unwrap an MCP tool result to its parsed JSON payload.
@@ -117,9 +102,6 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
     ?? findToolBySuffix(metricsTools, "list_datasources");
   const lokiDsUid = await findLokiDatasourceUid(listDsTool, config);
 
-  // Compute effective label keys: merge recipe labelKeys (if any) with defaults
-  const effectiveLabelKeys = computeEffectiveLabelKeys(config.discoveryRecipes);
-
   config.onIteration?.("validation", 0, config.services.length, "Enriching log labels from K8s...");
 
   // Phase 0: Enrich log labels from K8s pod data (ground truth — namespace + labels)
@@ -127,7 +109,7 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
   throwIfDiscoveryAborted(config.abortSignal);
 
   // Phase 1: Enrich remaining empty logLabels by matching service names against Loki label values (fallback)
-  const labelMap = await buildLabelMap(lokiLabelNamesTool, lokiLabelValuesTool, lokiDsUid, config, effectiveLabelKeys);
+  const labelMap = await buildLabelMap(lokiLabelNamesTool, lokiLabelValuesTool, lokiDsUid, config, SERVICE_LABEL_KEYS);
   const enriched = enrichLogLabels(k8sEnriched, labelMap);
   throwIfDiscoveryAborted(config.abortSignal);
 

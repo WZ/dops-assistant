@@ -4,7 +4,7 @@ import { getToolsByRole } from "../../mcp/provider.js";
 import { wrapToolsWithCallbacks } from "../tool-utils.js";
 import type { LanguageModel } from "ai";
 import type { MastraProvider } from "../../mcp/provider.js";
-import type { ServiceConfig, DiscoveryConfig, DiscoveryRecipe, ProbeMetricRule } from "../../config/schema.js";
+import type { ServiceConfig, DiscoveryConfig, ProbeMetricRule } from "../../config/schema.js";
 import { ProbeMetricRuleSchema } from "../../config/schema.js";
 import type { OnToolCallEnriched, OnIteration } from "../../types/agent-interfaces.js";
 import type { Skill } from "../../skills/store.js";
@@ -154,19 +154,6 @@ const STALL_RECOVERY_PROMPT_HEADER =
   `${UNTRUSTED_DATA_NOTICE} ` +
   "Output JSON only — no prose, no markdown fences.";
 
-const DEFAULT_PROMETHEUS_RECIPE: DiscoveryRecipe = {
-  providerType: "prometheus-k8s",
-  serviceQueries: [
-    'count by (deployment) (kube_deployment_status_replicas)',
-    'count by (statefulset) (kube_statefulset_status_replicas)',
-    'count by (daemonset) (kube_daemonset_status_desired_number_scheduled)',
-    'count by (container) (kube_pod_container_info{container!="POD",container!=""})',
-    'count by (app) (kube_pod_info)',
-    'count by (job) (up)',
-  ],
-  labelKeys: ["app", "container_name", "job", "component", "name", "service", "chart", "release"],
-};
-
 interface DatasourceHintResult {
   hintBlock: string;
   uidMap: Map<string, string>;
@@ -223,25 +210,6 @@ async function fetchDatasourceHintsForDiscover(
     void toolName;
     return empty;
   }
-}
-
-/**
- * Format discovery recipes into a prompt-friendly string.
- */
-function formatRecipeHints(recipes: DiscoveryRecipe[]): string {
-  return recipes.map((recipe) => {
-    const lines: string[] = [`### ${recipe.providerType}`];
-    if (recipe.serviceQueries.length > 0) {
-      lines.push("Suggested queries:");
-      for (const q of recipe.serviceQueries) {
-        lines.push(`- ${q}`);
-      }
-    }
-    if (recipe.labelKeys.length > 0) {
-      lines.push(`Service label keys: ${recipe.labelKeys.join(", ")}`);
-    }
-    return lines.join("\n");
-  }).join("\n\n");
 }
 
 /**
@@ -771,13 +739,6 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
     throw new Error("No MCP tools available — check that your monitoring MCP server is running and has the 'metrics' or 'infrastructure' role.");
   }
 
-  // Build recipe hints for the discover agent prompt
-  const configuredRecipes = config.discoveryConfig.discoveryRecipes ?? [];
-  const effectiveRecipes = configuredRecipes.length > 0
-    ? configuredRecipes
-    : [DEFAULT_PROMETHEUS_RECIPE];
-  const recipeHints = formatRecipeHints(effectiveRecipes);
-
   // Keep maxSteps capped so the quirk wind-down (which disables tools to
   // force JSON output) fires before the model exhausts all iterations.
   // The agent runs multiple discovery queries (deployments, statefulsets,
@@ -827,21 +788,22 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
     recordRawDiscoveryToolResult,
   );
 
-  // Build recipe hints (skills + recipes). Datasource UIDs are passed
-  // separately as a strict "CRITICAL" block in the agent's system prompt.
-  let recipeAndSkillHints = "";
+  // Build skill hints. Datasource UIDs are passed separately as a strict
+  // "CRITICAL" block in the agent's system prompt. The standard K8s sweep
+  // queries are baked into the prompt template itself (Layer 4 Process),
+  // so this builder only handles per-stack discovery skills.
+  let skillHints = "";
   if (config.skills && config.skills.length > 0) {
     const maxChars = config.maxCharsPerSkill ?? 2000;
     const skillSections = config.skills.map((s) => {
       const body = s.body.length > maxChars ? s.body.slice(0, maxChars) + "\n...[truncated]" : s.body;
       return `### ${wrapUntrusted("skill", s.title)}\n${wrapUntrusted("skill_body", body)}`;
     });
-    recipeAndSkillHints += `## PRIORITY: Team Knowledge (Discovery Skills)\nThese skills describe services that CANNOT be found via standard K8s queries. You MUST run these discovery queries IN ADDITION to the standard recipes below.\n\n${skillSections.join("\n\n")}\n\n`;
+    skillHints = `## PRIORITY: Team Knowledge (Discovery Skills)\nThese skills describe services that CANNOT be found via standard K8s queries. You MUST run these discovery queries IN ADDITION to the standard K8s sweep.\n\n${skillSections.join("\n\n")}`;
   }
-  recipeAndSkillHints += recipeHints;
 
   // For logging: combine both blocks so the debug log shows the full prompt
-  const fullHints = datasourceHints + recipeAndSkillHints;
+  const fullHints = datasourceHints + skillHints;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     throwIfDiscoveryAborted(config.abortSignal);
@@ -852,7 +814,7 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
       excludeServices: config.discoveryConfig.excludeServices,
       useQuirkHandling: true,
       datasourceUidHints: datasourceHints,
-      discoveryRecipes: recipeAndSkillHints,
+      discoverySkills: skillHints,
     });
 
     const discoverCallId = newCallId();

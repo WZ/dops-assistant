@@ -150,15 +150,6 @@ const BrandingSchema = z.object({
   subtitle: z.string().default("assistant"),
 });
 
-const DiscoveryRecipeSchema = z.object({
-  /** Provider type this recipe applies to, e.g. "prometheus-k8s", "datadog", "coroot" */
-  providerType: z.string(),
-  /** Example queries the discover agent should try (provider-specific syntax) */
-  serviceQueries: z.array(z.string()).default([]),
-  /** Label keys used to identify services in this provider's data */
-  labelKeys: z.array(z.string()).default([]),
-});
-
 const PeriodicDiscoverySchema = z.object({
   enabled:                  z.boolean().default(false),
   cron:                     z.string().default(""),
@@ -174,7 +165,6 @@ const DiscoverySchema = z.object({
   autoRefresh: z.boolean().default(false),
   excludeServices: z.array(z.string()).default([]),
   maxIterations: z.number().default(40),
-  discoveryRecipes: z.array(DiscoveryRecipeSchema).optional().default([]),
   periodic: PeriodicDiscoverySchema.optional().default({}),
   /**
    * Cap on each MCP tool result's character length before it enters the
@@ -428,7 +418,6 @@ export type TimeoutsConfig = z.infer<typeof TimeoutsSchema>;
 export type RetryConfig = z.infer<typeof RetrySchema>;
 export type ObservabilityConfig = z.infer<typeof ObservabilitySchema>;
 export type DiscoveryConfig = z.infer<typeof DiscoverySchema>;
-export type DiscoveryRecipe = z.infer<typeof DiscoveryRecipeSchema>;
 export type PeriodicDiscoveryConfig = z.infer<typeof PeriodicDiscoverySchema>;
 export { PeriodicDiscoverySchema };
 export type WebhookConfig = z.infer<typeof WebhookSchema>;
