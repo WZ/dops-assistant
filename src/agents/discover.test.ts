@@ -206,6 +206,36 @@ describe("buildDiscoverInstructions / layered structure (Option B)", () => {
     expect(tier1Wins).toMatch(/Tier-1 identity wins/i);
   });
 
+  it("Layer 4 truncation-recovery is marker-gated, namespace-bounded, supersedes", () => {
+    // The MCP tool result wrapper (src/workflows/tool-utils.ts truncateMcpResult)
+    // appends "... (truncated from N chars)" when a response exceeds the cap.
+    // On stack 120 with cap=8000, the deployment-sweep response is truncated
+    // mid-list and tail rows (e.g. ch-clickhouse-shard*) are dropped. Layer 4
+    // now instructs the LLM to recover by re-querying per non-system namespace,
+    // gated on the literal marker to prevent pre-emptive fanout.
+    const layer4Start = prompt.indexOf("## LAYER 4: PROCESS");
+    const layer5Start = prompt.indexOf("## LAYER 5: OUTPUT CONTRACT");
+    const layer4 = prompt.slice(layer4Start, layer5Start);
+
+    // Marker text must match truncateMcpResult exactly. If the suffix in
+    // tool-utils.ts ever drifts, this assertion fails loudly.
+    expect(layer4).toContain("... (truncated from N chars)");
+    // Per-namespace re-query pattern present.
+    expect(layer4).toMatch(/namespace="<ns>"/);
+    // SUPERSEDE guardrail (anti-double-count of truncated rows).
+    expect(layer4).toMatch(/SUPERSEDE/);
+    // Marker-gated guardrail (anti-fanout — must not re-query without the marker).
+    expect(layer4).toMatch(/Trigger ONLY on the literal marker/i);
+
+    // Recovery must live inside the METRICS FOR COVERAGE step, not as a new
+    // top-level step (avoids restructuring the six-step skeleton).
+    const recoveryIdx = layer4.indexOf("Truncation recovery");
+    const metricsForCoverageIdx = layer4.indexOf("METRICS FOR COVERAGE");
+    const dontMissIdx = layer4.indexOf("Don't miss APPLICATION");
+    expect(recoveryIdx).toBeGreaterThan(metricsForCoverageIdx);
+    expect(recoveryIdx).toBeLessThan(dontMissIdx);
+  });
+
   it("declares the TypeScript output contract before any rationale", () => {
     // The schema lives in Layer 5; rationale (Why for service_availability)
     // lives in Layer 6. The model should encounter the contract first.
