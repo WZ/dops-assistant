@@ -206,6 +206,30 @@ describe("buildDiscoverInstructions / layered structure (Option B)", () => {
     expect(omissionIdx).toBeGreaterThan(sectionDIdx);
   });
 
+  it("includes section 6.0 (Discovery sources) before 6.1, ranking infra + catalogs as Tier 1 identity sources", () => {
+    // 6.0 was added because Layer 6 originally documented how to fill fields
+    // (6.1 metrics, 6.2 logLabels, 6.3 probeRules, 6.4 globals) but never
+    // taught WHERE identity comes from. Empirics showed the LLM was choosing
+    // sources ad-hoc; this section names the authority hierarchy explicitly.
+    const section60 = prompt.indexOf("### 6.0 Discovery sources");
+    const section61 = prompt.indexOf("### 6.1 Picking metrics[0].query");
+    expect(section60).toBeGreaterThan(-1);
+    expect(section61).toBeGreaterThan(section60);
+
+    // Two-tier authority: Infrastructure + Catalogs are identity ground truth;
+    // Metrics + Logs are projections (observability).
+    expect(prompt).toMatch(/Tier 1 — IDENTITY/);
+    expect(prompt).toMatch(/Tier 2 — OBSERVABILITY/);
+
+    // Each source family appears in the new section.
+    const section60End = section61;
+    const section60Body = prompt.slice(section60, section60End);
+    expect(section60Body).toMatch(/Infrastructure \(K8s\)/);
+    expect(section60Body).toMatch(/Catalogs \(Consul/);
+    expect(section60Body).toMatch(/Metrics \(Prometheus\)/);
+    expect(section60Body).toMatch(/Logs \(Loki\)/);
+  });
+
   it("places the workload-kind table in section 6.1 (a decision guide), not inline in a rule", () => {
     // The USE / DO NOT USE table is reusable guidance — it lives in 6.1
     // (Picking metrics[0].query), not inside the service_availability rule

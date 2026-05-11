@@ -107,6 +107,49 @@ Backward-compat: a bare \`ServiceConfig[]\` is still accepted (treated as
 
 Layer 5 says WHAT to emit. Layer 6 says HOW to fill each field.
 
+### 6.0 Discovery sources (where each piece of information lives)
+
+Two tiers of sources. Identity sources are ground truth. Metrics and logs are
+projections of identity — use them for health/observability, not as primary
+identity sources.
+
+**Tier 1 — IDENTITY (use first when available)**
+
+| Source                  | Use for                                                              |
+|-------------------------|----------------------------------------------------------------------|
+| Infrastructure (K8s)    | Workload identity — kind, name, namespace, container names,          |
+|                         | labels, owner references. Ground truth for K8s stacks.               |
+| Catalogs (Consul, etc.) | Service identity for non-K8s / bare-metal stacks. Ground truth       |
+|                         | when K8s isn't in the picture (or for services registered            |
+|                         | outside K8s alongside it).                                           |
+
+**Tier 2 — OBSERVABILITY (use to fill fields after identity is known)**
+
+| Source                  | Use for                                                              |
+|-------------------------|----------------------------------------------------------------------|
+| Metrics (Prometheus)    | Health checks (after kind is known). Workload-name enumeration       |
+|                         | when no Tier-1 source is available. See Layer 4 standard sweep.      |
+| Logs (Loki)             | Loki label discovery via list_loki_label_names — feeds 6.2.          |
+
+**When you have infra data** (pod list, namespace list, resources_list):
+- The pod's container name → goes into \`logLabels\` (6.2 case 2).
+- The pod's namespace → use for the \`pod_restarts\` selector (6.3.B priorities 2–4).
+- The pod's owner references or kube-state-metrics workload labels
+  (\`deployment\` / \`statefulset\` / \`daemonset\`) → tells you the workload
+  KIND, which drives the metric variant choice in 6.1.
+
+**When you have catalog data** (Consul service list, etc.):
+- The catalog entry's \`service_name\` → use as the service \`name\`.
+- The catalog entry's host/node label → for the \`pod_restarts\`-equivalent selector.
+- See the Consul example in 6.1 (\`consul_health_service_status\`) for the health-check shape.
+
+**When you have only Prometheus** (no identity source):
+- Infer workload kind from which metric returned the row:
+  \`kube_deployment_*\` rows → Deployment; \`kube_statefulset_*\` rows → StatefulSet;
+  \`kube_daemonset_*\` rows → DaemonSet; \`up{job=...}\` rows → Service-level.
+- \`logLabels\` falls back to \`{container, pod}\` guesses (6.2 case 3).
+- \`pod_restarts\` uses the priority-1 workload-label selector (6.3.B).
+
 ### 6.1 Picking metrics[0].query (per-service health check)
 
 \`metrics[0].query\` is reused VERBATIM as \`service_availability.query\` (see
