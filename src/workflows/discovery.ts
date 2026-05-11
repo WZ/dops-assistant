@@ -1,4 +1,4 @@
-import { backfillGlobalAvailabilityRules, runDiscoverStep } from "./steps/discover.js";
+import { backfillGlobalAvailabilityRules, runDiscoverStep } from "./steps/discover/index.js";
 import { runValidateStep } from "./steps/validate.js";
 import { createLogger } from "../logger.js";
 import type { LanguageModel } from "ai";

@@ -18,7 +18,7 @@ export function createModel(llmConfig: Config["llm"]) {
   // still being enough for chat responses and investigation synthesis.
   // Discovery overrides this per-call via discovery.maxOutputTokens because
   // its JSON output for large stacks needs a larger budget — see
-  // src/workflows/steps/discover.ts.
+  // src/workflows/steps/discover/index.ts.
   return wrapLanguageModel({
     model: baseModel,
     middleware: {

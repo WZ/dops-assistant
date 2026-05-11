@@ -5,7 +5,7 @@ import type { ValidatedServiceConfig } from "../../types/discovery-types.js";
 import type { OnToolCallEnriched, OnIteration } from "../../types/agent-interfaces.js";
 import type { Tool } from "@mastra/core/tools";
 import { createLogger } from "../../logger.js";
-import { throwIfDiscoveryAborted } from "./discover.js";
+import { throwIfDiscoveryAborted } from "./discover/index.js";
 
 const logger = createLogger("validate");
 

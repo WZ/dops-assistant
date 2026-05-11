@@ -64,6 +64,7 @@ const discoverGenerateSignalStates: Array<{ sameAsFirst: boolean; abortedOnEntry
 // assert toolChoice: "none" on the recovery turn.
 let mockDiscoverStallThenRecover = false;
 let mockDiscoverEmptyArrayThenRecover = false;
+let mockDiscoverRecoveryFailsOnce = false;
 const discoverGenerateCalls: Array<{ promptType: "primary" | "recovery"; prompt: string; opts: any }> = [];
 
 vi.mock("@mastra/core/agent", () => ({
@@ -121,6 +122,9 @@ vi.mock("@mastra/core/agent", () => ({
               }],
             });
             return { text: mockDiscoverEmptyArrayThenRecover ? "[]" : "" };
+          }
+          if (mockDiscoverRecoveryFailsOnce && discoverGenerateCalls.filter((call) => call.promptType === "recovery").length === 1) {
+            throw new Error("ECONNRESET recovery");
           }
           return {
             text: JSON.stringify({
@@ -341,8 +345,10 @@ describe("runDiscoverStep — adversarial-review fixes (2026-04-22)", () => {
     mockDiscoverTimeoutAfterToolData = false;
     mockDiscoverNeverSettles = false;
     mockDiscoverEmptyArrayThenRecover = false;
+    mockDiscoverRecoveryFailsOnce = false;
     discoverGenerateSignals.length = 0;
     discoverGenerateSignalStates.length = 0;
+    discoverGenerateCalls.length = 0;
     vi.useRealTimers();
   });
 
@@ -635,6 +641,30 @@ describe("runDiscoverStep — adversarial-review fixes (2026-04-22)", () => {
       expect(discoverGenerateCalls[1]!.opts?.toolChoice).toBe("none");
     } finally {
       mockDiscoverEmptyArrayThenRecover = false;
+      discoverGenerateCalls.length = 0;
+    }
+  });
+
+  it("forwards stall-recovery retry callbacks", async () => {
+    mockDiscoverStallThenRecover = true;
+    mockDiscoverRecoveryFailsOnce = true;
+    discoverGenerateCalls.length = 0;
+    const retries: Array<{ attempt: number; maxRetries: number; reason: string }> = [];
+    try {
+      const result = await runDiscovery({
+        ...baseConfig,
+        llmRetry: { maxAttempts: 2, initialDelayMs: 1, maxDelayMs: 1, jitterPercent: 0 },
+        onRetry: (attempt, maxRetries, reason) => retries.push({ attempt, maxRetries, reason }),
+      });
+
+      expect(result.services[0]!.name).toBe("recovered-svc");
+      expect(discoverGenerateCalls.map((call) => call.promptType)).toEqual(["primary", "recovery", "recovery"]);
+      expect(retries).toEqual([
+        { attempt: 1, maxRetries: 2, reason: "ECONNRESET recovery" },
+      ]);
+    } finally {
+      mockDiscoverStallThenRecover = false;
+      mockDiscoverRecoveryFailsOnce = false;
       discoverGenerateCalls.length = 0;
     }
   });

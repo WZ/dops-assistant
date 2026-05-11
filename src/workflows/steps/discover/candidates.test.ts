@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { discoverStepTestHooks } from "./discover.js";
+import { discoverStepTestHooks } from "./index.js";
 
 function promRows(metrics: Array<Record<string, string>>): string {
   return JSON.stringify({

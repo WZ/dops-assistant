@@ -24,6 +24,8 @@ import {
   buildTimeWindowHint,
   buildServiceContextHint,
   debug,
+  extractMastraToolResult,
+  type MastraToolResultLike,
 } from "../tool-utils.js";
 import { PlanningOutputSchema, EvidenceOutputSchema } from "../schemas.js";
 import type { Skill } from "../../skills/store.js";
@@ -169,16 +171,10 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
               iterationCount++;
               workflowConfig.onIteration?.(phaseName, iterationCount, 10, `Step ${iterationCount}`);
               if (step.toolResults?.length) {
-                for (const tr of step.toolResults) {
-                  // Mastra wraps tool results: { payload: { toolName, args, result: { content: [{text}] } } }
-                  const payload = tr.payload ?? tr;
-                  const toolName = payload.toolName ?? payload.name ?? tr.toolName ?? "unknown";
-                  const nestedContent = payload.result?.content?.[0]?.text;
-                  const rawResult = nestedContent ?? payload.result ?? tr.result ?? tr.output ?? "";
-                  const resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
+                for (const tr of step.toolResults as MastraToolResultLike[]) {
+                  const { toolName, argsStr, resultStr } = extractMastraToolResult(tr);
                   const truncated = resultStr.length > TOOL_RESULT_TRUNCATION_LIMIT ? resultStr.slice(0, TOOL_RESULT_TRUNCATION_LIMIT) + "..." : resultStr;
                   toolData.push(`Tool: ${toolName}\nResult: ${truncated}`);
-                  const argsStr = JSON.stringify(payload.args ?? {});
                   const toolEvent: ToolCallEvent = { tool: toolName, argsChars: argsStr.length, args: argsStr, resultChars: resultStr.length, result: truncated };
                   llmToolCalls.push(toolEvent);
                   logToolCall(callId, phaseName, toolEvent);

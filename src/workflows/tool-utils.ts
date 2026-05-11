@@ -219,6 +219,60 @@ export function truncateMcpResult(result: unknown, maxChars: number): unknown {
   return { ...result, content: truncated };
 }
 
+/**
+ * Mastra/AI-SDK `toolResults` entry — shape varies across SDK versions, so
+ * callers reach into `tr.payload ?? tr` and try multiple paths to find the
+ * actual tool name and result text.
+ */
+export interface MastraToolResultLike {
+  payload?: { toolName?: string; name?: string; args?: unknown; result?: unknown };
+  toolName?: string;
+  result?: unknown;
+  output?: unknown;
+}
+
+export interface ExtractedToolResult {
+  toolName: string;
+  args: Record<string, unknown>;
+  argsStr: string;
+  resultStr: string;
+}
+
+/**
+ * Unwrap a single Mastra `toolResults` entry into the fields the `onStepFinish`
+ * callback wants. Centralizes the `tr.payload ?? tr` reach-in and the
+ * `payload.result?.content?.[0]?.text` MCP-content-wrapper unwrap so the agent
+ * step files don't each carry their own copy of this fragile shape-coercion
+ * code (was previously duplicated across discover.ts, evidence.ts, anomaly.ts).
+ *
+ * JSON.stringify can throw on BigInt / circular / exotic return types — falls
+ * back to "[unserializable]" rather than crashing observability.
+ */
+export function extractMastraToolResult(tr: MastraToolResultLike): ExtractedToolResult {
+  const payload = tr.payload ?? tr;
+  const toolName =
+    (payload as { toolName?: string }).toolName ??
+    (payload as { name?: string }).name ??
+    tr.toolName ??
+    "unknown";
+  const nestedContent = (payload as { result?: { content?: Array<{ text?: string }> } }).result?.content?.[0]?.text;
+  const rawResult = nestedContent ?? (payload as { result?: unknown }).result ?? tr.result ?? tr.output ?? "";
+  const args = ((payload as { args?: unknown }).args ?? {}) as Record<string, unknown>;
+  let resultStr: string;
+  try {
+    resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
+  } catch {
+    resultStr = "[unserializable]";
+  }
+  let argsStr: string;
+  try {
+    argsStr = JSON.stringify(args);
+  } catch {
+    argsStr = "[unserializable]";
+  }
+  return { toolName, args, argsStr, resultStr };
+}
+
 function unwrapMcpResult(result: unknown): string {
   if (typeof result === "string") return result;
   if (typeof result === "object" && result !== null && !Array.isArray(result)) {
