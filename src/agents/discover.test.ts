@@ -181,6 +181,31 @@ describe("buildDiscoverInstructions / layered structure (Option B)", () => {
     expect(sweepIdx).toBeLessThan(layer5);
   });
 
+  it("orders Layer 4 as identity-first (Tier 1) then metric sweep (Tier 2)", () => {
+    // Empirically the model was running the K8s metric sweep before consulting
+    // infra/catalog tools, even though Layer 6.0 documented Tier 1 as the
+    // primary source. Layer 4 now bakes the ordering into the imperative
+    // process: IDENTITY FIRST appears before the metric sweep, and metrics
+    // are explicitly framed as Tier 2 / coverage.
+    const layer4 = prompt.indexOf("## LAYER 4: PROCESS");
+    const layer5 = prompt.indexOf("## LAYER 5: OUTPUT CONTRACT");
+    expect(layer4).toBeGreaterThan(-1);
+
+    const identityFirstIdx = prompt.indexOf("IDENTITY FIRST", layer4);
+    const metricsForCoverageIdx = prompt.indexOf("METRICS FOR COVERAGE", layer4);
+    const sweepIdx = prompt.indexOf("count by (deployment)", layer4);
+
+    expect(identityFirstIdx).toBeGreaterThan(layer4);
+    expect(identityFirstIdx).toBeLessThan(layer5);
+    expect(metricsForCoverageIdx).toBeGreaterThan(identityFirstIdx);
+    expect(sweepIdx).toBeGreaterThan(metricsForCoverageIdx);
+
+    // The Tier-1-wins conflict rule must be stated explicitly in Layer 4
+    // (not only in Layer 6.0) so it's part of the process the model executes.
+    const tier1Wins = prompt.slice(layer4, layer5);
+    expect(tier1Wins).toMatch(/Tier-1 identity wins/i);
+  });
+
   it("declares the TypeScript output contract before any rationale", () => {
     // The schema lives in Layer 5; rationale (Why for service_availability)
     // lives in Layer 6. The model should encounter the contract first.

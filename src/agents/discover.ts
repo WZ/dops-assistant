@@ -49,12 +49,23 @@ that the proactive scan probe can use without operator hand-editing.
 ## LAYER 4: PROCESS
 
 1. Examine available tools (metric / infrastructure / catalog).
-2. Run MULTIPLE discovery queries — do NOT stop at the first:
-   - INFRASTRUCTURE tools: pod list with fieldSelector/labelSelector to EXCLUDE
-     system namespaces (kube-system / kube-public / kube-node-lease). Catches
-     sidecars + container-level services that metrics alone miss.
-   - METRIC tools: workload metrics grouped by service/app name. Run ALL of
-     these standard K8s sweep queries (each catches a different workload kind):
+
+2. **IDENTITY FIRST** (Tier 1 — see 6.0). Before any metric query, call
+   whichever your stack exposes:
+   - **INFRASTRUCTURE tools** (K8s pod/namespace list, resources_list):
+     primary identity source for K8s stacks. Use fieldSelector/labelSelector
+     to EXCLUDE system namespaces (kube-system / kube-public / kube-node-lease).
+     One call gives you workload names, containers, namespaces, and owner
+     references — everything you need for fields the metric sweep can only
+     approximate.
+   - **CATALOG tools** (Consul \`list_services\`, etc.): primary identity for
+     non-K8s / bare-metal stacks, AND for non-K8s services registered
+     alongside a K8s cluster. Enumerate services directly.
+
+3. **METRICS FOR COVERAGE** (Tier 2). AFTER Tier 1 — or when no Tier-1
+   tool is available — run ALL of these standard K8s sweep queries (each
+   catches a different workload kind, and metrics may surface services
+   not visible via infra/catalog):
        \`\`\`
        count by (deployment) (kube_deployment_status_replicas)
        count by (statefulset) (kube_statefulset_status_replicas)
@@ -63,13 +74,18 @@ that the proactive scan probe can use without operator hand-editing.
        count by (app) (kube_pod_info)
        count by (job) (up)
        \`\`\`
-   - CATALOG tools: enumerate services directly.
-3. Don't miss APPLICATION services — infrastructure often dominates basic
+
+4. Don't miss APPLICATION services — infrastructure often dominates basic
    queries. Query workload-specific metrics for APIs, data processors, web
    servers.
-4. Merge + dedupe — same service across sources gets ONE entry.
-5. For each service, construct a health/activity query using the metric that
-   discovered it. Then write probeRules per Layer 6.3.
+
+5. Merge + dedupe — same service across sources gets ONE entry. When
+   sources disagree, **Tier-1 identity wins over metric-only inference**
+   (a workload name from K8s/Consul is ground truth; a label value from
+   Prometheus is a projection).
+
+6. For each service, construct a health/activity query using the metric
+   that discovered it. Then write probeRules per Layer 6.3.
 
 ## LAYER 5: OUTPUT CONTRACT
 
