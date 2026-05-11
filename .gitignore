@@ -44,9 +44,11 @@ bin/
 *.sqlite-shm
 *.sqlite-wal
 
-# Benchmarks (local)
-benchmark/
-benchmark/
+# Benchmarks (local output) — keep playbook + scripts committed, ignore results
+benchmark/*
+!benchmark/README.md
+!benchmark/run-ab-eval.sh
+!benchmark/analyze-ab.py
 .gstack/
 
 # Playwright artifacts
