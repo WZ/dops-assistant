@@ -111,15 +111,6 @@ discovery:
     - grafana
     - node-exporter
     - alertmanager
-  # Per-provider hints for the discovery agent
-  # discoveryRecipes:
-  #   - providerType: prometheus-k8s
-  #     serviceQueries:
-  #       - 'group by (app) (up)'
-  #     labelKeys: [app, service, job]
-  #   - providerType: coroot
-  #     serviceQueries: []
-  #     labelKeys: [app]
 
 agent:
   maxIterations: 20

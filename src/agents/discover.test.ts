@@ -45,17 +45,29 @@ describe("buildDiscoverInstructions / availability metric guidance", () => {
     expect(prompt).toMatch(/kube_deployment_spec_replicas/);
   });
 
-  it("only mentions `kube_deployment_status_replicas` in the DO NOT USE column", () => {
-    // \b on both sides excludes `_replicas_available` / `_replicas_ready`
-    // (no word boundary between word chars), so we get only the bare form.
-    // Then assert each occurrence has "DO NOT USE" within the preceding
-    // window — ties the metric to the warning column structurally instead
-    // of relying on the surrounding prose.
+  it("only mentions `kube_deployment_status_replicas` as a DO-NOT-USE health metric OR as a `count by` enumeration query", () => {
+    // The bare counter is OK as an enumeration query in Layer 4's standard
+    // K8s sweep (`count by (deployment) (kube_deployment_status_replicas)`)
+    // because we're using it for service-name enumeration, not health.
+    // The trap was using it as the service_availability `query` field, where
+    // `lt 1` never trips because the counter doesn't drop during outages.
+    //
+    // For each bare-form occurrence, accept ONE of:
+    //   (a) "DO NOT USE" appears within the preceding 300 chars (it's in
+    //       Layer 6.1's USE/DO NOT USE table), OR
+    //   (b) "count by" appears within the preceding ~50 chars (it's an
+    //       enumeration query in Layer 4 Process, not a health metric).
     const occurrences = [...prompt.matchAll(/\bkube_deployment_status_replicas\b/g)];
     expect(occurrences.length).toBeGreaterThan(0);
     for (const m of occurrences) {
-      const context = prompt.slice(Math.max(0, m.index! - 300), m.index!);
-      expect(context).toMatch(/DO NOT USE/);
+      const wideContext = prompt.slice(Math.max(0, m.index! - 300), m.index!);
+      const narrowContext = prompt.slice(Math.max(0, m.index! - 50), m.index!);
+      const isDoNotUseCell = /DO NOT USE/.test(wideContext);
+      const isEnumerationQuery = /count by/.test(narrowContext);
+      expect(
+        isDoNotUseCell || isEnumerationQuery,
+        `kube_deployment_status_replicas occurrence at idx=${m.index} is neither in a DO-NOT-USE cell nor in a count-by enumeration query`,
+      ).toBe(true);
     }
   });
 
@@ -130,14 +142,14 @@ describe("buildDiscoverInstructions / layered structure (Option B)", () => {
   it("omits LAYER 3 entirely when no stack hints are configured", () => {
     expect(prompt).not.toContain("## LAYER 3");
     expect(prompt).not.toContain("### Datasource UIDs");
-    expect(prompt).not.toContain("### Provider-specific recipes");
+    expect(prompt).not.toContain("PRIORITY: Team Knowledge");
   });
 
   it("renders LAYER 3 between LAYER 2 and LAYER 4 when stack hints are configured", () => {
     const promptWithHints = buildDiscoverInstructions({
       model: fakeModel,
       datasourceUidHints: "metrics: PA58DA793C7250F1B",
-      discoveryRecipes: "recipe-1: example",
+      discoverySkills: "## PRIORITY: Team Knowledge (Discovery Skills)\nThese skills describe services that CANNOT be found via standard K8s queries.",
     });
     const layer2 = promptWithHints.indexOf("## LAYER 2: CONSTRAINTS");
     const layer3 = promptWithHints.indexOf("## LAYER 3: STACK HINTS");
@@ -146,8 +158,27 @@ describe("buildDiscoverInstructions / layered structure (Option B)", () => {
     expect(layer3).toBeGreaterThan(layer2);
     expect(layer4).toBeGreaterThan(layer3);
     expect(promptWithHints).toContain("### Datasource UIDs (non-negotiable)");
-    expect(promptWithHints).toContain("### Provider-specific recipes (suggestions)");
+    expect(promptWithHints).toContain("PRIORITY: Team Knowledge (Discovery Skills)");
     expect(promptWithHints).toContain("PA58DA793C7250F1B");
+  });
+
+  it("bakes the standard K8s sweep queries into Layer 4 (not in conditional Layer 3)", () => {
+    // Pre-cleanup, the sweep queries came from config.discoveryRecipes
+    // (or its DEFAULT_PROMETHEUS_RECIPE fallback) and were injected via a
+    // recipe-hints block in Layer 3. They now live in the prompt template
+    // itself so they're always present regardless of config.
+    expect(prompt).toContain("count by (deployment) (kube_deployment_status_replicas)");
+    expect(prompt).toContain("count by (statefulset) (kube_statefulset_status_replicas)");
+    expect(prompt).toContain("count by (daemonset) (kube_daemonset_status_desired_number_scheduled)");
+    expect(prompt).toContain("count by (container) (kube_pod_container_info");
+    expect(prompt).toContain("count by (job) (up)");
+    // They live in Layer 4 Process, not Layer 3 (which we just asserted is
+    // absent in this no-hints build).
+    const layer4 = prompt.indexOf("## LAYER 4: PROCESS");
+    const sweepIdx = prompt.indexOf("count by (deployment)");
+    const layer5 = prompt.indexOf("## LAYER 5: OUTPUT CONTRACT");
+    expect(sweepIdx).toBeGreaterThan(layer4);
+    expect(sweepIdx).toBeLessThan(layer5);
   });
 
   it("declares the TypeScript output contract before any rationale", () => {

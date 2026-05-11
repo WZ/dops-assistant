@@ -179,7 +179,7 @@ describe("runDiscovery", () => {
     const config: DiscoveryWorkflowConfig = {
       model: fakeModel,
       providers: [],
-      discoveryConfig: { autoRefresh: false, excludeServices: [], maxIterations: 5, discoveryRecipes: [] },
+      discoveryConfig: { autoRefresh: false, excludeServices: [], maxIterations: 5 },
     };
     const result = await runDiscovery(config);
     expect(result.services).toHaveLength(1);
@@ -195,7 +195,7 @@ describe("runDiscovery", () => {
     const config: DiscoveryWorkflowConfig = {
       model: fakeModel,
       providers: [],
-      discoveryConfig: { autoRefresh: false, excludeServices: [], maxIterations: 5, discoveryRecipes: [] },
+      discoveryConfig: { autoRefresh: false, excludeServices: [], maxIterations: 5 },
       onPhase: (phase) => phases.push(phase),
     };
     await runDiscovery(config);
@@ -212,7 +212,7 @@ describe("runDiscovery", () => {
       const config: DiscoveryWorkflowConfig = {
         model: fakeModel,
         providers: [],
-        discoveryConfig: { autoRefresh: false, excludeServices: [], maxIterations: 5, discoveryRecipes: [] },
+        discoveryConfig: { autoRefresh: false, excludeServices: [], maxIterations: 5 },
         onPhase: (phase) => phases.push(phase),
       };
       const result = await runDiscovery(config);
@@ -232,7 +232,7 @@ describe("runDiscovery", () => {
       const config: DiscoveryWorkflowConfig = {
         model: fakeModel,
         providers: [],
-        discoveryConfig: { autoRefresh: false, excludeServices: [], maxIterations: 5, discoveryRecipes: [] },
+        discoveryConfig: { autoRefresh: false, excludeServices: [], maxIterations: 5 },
         onPhase: (phase) => phases.push(phase),
       };
       const result = await runDiscovery(config);
@@ -260,7 +260,7 @@ describe("runDiscovery", () => {
       const promise = runDiscovery({
         model: fakeModel,
         providers: [],
-        discoveryConfig: { autoRefresh: false, excludeServices: [], maxIterations: 5, discoveryRecipes: [] },
+        discoveryConfig: { autoRefresh: false, excludeServices: [], maxIterations: 5 },
         onPhase: (phase) => phases.push(phase),
         abortSignal: controller.signal,
       });
@@ -296,7 +296,7 @@ describe("runDiscovery", () => {
     const config: DiscoveryWorkflowConfig = {
       model: fakeModel,
       providers: [],
-      discoveryConfig: { autoRefresh: false, excludeServices: [], maxIterations: 5, discoveryRecipes: [] },
+      discoveryConfig: { autoRefresh: false, excludeServices: [], maxIterations: 5 },
       onPhase: (phase) => phases.push(phase),
     };
     await expect(runDiscovery(config)).rejects.toThrow();
@@ -309,7 +309,7 @@ describe("runDiscovery", () => {
       const config: DiscoveryWorkflowConfig = {
         model: fakeModel,
         providers: [],
-        discoveryConfig: { autoRefresh: false, excludeServices: [], maxIterations: 5, discoveryRecipes: [] },
+        discoveryConfig: { autoRefresh: false, excludeServices: [], maxIterations: 5 },
       };
       const result = await runDiscovery(config);
       expect(result.services).toHaveLength(1);
@@ -332,7 +332,7 @@ describe("runDiscoverStep — adversarial-review fixes (2026-04-22)", () => {
   const baseConfig: DiscoveryWorkflowConfig = {
     model: fakeModel,
     providers: [],
-    discoveryConfig: { autoRefresh: false, excludeServices: [], maxIterations: 5, discoveryRecipes: [] },
+    discoveryConfig: { autoRefresh: false, excludeServices: [], maxIterations: 5 },
   };
 
   afterEach(() => {
