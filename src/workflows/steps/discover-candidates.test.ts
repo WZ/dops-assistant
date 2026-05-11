@@ -115,7 +115,7 @@ describe("discover deterministic candidate backfill", () => {
     ]);
   });
 
-  it("does not auto-add every StatefulSet from high-cardinality shard sweeps", () => {
+  it("drops shard-suffixed StatefulSets regardless of count", () => {
     const candidates = new Map<string, ReturnType<typeof discoverStepTestHooks.extractDiscoveryCandidates>[number]>();
     const rows = Array.from({ length: 12 }, (_, i) => ({ namespace: "db", statefulset: `db-shard${i}` }));
     for (const candidate of discoverStepTestHooks.extractDiscoveryCandidates(
@@ -132,7 +132,54 @@ describe("discover deterministic candidate backfill", () => {
       [],
     );
 
+    // Shards filtered by the `-shard\d+$` regex in isLowSignalInfrastructureService,
+    // not by the (now-removed) blanket source-count skip.
     expect(merged.services).toEqual([]);
+  });
+
+  it("admits non-shard StatefulSets even with 12+ of them", () => {
+    const names = ["kafka", "zookeeper", "redis-ha-server", "prometheus-server",
+                   "stolon-keeper", "clickhouse", "mongodb", "elasticsearch",
+                   "neo4j", "cassandra", "minio", "etcd-cluster"];
+    const candidates = new Map<string, ReturnType<typeof discoverStepTestHooks.extractDiscoveryCandidates>[number]>();
+    const rows = names.map((name) => ({ namespace: "infra", statefulset: name }));
+    for (const candidate of discoverStepTestHooks.extractDiscoveryCandidates(
+      { expr: "count by (namespace, statefulset) (kube_statefulset_status_replicas_ready)" },
+      promRows(rows),
+      [],
+    )) {
+      candidates.set(candidate.name, candidate);
+    }
+
+    const merged = discoverStepTestHooks.mergeCandidatesIntoDiscoveryResult(
+      { services: [], globalProbeRules: [] },
+      candidates,
+      [],
+    );
+
+    expect(merged.services.map((s) => s.name).sort()).toEqual([...names].sort());
+  });
+
+  it("admits openebs-jiva-csi-controller (only openebs-ndm is filtered as a node agent)", () => {
+    const candidates = new Map<string, ReturnType<typeof discoverStepTestHooks.extractDiscoveryCandidates>[number]>();
+    for (const candidate of discoverStepTestHooks.extractDiscoveryCandidates(
+      { expr: "count by (namespace, daemonset) (kube_daemonset_status_desired_number_scheduled)" },
+      promRows([
+        { namespace: "openebs", daemonset: "openebs-jiva-csi-controller" },
+        { namespace: "openebs", daemonset: "openebs-ndm" },
+      ]),
+      [],
+    )) {
+      candidates.set(candidate.name, candidate);
+    }
+
+    const merged = discoverStepTestHooks.mergeCandidatesIntoDiscoveryResult(
+      { services: [], globalProbeRules: [] },
+      candidates,
+      [],
+    );
+
+    expect(merged.services.map((s) => s.name)).toEqual(["openebs-jiva-csi-controller"]);
   });
 
   it("drops low-signal node agents and StatefulSet shards from LLM output", () => {

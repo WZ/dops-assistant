@@ -564,7 +564,7 @@ function isLowSignalInfrastructureService(service: ServiceConfig): boolean {
   if (!isDaemonSetBackedService(service)) return false;
   return (
     /^kube-(proxy|flannel(?:-ds-.+)?)$/.test(name) ||
-    /^openebs-/.test(name) ||
+    name === "openebs-ndm" ||  // node disk manager — true per-node agent; controllers/operators are workloads
     name === "promtail" ||
     name === "prometheus-node-exporter" ||
     name === "process-exporter" ||
@@ -697,13 +697,11 @@ function mergeCandidatesIntoDiscoveryResult(
     return counts;
   }, new Map<DiscoveryCandidate["source"], number>());
 
+  // Anti-shard guard lives in isLowSignalInfrastructureService (the `-shard\d+$` regex).
+  // No blanket source-count skip — that dropped non-shard StatefulSets on busy clusters.
   for (const candidate of [...candidates.values()].sort((a, b) => a.name.localeCompare(b.name))) {
     const key = candidateKey(candidate.name);
     if (existing.has(key)) continue;
-    const sourceCount = sourceCounts.get(candidate.source) ?? 0;
-    if ((candidate.source === "statefulset" || candidate.source === "daemonset") && sourceCount > 10) {
-      continue;
-    }
     const service = serviceFromCandidate(candidate);
     if (isLowSignalInfrastructureService(service)) continue;
     existing.add(key);
