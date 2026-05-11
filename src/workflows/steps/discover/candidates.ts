@@ -14,6 +14,7 @@
 
 import type { ServiceConfig, ProbeMetricRule } from "../../../config/schema.js";
 import { createLogger } from "../../../logger.js";
+import { quirkHit } from "../../../agents/shared/quirk-telemetry.js";
 import { isExcludedService, isLowSignalInfrastructureService, normalizeServiceName } from "./filters.js";
 
 const logger = createLogger("discover");
@@ -242,6 +243,7 @@ export function mergeCandidatesIntoDiscoveryResult(
       },
       "discovery: added services deterministically from observed metric/catalog rows",
     );
+    quirkHit("deterministic-merge:added", { count: added.length, llmCount: result.services.length });
   }
 
   return {

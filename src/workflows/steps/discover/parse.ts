@@ -15,6 +15,7 @@
 
 import { safeJsonParse } from "../../../agents/shared/processors.js";
 import { getReasoningText } from "../../../agents/shared/llm-result.js";
+import { quirkHit } from "../../../agents/shared/quirk-telemetry.js";
 import type { ServiceConfig, ProbeMetricRule } from "../../../config/schema.js";
 import { ProbeMetricRuleSchema } from "../../../config/schema.js";
 import { createLogger } from "../../../logger.js";
@@ -102,6 +103,7 @@ function backfillServiceAvailability(
     source: "metrics",
   });
   logger.debug({ service: serviceName, query }, "discovery: backfilled service_availability rule from metrics[0]");
+  quirkHit("backfill:service-availability", { service: serviceName });
 }
 
 /**
@@ -194,6 +196,7 @@ export function backfillGlobalAvailabilityRules(
     source: "metrics",
   });
   logger.debug({ rule: name, query, matchedServices, serviceCount: services.length }, "discovery: backfilled global availability rule");
+  quirkHit("backfill:global-availability", { label, matchedServices, serviceCount: services.length });
 }
 
 function tryParseDiscoverResponse(text: string | undefined): DiscoverStepResult | null {
@@ -225,8 +228,14 @@ function tryParseDiscoverResponse(text: string | undefined): DiscoverStepResult 
  */
 export function parsePrimaryOrReasoning(result: unknown): DiscoverStepResult | null {
   const r = result as { text?: string };
-  return (
-    tryParseDiscoverResponse(r.text) ??
-    tryParseDiscoverResponse(getReasoningText(result))
-  );
+  const primary = tryParseDiscoverResponse(r.text);
+  if (primary) return primary;
+  const reasoning = getReasoningText(result);
+  const reasoningParse = tryParseDiscoverResponse(reasoning);
+  if (reasoningParse) {
+    // Fallback fired — text didn't yield a result but reasoningText did.
+    // Hit counter only when the fallback is what actually rescued the parse.
+    quirkHit("reasoning-fallback", { textLen: r.text?.length ?? 0, reasoningLen: reasoning?.length ?? 0 });
+  }
+  return reasoningParse;
 }

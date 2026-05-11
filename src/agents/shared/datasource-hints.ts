@@ -15,6 +15,7 @@
  */
 
 import { createLogger } from "../../logger.js";
+import { quirkHit } from "./quirk-telemetry.js";
 
 const logger = createLogger("discover");
 
@@ -63,6 +64,7 @@ export async function fetchDatasourceHints(
       `<untrusted_datasource_hints>Available datasources (use these UIDs directly, do NOT guess or call list_datasources):\n${lines.join("\n")}\n` +
       `IMPORTANT: You MUST use the exact datasourceUid values above when calling query_prometheus, query_loki_logs, or list_loki_label_names. Do not invent short names like "loki" or "prometheus-k8s" — always use the real UIDs.</untrusted_datasource_hints>\n\n`;
 
+    quirkHit("datasource-hints:emitted", { datasourceCount: relevant.length });
     return { hintBlock, uidMap };
   } catch (err) {
     // Silently proceeding leaves the agent to hallucinate datasource UIDs,

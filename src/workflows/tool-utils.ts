@@ -13,6 +13,7 @@ import { extractTimeRange, suggestStepSeconds, toRfc3339Window } from "./helpers
 import type { ServiceConfig } from "../config/schema.js";
 import { getTimeContext } from "../agents/shared/time-context.js";
 import { createLogger } from "../logger.js";
+import { quirkHit } from "../agents/shared/quirk-telemetry.js";
 
 const coercionLogger = createLogger("tool-coercion");
 
@@ -95,10 +96,10 @@ export function coerceToolArgs(args: Record<string, unknown>, toolSchema: any): 
  */
 export function coercePrometheusArgs(args: Record<string, unknown>): Record<string, unknown> {
   const coerced = { ...args };
-  if (coerced.startTime == null) coerced.startTime = "now";
-  if (coerced.endTime == null) coerced.endTime = "now";
-  if (coerced.stepSeconds == null) coerced.stepSeconds = 0;
-  if (coerced.queryType == null) coerced.queryType = "instant";
+  if (coerced.startTime == null) { coerced.startTime = "now"; quirkHit("prom-coerce:startTime-null"); }
+  if (coerced.endTime == null) { coerced.endTime = "now"; quirkHit("prom-coerce:endTime-null"); }
+  if (coerced.stepSeconds == null) { coerced.stepSeconds = 0; quirkHit("prom-coerce:stepSeconds-null"); }
+  if (coerced.queryType == null) { coerced.queryType = "instant"; quirkHit("prom-coerce:queryType-null"); }
   return coerced;
 }
 
@@ -178,15 +179,20 @@ export function coerceLokiArgs(args: Record<string, unknown>): Record<string, un
   const coerced = { ...args };
   // stepSeconds is a Prometheus concept — Loki's query_loki_logs doesn't accept it.
   // LLMs consistently pass it; drop it so the tool call isn't rejected.
-  delete coerced.stepSeconds;
+  if ("stepSeconds" in coerced) {
+    delete coerced.stepSeconds;
+    quirkHit("loki-coerce:stepSeconds-dropped");
+  }
   // Always use backward (newest-first) — errors at the end of a window are more relevant
   if (coerced.direction === "forward" || !coerced.direction) {
+    if (coerced.direction === "forward") quirkHit("loki-coerce:direction-forced");
     coerced.direction = "backward";
   }
   // Minimum limit of 50 — 20 is too low for multi-minute incidents
   // Handle both number and string-typed limit (LLMs sometimes send "20" instead of 20)
   const limit = typeof coerced.limit === "string" ? Number(coerced.limit) : coerced.limit;
   if (typeof limit === "number" && !isNaN(limit) && limit < 50) {
+    quirkHit("loki-coerce:limit-bumped", { from: limit });
     coerced.limit = 50;
   }
   return coerced;
@@ -345,6 +351,7 @@ export function wrapToolsWithCallbacks(
                 { phase, tool: name, from: uid, to: realUid },
                 `Coerced datasourceUid: ${uid} → ${realUid}`,
               );
+              quirkHit("uid-hallucination:coerced", { from: uid, to: realUid });
             }
           }
         }

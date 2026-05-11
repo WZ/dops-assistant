@@ -16,6 +16,7 @@ import { withLlmRetry, safeAgentRetryConfig, type LlmRetryConfig } from "../../.
 import { LlmUnavailableError } from "../../../agents/shared/llm-errors.js";
 import { UNTRUSTED_DATA_NOTICE, wrapUntrusted } from "../../../agents/shared/prompt-helpers.js";
 import { getUsage } from "../../../agents/shared/llm-result.js";
+import { quirkHit } from "../../../agents/shared/quirk-telemetry.js";
 import { logLlmCall, logLlmCallStart, newCallId } from "../../../server/llm-logger.js";
 import { createLogger } from "../../../logger.js";
 
@@ -109,6 +110,7 @@ export async function runStallRecovery<T>(deps: StallRecoveryDeps): Promise<T | 
     },
     "discovery: unusable synthesis after tool-using session — invoking stall-recovery",
   );
+  quirkHit("stall-recovery:start", { attempt: deps.attempt, toolCallCount: deps.recoveryHistory.length });
   logLlmCallStart({
     callId: recoveryCallId,
     agent: deps.agentName,
@@ -166,6 +168,7 @@ export async function runStallRecovery<T>(deps: StallRecoveryDeps): Promise<T | 
     const recovered = deps.parse(recoveryResult) as T | null;
     if (recovered) {
       logger.info({ attempt: deps.attempt }, "discovery: stall-recovery succeeded");
+      quirkHit("stall-recovery:success", { attempt: deps.attempt });
       return recovered;
     }
     logger.warn(

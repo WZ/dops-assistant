@@ -16,6 +16,8 @@
  * section dividers, breaking strict JSON.parse and silently dropping the
  * entire discovery result.
  */
+import { quirkHit } from "./quirk-telemetry.js";
+
 export function safeJsonParse(text: string): any | null {
   if (!text?.trim()) return null;
 
@@ -46,7 +48,10 @@ export function safeJsonParse(text: string): any | null {
   // Runs before single-object extraction so we don't pick up a stray inner
   // object from inside a truncated array.
   const truncated = recoverTruncatedJsonArray(text);
-  if (truncated) return truncated;
+  if (truncated) {
+    quirkHit("truncation-recovery:array", { recoveredCount: truncated.length });
+    return truncated;
+  }
 
   // 4b. Truncated discover-style object recovery: the discover agent emits
   // {"services": [...], "globalProbeRules": [...]}. When the LLM exhausts
@@ -55,7 +60,10 @@ export function safeJsonParse(text: string): any | null {
   // to be, even if that's a probeRule deep inside an unfinished service).
   // This recovers any complete services that DID serialize before truncation.
   const truncatedObj = recoverTruncatedServicesObject(text);
-  if (truncatedObj) return truncatedObj;
+  if (truncatedObj) {
+    quirkHit("truncation-recovery:services-object", { recoveredCount: truncatedObj.services.length });
+    return truncatedObj;
+  }
 
   // 5. Extract the LAST top-level {...} object. Agents are instructed to end
   // their response with JSON, so the last complete object is most likely
