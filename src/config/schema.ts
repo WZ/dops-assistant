@@ -16,7 +16,7 @@ const ThresholdSchema = z.object({
   value: z.number(),
 });
 
-// Exported so the discovery-path validator in src/workflows/steps/discover.ts
+// Exported so the discovery-path validator in src/workflows/steps/discover/parse.ts
 // can safeParse LLM-written rules before they're persisted. Keep this in
 // lockstep with scan-rule-validator's RuleSchema (same fields, same defaults);
 // the only intentional divergence is that scan-rule-validator is `.strict()`

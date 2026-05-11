@@ -11,7 +11,7 @@ import { generateText } from "ai";
 import type { WorkflowConfig } from "../investigation.js";
 import { PrefetchOutputSchema, AnomalyOutputSchema } from "../schemas.js";
 import { getToolsByRole, filterToReadOnlyTools } from "../../mcp/provider.js";
-import { wrapToolsWithCallbacks, debug } from "../tool-utils.js";
+import { wrapToolsWithCallbacks, debug, extractMastraToolResult, type MastraToolResultLike } from "../tool-utils.js";
 import { getTimeContext } from "../../agents/shared/time-context.js";
 import { TOOL_RESULT_TRUNCATION_LIMIT, DEFAULT_TIME_RANGE_MS } from "../../constants.js";
 import { safeJsonParse } from "../../agents/shared/processors.js";
@@ -79,12 +79,8 @@ export function buildAnomalyStep(config: WorkflowConfig) {
                 anomalyIterationCount++;
                 config.onIteration?.("anomaly", anomalyIterationCount, 10, `Step ${anomalyIterationCount}`);
                 if (step.toolResults?.length) {
-                  for (const tr of step.toolResults) {
-                    const payload = tr.payload ?? tr;
-                    const toolName = payload.toolName ?? payload.name ?? tr.toolName ?? "unknown";
-                    const nestedContent = payload.result?.content?.[0]?.text;
-                    const rawResult = nestedContent ?? payload.result ?? tr.result ?? tr.output ?? "";
-                    const resultStr = typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
+                  for (const tr of step.toolResults as MastraToolResultLike[]) {
+                    const { toolName, resultStr } = extractMastraToolResult(tr);
                     const truncated = resultStr.length > TOOL_RESULT_TRUNCATION_LIMIT ? resultStr.slice(0, TOOL_RESULT_TRUNCATION_LIMIT) + "..." : resultStr;
                     anomalyToolData.push(`Tool: ${toolName}\nResult: ${truncated}`);
                   }

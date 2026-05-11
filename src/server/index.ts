@@ -35,6 +35,7 @@ import { InvestigationDedup } from "./investigation-dedup.js";
 import { createApiKeyMiddleware } from "./auth-middleware.js";
 import { globalLimiter, strictLimiter, moderateLimiter } from "./rate-limit.js";
 import { startHealthMonitor, stopHealthMonitor, healthHandler } from "./health-monitor.js";
+import { getQuirkHits, resetQuirkHits } from "../agents/shared/quirk-telemetry.js";
 import { eventLog } from "./event-log.js";
 import { startEventsRetentionTask } from "./events-retention.js";
 import { createDemoModeMiddleware, isDemoMode } from "./demo-mode.js";
@@ -484,6 +485,18 @@ async function main() {
     logger.info("demo mode: skipping background health monitor");
   }
   app.get("/api/health", healthHandler);
+
+  // Hit-counter inspector for gpt-oss-120b quirk defenses. Phase 1 of the
+  // quirk-validation plan — see docs/plans/gpt-oss-quirks-validation.html.
+  // Counters reset on server restart; daily cron is expected to GET this
+  // endpoint, persist to CSV, then POST /api/health/quirks/reset.
+  app.get("/api/health/quirks", (_req: Request, res: Response) => {
+    res.json({ hits: getQuirkHits(), uptime: process.uptime() });
+  });
+  app.post("/api/health/quirks/reset", (_req: Request, res: Response) => {
+    resetQuirkHits();
+    res.json({ ok: true });
+  });
 
   // Alert webhook endpoint.
   // The route is always registered. When no DB-managed webhook tokens exist,

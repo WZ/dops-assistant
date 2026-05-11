@@ -1,5 +1,6 @@
 import type { ProcessInputStepArgs, ProcessInputStepResult } from "@mastra/core/processors";
 import { createLogger } from "../../logger.js";
+import { quirkHit } from "./quirk-telemetry.js";
 
 const logger = createLogger("prepare-step");
 
@@ -67,6 +68,7 @@ export function createQuirkPrepareStep(config: QuirkPrepareStepConfig): PrepareS
     // Wind-down phase: disable tools so the model produces a final answer
     if (step >= windDownStartStep) {
       logger.debug({ step }, "wind-down: disabling tools");
+      quirkHit("prepareStep:wind-down", { step, maxSteps });
       return {
         tools: {},
         activeTools: [],
@@ -77,6 +79,7 @@ export function createQuirkPrepareStep(config: QuirkPrepareStepConfig): PrepareS
     // Midpoint nudge: inject a reminder message AND keep toolChoice as "auto"
     if (step === midpointStep) {
       logger.debug({ step }, "midpoint nudge");
+      quirkHit("prepareStep:nudge", { step, maxSteps });
       return {
         toolChoice: "auto" as const,
         messages: [
