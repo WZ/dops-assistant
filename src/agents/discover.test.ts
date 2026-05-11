@@ -45,17 +45,29 @@ describe("buildDiscoverInstructions / availability metric guidance", () => {
     expect(prompt).toMatch(/kube_deployment_spec_replicas/);
   });
 
-  it("only mentions `kube_deployment_status_replicas` in the DO NOT USE column", () => {
-    // \b on both sides excludes `_replicas_available` / `_replicas_ready`
-    // (no word boundary between word chars), so we get only the bare form.
-    // Then assert each occurrence has "DO NOT USE" within the preceding
-    // window — ties the metric to the warning column structurally instead
-    // of relying on the surrounding prose.
+  it("only mentions `kube_deployment_status_replicas` as a DO-NOT-USE health metric OR as a `count by` enumeration query", () => {
+    // The bare counter is OK as an enumeration query in Layer 4's standard
+    // K8s sweep (`count by (deployment) (kube_deployment_status_replicas)`)
+    // because we're using it for service-name enumeration, not health.
+    // The trap was using it as the service_availability `query` field, where
+    // `lt 1` never trips because the counter doesn't drop during outages.
+    //
+    // For each bare-form occurrence, accept ONE of:
+    //   (a) "DO NOT USE" appears within the preceding 300 chars (it's in
+    //       Layer 6.1's USE/DO NOT USE table), OR
+    //   (b) "count by" appears within the preceding ~50 chars (it's an
+    //       enumeration query in Layer 4 Process, not a health metric).
     const occurrences = [...prompt.matchAll(/\bkube_deployment_status_replicas\b/g)];
     expect(occurrences.length).toBeGreaterThan(0);
     for (const m of occurrences) {
-      const context = prompt.slice(Math.max(0, m.index! - 300), m.index!);
-      expect(context).toMatch(/DO NOT USE/);
+      const wideContext = prompt.slice(Math.max(0, m.index! - 300), m.index!);
+      const narrowContext = prompt.slice(Math.max(0, m.index! - 50), m.index!);
+      const isDoNotUseCell = /DO NOT USE/.test(wideContext);
+      const isEnumerationQuery = /count by/.test(narrowContext);
+      expect(
+        isDoNotUseCell || isEnumerationQuery,
+        `kube_deployment_status_replicas occurrence at idx=${m.index} is neither in a DO-NOT-USE cell nor in a count-by enumeration query`,
+      ).toBe(true);
     }
   });
 
@@ -98,5 +110,163 @@ describe("buildDiscoverInstructions / availability metric guidance", () => {
       // Each documented metric must appear in the prompt at least once.
       expect(prompt).toContain(metric);
     }
+  });
+});
+
+describe("buildDiscoverInstructions / layered structure (Option B)", () => {
+  // These assertions pin the 7-layer organization. The prompt should read
+  // top-to-bottom as one coherent document and consolidate previously-
+  // duplicated guidance (omission policy was stated 4 times in the pre-Option-B
+  // version).
+  const prompt = buildDiscoverInstructions({ model: fakeModel });
+
+  it("renders all 7 layer headers in order", () => {
+    const expectedHeaders = [
+      "## LAYER 1: IDENTITY & GOAL",
+      "## LAYER 2: CONSTRAINTS",
+      // LAYER 3 is conditional — skipped here
+      "## LAYER 4: PROCESS",
+      "## LAYER 5: OUTPUT CONTRACT",
+      "## LAYER 6: DECISION GUIDES",
+      "## LAYER 7: OUTPUT STRICTNESS",
+    ];
+    let lastIdx = -1;
+    for (const header of expectedHeaders) {
+      const idx = prompt.indexOf(header);
+      expect(idx, `missing header: ${header}`).toBeGreaterThan(-1);
+      expect(idx, `header out of order: ${header}`).toBeGreaterThan(lastIdx);
+      lastIdx = idx;
+    }
+  });
+
+  it("omits LAYER 3 entirely when no stack hints are configured", () => {
+    expect(prompt).not.toContain("## LAYER 3");
+    expect(prompt).not.toContain("### Datasource UIDs");
+    expect(prompt).not.toContain("PRIORITY: Team Knowledge");
+  });
+
+  it("renders LAYER 3 between LAYER 2 and LAYER 4 when stack hints are configured", () => {
+    const promptWithHints = buildDiscoverInstructions({
+      model: fakeModel,
+      datasourceUidHints: "metrics: PA58DA793C7250F1B",
+      discoverySkills: "## PRIORITY: Team Knowledge (Discovery Skills)\nThese skills describe services that CANNOT be found via standard K8s queries.",
+    });
+    const layer2 = promptWithHints.indexOf("## LAYER 2: CONSTRAINTS");
+    const layer3 = promptWithHints.indexOf("## LAYER 3: STACK HINTS");
+    const layer4 = promptWithHints.indexOf("## LAYER 4: PROCESS");
+    expect(layer2).toBeGreaterThan(-1);
+    expect(layer3).toBeGreaterThan(layer2);
+    expect(layer4).toBeGreaterThan(layer3);
+    expect(promptWithHints).toContain("### Datasource UIDs (non-negotiable)");
+    expect(promptWithHints).toContain("PRIORITY: Team Knowledge (Discovery Skills)");
+    expect(promptWithHints).toContain("PA58DA793C7250F1B");
+  });
+
+  it("bakes the standard K8s sweep queries into Layer 4 (not in conditional Layer 3)", () => {
+    // Pre-cleanup, the sweep queries came from config.discoveryRecipes
+    // (or its DEFAULT_PROMETHEUS_RECIPE fallback) and were injected via a
+    // recipe-hints block in Layer 3. They now live in the prompt template
+    // itself so they're always present regardless of config.
+    expect(prompt).toContain("count by (deployment) (kube_deployment_status_replicas)");
+    expect(prompt).toContain("count by (statefulset) (kube_statefulset_status_replicas)");
+    expect(prompt).toContain("count by (daemonset) (kube_daemonset_status_desired_number_scheduled)");
+    expect(prompt).toContain("count by (container) (kube_pod_container_info");
+    expect(prompt).toContain("count by (job) (up)");
+    // They live in Layer 4 Process, not Layer 3 (which we just asserted is
+    // absent in this no-hints build).
+    const layer4 = prompt.indexOf("## LAYER 4: PROCESS");
+    const sweepIdx = prompt.indexOf("count by (deployment)");
+    const layer5 = prompt.indexOf("## LAYER 5: OUTPUT CONTRACT");
+    expect(sweepIdx).toBeGreaterThan(layer4);
+    expect(sweepIdx).toBeLessThan(layer5);
+  });
+
+  it("declares the TypeScript output contract before any rationale", () => {
+    // The schema lives in Layer 5; rationale (Why for service_availability)
+    // lives in Layer 6. The model should encounter the contract first.
+    const contractIdx = prompt.indexOf("type ServiceConfig");
+    const rationaleIdx = prompt.indexOf(
+      "globalProbeRules use one majority-wins label key",
+    );
+    expect(contractIdx).toBeGreaterThan(-1);
+    expect(rationaleIdx).toBeGreaterThan(-1);
+    expect(contractIdx).toBeLessThan(rationaleIdx);
+  });
+
+  it("states the per-rule omission policy exactly once (in 6.3.D)", () => {
+    // Previously the omission policy was stated 4 times across the prompt
+    // (lines 137, 197, 260, 287). Now it lives in one table in 6.3.D and is
+    // not repeated inline in 6.3.A / 6.3.B / 6.3.C.
+    const occurrences = [...prompt.matchAll(/Omit only when/g)];
+    expect(occurrences.length).toBe(1);
+    // And the single occurrence is in section 6.3.D.
+    const omissionIdx = prompt.indexOf("Omit only when");
+    const sectionDIdx = prompt.indexOf("6.3.D Omission policy");
+    expect(sectionDIdx).toBeGreaterThan(-1);
+    expect(omissionIdx).toBeGreaterThan(sectionDIdx);
+  });
+
+  it("includes section 6.0 (Discovery sources) before 6.1, ranking infra + catalogs as Tier 1 identity sources", () => {
+    // 6.0 was added because Layer 6 originally documented how to fill fields
+    // (6.1 metrics, 6.2 logLabels, 6.3 probeRules, 6.4 globals) but never
+    // taught WHERE identity comes from. Empirics showed the LLM was choosing
+    // sources ad-hoc; this section names the authority hierarchy explicitly.
+    const section60 = prompt.indexOf("### 6.0 Discovery sources");
+    const section61 = prompt.indexOf("### 6.1 Picking metrics[0].query");
+    expect(section60).toBeGreaterThan(-1);
+    expect(section61).toBeGreaterThan(section60);
+
+    // Two-tier authority: Infrastructure + Catalogs are identity ground truth;
+    // Metrics + Logs are projections (observability).
+    expect(prompt).toMatch(/Tier 1 — IDENTITY/);
+    expect(prompt).toMatch(/Tier 2 — OBSERVABILITY/);
+
+    // Each source family appears in the new section.
+    const section60End = section61;
+    const section60Body = prompt.slice(section60, section60End);
+    expect(section60Body).toMatch(/Infrastructure \(K8s\)/);
+    expect(section60Body).toMatch(/Catalogs \(Consul/);
+    expect(section60Body).toMatch(/Metrics \(Prometheus\)/);
+    expect(section60Body).toMatch(/Logs \(Loki/);
+  });
+
+  it("places the workload-kind table in section 6.1 (a decision guide), not inline in a rule", () => {
+    // The USE / DO NOT USE table is reusable guidance — it lives in 6.1
+    // (Picking metrics[0].query), not inside the service_availability rule
+    // shape. The rule references 6.1 by section name.
+    const tableIdx = prompt.indexOf("| Workload kind");
+    const section61Idx = prompt.indexOf("### 6.1 Picking metrics[0].query");
+    const rule63aIdx = prompt.indexOf("#### 6.3.A service_availability");
+    expect(section61Idx).toBeGreaterThan(-1);
+    expect(rule63aIdx).toBeGreaterThan(-1);
+    expect(tableIdx).toBeGreaterThan(section61Idx);
+    expect(tableIdx).toBeLessThan(rule63aIdx);
+  });
+
+  it("places the selector-priority table as a markdown table (not plaintext list)", () => {
+    // Pre-Option-B the priority list was 7 lines of prose. Now it's a
+    // markdown table with explicit "(best)" and "(last-resort fallback)"
+    // labels on the bounding rows so the model can scan-read.
+    expect(prompt).toMatch(/\| Priority\s+\| Selector/);
+    expect(prompt).toMatch(/1 \(best\)/);
+    expect(prompt).toMatch(/4 \(last-resort fallback\)/);
+  });
+
+  it("appends the exclude list inside LAYER 2: CONSTRAINTS, not the strictness tail", () => {
+    // Pre-Option-B excludeServices was tacked onto the end of the OUTPUT
+    // STRICTNESS paragraph. Now it lives where it belongs — in CONSTRAINTS.
+    const promptWithExcludes = buildDiscoverInstructions({
+      model: fakeModel,
+      excludeServices: ["consul", "prometheus"],
+    });
+    const constraintsIdx = promptWithExcludes.indexOf("## LAYER 2: CONSTRAINTS");
+    const excludesIdx = promptWithExcludes.indexOf(
+      "Exclude these services (case-insensitive)",
+    );
+    const layer4Idx = promptWithExcludes.indexOf("## LAYER 4: PROCESS");
+    expect(constraintsIdx).toBeGreaterThan(-1);
+    expect(excludesIdx).toBeGreaterThan(constraintsIdx);
+    expect(excludesIdx).toBeLessThan(layer4Idx);
+    expect(promptWithExcludes).toContain("consul, prometheus");
   });
 });

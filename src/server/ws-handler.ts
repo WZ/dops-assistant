@@ -809,7 +809,7 @@ export async function handleClientMessage(
         logger.debug({ skillCount: discoverySkills.length, skills: discoverySkills.map(s => s.id) }, "Injecting discovery skills");
       }
       const result = await agents.discoverAgent.discover(
-        discoveryConfig ?? { autoRefresh: false, excludeServices: [], maxIterations: 40, discoveryRecipes: [], maxToolResultChars: 30_000, maxOutputTokens: 8192 },
+        discoveryConfig ?? { autoRefresh: false, excludeServices: [], maxIterations: 40, maxToolResultChars: 30_000, maxOutputTokens: 8192 },
         {
           onPhase: (phase) => {
             // Suppress emits from a superseded run. Mastra's agent loop is

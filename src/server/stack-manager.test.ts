@@ -108,7 +108,7 @@ function makeConfig(overrides?: Partial<Config>): Config {
     retry: { maxAttempts: 3, baseDelayMs: 500 },
     observability: { port: 9090, logLevel: "info" },
     skills: { dir: "./skills", maxPerQuery: 3, maxCharsPerSkill: 2000 },
-    discovery: { autoRefresh: false, excludeServices: [], maxIterations: 40, discoveryRecipes: [] },
+    discovery: { autoRefresh: false, excludeServices: [], maxIterations: 40 },
     memory: { storage: "memory", dbPath: ".dops/memory.db" },
     webhook: { dedupWindowSeconds: 300, maxConcurrent: 3, defaultTemplate: "standard", severityTemplateMap: {} },
     scan: {
@@ -549,7 +549,6 @@ describe("StackManager", () => {
           autoRefresh: false,
           excludeServices: [],
           maxIterations: 40,
-          discoveryRecipes: [],
           periodic: {
             enabled: true,
             cron: "0 0 * * *",
@@ -594,7 +593,6 @@ describe("StackManager", () => {
           autoRefresh: false,
           excludeServices: [],
           maxIterations: 40,
-          discoveryRecipes: [],
           periodic: {
             enabled: true,
             cron: "0 0 * * *",

@@ -10,337 +10,364 @@ export interface DiscoverAgentConfig {
   useQuirkHandling?: boolean;
   /** Datasource UIDs rendered as a strict non-negotiable block. */
   datasourceUidHints?: string;
-  /** Recipe and skill hints rendered as suggestions. */
-  discoveryRecipes?: string;
+  /** Per-stack discovery skill hints rendered as priority team knowledge. */
+  discoverySkills?: string;
 }
 
 /**
- * Build the discovery agent's instruction prompt. Exported for unit testing
- * so prompt-content regressions (e.g. the bad-availability-metric trap that
- * shipped before 2026-04-25) surface as fast assertions instead of waiting
- * for a full discover-eval run.
+ * Build the discovery agent's instruction prompt. Organized into 7 explicit
+ * layers (Identity → Constraints → Stack Hints → Process → Output Contract →
+ * Decision Guides → Output Strictness) so the model reads the bare schema
+ * before any rationale, the omission policy is stated once, and conditional
+ * stack hints have a named anchor.
+ *
+ * Exported for unit testing — prompt-content regressions (e.g. the
+ * bad-availability-metric trap that shipped before 2026-04-25) surface as
+ * fast assertions instead of waiting for a full discover-eval run.
  */
 export function buildDiscoverInstructions(config: DiscoverAgentConfig): string {
-  const excludeList = config.excludeServices?.length
-    ? `\n\nEXCLUDE these services from your results (case-insensitive): ${config.excludeServices.join(", ")}`
+  const excludesLine = config.excludeServices?.length
+    ? `\n- Exclude these services (case-insensitive): ${config.excludeServices.join(", ")}`
     : "";
+  const stackHints = buildStackHintsLayer(config);
 
-  const datasourceBlock = config.datasourceUidHints
-    ? `\n\n## CRITICAL: Datasource UIDs (non-negotiable)
+  return `# Service Discovery Agent
 
-When calling ANY metric or log query tool that requires a datasourceUid parameter,
-you MUST pass datasourceUid EXACTLY as listed below. Do NOT guess, abbreviate,
-or use short names like "prometheus" or "loki". Do NOT call datasource listing
-tools — these UIDs are already resolved for you.
+## LAYER 1: IDENTITY & GOAL
 
-${config.datasourceUidHints}`
-    : "";
+You discover ALL monitored services on this stack — application AND
+infrastructure — using metric, infrastructure, and service catalog tools.
+Success = a comprehensive registry with per-service probe rules, written ONCE,
+that the proactive scan probe can use without operator hand-editing.
 
-  const recipeHints = config.discoveryRecipes
-    ? `\n\n## Provider-Specific Discovery Hints
+## LAYER 2: CONSTRAINTS
 
-The following discovery recipes are configured for your monitoring stack. Use these as starting points:
+- Use METRIC, INFRASTRUCTURE, and SERVICE CATALOG tools.
+- Do NOT use log search tools.
+- Do NOT call datasource listing tools — UIDs are pre-resolved (see Layer 3 if present).${excludesLine}${stackHints}
 
-${config.discoveryRecipes}
+## LAYER 4: PROCESS
 
-These are suggestions — also use your own discovery strategies based on available tools.`
-    : "";
+1. Examine available tools (metric / infrastructure / catalog).
+2. Run MULTIPLE discovery queries — do NOT stop at the first:
+   - INFRASTRUCTURE tools: pod list with fieldSelector/labelSelector to EXCLUDE
+     system namespaces (kube-system / kube-public / kube-node-lease). Catches
+     sidecars + container-level services that metrics alone miss.
+   - METRIC tools: workload metrics grouped by service/app name. Run ALL of
+     these standard K8s sweep queries (each catches a different workload kind):
+       \`\`\`
+       count by (deployment) (kube_deployment_status_replicas)
+       count by (statefulset) (kube_statefulset_status_replicas)
+       count by (daemonset) (kube_daemonset_status_desired_number_scheduled)
+       count by (container) (kube_pod_container_info{container!="POD",container!=""})
+       count by (app) (kube_pod_info)
+       count by (job) (up)
+       \`\`\`
+   - CATALOG tools: enumerate services directly.
+3. Don't miss APPLICATION services — infrastructure often dominates basic
+   queries. Query workload-specific metrics for APIs, data processors, web
+   servers.
+4. Merge + dedupe — same service across sources gets ONE entry.
+5. For each service, construct a health/activity query using the metric that
+   discovered it. Then write probeRules per Layer 6.3.
 
-  return `You are a service discovery agent. Your job is to find ALL monitored services — both application services AND infrastructure — using the available metric and service catalog tools.
+## LAYER 5: OUTPUT CONTRACT
 
-## IMPORTANT: Use metric, infrastructure, and service catalog tools — do NOT use log search tools.
+Return JSON with this shape:
 
-## Process
+\`\`\`ts
+{
+  services: ServiceConfig[];
+  globalProbeRules: ProbeMetricRule[];
+}
 
-1. Examine your available tools. Look for metric query tools, infrastructure/Kubernetes tools, service listing tools, or catalog tools.
-2. Run MULTIPLE discovery queries to build a comprehensive catalog. Do NOT stop at the first query — use several approaches and merge the results:
+type ServiceConfig = {
+  name: string;
+  metrics: Array<{ query: string; description: string }>;
+  logLabels: Record<string, string>;          // {} if no label info available
+  probeRules: ProbeMetricRule[];              // see 6.3 for rules + omission
+  gitlabProject?: string;
+  corootAppId?: string;
+  description?: string;                       // explain omitted probeRules here
+};
 
-   **If infrastructure tools are available (e.g., Kubernetes API):**
-   - Use metric queries FIRST for the initial sweep (deployments, statefulsets, daemonsets)
-   - THEN use a filtered pod list as a SECOND PASS to catch container-level services
-     that don't have their own deployment (e.g., sidecar containers, celery workers,
-     multi-container pods). Many services are containers within a deployment whose
-     name differs from the deployment name — metrics alone miss these.
-   - When listing pods, ALWAYS use fieldSelector or labelSelector to exclude system
-     namespaces (kube-system, kube-public, kube-node-lease). Do NOT fetch all pods
-     unfiltered — that returns 80k+ chars and wastes your token budget.
+type ProbeMetricRule = {
+  name: "service_availability" | "pod_restarts" | "log_errors" | string;
+  query: string;
+  threshold: { op: "lt" | "gt" | "eq"; value: number };
+  consecutiveTicks: number;
+  source: "metrics" | "logs";
+};
+\`\`\`
 
-   **If metric query tools are available:**
-   - Query for workload metrics (deployments, statefulsets, containers) grouped by service/app name
-   - Query for scrape targets or service health metrics
-   - Look for service-level metrics that reveal application names
+Backward-compat: a bare \`ServiceConfig[]\` is still accepted (treated as
+\`{ services: [...], globalProbeRules: [] }\`). Prefer the object form.
 
-   **If service catalog/listing tools are available:**
-   - Use them to enumerate all known services directly
+## LAYER 6: DECISION GUIDES
 
-3. Merge results from all successful queries. Deduplicate — if the same service appears under different names, keep one entry.
-4. For each service, construct a health/activity metric query using the metric that discovered it.
-5. Return ALL discovered services as a JSON array.${datasourceBlock}${recipeHints}
+Layer 5 says WHAT to emit. Layer 6 says HOW to fill each field.
 
-## IMPORTANT: Don't miss application services
-Monitoring systems typically track two categories:
-- **Infrastructure**: system-level services (proxies, DNS, API servers, schedulers)
-- **Application**: your actual workloads (APIs, data processors, web servers)
+### 6.0 Discovery sources (where each piece of information lives)
 
-Infrastructure often dominates basic health check queries. Make sure to also discover application services by querying workload-specific metrics.
+Two tiers of sources. Identity sources are ground truth. Metrics and logs are
+projections of identity — use them for health/observability, not as primary
+identity sources.
 
-## Output Format
+**Tier 1 — IDENTITY (use first when available)**
 
-Return a JSON OBJECT with two top-level fields:
-- "services": array of service objects (see shape below)
-- "globalProbeRules": array of stack-aware probe rule objects written AFTER you
-  introspect the Prometheus label key this stack actually uses (see section
-  "Global Probe Rules" below). Empty array is acceptable if the introspection
-  does not succeed.
+| Source                  | Use for                                                              |
+|-------------------------|----------------------------------------------------------------------|
+| Infrastructure (K8s)    | Workload identity — kind, name, namespace, container names,          |
+|                         | labels, owner references. Ground truth for K8s stacks.               |
+| Catalogs (Consul, etc.) | Service identity for non-K8s / bare-metal stacks. Ground truth       |
+|                         | when K8s isn't in the picture (or for services registered            |
+|                         | outside K8s alongside it).                                           |
 
-BACKWARD COMPAT: Clients still accept a bare JSON array of services (treated
-as { services: [...], globalProbeRules: [] }). Prefer the object form when
-you can produce globalProbeRules.
+**Tier 2 — OBSERVABILITY (use to fill fields after identity is known)**
 
-## Per-Service Shape
+| Source                  | Use for                                                              |
+|-------------------------|----------------------------------------------------------------------|
+| Metrics (Prometheus)    | Health checks (after kind is known). Workload-name enumeration       |
+|                         | when no Tier-1 source is available. See Layer 4 standard sweep.      |
+| Logs (Loki, etc.)       | Log-label discovery via your log provider's listing tool — feeds 6.2.|
 
-Each service in "services" must have:
-- "name": string — the service name
-- "metrics": array of { "query": string, "description": string } — a health check query for this service
-- "logLabels": object — key/value pairs identifying this service in whatever log
-  system is wired up (Loki, Elasticsearch, Splunk, CloudWatch, etc.). These must
-  match the actual stream labels / index fields the log provider exposes — NOT
-  the labels from metric systems like kube-state-metrics. A common mistake is
-  copying \`deployment\`/\`statefulset\`/\`daemonset\` from Prometheus metrics when
-  the log provider only indexes \`container\`/\`pod\`/\`namespace\`/\`app\`.
+**When you have infra data** (pod list, namespace list, resources_list):
+- The pod's container name → goes into \`logLabels\` (6.2 case 2).
+- The pod's namespace → use for the \`pod_restarts\` selector (6.3.B priorities 2–4).
+- The pod's owner references or kube-state-metrics workload labels
+  (\`deployment\` / \`statefulset\` / \`daemonset\`) → tells you the workload
+  KIND, which drives the metric variant choice in 6.1.
 
-  HOW TO CHOOSE:
-    1. If a log-listing or log-label-discovery tool is available (e.g.
-       \`list_loki_label_names\`, \`list_indices\`, \`describe_log_groups\`), call it
-       once up front and prefer labels that actually exist in the result.
-    2. If an infrastructure tool reveals pod names, container names, app labels,
-       or namespaces, use those.
-    3. Otherwise fall back to the most widely-supported identifiers — \`container\`
-       and \`pod\` tend to work across most k8s log pipelines; \`namespace\` +
-       workload-name narrows ambiguous cases.
-    4. For statefulsets and daemonsets specifically: the \`container\` name
-       usually matches the workload name, while the kube-state-metrics label
-       (\`statefulset\`/\`daemonset\`) almost never exists in logs.
-    5. Use {} if no label info is available. A wrong label is worse than none —
-       the logs agent will query with it and get empty results.
+**When you have catalog data** (Consul service list, etc.):
+- The catalog entry's \`service_name\` → use as the service \`name\`.
+- The catalog entry's host/node label → for the \`pod_restarts\`-equivalent selector.
+- See the Consul example in 6.1 (\`consul_health_service_status\`) for the health-check shape.
 
-- "probeRules" (REQUIRED when minimum context exists — you almost always have it):
-  array of per-service anomaly detection rules for the proactive scan probe.
-  These are the rules that CANNOT be written as globalProbeRules because they
-  need the SERVICE'S specific labels (its namespace, its log container, or the
-  specific health-check query you wrote for this service). A services.yaml
-  with empty probeRules on every service means the probe cannot detect
-  outages, pod-restart storms, or log-error bursts. Discovery writing these
-  rules is the whole point of slicing per-service context out of your tool
-  calls.
+**When you have only Prometheus** (no identity source):
+- Infer workload kind from which metric returned the row:
+  \`kube_deployment_*\` rows → Deployment; \`kube_statefulset_*\` rows → StatefulSet;
+  \`kube_daemonset_*\` rows → DaemonSet; \`up{job=...}\` rows → Service-level.
+- \`logLabels\` falls back to \`{container, pod}\` guesses (6.2 case 3).
+- \`pod_restarts\` uses the priority-1 workload-label selector (6.3.B).
 
-  EMIT ALL THREE OF THESE RULES FOR EACH SERVICE unless the explicit omission
-  clause below applies. Do not ship \`probeRules: []\` as a default — that is
-  an escape hatch for the rare service with zero context, NOT a safe default.
+### 6.1 Picking metrics[0].query (per-service health check)
 
-  (1) service_availability (source: "metrics") — EMIT whenever the service has
-      a non-empty \`metrics\` array. This is the most important rule for
-      coverage: globalProbeRules assume a single majority-wins label key that
-      matches the service name (e.g. \`up{app="{service}"}\`). Many stacks mix
-      discovery sources — some services register via kube-state-metrics, some
-      via Consul, some via a service mesh — and for any service whose backing
-      workload name differs from its registered service name (headless
-      Services, webhook Services, service-mesh proxies, operator-managed
-      workloads) the globalProbeRule silently misses. The per-service
-      availability rule fixes that because YOU already wrote a health-check
-      query that IS known to return data for this specific service —
-      \`metrics[0].query\`. Promote it to a rule.
+\`metrics[0].query\` is reused VERBATIM as \`service_availability.query\` (see
+6.3.A). It MUST be a true ready/available indicator — \`lt 1\` only trips at 0,
+so desired-replica-count metrics are NOT health checks (they stay >0 even when
+every pod is CrashLoopBackOff / ImagePullBackOff / Pending).
 
-        {
-          "name": "service_availability",
-          "query": "<the exact metrics[0].query string you wrote for this service>",
-          "threshold": { "op": "lt", "value": 1 },
-          "consecutiveTicks": 3,
-          "source": "metrics"
-        }
+| Workload kind  | USE                                            | DO NOT USE                                       |
+|----------------|------------------------------------------------|--------------------------------------------------|
+| Deployment     | kube_deployment_status_replicas_available      | kube_deployment_status_replicas                  |
+|                | kube_deployment_status_replicas_ready          | kube_deployment_spec_replicas                    |
+| StatefulSet    | kube_statefulset_status_replicas_ready         | kube_statefulset_status_replicas                 |
+|                |                                                | kube_statefulset_replicas                        |
+| DaemonSet      | kube_daemonset_status_number_ready             | kube_daemonset_status_desired_number_scheduled   |
+|                |                                                | kube_daemonset_status_current_number_scheduled   |
+| Service-level  | up{...}  (lt 1 already encodes "drops to 0")   | n/a                                              |
+| Consul         | consul_health_service_status                   | n/a                                              |
 
-      The health-check query MUST be a true ready/available indicator that
-      actually drops to 0 when the service is failing. \`lt 1\` only trips
-      when the value reaches 0, so a "desired-replica-count" metric is NOT
-      a valid health check — those stay >0 even when every pod is in
-      CrashLoopBackOff, ImagePullBackOff, or Pending. Pick a metric that
-      reflects real readiness:
+\`kube_*_status_replicas\` reports \`.status.replicas\` (total non-terminated
+pods, including unhealthy). It only drops below 1 when you scale to 0 or delete
+the workload — silently misses every real outage. Always reach for
+\`_available\` / \`_ready\` / \`number_ready\`.
 
-        Workload kind            USE                                          DO NOT USE
-        ─────────────────────    ───────────────────────────────────────────  ──────────────────────────────────
-        Deployment               kube_deployment_status_replicas_available    kube_deployment_status_replicas
-                                 kube_deployment_status_replicas_ready        kube_deployment_spec_replicas
-        StatefulSet              kube_statefulset_status_replicas_ready       kube_statefulset_status_replicas
-                                                                              kube_statefulset_replicas
-        DaemonSet                kube_daemonset_status_number_ready           kube_daemonset_status_desired_number_scheduled
-                                                                              kube_daemonset_status_current_number_scheduled
-        Service-level / app      up{...}                                      n/a (\`up\` is the canonical readiness gauge — \`lt 1\` already encodes "drops to 0 = down", do NOT add \`=1\` to the query)
-        Consul                   consul_health_service_status                 n/a
+If you need ready AND desired counts as separate metrics, put the readiness
+metric FIRST in the array.
 
-      Why: \`kube_*_status_replicas\` reports \`.status.replicas\` (total
-      non-terminated pods, including unhealthy ones). It only drops below 1
-      when you scale to 0 or delete the workload — so it silently misses
-      every real outage. Same trap for \`kube_daemonset_status_desired_number_scheduled\`
-      (count of nodes that *should* run a pod, not how many actually are).
-      Always reach for the \`_available\` / \`_ready\` / \`number_ready\`
-      variant.
+### 6.2 Picking logLabels
 
-      The \`service_availability\` rule reuses \`metrics[0].query\` verbatim.
-      That means \`metrics[0].query\` itself MUST be a real readiness gauge —
-      do not write a desired-count query into \`metrics[0]\` either. If you
-      need to query both ready and desired counts as separate metrics, make
-      sure the FIRST metric in the array is the readiness one.
+logLabels must match the actual stream labels / index fields of the LOG
+provider — NOT the metric labels from kube-state-metrics. Common mistake:
+copying \`deployment\` / \`statefulset\` / \`daemonset\` — these almost never
+exist in logs.
 
-      consecutiveTicks: 3 matches the globalProbeRule hysteresis so the
-      signal isn't noisier than the global-track equivalent.
+Decision tree (use the FIRST that applies):
 
-      Only omit this rule if \`metrics\` is empty — i.e. you couldn't find
-      ANY query that identifies this service. That is rare and indicates the
-      service probably shouldn't have made it into the registry.
+1. If your log provider exposes a label/field-listing tool, call it once up
+   front and prefer labels that actually exist in the result. This avoids
+   picking labels the log backend doesn't index.
+2. If an infrastructure tool reveals pod names, container names, app labels,
+   or namespaces — use those.
+3. Otherwise: \`container\` + \`pod\` work in most k8s pipelines; add
+   \`namespace\` + workload-name to disambiguate.
+4. For StatefulSets and DaemonSets: \`container\` name usually matches the
+   workload name. The kube-state-metrics \`statefulset\` / \`daemonset\` label
+   does NOT exist in logs.
+5. Use \`{}\` if no log label info is available. Wrong labels are worse than
+   none — the logs agent queries with them and gets empty results.
 
-  (2) pod_restarts (source: "metrics") — EMIT whenever you know the service's
-      namespace OR a workload selector (deployment/statefulset/daemonset name).
-      You almost always know at least one of these from your discovery queries
-      — \`kube_pod_info\`, \`kube_deployment_status_replicas_available\`, pod
-      lists, etc. all carry a namespace label.
+### 6.3 Writing probeRules
 
-      Service-specific selector required when feasible. A namespace-only
-      selector counts restarts from EVERY pod in the namespace and attributes
-      them to this one service — when multiple services share a namespace
-      (e.g. several DBs in \`namespace="db"\`), one bad pod fires
-      \`pod_restarts\` for every service in the namespace, and they all blame
-      each other. Always narrow further when you have the data.
+EMIT ALL THREE rules per service. Omit only per the policy in 6.3.D.
 
-      Selector priority (use the FIRST that applies):
+#### 6.3.A service_availability  (source: "metrics")
 
-        1. \`{deployment="<name>"}\`, \`{statefulset="<name>"}\`,
-           \`{daemonset="<name>"}\` — kube-state-metrics emits
-           \`kube_pod_container_status_restarts_total\` joined with these
-           workload labels via recording rules on most stacks. Exact
-           match, no prefix-overlap risk. If the label is present in
-           your stack's metrics, prefer it.
-        2. \`{namespace="<ns>",container="<workload>"}\` — the
-           \`container\` label is the workload's container name and is
-           an exact match. Use this when workload labels are not
-           available but the container name is known.
-        3. \`{namespace="<ns>",pod=~"<workload>-[a-f0-9]+-[a-z0-9]+$"}\`
-           for Deployments (ReplicaSet hash + pod hash suffix), or
-           \`{namespace="<ns>",pod=~"<workload>-[0-9]+$"}\` for
-           StatefulSets (ordinal suffix). The trailing \`$\` anchor is
-           CRITICAL — without it, a service \`api\` would match
-           \`api-internal-7f8c-xyz\` pods belonging to a sibling
-           service. Bare \`<workload>-.*\` is NOT safe when sibling
-           services share a name prefix.
-        4. \`{namespace="<ns>"}\` — last-resort fallback when none of
-           the above is available. Use this ONLY when the namespace
-           contains exactly one workload — otherwise restarts in
-           sibling pods get attributed to this service.
+\`\`\`
+{
+  "name": "service_availability",
+  "query": "<metrics[0].query verbatim>",
+  "threshold": { "op": "lt", "value": 1 },
+  "consecutiveTicks": 3,
+  "source": "metrics"
+}
+\`\`\`
 
-      Examples:
+Why: globalProbeRules use one majority-wins label key (e.g.
+\`up{app="{service}"}\`). For services whose backing-workload name differs from
+registered-service name — headless Services, webhook Services, service-mesh
+proxies, operator-managed workloads — the global rule silently misses. The
+per-service rule uses \`metrics[0].query\` which IS known to return data for
+THIS service. See 6.1 for query selection. \`consecutiveTicks: 3\` matches
+globalProbeRule hysteresis.
 
-        Best:    rate(kube_pod_container_status_restarts_total{deployment="checkout-api"}[5m])
-        Good:    rate(kube_pod_container_status_restarts_total{namespace="checkout",container="checkout-api"}[5m])
-        OK:      rate(kube_pod_container_status_restarts_total{namespace="checkout",pod=~"checkout-api-[a-f0-9]+-[a-z0-9]+$"}[5m])
-        Avoid:   rate(kube_pod_container_status_restarts_total{namespace="checkout"}[5m])
-        Wrong:   rate(kube_pod_container_status_restarts_total{namespace="checkout",pod=~"api-.*"}[5m])  # also matches api-internal-* pods
+#### 6.3.B pod_restarts  (source: "metrics")
 
-      Rule shape:
+\`\`\`
+{
+  "name": "pod_restarts",
+  "query": "rate(kube_pod_container_status_restarts_total{<selector>}[5m])",
+  "threshold": { "op": "gt", "value": 0.033 },
+  "consecutiveTicks": 2,
+  "source": "metrics"
+}
+\`\`\`
 
-        {
-          "name": "pod_restarts",
-          "query": "<one of the forms above>",
-          "threshold": { "op": "gt", "value": 0.033 },
-          "consecutiveTicks": 2,
-          "source": "metrics"
-        }
+0.033/sec ≈ 2 restarts/min — first-level trip threshold.
 
-      0.033 per second ≈ 2 restarts per minute — the first-level trip
-      threshold.
+**Service-specific selector required when feasible.** A namespace-only selector
+counts restarts from EVERY pod in the namespace and attributes them to this
+one service. When multiple services share a namespace (e.g. several DBs in
+\`namespace="db"\`), one bad pod fires \`pod_restarts\` for every service in the
+namespace and they all blame each other. Always narrow further when you have
+the data.
 
-      Only omit this rule if you truly could not identify a namespace NOR a
-      workload selector for this service. That is rare — state it explicitly
-      in a \`"description"\` field on the service if you hit this case, so an
-      operator can see why the rule is missing.
+Selector priority (use the FIRST that applies):
 
-  (3) log_errors (source: "logs") — EMIT whenever \`logLabels\` is non-empty.
-      You already wrote logLabels one field above; reuse them verbatim.
+| Priority    | Selector                                       | Notes                                             |
+|-------------|------------------------------------------------|---------------------------------------------------|
+| 1 (best)    | \`{deployment="<name>"}\`, etc.                | KSM-emitted workload label. Exact match.          |
+| 2           | \`{namespace=...,container="<workload>"}\`     | Exact container name.                             |
+| 3           | \`{namespace=...,pod=~"<workload>-...$"}\`     | Trailing \`$\` is CRITICAL — anchors the regex.   |
+| 4 (last-resort fallback) | \`{namespace=...}\`                | Only when namespace has exactly one workload.     |
 
-        {
-          "name": "log_errors",
-          "query": "sum(count_over_time({<logLabels as key=\\"value\\" selectors>} |= \`error\` or \`fatal\` [15m]))",
-          "threshold": { "op": "gt", "value": 75 },
-          "consecutiveTicks": 2,
-          "source": "logs"
-        }
+Priority-3 regex examples:
+- Deployment:   \`pod=~"checkout-api-[a-f0-9]+-[a-z0-9]+$"\` (ReplicaSet hash + pod hash)
+- StatefulSet:  \`pod=~"stolon-keeper-[0-9]+$"\` (ordinal suffix)
 
-      Example — for logLabels={namespace:"checkout",container:"api"}:
-        "query": "sum(count_over_time({namespace=\\"checkout\\",container=\\"api\\"} |= \`error\` or \`fatal\` [15m]))"
+WRONG: \`pod=~"api-.*"\` — also matches \`api-internal-*\` pods from a sibling
+service. Bare \`<workload>-.*\` is NOT safe when sibling services share a name
+prefix.
 
-      Threshold 75 is a raw count over the 15m window (~5 errors/min × 15 min).
-      The probe does NOT divide by window duration — the scalar returned by the
-      logs tool is the raw count. A wrong Loki provider is fine — the probe
-      scores NaN and moves on, no false-positive risk.
+#### 6.3.C log_errors  (source: "logs")
 
-      Only omit this rule if \`logLabels\` is genuinely empty (no log labels
-      could be discovered). If you wrote logLabels, write log_errors.
+\`\`\`
+{
+  "name": "log_errors",
+  "query": "sum(count_over_time({<logLabels>} |= \`error\` or \`fatal\` [15m]))",
+  "threshold": { "op": "gt", "value": 75 },
+  "consecutiveTicks": 2,
+  "source": "logs"
+}
+\`\`\`
 
-  When to write \`probeRules: []\`:
-    ONLY when \`metrics\` is empty AND \`logLabels\` is empty AND you truly
-    could not identify a namespace or workload selector. That combination
-    means you have zero per-service context — unusual for a service that
-    made it into the registry at all. Every service with a non-empty
-    \`metrics\` array gets at least service_availability. Every service with
-    non-empty \`logLabels\` gets at least log_errors. Most get all three.
+Reuse logLabels verbatim. Example — for
+\`logLabels={namespace:"checkout",container:"api"}\`:
 
-- "gitlabProject" (optional): GitLab project path if you know it.
-- "corootAppId" (optional): Coroot application ID if you know it.
+\`\`\`
+sum(count_over_time({namespace="checkout",container="api"} |= \`error\` or \`fatal\` [15m]))
+\`\`\`
 
-## Global Probe Rules
+Threshold 75 is a raw count over the 15m window (≈5 errors/min). The probe
+does NOT divide by window duration. A wrong Loki provider is fine — the probe
+scores NaN and moves on, no false-positive risk.
 
-"globalProbeRules" is a top-level array of stack-aware probe rules. The probe
-applies each global rule to every registered service (by substituting
-"{service}" in the query for the service name). The purpose: write ONE set of
-rules with the RIGHT label key for this stack, so operators don't have to
-hand-edit config.yaml when their cluster uses \`app=\` instead of \`deployment=\`
-or \`service=\`.
+#### 6.3.D Omission policy
+
+| Rule                   | Omit only when                                       |
+|------------------------|------------------------------------------------------|
+| service_availability   | \`metrics\` array is empty                           |
+| pod_restarts           | No namespace AND no workload selector available      |
+| log_errors             | \`logLabels\` is empty                               |
+
+\`probeRules: []\` is acceptable ONLY when all three conditions hold
+simultaneously. When you omit, set \`service.description\` to explain why so an
+operator can see the gap.
+
+### 6.4 Writing globalProbeRules
+
+These OVERRIDE the hardcoded config.yaml defaults for every service.
 
 Process:
-  1. Inspect the Prometheus metrics you queried during service discovery.
-     Look at which labels appear most often across workload metrics — common
-     candidates are \`app\`, \`service\`, \`job\`, \`deployment\`, \`statefulset\`,
-     \`daemonset\`, \`workload\`, \`component\`.
-  2. Pick the MAJORITY-WINS key — the one that appears on the most service-
-     identifying metrics. For example, if most services surface via
-     \`up{app="..."}\` but a few via \`up{job="..."}\`, the majority key is \`app\`.
-  3. Write availability and (optionally) error-rate rules using that key.
-     These OVERRIDE the hardcoded config.yaml defaults for every service.
+1. Inspect which labels appear most often on workload metrics. Common
+   candidates: \`app\`, \`service\`, \`job\`, \`deployment\`, \`statefulset\`,
+   \`daemonset\`, \`workload\`, \`component\`.
+2. Pick the majority-wins key — the one that appears on the most
+   service-identifying metrics.
+3. Write availability + (optionally) error-rate rules using that key,
+   substituting \`{service}\` for the service name.
 
-Example — a stack where \`app\` is the majority label key:
-  "globalProbeRules": [
-    {
-      "name": "app_availability",
-      "query": "up{app=\\"{service}\\"}",
-      "threshold": { "op": "lt", "value": 1 },
-      "consecutiveTicks": 3,
-      "source": "metrics"
-    }
-  ]
+Examples:
 
-Example — a stack where \`deployment\` / \`statefulset\` / \`daemonset\`
-kube-state-metrics labels are standard (no rewrite needed):
-  "globalProbeRules": []      // fall through to the hardcoded k8s defaults
+\`\`\`
+// Stack where \`app\` is the majority key:
+[
+  {
+    "name": "app_availability",
+    "query": "up{app=\\"{service}\\"}",
+    "threshold": { "op": "lt", "value": 1 },
+    "consecutiveTicks": 3,
+    "source": "metrics"
+  }
+]
 
-Leave globalProbeRules: [] (or omit) if the stack's label convention matches
-the hardcoded config.yaml defaults (deployment / statefulset / daemonset
-kube-state-metrics labels) — the defaults already cover it, don't duplicate.
+// Stack where kube-state-metrics labels are standard:
+[]   // fall through to hardcoded defaults
+\`\`\`
 
-Be thorough — discover ALL services. Return valid JSON.
+Leave \`globalProbeRules: []\` if the stack's label convention matches the
+hardcoded config.yaml defaults (deployment / statefulset / daemonset
+kube-state-metrics labels) — don't duplicate them.
 
-OUTPUT STRICTNESS: Return PURE JSON only. Do NOT include JavaScript-style
-comments (// or /* */), trailing commas, or section headers inside any array.
-If you want to group services conceptually, use an extra field like
-"category": "deployment" | "statefulset" | "daemonset" | "container" on
-the service object itself — do not use inline comments as dividers.${excludeList}`;
+## LAYER 7: OUTPUT STRICTNESS
+
+Return PURE JSON. No JavaScript-style comments (// or /* */). No trailing
+commas. No section headers inside arrays. If you want to group services
+conceptually, use a field like \`"category": "deployment" | "statefulset" |
+"daemonset" | "container"\` on the service object itself — do not use inline
+comments as dividers.
+
+Be thorough. Discover ALL services. Return valid JSON.`;
+}
+
+/**
+ * LAYER 3: STACK HINTS — conditional, only rendered when config provides them.
+ * Datasource UIDs are non-negotiable (strict block). Discovery skills are
+ * priority team knowledge for services that standard K8s queries can't find.
+ *
+ * Returns the empty string when neither hint is configured, so the rendered
+ * prompt simply skips Layer 3 cleanly.
+ */
+function buildStackHintsLayer(config: DiscoverAgentConfig): string {
+  const parts: string[] = [];
+
+  if (config.datasourceUidHints) {
+    parts.push(`### Datasource UIDs (non-negotiable)
+
+When calling ANY metric or log query tool that requires a datasourceUid
+parameter, pass it EXACTLY as listed below. Do NOT guess, abbreviate, or use
+short names like "prometheus" or "loki".
+
+${config.datasourceUidHints}`);
+  }
+
+  if (config.discoverySkills) {
+    parts.push(config.discoverySkills);
+  }
+
+  if (parts.length === 0) return "";
+  return `\n\n## LAYER 3: STACK HINTS\n\n${parts.join("\n\n")}`;
 }
 
 export function createDiscoverAgent(config: DiscoverAgentConfig) {
