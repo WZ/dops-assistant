@@ -64,3 +64,7 @@ playwright/.cache/
 # Never commit — the seed script is the source of truth; `npm run seed:demo`
 # regenerates this. Keep out of history to avoid massive diffs on every reseed.
 data-demo/
+
+# Local scratch / working artifacts (e.g., quirk-snapshot observation files
+# captured by scripts/quirk-tally.sh)
+tmp/
