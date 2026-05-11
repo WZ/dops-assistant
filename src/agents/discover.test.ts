@@ -227,7 +227,7 @@ describe("buildDiscoverInstructions / layered structure (Option B)", () => {
     expect(section60Body).toMatch(/Infrastructure \(K8s\)/);
     expect(section60Body).toMatch(/Catalogs \(Consul/);
     expect(section60Body).toMatch(/Metrics \(Prometheus\)/);
-    expect(section60Body).toMatch(/Logs \(Loki\)/);
+    expect(section60Body).toMatch(/Logs \(Loki/);
   });
 
   it("places the workload-kind table in section 6.1 (a decision guide), not inline in a rule", () => {

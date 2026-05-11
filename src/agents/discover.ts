@@ -129,7 +129,7 @@ identity sources.
 |-------------------------|----------------------------------------------------------------------|
 | Metrics (Prometheus)    | Health checks (after kind is known). Workload-name enumeration       |
 |                         | when no Tier-1 source is available. See Layer 4 standard sweep.      |
-| Logs (Loki)             | Loki label discovery via list_loki_label_names — feeds 6.2.          |
+| Logs (Loki, etc.)       | Log-label discovery via your log provider's listing tool — feeds 6.2.|
 
 **When you have infra data** (pod list, namespace list, resources_list):
 - The pod's container name → goes into \`logLabels\` (6.2 case 2).
@@ -185,9 +185,9 @@ exist in logs.
 
 Decision tree (use the FIRST that applies):
 
-1. If a log-label-discovery tool is available (\`list_loki_label_names\`,
-   \`list_indices\`, \`describe_log_groups\`), call it once up front and prefer
-   labels that exist in the result.
+1. If your log provider exposes a label/field-listing tool, call it once up
+   front and prefer labels that actually exist in the result. This avoids
+   picking labels the log backend doesn't index.
 2. If an infrastructure tool reveals pod names, container names, app labels,
    or namespaces — use those.
 3. Otherwise: \`container\` + \`pod\` work in most k8s pipelines; add
