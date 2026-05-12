@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parsePrimaryOrReasoning, backfillGlobalAvailabilityRules } from "./parse.js";
-import type { ServiceConfig, ProbeMetricRule } from "../../../config/schema.js";
+import { parsePrimaryOrReasoning } from "./parse.js";
+import type { ServiceConfig } from "../../../config/schema.js";
 
 describe("parsePrimaryOrReasoning — service-level backfills", () => {
   function parse(json: object): ServiceConfig[] | undefined {
@@ -8,47 +8,9 @@ describe("parsePrimaryOrReasoning — service-level backfills", () => {
     return result?.services;
   }
 
-  describe("backfillServiceAvailability", () => {
-    it("backfills service_availability from metrics[0] when the LLM omits it", () => {
-      const services = parse({
-        services: [{
-          name: "checkout-api",
-          metrics: [{
-            query: 'kube_deployment_status_replicas_available{deployment="checkout-api"}',
-            description: "ready replicas",
-          }],
-          logLabels: {},
-          probeRules: [],
-        }],
-      });
-      const rules = services?.[0]?.probeRules ?? [];
-      expect(rules.map((r) => r.name)).toContain("service_availability");
-      const sa = rules.find((r) => r.name === "service_availability");
-      expect(sa?.query).toBe('kube_deployment_status_replicas_available{deployment="checkout-api"}');
-      expect(sa?.threshold).toEqual({ op: "lt", value: 1 });
-    });
-
-    it("does NOT duplicate service_availability when the LLM already emitted it", () => {
-      const services = parse({
-        services: [{
-          name: "checkout-api",
-          metrics: [{ query: 'up{job="checkout-api"}', description: "up" }],
-          logLabels: {},
-          probeRules: [{
-            name: "service_availability",
-            query: 'up{job="checkout-api"} == 0',
-            threshold: { op: "gt", value: 0 },
-            consecutiveTicks: 3,
-            source: "metrics",
-          }],
-        }],
-      });
-      const sa = (services?.[0]?.probeRules ?? []).filter((r) => r.name === "service_availability");
-      expect(sa).toHaveLength(1);
-      // Preserves the LLM-emitted form rather than overwriting.
-      expect(sa[0]?.query).toBe('up{job="checkout-api"} == 0');
-    });
-  });
+  // `backfillServiceAvailability` was removed on main (PR #215) — 51 stress
+  // iters showed 0 fires. The LLM emits service_availability reliably on
+  // its own. Tests for it deleted alongside.
 
   describe("backfillPodRestarts (iter 7)", () => {
     it("backfills deployment-flavored pod_restarts from metrics[0] when omitted", () => {
@@ -237,43 +199,5 @@ describe("parsePrimaryOrReasoning — service-level backfills", () => {
   });
 });
 
-describe("backfillGlobalAvailabilityRules", () => {
-  it("infers a global `up{<label>=\"{service}\"}` rule when N>=ceil(services/2) match", () => {
-    const services: ServiceConfig[] = [
-      { name: "api", metrics: [{ query: 'up{app="api"}', description: "x" }], logLabels: {}, probeRules: [] },
-      { name: "worker", metrics: [{ query: 'up{app="worker"}', description: "x" }], logLabels: {}, probeRules: [] },
-      { name: "cron", metrics: [{ query: 'up{app="cron"}', description: "x" }], logLabels: {}, probeRules: [] },
-    ];
-    const globals: ProbeMetricRule[] = [];
-    backfillGlobalAvailabilityRules(services, globals);
-    expect(globals.map((g) => g.name)).toEqual(["app_availability"]);
-    expect(globals[0]?.query).toBe('up{app="{service}"}');
-  });
-
-  it("does NOT add a global rule when fewer than half the services share the label", () => {
-    const services: ServiceConfig[] = [
-      { name: "api", metrics: [{ query: 'up{app="api"}', description: "x" }], logLabels: {}, probeRules: [] },
-      { name: "worker", metrics: [{ query: 'kube_deployment_status_replicas_available{deployment="worker"}', description: "x" }], logLabels: {}, probeRules: [] },
-      { name: "cron", metrics: [{ query: 'kube_deployment_status_replicas_available{deployment="cron"}', description: "x" }], logLabels: {}, probeRules: [] },
-    ];
-    const globals: ProbeMetricRule[] = [];
-    backfillGlobalAvailabilityRules(services, globals);
-    expect(globals).toHaveLength(0);
-  });
-
-  it("is idempotent — does not duplicate if a service_availability-style global already exists", () => {
-    const services: ServiceConfig[] = [
-      { name: "api", metrics: [{ query: 'up{app="api"}', description: "x" }], logLabels: {}, probeRules: [] },
-      { name: "worker", metrics: [{ query: 'up{app="worker"}', description: "x" }], logLabels: {}, probeRules: [] },
-    ];
-    const globals: ProbeMetricRule[] = [{
-      name: "app_availability",
-      query: 'up{app="{service}"}',
-      threshold: { op: "lt", value: 1 },
-      consecutiveTicks: 3,
-      source: "metrics",
-    }];
-    backfillGlobalAvailabilityRules(services, globals);
-    expect(globals).toHaveLength(1);
-  });
-});
+// `backfillGlobalAvailabilityRules` was removed on main (PR #215) — 51 stress
+// iters showed 0 fires. Tests for it deleted alongside.
