@@ -52,6 +52,7 @@ interface AppRunArtifact extends BenchmarkRunScore {
     durationMs?: number;
   }>;
   discoveredNames: string[];
+  serviceMetricCounts: Record<string, number>;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -216,11 +217,17 @@ async function runAppDiscovery(args: CliArgs, expectedServices: string[], iterat
     error: appResult.error,
   });
 
+  const services = appResult.services ?? [];
+  const serviceMetricCounts: Record<string, number> = {};
+  for (const s of services) {
+    serviceMetricCounts[s.name] = (s.metrics ?? []).length;
+  }
   return {
     ...score,
     totalUsage,
     toolCalls,
-    discoveredNames: appResult.services?.map((s) => s.name).sort() ?? [],
+    discoveredNames: services.map((s) => s.name).sort(),
+    serviceMetricCounts,
   };
 }
 

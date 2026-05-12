@@ -201,6 +201,19 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
     });
   }
 
+  // Phase 3 — deterministic app-metric enrichment.
+  // metrics[0] is the health check (per discover prompt Layer 6.1). metrics[1..]
+  // are service-specific counters / histograms / queue gauges that operators
+  // look at when triaging an incident. Empirics on stack-120 showed the LLM
+  // never volunteers metrics[1..] without explicit prompting, and the explicit
+  // prompt (iter 1's Layer 6.5) burned iteration budget. Iter 3 moves the work
+  // here: one Prometheus probe per service against `{__name__=~"<prefix>.*"}`,
+  // then a quick scoring pass picks 3 informative metrics.
+  if (promTool) {
+    config.onIteration?.("validation", results.length, results.length, "Enriching app metrics...");
+    await enrichApplicationMetrics(results, promTool, config);
+  }
+
   const verified = results.filter((r) => r.confidence === "verified").length;
   const partial = results.filter((r) => r.confidence === "partial").length;
   const unverified = results.filter((r) => r.confidence === "unverified").length;
@@ -213,6 +226,173 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
   logger.debug(`Done: ${verified} verified, ${partial} partial, ${unverified} unverified`);
 
   return results;
+}
+
+// ── Application metric enrichment ──────────────────────────────────────────
+
+const APP_METRIC_LIMIT_PER_SERVICE = 3;
+
+/** Generic infra metric prefixes that should NEVER be picked as service-specific
+ *  app metrics — they're stack-wide and useless on a service detail page. */
+const GENERIC_METRIC_PREFIXES = [
+  "kube_", "container_", "node_", "process_", "go_", "promhttp_",
+  "prometheus_", "alertmanager_", "loki_", "grafana_",
+];
+
+interface AppMetricCandidate {
+  name: string;
+  seriesCount: number;
+  rank: number; // lower = better
+}
+
+/**
+ * Derive an underscore-prefix hint from a service name so the LLM-emitted
+ * service name (`ingestion-server`) maps to its Prometheus metric prefix
+ * (`ingestion_`). Returns the prefix WITHOUT the trailing wildcard.
+ *
+ * `ingestion-server` → `ingestion_server` (keep both halves; some apps emit
+ *                                          `ingestion_server_*` metrics)
+ * `ch-clickhouse-shard0` → `clickhouse_` (drop ch- prefix; shards share
+ *                                         the same `clickhouse_*` namespace)
+ * `kafka-cluster-kafka` → `kafka_`
+ *
+ * We try a small ladder of prefixes per service (full normalized, then each
+ * dash-separated chunk) and combine results — Prometheus regex alternation
+ * is cheap.
+ */
+function derivePrefixCandidates(serviceName: string): string[] {
+  const normalized = serviceName.replace(/-/g, "_");
+  const parts = serviceName.split("-").filter(Boolean);
+  const out = new Set<string>([normalized]);
+  for (const part of parts) {
+    if (part.length >= 4) out.add(part); // skip 1-3 char fragments — too noisy
+  }
+  return [...out];
+}
+
+/** Wrap a counter/gauge/histogram-bucket name into a UI-friendly PromQL query. */
+function formatMetricQuery(metricName: string): { query: string; description: string } {
+  if (metricName.endsWith("_bucket")) {
+    const root = metricName.replace(/_bucket$/, "");
+    return {
+      query: `histogram_quantile(0.99, sum by (le) (rate(${metricName}[5m])))`,
+      description: `${root} p99`,
+    };
+  }
+  if (metricName.endsWith("_total") || metricName.endsWith("_count")) {
+    return {
+      query: `sum(rate(${metricName}[5m]))`,
+      description: `${metricName.replace(/_total$|_count$/, "")} rate`,
+    };
+  }
+  return { query: metricName, description: metricName };
+}
+
+/** Score a metric name — lower = picked first. */
+function rankMetric(name: string, seriesCount: number): number {
+  // Penalize generic infra namespaces (we should have filtered these by
+  // prefix, but a metric like `kube_pod_ingestion_health_total` could slip in
+  // because of substring match in the regex). Down-rank rather than drop so
+  // we still get something if the service has nothing else.
+  let r = 0;
+  if (GENERIC_METRIC_PREFIXES.some((p) => name.startsWith(p))) r += 100;
+
+  // Errors/lag/queue/duration win their categories.
+  if (/(_errors_total|_failed_total|_rejected_total)$/.test(name)) r += 0;
+  else if (/(_duration_seconds_bucket|_latency_.*_bucket)$/.test(name)) r += 1;
+  else if (/(_queue_size|_lag|_backlog|_pending)$/.test(name)) r += 2;
+  else if (/(_total|_count)$/.test(name)) r += 3;
+  else r += 5;
+
+  // Tiebreak: prefer metrics that have only a moderate number of series —
+  // tens of series typically means per-pod/per-topic, useful. Thousands of
+  // series usually means a high-cardinality label we don't want by default.
+  if (seriesCount > 200) r += 10;
+  if (seriesCount > 1000) r += 50;
+
+  return r;
+}
+
+function parseCountByName(resultText: string): Array<{ name: string; seriesCount: number }> {
+  try {
+    const obj = JSON.parse(resultText) as unknown;
+    const rows: unknown[] =
+      (obj as { data?: { result?: unknown[] } })?.data?.result
+      ?? (obj as { result?: unknown[] })?.result
+      ?? [];
+    const out: Array<{ name: string; seriesCount: number }> = [];
+    for (const row of rows) {
+      if (!row || typeof row !== "object") continue;
+      const r = row as { metric?: Record<string, string>; value?: [number, string] };
+      const name = r.metric?.["__name__"];
+      const v = r.value?.[1];
+      if (!name) continue;
+      const count = v ? parseFloat(v) : 0;
+      out.push({ name, seriesCount: Number.isFinite(count) ? count : 0 });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+async function enrichApplicationMetrics(
+  services: ValidatedServiceConfig[],
+  promTool: [string, Tool],
+  config: ValidateStepConfig,
+): Promise<void> {
+  let added = 0;
+  for (const service of services) {
+    throwIfDiscoveryAborted(config.abortSignal);
+
+    // Skip services where the LLM already emitted multiple metrics — trust it.
+    if (service.metrics.length > 1) continue;
+
+    const prefixes = derivePrefixCandidates(service.name).map((p) => `${p}.*`);
+    const regex = prefixes.join("|");
+    const query = `count by (__name__) ({__name__=~"${regex}"})`;
+
+    let resultText = "";
+    try {
+      const start = Date.now();
+      const raw = await promTool[1].execute!({ expr: query, queryType: "instant" }, {} as any);
+      const duration = Date.now() - start;
+      resultText = typeof raw === "string" ? raw : JSON.stringify(raw);
+      config.onToolCall?.(promTool[0], { expr: query }, resultText, duration, undefined, "validation");
+    } catch (err) {
+      config.onToolCall?.(promTool[0], { expr: query }, undefined, 0, String(err), "validation");
+      continue;
+    }
+
+    const parsed = parseCountByName(resultText);
+    if (parsed.length === 0) continue;
+
+    // Drop generic infra metrics by prefix; rank what remains.
+    const filtered = parsed.filter(
+      (m) => !GENERIC_METRIC_PREFIXES.some((p) => m.name.startsWith(p)),
+    );
+    if (filtered.length === 0) continue;
+
+    // Drop metrics whose name is exactly the existing metrics[0] root.
+    const existingRoots = new Set(
+      service.metrics.map((m) => m.query.replace(/^.*\b([a-z_][a-z_0-9]*)\b.*$/, "$1")),
+    );
+    const candidates: AppMetricCandidate[] = filtered
+      .filter((m) => !existingRoots.has(m.name))
+      .map((m) => ({ name: m.name, seriesCount: m.seriesCount, rank: rankMetric(m.name, m.seriesCount) }))
+      .sort((a, b) => a.rank - b.rank || b.seriesCount - a.seriesCount || a.name.localeCompare(b.name));
+
+    const picks = candidates.slice(0, APP_METRIC_LIMIT_PER_SERVICE);
+    if (picks.length === 0) continue;
+
+    for (const pick of picks) {
+      service.metrics.push(formatMetricQuery(pick.name));
+      added++;
+    }
+  }
+  if (added > 0) {
+    logger.info({ servicesEnriched: services.filter((s) => s.metrics.length > 1).length, metricsAdded: added }, "discovery validation: app metrics enriched");
+  }
 }
 
 /**
