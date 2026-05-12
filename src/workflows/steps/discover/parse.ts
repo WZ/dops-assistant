@@ -66,6 +66,87 @@ function validateDiscoveredRules(raw: unknown[], source: string): ProbeMetricRul
 }
 
 /**
+ * Detect workload kind from `metrics[0].query` so we can emit a
+ * pod_restarts rule with the correct selector. Returns `{ kind, name }`
+ * where `name` is the workload label value. Returns null when the query
+ * shape doesn't reveal a workload.
+ */
+function detectWorkloadFromQuery(query: string): { kind: "deployment" | "statefulset"; name: string } | null {
+  const dep = /\bdeployment="([^"\\]+)"/.exec(query);
+  if (dep && dep[1]) return { kind: "deployment", name: dep[1] };
+  const sts = /\bstatefulset="([^"\\]+)"/.exec(query);
+  if (sts && sts[1]) return { kind: "statefulset", name: sts[1] };
+  return null;
+}
+
+/**
+ * Deterministic pod_restarts backfill. Mirrors the discover-prompt's
+ * Layer 6.3.B priority ladder using the kube-state label (`deployment`
+ * or `statefulset`). For statefulsets the selector is
+ * `pod=~"<name>-[0-9]+$"` (ordinal-anchored).
+ *
+ * Only fires when the LLM didn't emit pod_restarts AND `metrics[0]`
+ * reveals a deployment or statefulset workload. Bare-metal Consul services
+ * and DaemonSets fall through and leave the rule unset.
+ */
+function backfillPodRestarts(
+  serviceName: string,
+  rawMetrics: unknown,
+  probeRules: ProbeMetricRule[],
+): void {
+  if (probeRules.some((r) => r.name === "pod_restarts")) return;
+  if (!Array.isArray(rawMetrics) || rawMetrics.length === 0) return;
+  const first = rawMetrics[0] as Record<string, unknown> | undefined;
+  const query = first && typeof first.query === "string" ? first.query.trim() : "";
+  if (!query) return;
+  const workload = detectWorkloadFromQuery(query);
+  if (!workload) return;
+
+  const selector = workload.kind === "deployment"
+    ? `{deployment="${workload.name}"}`
+    : `{pod=~"${workload.name}-[0-9]+$"}`;
+  probeRules.push({
+    name: "pod_restarts",
+    query: `rate(kube_pod_container_status_restarts_total${selector}[5m])`,
+    threshold: { op: "gt", value: 0.033 },
+    consecutiveTicks: 2,
+    source: "metrics",
+  });
+  logger.debug({ service: serviceName, selector }, "discovery: backfilled pod_restarts rule");
+  quirkHit("backfill:pod-restarts", { service: serviceName, kind: workload.kind });
+}
+
+/**
+ * Deterministic log_errors backfill. Reuses the LLM-emitted `logLabels`
+ * map and wraps it in the standard Loki shape (same template as the
+ * discover-prompt Layer 6.3.C). Only fires when the LLM omitted log_errors
+ * AND emitted at least one logLabel.
+ */
+function backfillLogErrors(
+  serviceName: string,
+  rawLogLabels: unknown,
+  probeRules: ProbeMetricRule[],
+): void {
+  if (probeRules.some((r) => r.name === "log_errors")) return;
+  if (!rawLogLabels || typeof rawLogLabels !== "object") return;
+  const entries = Object.entries(rawLogLabels as Record<string, unknown>)
+    .filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0);
+  if (entries.length === 0) return;
+  const selector = entries
+    .map(([k, v]) => `${k}="${v.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`)
+    .join(",");
+  probeRules.push({
+    name: "log_errors",
+    query: `sum(count_over_time({${selector}} |= \`error\` or \`fatal\` [15m]))`,
+    threshold: { op: "gt", value: 75 },
+    consecutiveTicks: 2,
+    source: "logs",
+  });
+  logger.debug({ service: serviceName, selector }, "discovery: backfilled log_errors rule from logLabels");
+  quirkHit("backfill:log-errors", { service: serviceName });
+}
+
+/**
  * Best-effort shape check for an LLM-written services array. The full
  * `ServiceSchema` is Zod-validated downstream via runValidateStep, which
  * drops services that fail shape. Here we only scrub the `probeRules`
@@ -84,6 +165,8 @@ function validateDiscoveredServices(raw: unknown[]): ServiceConfig[] {
     }
     const rawProbeRules = Array.isArray(svc.probeRules) ? svc.probeRules : [];
     const probeRules = validateDiscoveredRules(rawProbeRules, `service.${svc.name}.probeRules`);
+    backfillPodRestarts(svc.name, svc.metrics, probeRules);
+    backfillLogErrors(svc.name, svc.logLabels, probeRules);
     out.push({ ...(svc as ServiceConfig), probeRules });
   }
   return out;
