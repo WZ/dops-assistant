@@ -252,6 +252,38 @@ describe("buildDiscoverInstructions / layered structure (Option B)", () => {
     expect(prompt).toMatch(/4 \(last-resort fallback\)/);
   });
 
+  it("documents the Consul status='passing' filter so per-service metrics are interpretable", () => {
+    // Before this fix, the Consul row in Layer 6.1 said
+    //   "USE: consul_health_service_status — DO NOT USE: n/a"
+    // which is too vague: that metric returns 1 row per (node × status) and only
+    // the row whose status equals the current health has value=1. The discover
+    // agent dutifully emitted `consul_health_service_status{service_name="X"}`,
+    // the health poller couldn't interpret the multi-row result, and all 11
+    // bare-metal services on stack-120 stuck at UNKNOWN.
+    expect(prompt).toContain('consul_health_service_status{service_name="X",status="passing"}');
+    expect(prompt).toContain('max by (service_name)');
+    // The "DO NOT USE" cell explicitly calls out the bare query as broken.
+    expect(prompt).toContain('consul_health_service_status{service_name="X"}');
+  });
+
+  it("includes Layer 6.5 (additional application metrics) before LAYER 7", () => {
+    // Without 6.5 the LLM produces a registry where every service has exactly
+    // one metric — the kube-state health check. Operators triaging incidents
+    // need service-specific counters/histograms/lag gauges. Empirically the
+    // LLM never volunteers metrics[1..] without an explicit prompt branch.
+    const section65 = prompt.indexOf("### 6.5 Adding application metrics");
+    const layer7 = prompt.indexOf("## LAYER 7: OUTPUT STRICTNESS");
+    expect(section65).toBeGreaterThan(-1);
+    expect(layer7).toBeGreaterThan(section65);
+    expect(prompt).toMatch(/count by \(__name__\)/);
+    expect(prompt).toMatch(/service_underscore_prefix/);
+    // The four metric categories that should be picked first.
+    expect(prompt).toMatch(/Workload counters/);
+    expect(prompt).toMatch(/Latency histograms/);
+    expect(prompt).toMatch(/Queue \/ lag gauges/);
+    expect(prompt).toMatch(/Error counters/);
+  });
+
   it("appends the exclude list inside LAYER 2: CONSTRAINTS, not the strictness tail", () => {
     // Pre-Option-B excludeServices was tacked onto the end of the OUTPUT
     // STRICTNESS paragraph. Now it lives where it belongs — in CONSTRAINTS.

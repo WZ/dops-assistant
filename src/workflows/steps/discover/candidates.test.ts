@@ -115,7 +115,7 @@ describe("discover deterministic candidate backfill", () => {
     ]);
   });
 
-  it("drops shard-suffixed StatefulSets regardless of count", () => {
+  it("admits shard-suffixed StatefulSets — they're the data-plane on sharded stacks", () => {
     const candidates = new Map<string, ReturnType<typeof discoverStepTestHooks.extractDiscoveryCandidates>[number]>();
     const rows = Array.from({ length: 12 }, (_, i) => ({ namespace: "db", statefulset: `db-shard${i}` }));
     for (const candidate of discoverStepTestHooks.extractDiscoveryCandidates(
@@ -132,9 +132,12 @@ describe("discover deterministic candidate backfill", () => {
       [],
     );
 
-    // Shards filtered by the `-shard\d+$` regex in isLowSignalInfrastructureService,
-    // not by the (now-removed) blanket source-count skip.
-    expect(merged.services).toEqual([]);
+    // Shards are kept (regression of the 2026-04 `-shard\d+$` filter that
+    // killed ClickHouse shard visibility on stack 120). Operators hide
+    // spammy shards via /api/services/hidden instead.
+    expect(merged.services.map((s) => s.name).sort()).toEqual(
+      Array.from({ length: 12 }, (_, i) => `db-shard${i}`).sort(),
+    );
   });
 
   it("admits non-shard StatefulSets even with 12+ of them", () => {
@@ -182,7 +185,7 @@ describe("discover deterministic candidate backfill", () => {
     expect(merged.services.map((s) => s.name)).toEqual(["openebs-jiva-csi-controller"]);
   });
 
-  it("drops low-signal node agents and StatefulSet shards from LLM output", () => {
+  it("drops low-signal node agents but keeps StatefulSet shards from LLM output", () => {
     const merged = discoverStepTestHooks.mergeCandidatesIntoDiscoveryResult(
       {
         services: [
@@ -211,6 +214,8 @@ describe("discover deterministic candidate backfill", () => {
       [],
     );
 
-    expect(merged.services.map((service) => service.name)).toEqual(["checkout-api"]);
+    expect(merged.services.map((service) => service.name).sort()).toEqual(
+      ["ch-clickhouse-shard4", "checkout-api"],
+    );
   });
 });

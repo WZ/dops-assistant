@@ -166,7 +166,16 @@ every pod is CrashLoopBackOff / ImagePullBackOff / Pending).
 | DaemonSet      | kube_daemonset_status_number_ready             | kube_daemonset_status_desired_number_scheduled   |
 |                |                                                | kube_daemonset_status_current_number_scheduled   |
 | Service-level  | up{...}  (lt 1 already encodes "drops to 0")   | n/a                                              |
-| Consul         | consul_health_service_status                   | n/a                                              |
+| Consul         | max by (service_name)(...{status="passing"})   | consul_health_service_status{service_name="X"}   |
+
+For Consul: the full form is
+\`max by (service_name) (consul_health_service_status{service_name="X",status="passing"})\`.
+\`consul_health_service_status\` emits one row per (node × status) — 4 statuses
+(passing, warning, critical, maintenance) × N nodes. Only the row whose status equals the
+service's CURRENT health has value=1; all others are 0. Without \`status="passing"\` AND
+the \`max by (service_name)\` collapse, the result is a multi-row mixed-value vector that
+\`lt 1\` cannot interpret. With the filter+collapse, value=1 means at least one node passing
+(healthy), value=0 or missing means no node passing (down).
 
 \`kube_*_status_replicas\` reports \`.status.replicas\` (total non-terminated
 pods, including unhealthy). It only drops below 1 when you scale to 0 or delete
@@ -329,6 +338,49 @@ Examples:
 Leave \`globalProbeRules: []\` if the stack's label convention matches the
 hardcoded config.yaml defaults (deployment / statefulset / daemonset
 kube-state-metrics labels) — don't duplicate them.
+
+### 6.5 Adding application metrics (after metrics[0] health check)
+
+\`metrics[0]\` is the health check (per 6.1) — it powers \`service_availability\`
+and the UI's UP/DOWN summary. metrics[1..] are the SERVICE-SPECIFIC OBSERVABILITY
+that operators look at when triaging an incident (request rate, queue depth, batch
+counters, error rates emitted BY the service, not by kube-state-metrics).
+
+Without metrics[1..] the service detail page shows generic replica counts and
+nothing else — the operator cannot see what the service is actually doing.
+
+**For every discovered service, also enumerate its application-level metrics.**
+Use the service-name prefix (with hyphen→underscore normalization) as a probe:
+
+\`\`\`
+count by (__name__) ({__name__=~"<service_underscore_prefix>.*"})
+\`\`\`
+
+Examples:
+- service \`ingestion-server\` → query \`{__name__=~"ingestion_.*"}\`
+- service \`clickhouse-sinker\` → query \`{__name__=~"clickhouse_.*"}\` or \`"sinker_.*"\`
+- service \`kafka-cluster-kafka\` → query \`{__name__=~"kafka_.*"}\`
+
+From the returned metric names, pick the 3–5 most informative as additional
+metrics entries. Prefer in this order:
+
+1. **Workload counters** — \`*_total\`, \`*_accepted_total\`, \`*_processed_total\`,
+   \`*_received\`. These reveal whether the service is actually doing its job.
+2. **Latency histograms** — \`*_duration_seconds_bucket\`, \`*_latency_*\`.
+3. **Queue / lag gauges** — \`*_queue_size\`, \`*_lag\`, \`*_backlog\`.
+4. **Error counters** — \`*_errors_total\`, \`*_failed_total\`, \`*_rejected_total\`.
+
+Wrap counters in \`sum(rate(<metric>[5m]))\` so the UI plots a rate, not a raw
+counter. Histograms get \`histogram_quantile(0.99, sum(rate(<bucket>[5m])) by (le))\`.
+
+**Omit metrics[1..] only when** the prefix probe returns zero rows (e.g. for
+infrastructure components that don't expose application metrics, like
+\`kube-state-metrics\` itself, or for bare-metal Consul services whose Prometheus
+exporters use a different naming convention).
+
+This step adds tool calls but each is a single low-cost metadata query. Do not
+skip it — the goal is a complete registry the operator can use without manual
+hand-editing.
 
 ## LAYER 7: OUTPUT STRICTNESS
 

@@ -26,8 +26,30 @@ Each unique `service_name` is a service. The `node` label (e.g., `blade-198-18-1
 ### Step 2: Build service entries for bare-metal services
 For each bare-metal-only service, use this format:
 - **name**: the `service_name` value (e.g., `hdfs-datanode`)
-- **metrics**: `[{"query": "consul_health_service_status{service_name=\"<name>\"}", "description": "Consul health status"}]`
-- **logLabels**: `{"app_fortidata_name": "<name>"}` — this is the Loki label key for this stack
+- **metrics**: `[{"query": "max by (service_name) (consul_health_service_status{service_name=\"<name>\",status=\"passing\"})", "description": "Consul health (1 if any node passing)"}]`
+- **logLabels**: `{"app_host_name": "<name>"}` — typical Loki label key for bare-metal host processes; adjust if the stack's Loki uses a different convention.
+
+### Why the `status="passing"` filter is required
+`consul_health_service_status` returns one row per (node × status), i.e. up to 4
+rows per service (passing, warning, critical, maintenance). Only the row whose
+`status` label matches the service's *current* health has value=1; all others
+are 0. Without `status="passing"`, a query like
+`consul_health_service_status{service_name="X"}` returns multiple rows with
+mixed 0/1 values — the probe and the health poller cannot interpret it.
+
+### probeRules for bare-metal services
+Emit at minimum:
+```
+{ "name": "service_availability",
+  "query": "max by (service_name) (consul_health_service_status{service_name=\"<name>\",status=\"passing\"})",
+  "threshold": { "op": "lt", "value": 1 },
+  "consecutiveTicks": 3,
+  "source": "metrics" }
+```
+Plus a `log_errors` rule using the bare-metal logLabels above.
+
+`pod_restarts` is omitted (no Kubernetes pods) — set
+`service.description = "bare-metal Consul service; no pod_restarts rule"`.
 
 ### Important: discover ALL Consul services, not just known ones
 You MUST run the `consul_health_service_status` query above and include

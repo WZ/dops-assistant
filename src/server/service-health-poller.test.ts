@@ -232,6 +232,26 @@ describe("matchResultsToServices", () => {
     expect(result.get("prometheus")).toBe("healthy");
   });
 
+  it("matches by service_name label (Consul bare-metal services)", () => {
+    // Consul-registered bare-metal services emit `service_name`. Before adding
+    // this label to the candidate list, the consul batch query
+    // (max by (service_name) (consul_health_service_status{status="passing"}))
+    // resolved no services → permanent UNKNOWN in the UI for the 11
+    // Consul-registered host-process services on the on-prem stack
+    // (hdfs-*, kudu*, impala*, hive-metastore, and several proprietary services).
+    const entries = [
+      makePrometheusEntry({ service_name: "hdfs-datanode" }, "1"),
+      makePrometheusEntry({ service_name: "kudu-tserver" }, "0"),
+    ];
+    const result = matchResultsToServices(
+      entries as ReturnType<typeof makePrometheusEntry>[],
+      new Set(["hdfs-datanode", "kudu-tserver"]),
+      "down",
+    );
+    expect(result.get("hdfs-datanode")).toBe("healthy");
+    expect(result.get("kudu-tserver")).toBe("down");
+  });
+
   it("value=0 with zeroMeans=unknown → unknown (replicas semantics)", () => {
     const entries = [makePrometheusEntry({ deployment: "scaled-down" }, "0")];
     const result = matchResultsToServices(
@@ -364,16 +384,23 @@ describe("ServiceHealthPoller", () => {
       expect(poller.getHealth().get("api")).toBe("down");
     });
 
-    it("issues all four PromQL queries (deployment, statefulset, daemonset, up) per poll and classifies daemonset matches", async () => {
+    it("issues all five PromQL queries (deployment, statefulset, daemonset, up, consul) per poll and classifies matches across batches", async () => {
       // Regression guard: before this test, a test for the daemonset matcher
       // existed but nothing verified that pollOnce actually QUERIED the
       // daemonset metric. Dropping the daemonset entry from the Promise.all
-      // would have passed all prior tests.
+      // would have passed all prior tests. The Consul batch was added so
+      // bare-metal Consul services (hdfs-datanode, kudu, impala, hive-metastore,
+      // and other host-process workloads registered in Consul) no
+      // longer report UNKNOWN — the discover agent emits
+      // `consul_health_service_status` per service but the poller only
+      // consults the batch queries.
+      const consulExpr = "max by (service_name) (consul_health_service_status{status=\"passing\"})";
       const queryResults: Record<string, object[]> = {
         "kube_deployment_status_replicas": [makePrometheusEntry({ deployment: "api" }, "1")],
         "kube_statefulset_status_replicas": [makePrometheusEntry({ statefulset: "postgres" }, "1")],
         "kube_daemonset_status_desired_number_scheduled": [makePrometheusEntry({ daemonset: "node-exporter" }, "6")],
         "up": [makePrometheusEntry({ job: "prom" }, "1")],
+        [consulExpr]: [makePrometheusEntry({ service_name: "hdfs-datanode" }, "1")],
       };
       const queryTool = {
         execute: vi.fn(async (args: unknown) => {
@@ -397,7 +424,7 @@ describe("ServiceHealthPoller", () => {
 
       const poller = new ServiceHealthPoller({
         providers: [provider],
-        registryStore: makeRegistryStore(["node-exporter", "api", "postgres", "prom"]),
+        registryStore: makeRegistryStore(["node-exporter", "api", "postgres", "prom", "hdfs-datanode"]),
         db: makeDb(),
         intervalMs: 999_999,
       });
@@ -409,12 +436,14 @@ describe("ServiceHealthPoller", () => {
       expect(exprs).toContain("kube_statefulset_status_replicas");
       expect(exprs).toContain("kube_daemonset_status_desired_number_scheduled");
       expect(exprs).toContain("up");
+      expect(exprs).toContain(consulExpr);
 
-      // DaemonSet service gets classified via the daemonset batch.
+      // DaemonSet, Deployment, StatefulSet, up, and Consul service all classified.
       expect(poller.getHealth().get("node-exporter")).toBe("healthy");
       expect(poller.getHealth().get("api")).toBe("healthy");
       expect(poller.getHealth().get("postgres")).toBe("healthy");
       expect(poller.getHealth().get("prom")).toBe("healthy");
+      expect(poller.getHealth().get("hdfs-datanode")).toBe("healthy");
     });
 
     it("marks service as down when up = 0 (real scrape failure)", async () => {
