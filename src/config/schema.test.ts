@@ -21,7 +21,7 @@ describe("ConfigSchema – defaults", () => {
       providers: [grafanaProvider],
     });
     expect(result.timeouts.mcpConnectMs).toBe(30_000);
-    expect(result.timeouts.llmCallMs).toBe(60_000);
+    expect(result.timeouts.llmCallMs).toBe(240_000);
     expect(result.timeouts.toolExecutionMs).toBe(30_000);
     expect(result.timeouts.agentIterationMs).toBe(90_000);
     expect(result.retry.maxAttempts).toBe(3);
