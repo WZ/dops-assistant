@@ -344,7 +344,22 @@ async function enrichApplicationMetrics(
   promTool: [string, Tool],
   config: ValidateStepConfig,
 ): Promise<void> {
-  logger.info({ serviceCount: services.length, toolName: promTool[0] }, "enrich: start app-metric enrichment");
+  // The grafana-mcp `query_prometheus` tool requires `datasourceUid`,
+  // `startTime`, and `endTime` in its input schema. Without these the MCP
+  // returns `{"error":true,"message":"Tool input validation failed..."}` for
+  // every call and the function silently adds zero metrics. Resolve the
+  // Prometheus UID the same way `findLokiDatasourceUid` does for Loki —
+  // a single `list_datasources` call against the metrics-role MCP.
+  const metricsTools = await getToolsByRole(config.providers, "metrics").catch(() => ({}));
+  const listDsTool = findToolBySuffix(metricsTools as Record<string, Tool>, "list_datasources");
+  const promDsUid = await findPrometheusDatasourceUid(listDsTool, config);
+
+  logger.info({ serviceCount: services.length, toolName: promTool[0], promDsUid: promDsUid ? "set" : "missing" }, "enrich: start app-metric enrichment");
+  if (!promDsUid) {
+    logger.warn("enrich: no Prometheus datasourceUid available, skipping app-metric enrichment");
+    return;
+  }
+
   let added = 0;
   let totalCandidates = 0;
   let totalFiltered = 0;
@@ -358,13 +373,22 @@ async function enrichApplicationMetrics(
     const regex = prefixes.join("|");
     const query = `count by (__name__) ({__name__=~"${regex}"})`;
 
+    const now = new Date();
+    const startTime = new Date(now.getTime() - 5 * 60 * 1000).toISOString();
+    const endTime = now.toISOString();
+
     let resultText = "";
     try {
       const start = Date.now();
-      const raw = await promTool[1].execute!({ expr: query, queryType: "instant" }, {} as any);
+      const raw = await promTool[1].execute!({
+        expr: query,
+        queryType: "instant",
+        datasourceUid: promDsUid,
+        startTime,
+        endTime,
+      }, {} as any);
       const duration = Date.now() - start;
       resultText = typeof raw === "string" ? raw : JSON.stringify(raw);
-      logger.debug({ service: service.name, queryLen: query.length, rawType: typeof raw, resultLen: resultText.length, resultPreview: resultText.slice(0, 250), duration }, "enrich: query response");
       config.onToolCall?.(promTool[0], { expr: query }, resultText, duration, undefined, "validation");
     } catch (err) {
       logger.warn({ service: service.name, err: String(err) }, "enrich: query threw");
@@ -639,6 +663,34 @@ function parsePodsList(raw: string): Array<{ name: string; namespace: string; la
 /**
  * Find the Loki datasource UID by querying list_datasources.
  */
+async function findPrometheusDatasourceUid(
+  listDsTool: [string, Tool] | undefined,
+  config: ValidateStepConfig,
+): Promise<string | undefined> {
+  if (!listDsTool) return undefined;
+  try {
+    const start = Date.now();
+    const result = await listDsTool[1].execute!({}, {} as any);
+    const duration = Date.now() - start;
+    const resultStr = typeof result === "string" ? result : JSON.stringify(result);
+    config.onToolCall?.(listDsTool[0], {}, resultStr, duration, undefined, "validation");
+
+    const dsData = unwrapMcpJson(result);
+    const datasources = Array.isArray(dsData) ? dsData : dsData?.datasources ?? [];
+    const prom = datasources.find((ds: any) =>
+      ds.type === "prometheus" || ds.typeName === "Prometheus" || ds.name?.toLowerCase().includes("prometheus") || ds.name?.toLowerCase() === "metrics"
+    );
+    if (prom?.uid) {
+      logger.debug(`Found Prometheus datasource: uid=${prom.uid}, name=${prom.name}`);
+      return prom.uid;
+    }
+    logger.warn(`No Prometheus datasource found in: ${JSON.stringify(datasources.map((d: any) => ({ name: d.name, type: d.type, uid: d.uid }))).slice(0, 500)}`);
+  } catch (err) {
+    logger.warn(`Failed to find Prometheus datasource: ${err}`);
+  }
+  return undefined;
+}
+
 async function findLokiDatasourceUid(
   listDsTool: [string, Tool] | undefined,
   config: ValidateStepConfig,
