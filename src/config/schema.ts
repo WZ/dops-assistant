@@ -122,7 +122,7 @@ const AgentSchema = z.object({
 
 const TimeoutsSchema = z.object({
   mcpConnectMs: z.number().default(30_000),
-  llmCallMs: z.number().default(60_000),
+  llmCallMs: z.number().default(240_000),
   toolExecutionMs: z.number().default(30_000),
   agentIterationMs: z.number().default(90_000),
 });
