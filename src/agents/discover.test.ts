@@ -266,22 +266,22 @@ describe("buildDiscoverInstructions / layered structure (Option B)", () => {
     expect(prompt).toContain('consul_health_service_status{service_name="X"}');
   });
 
-  it("includes Layer 6.5 (additional application metrics) before LAYER 7", () => {
-    // Without 6.5 the LLM produces a registry where every service has exactly
-    // one metric — the kube-state health check. Operators triaging incidents
-    // need service-specific counters/histograms/lag gauges. Empirically the
-    // LLM never volunteers metrics[1..] without an explicit prompt branch.
-    const section65 = prompt.indexOf("### 6.5 Adding application metrics");
+  it("includes Layer 6.5 (application metrics, with deterministic enrichment) before LAYER 7", () => {
+    // Iter 1 made 6.5 a hard requirement with a per-service `count by (__name__)`
+    // probe; eval showed the LLM blew its iteration budget on those probes and
+    // missed the global service-name sweep (recall dropped 0.998 → 0.779).
+    // Iter 2 softens 6.5 to a brief note that defers app-metric enrichment to
+    // a deterministic post-discovery step; the LLM keeps its budget for the
+    // service sweep.
+    const section65 = prompt.indexOf("### 6.5 Application metrics");
     const layer7 = prompt.indexOf("## LAYER 7: OUTPUT STRICTNESS");
     expect(section65).toBeGreaterThan(-1);
     expect(layer7).toBeGreaterThan(section65);
-    expect(prompt).toMatch(/count by \(__name__\)/);
-    expect(prompt).toMatch(/service_underscore_prefix/);
-    // The four metric categories that should be picked first.
-    expect(prompt).toMatch(/Workload counters/);
-    expect(prompt).toMatch(/Latency histograms/);
-    expect(prompt).toMatch(/Queue \/ lag gauges/);
-    expect(prompt).toMatch(/Error counters/);
+    // The section names the metrics[0] vs metrics[1..] split and points at the
+    // deterministic enrichment step so the LLM doesn't try to do it itself.
+    expect(prompt).toMatch(/metrics\[1\.\.\]/);
+    expect(prompt).toMatch(/deterministic post-discovery step/);
+    expect(prompt).toMatch(/Layer 4 service-name sweep/);
   });
 
   it("appends the exclude list inside LAYER 2: CONSTRAINTS, not the strictness tail", () => {

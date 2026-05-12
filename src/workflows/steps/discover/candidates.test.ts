@@ -32,7 +32,9 @@ describe("discover deterministic candidate backfill", () => {
       expect.objectContaining({
         name: "warehouse",
         source: "consul",
-        metricQuery: 'consul_health_service_status{service_name="warehouse"}',
+        // status="passing" + max by collapses the (node × status) cross-product
+        // so the per-service rule actually behaves like service_availability.
+        metricQuery: 'max by (service_name) (consul_health_service_status{service_name="warehouse",status="passing"})',
         logLabels: {},
       }),
     ]);
@@ -76,7 +78,11 @@ describe("discover deterministic candidate backfill", () => {
     ]);
   });
 
-  it("omits pod_restarts from statefulset/daemonset candidates (no statefulset/daemonset label on the restart counter)", () => {
+  it("emits pod_restarts for statefulset candidates via ordinal-anchored pod regex, but omits it for daemonsets", () => {
+    // StatefulSets name pods as <set>-<ordinal>; the anchored regex
+    // `pod=~"<set>-[0-9]+$"` catches every ordinal without false-matching
+    // sibling workloads. DaemonSets still lack a stable per-pod regex
+    // anchor (random pod-hash suffix), so they continue to omit the rule.
     const stsCandidates = new Map<string, ReturnType<typeof discoverStepTestHooks.extractDiscoveryCandidates>[number]>();
     for (const candidate of discoverStepTestHooks.extractDiscoveryCandidates(
       { expr: "count by (namespace, statefulset) (kube_statefulset_status_replicas_ready)" },
@@ -105,10 +111,17 @@ describe("discover deterministic candidate backfill", () => {
       [],
     );
 
-    expect(stsMerged.services.find((s) => s.name === "single-sts")?.probeRules.map((r) => r.name)).toEqual([
+    const sts = stsMerged.services.find((s) => s.name === "single-sts");
+    expect(sts?.probeRules.map((r) => r.name)).toEqual([
       "service_availability",
+      "pod_restarts",
       "log_errors",
     ]);
+    const stsRestart = sts?.probeRules.find((r) => r.name === "pod_restarts");
+    expect(stsRestart?.query).toBe(
+      'rate(kube_pod_container_status_restarts_total{namespace="data",pod=~"single-sts-[0-9]+$"}[5m])',
+    );
+
     expect(dsMerged.services.find((s) => s.name === "telemetry-collector")?.probeRules.map((r) => r.name)).toEqual([
       "service_availability",
       "log_errors",

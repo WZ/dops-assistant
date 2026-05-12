@@ -339,48 +339,18 @@ Leave \`globalProbeRules: []\` if the stack's label convention matches the
 hardcoded config.yaml defaults (deployment / statefulset / daemonset
 kube-state-metrics labels) — don't duplicate them.
 
-### 6.5 Adding application metrics (after metrics[0] health check)
+### 6.5 Application metrics (metrics[1..])
 
-\`metrics[0]\` is the health check (per 6.1) — it powers \`service_availability\`
-and the UI's UP/DOWN summary. metrics[1..] are the SERVICE-SPECIFIC OBSERVABILITY
-that operators look at when triaging an incident (request rate, queue depth, batch
-counters, error rates emitted BY the service, not by kube-state-metrics).
+\`metrics[0]\` is the health check (per 6.1). \`metrics[1..]\` are SERVICE-SPECIFIC
+counters / histograms / queue gauges the operator looks at when triaging incidents.
 
-Without metrics[1..] the service detail page shows generic replica counts and
-nothing else — the operator cannot see what the service is actually doing.
-
-**For every discovered service, also enumerate its application-level metrics.**
-Use the service-name prefix (with hyphen→underscore normalization) as a probe:
-
-\`\`\`
-count by (__name__) ({__name__=~"<service_underscore_prefix>.*"})
-\`\`\`
-
-Examples:
-- service \`ingestion-server\` → query \`{__name__=~"ingestion_.*"}\`
-- service \`clickhouse-sinker\` → query \`{__name__=~"clickhouse_.*"}\` or \`"sinker_.*"\`
-- service \`kafka-cluster-kafka\` → query \`{__name__=~"kafka_.*"}\`
-
-From the returned metric names, pick the 3–5 most informative as additional
-metrics entries. Prefer in this order:
-
-1. **Workload counters** — \`*_total\`, \`*_accepted_total\`, \`*_processed_total\`,
-   \`*_received\`. These reveal whether the service is actually doing its job.
-2. **Latency histograms** — \`*_duration_seconds_bucket\`, \`*_latency_*\`.
-3. **Queue / lag gauges** — \`*_queue_size\`, \`*_lag\`, \`*_backlog\`.
-4. **Error counters** — \`*_errors_total\`, \`*_failed_total\`, \`*_rejected_total\`.
-
-Wrap counters in \`sum(rate(<metric>[5m]))\` so the UI plots a rate, not a raw
-counter. Histograms get \`histogram_quantile(0.99, sum(rate(<bucket>[5m])) by (le))\`.
-
-**Omit metrics[1..] only when** the prefix probe returns zero rows (e.g. for
-infrastructure components that don't expose application metrics, like
-\`kube-state-metrics\` itself, or for bare-metal Consul services whose Prometheus
-exporters use a different naming convention).
-
-This step adds tool calls but each is a single low-cost metadata query. Do not
-skip it — the goal is a complete registry the operator can use without manual
-hand-editing.
+A deterministic post-discovery step enriches the \`metrics\` array from observed
+Prometheus metric names — you do NOT need to query for application metrics yourself.
+Focus your tool budget on completing the Layer 4 service-name sweep across ALL workload
+kinds (deployment / statefulset / daemonset / consul / job). If you happen to know an
+obvious app-level counter for a discovered service (e.g. \`kafka_server_BrokerTopicMetrics_MessagesInPerSec\`
+for kafka), you may still include it in metrics[1..] — but never at the cost of
+finishing the global sweep.
 
 ## LAYER 7: OUTPUT STRICTNESS
 
