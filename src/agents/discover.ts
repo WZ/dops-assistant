@@ -166,7 +166,16 @@ every pod is CrashLoopBackOff / ImagePullBackOff / Pending).
 | DaemonSet      | kube_daemonset_status_number_ready             | kube_daemonset_status_desired_number_scheduled   |
 |                |                                                | kube_daemonset_status_current_number_scheduled   |
 | Service-level  | up{...}  (lt 1 already encodes "drops to 0")   | n/a                                              |
-| Consul         | consul_health_service_status                   | n/a                                              |
+| Consul         | max by (service_name)(...{status="passing"})   | consul_health_service_status{service_name="X"}   |
+
+For Consul: the full form is
+\`max by (service_name) (consul_health_service_status{service_name="X",status="passing"})\`.
+\`consul_health_service_status\` emits one row per (node × status) — 4 statuses
+(passing, warning, critical, maintenance) × N nodes. Only the row whose status equals the
+service's CURRENT health has value=1; all others are 0. Without \`status="passing"\` AND
+the \`max by (service_name)\` collapse, the result is a multi-row mixed-value vector that
+\`lt 1\` cannot interpret. With the filter+collapse, value=1 means at least one node passing
+(healthy), value=0 or missing means no node passing (down).
 
 \`kube_*_status_replicas\` reports \`.status.replicas\` (total non-terminated
 pods, including unhealthy). It only drops below 1 when you scale to 0 or delete
@@ -243,16 +252,19 @@ one service. When multiple services share a namespace (e.g. several DBs in
 namespace and they all blame each other. Always narrow further when you have
 the data.
 
+\`kube_pod_container_status_restarts_total\` has \`namespace\`, \`pod\`, \`container\`,
+and \`uid\` labels. It does NOT have \`deployment\` or \`statefulset\` labels. Use
+pod-name regexes for workload owners, or exact container labels when available.
+
 Selector priority (use the FIRST that applies):
 
 | Priority    | Selector                                       | Notes                                             |
 |-------------|------------------------------------------------|---------------------------------------------------|
-| 1 (best)    | \`{deployment="<name>"}\`, etc.                | KSM-emitted workload label. Exact match.          |
-| 2           | \`{namespace=...,container="<workload>"}\`     | Exact container name.                             |
-| 3           | \`{namespace=...,pod=~"<workload>-...$"}\`     | Trailing \`$\` is CRITICAL — anchors the regex.   |
-| 4 (last-resort fallback) | \`{namespace=...}\`                | Only when namespace has exactly one workload.     |
+| 1 (best)    | \`{namespace=...,container="<workload>"}\`     | Exact container name.                             |
+| 2           | \`{namespace=...,pod=~"<workload>-...$"}\`     | Anchored workload pod regex.                      |
+| 3 (last-resort fallback) | \`{namespace=...}\`                | Only when namespace has exactly one workload.     |
 
-Priority-3 regex examples:
+Priority-2 regex examples:
 - Deployment:   \`pod=~"checkout-api-[a-f0-9]+-[a-z0-9]+$"\` (ReplicaSet hash + pod hash)
 - StatefulSet:  \`pod=~"stolon-keeper-[0-9]+$"\` (ordinal suffix)
 
@@ -329,6 +341,19 @@ Examples:
 Leave \`globalProbeRules: []\` if the stack's label convention matches the
 hardcoded config.yaml defaults (deployment / statefulset / daemonset
 kube-state-metrics labels) — don't duplicate them.
+
+### 6.5 Application metrics (metrics[1..])
+
+\`metrics[0]\` is the health check (per 6.1). \`metrics[1..]\` are SERVICE-SPECIFIC
+counters / histograms / queue gauges the operator looks at when triaging incidents.
+
+A deterministic post-discovery step enriches the \`metrics\` array from observed
+Prometheus metric names — you do NOT need to query for application metrics yourself.
+Focus your tool budget on completing the Layer 4 service-name sweep across ALL workload
+kinds (deployment / statefulset / daemonset / consul / job). If you happen to know an
+obvious app-level counter for a discovered service (e.g. \`kafka_server_BrokerTopicMetrics_MessagesInPerSec\`
+for kafka), you may still include it in metrics[1..] — but never at the cost of
+finishing the global sweep.
 
 ## LAYER 7: OUTPUT STRICTNESS
 

@@ -45,6 +45,10 @@ function promLabelEscape(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
+function promRegexEscape(value: string): string {
+  return value.replace(/[\\^$*+?.()|[\]{}]/g, "\\$&");
+}
+
 function selector(labels: Record<string, string | undefined>): string {
   const parts = Object.entries(labels)
     .filter((entry): entry is [string, string] => Boolean(entry[1]))
@@ -152,6 +156,9 @@ export function extractDiscoveryCandidates(
     const namespace = metric["namespace"];
     if (metric["deployment"]) {
       const name = metric["deployment"];
+      const restartSelector = namespace
+        ? `{namespace="${promLabelEscape(namespace)}",pod=~"${promLabelEscape(`${promRegexEscape(name)}-[a-z0-9]+-[a-z0-9]+$`)}"}`
+        : `{pod=~"${promLabelEscape(`${promRegexEscape(name)}-[a-z0-9]+-[a-z0-9]+$`)}"}`;
       out.push({
         name,
         source: "deployment",
@@ -159,14 +166,19 @@ export function extractDiscoveryCandidates(
         metricQuery: `kube_deployment_status_replicas_available${selector({ deployment: name, namespace })}`,
         metricDescription: "Deployment available replicas",
         logLabels: namespace ? { namespace, container_name: name } : { container_name: name },
-        restartQuery: `rate(kube_pod_container_status_restarts_total${selector({ deployment: name })}[5m])`,
+        restartQuery: `rate(kube_pod_container_status_restarts_total${restartSelector}[5m])`,
       });
     } else if (metric["statefulset"]) {
       const name = metric["statefulset"];
-      // No restartQuery: kube_pod_container_status_restarts_total has no
-      // statefulset label by default (kube-state-metrics labels are
-      // namespace/pod/container/uid/node), so the rule would always read 0.
-      // Leave it to LLM-driven discovery to emit a per-cluster correct query.
+      // restartQuery uses pod=~"<name>-<ordinal>$" — StatefulSets name pods as
+      // <set>-0, <set>-1, ... so an anchored regex catches every ordinal
+      // without false-matching sibling workloads that share a name prefix.
+      // The kube_pod_container_status_restarts_total metric has pod/namespace
+      // labels (not statefulset), so this regex is the closest we get without
+      // an extra owner-reference lookup.
+      const restartSelector = namespace
+        ? `{namespace="${promLabelEscape(namespace)}",pod=~"${promLabelEscape(name)}-[0-9]+$"}`
+        : `{pod=~"${promLabelEscape(name)}-[0-9]+$"}`;
       out.push({
         name,
         source: "statefulset",
@@ -174,6 +186,7 @@ export function extractDiscoveryCandidates(
         metricQuery: `kube_statefulset_status_replicas_ready${selector({ statefulset: name, namespace })}`,
         metricDescription: "StatefulSet ready replicas",
         logLabels: namespace ? { namespace, container_name: name } : { container_name: name },
+        restartQuery: `rate(kube_pod_container_status_restarts_total${restartSelector}[5m])`,
       });
     } else if (metric["daemonset"]) {
       const name = metric["daemonset"];
@@ -188,11 +201,16 @@ export function extractDiscoveryCandidates(
       });
     } else if (expr.includes("consul_health_service_status") && metric["service_name"]) {
       const name = metric["service_name"];
+      // `consul_health_service_status` emits one row per (node × status) — bare
+      // `{service_name="X"}` returns a multi-row vector that `lt 1` can't
+      // interpret. `max by (service_name) (... {status="passing"})` collapses to
+      // one row per service: value=1 means at least one node passing (healthy),
+      // value=0/missing means no node passing (down).
       out.push({
         name,
         source: "consul",
-        metricQuery: `consul_health_service_status${selector({ service_name: name })}`,
-        metricDescription: "Consul health status",
+        metricQuery: `max by (service_name) (consul_health_service_status${selector({ service_name: name, status: "passing" })})`,
+        metricDescription: "Consul health (1 if any node passing)",
         logLabels: {},
       });
     }

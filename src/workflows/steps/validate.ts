@@ -6,6 +6,7 @@ import type { OnToolCallEnriched, OnIteration } from "../../types/agent-interfac
 import type { Tool } from "@mastra/core/tools";
 import { createLogger } from "../../logger.js";
 import { throwIfDiscoveryAborted } from "./discover/index.js";
+import { backfillPodRestarts, backfillLogErrors } from "./discover/parse.js";
 
 const logger = createLogger("validate");
 
@@ -101,6 +102,13 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
   const listDsTool = findToolBySuffix(dashboardsTools, "list_datasources")
     ?? findToolBySuffix(metricsTools, "list_datasources");
   const lokiDsUid = await findLokiDatasourceUid(listDsTool, config);
+  // Prometheus UID is required by grafana-mcp `query_prometheus` (alongside
+  // startTime/endTime). Without it Phase 2's metric verification call and the
+  // tryMetricFallback path get an MCP "Tool input validation failed" error
+  // string back; the existing `metricsOk = !resultStr.includes('"result":[]')`
+  // heuristic false-positives that error as a successful query, so the
+  // operator never sees the broken-metric flag and the fallback never runs.
+  const promDsUid = await findPrometheusDatasourceUid(listDsTool, config);
 
   config.onIteration?.("validation", 0, config.services.length, "Enriching log labels from K8s...");
 
@@ -112,6 +120,17 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
   const labelMap = await buildLabelMap(lokiLabelNamesTool, lokiLabelValuesTool, lokiDsUid, config, SERVICE_LABEL_KEYS);
   const enriched = enrichLogLabels(k8sEnriched, labelMap);
   throwIfDiscoveryAborted(config.abortSignal);
+
+  // Phase 1b (iter 10): re-run the parse-time backfills now that logLabels
+  // are populated by K8s + Loki. The parse-time backfills run before any
+  // enrichment, so when the LLM emits `logLabels: {}` they skip log_errors
+  // and the logLabel-derived pod_restarts fallback. Re-running here closes
+  // the gap — a bad-seed LLM run that produces empty logLabels still ends
+  // up with full 3-rule coverage in the registry.
+  for (const service of enriched) {
+    backfillPodRestarts(service.name, service.metrics, service.logLabels, service.probeRules ?? (service.probeRules = []));
+    backfillLogErrors(service.name, service.logLabels, service.probeRules ?? []);
+  }
 
   // Phase 2: Validate metrics and logs for each service
   const results: ValidatedServiceConfig[] = [];
@@ -127,19 +146,28 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
 
     // Check metrics — and repair if the agent's pick returns empty.
     if (promTool && service.metrics.length > 0) {
+      const query = service.metrics[0].query;
       try {
-        const query = service.metrics[0].query;
         const start = Date.now();
-        const result = await promTool[1].execute!({ expr: query, queryType: "instant" }, {} as any);
+        const result = await promTool[1].execute!(buildPromQueryArgs(query, promDsUid), {} as any);
         const duration = Date.now() - start;
         const resultStr = typeof result === "string" ? result : JSON.stringify(result);
         config.onToolCall?.(promTool[0], { expr: query }, resultStr, duration, undefined, "validation");
 
-        metricsOk = resultStr.length > 10 && !resultStr.includes('"result":[]');
+        // Iter-6 added the `"error":true` check. Pre-iter-6, the
+        // `query_prometheus` MCP tool rejected every Phase 2 call with
+        // `{"error":true,"message":"Tool input validation failed..."}`
+        // because the args list omitted `datasourceUid`/`startTime`/`endTime`.
+        // The old `metricsOk = !resultStr.includes('"result":[]')` heuristic
+        // false-positived the error envelope as success and the fallback
+        // path never ran.
+        metricsOk = resultStr.length > 10
+          && !resultStr.includes('"result":[]')
+          && !resultStr.includes('"error":true');
         notes.push(metricsOk ? "metrics \u2713" : "metrics \u2717 no data");
       } catch (err) {
         notes.push("metrics \u2717 query failed");
-        config.onToolCall?.(promTool[0], { expr: service.metrics[0].query }, undefined, 0, String(err), "validation");
+        config.onToolCall?.(promTool[0], { expr: query }, undefined, 0, String(err), "validation");
       }
 
       // Verify-before-keep: the agent's metric pick returned empty. This is
@@ -150,7 +178,7 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
       // service's metrics[0] AND the paired service_availability probe
       // rule so the probe actually uses the working query next tick.
       if (!metricsOk) {
-        const replacement = await tryMetricFallback(promTool, service.name, config);
+        const replacement = await tryMetricFallback(promTool, service.name, promDsUid, config);
         if (replacement) {
           service.metrics[0] = { query: replacement, description: "validate-step fallback (original returned empty)" };
           syncServiceAvailabilityRule(service, replacement);
@@ -201,6 +229,19 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
     });
   }
 
+  // Phase 3 — deterministic app-metric enrichment.
+  // metrics[0] is the health check (per discover prompt Layer 6.1). metrics[1..]
+  // are service-specific counters / histograms / queue gauges that operators
+  // look at when triaging an incident. Empirics on stack-120 showed the LLM
+  // never volunteers metrics[1..] without explicit prompting, and the explicit
+  // prompt (iter 1's Layer 6.5) burned iteration budget. Iter 3 moves the work
+  // here: one Prometheus probe per service against `{__name__=~"<prefix>.*"}`,
+  // then a quick scoring pass picks 3 informative metrics.
+  if (promTool) {
+    config.onIteration?.("validation", results.length, results.length, "Enriching app metrics...");
+    await enrichApplicationMetrics(results, promTool, promDsUid, config);
+  }
+
   const verified = results.filter((r) => r.confidence === "verified").length;
   const partial = results.filter((r) => r.confidence === "partial").length;
   const unverified = results.filter((r) => r.confidence === "unverified").length;
@@ -213,6 +254,193 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
   logger.debug(`Done: ${verified} verified, ${partial} partial, ${unverified} unverified`);
 
   return results;
+}
+
+// ── Application metric enrichment ──────────────────────────────────────────
+
+const APP_METRIC_LIMIT_PER_SERVICE = 3;
+
+/** Generic infra metric prefixes that should NEVER be picked as service-specific
+ *  app metrics — they're stack-wide and useless on a service detail page. */
+const GENERIC_METRIC_PREFIXES = [
+  "kube_", "container_", "node_", "process_", "go_", "promhttp_",
+  "prometheus_", "alertmanager_", "loki_", "grafana_",
+];
+
+interface AppMetricCandidate {
+  name: string;
+  seriesCount: number;
+  rank: number; // lower = better
+}
+
+/**
+ * Derive an underscore-prefix hint from a service name so the LLM-emitted
+ * service name (`ingestion-server`) maps to its Prometheus metric prefix
+ * (`ingestion_`). Returns the prefix WITHOUT the trailing wildcard.
+ *
+ * `ingestion-server` → `ingestion_server` (keep both halves; some apps emit
+ *                                          `ingestion_server_*` metrics)
+ * `ch-clickhouse-shard0` → `clickhouse_` (drop ch- prefix; shards share
+ *                                         the same `clickhouse_*` namespace)
+ * `kafka-cluster-kafka` → `kafka_`
+ *
+ * We try a small ladder of prefixes per service (full normalized, then each
+ * dash-separated chunk) and combine results — Prometheus regex alternation
+ * is cheap.
+ */
+function derivePrefixCandidates(serviceName: string): string[] {
+  const normalized = serviceName.replace(/-/g, "_");
+  const parts = serviceName.split("-").filter(Boolean);
+  const out = new Set<string>([normalized]);
+  for (const part of parts) {
+    if (part.length >= 4) out.add(part); // skip 1-3 char fragments — too noisy
+  }
+  return [...out];
+}
+
+/** Wrap a counter/gauge/histogram-bucket name into a UI-friendly PromQL query. */
+function formatMetricQuery(metricName: string): { query: string; description: string } {
+  if (metricName.endsWith("_bucket")) {
+    const root = metricName.replace(/_bucket$/, "");
+    return {
+      query: `histogram_quantile(0.99, sum by (le) (rate(${metricName}[5m])))`,
+      description: `${root} p99`,
+    };
+  }
+  if (metricName.endsWith("_total") || metricName.endsWith("_count")) {
+    return {
+      query: `sum(rate(${metricName}[5m]))`,
+      description: `${metricName.replace(/_total$|_count$/, "")} rate`,
+    };
+  }
+  return { query: metricName, description: metricName };
+}
+
+/** Score a metric name — lower = picked first. */
+function rankMetric(name: string, seriesCount: number): number {
+  // Penalize generic infra namespaces (we should have filtered these by
+  // prefix, but a metric like `kube_pod_ingestion_health_total` could slip in
+  // because of substring match in the regex). Down-rank rather than drop so
+  // we still get something if the service has nothing else.
+  let r = 0;
+  if (GENERIC_METRIC_PREFIXES.some((p) => name.startsWith(p))) r += 100;
+
+  // Errors/lag/queue/duration win their categories.
+  if (/(_errors_total|_failed_total|_rejected_total)$/.test(name)) r += 0;
+  else if (/(_duration_seconds_bucket|_latency_.*_bucket)$/.test(name)) r += 1;
+  else if (/(_queue_size|_lag|_backlog|_pending)$/.test(name)) r += 2;
+  else if (/(_total|_count)$/.test(name)) r += 3;
+  else r += 5;
+
+  // Tiebreak: prefer metrics that have only a moderate number of series —
+  // tens of series typically means per-pod/per-topic, useful. Thousands of
+  // series usually means a high-cardinality label we don't want by default.
+  if (seriesCount > 200) r += 10;
+  if (seriesCount > 1000) r += 50;
+
+  return r;
+}
+
+function parseCountByName(resultText: string): Array<{ name: string; seriesCount: number }> {
+  try {
+    // MCP results are commonly wrapped in {"content":[{"text":"<inner JSON>"}]};
+    // `unwrapMcpJson` peels both layers and returns the parsed inner object.
+    const obj = unwrapMcpJson(resultText) as unknown;
+    const rows: unknown[] =
+      (obj as { data?: { result?: unknown[] } })?.data?.result
+      ?? (obj as { result?: unknown[] })?.result
+      ?? (Array.isArray((obj as { data?: unknown })?.data) ? ((obj as { data: unknown[] }).data) : [])
+      ?? [];
+    const out: Array<{ name: string; seriesCount: number }> = [];
+    for (const row of rows) {
+      if (!row || typeof row !== "object") continue;
+      const r = row as { metric?: Record<string, string>; value?: [number, string] };
+      const name = r.metric?.["__name__"];
+      const v = r.value?.[1];
+      if (!name) continue;
+      const count = v ? parseFloat(v) : 0;
+      out.push({ name, seriesCount: Number.isFinite(count) ? count : 0 });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+async function enrichApplicationMetrics(
+  services: ValidatedServiceConfig[],
+  promTool: [string, Tool],
+  promDsUid: string | undefined,
+  config: ValidateStepConfig,
+): Promise<void> {
+  if (!promDsUid) {
+    logger.warn("enrich: no Prometheus datasourceUid available; skipping app-metric enrichment");
+    return;
+  }
+
+  let added = 0;
+  let totalCandidates = 0;
+  let totalFiltered = 0;
+  for (const service of services) {
+    throwIfDiscoveryAborted(config.abortSignal);
+
+    // Skip services where the LLM already emitted multiple metrics — trust it.
+    if (service.metrics.length > 1) continue;
+
+    const prefixes = derivePrefixCandidates(service.name).map((p) => `${p}.*`);
+    const regex = prefixes.join("|");
+    const query = `count by (__name__) ({__name__=~"${regex}"})`;
+
+    let resultText = "";
+    try {
+      const start = Date.now();
+      const raw = await promTool[1].execute!(buildPromQueryArgs(query, promDsUid), {} as any);
+      const duration = Date.now() - start;
+      resultText = typeof raw === "string" ? raw : JSON.stringify(raw);
+      config.onToolCall?.(promTool[0], { expr: query }, resultText, duration, undefined, "validation");
+    } catch (err) {
+      config.onToolCall?.(promTool[0], { expr: query }, undefined, 0, String(err), "validation");
+      continue;
+    }
+
+    const parsed = parseCountByName(resultText);
+    if (parsed.length === 0) {
+      logger.debug({ service: service.name, query, resultLen: resultText.length, resultPreview: resultText.slice(0, 200) }, "enrich: zero candidates from parseCountByName");
+      continue;
+    }
+    totalCandidates += parsed.length;
+
+    // Drop generic infra metrics by prefix; rank what remains.
+    const filtered = parsed.filter(
+      (m) => !GENERIC_METRIC_PREFIXES.some((p) => m.name.startsWith(p)),
+    );
+    totalFiltered += filtered.length;
+    if (filtered.length === 0) continue;
+
+    // Drop metrics whose name is exactly the existing metrics[0] root.
+    const existingRoots = new Set(
+      service.metrics.map((m) => m.query.replace(/^.*\b([a-z_][a-z_0-9]*)\b.*$/, "$1")),
+    );
+    const candidates: AppMetricCandidate[] = filtered
+      .filter((m) => !existingRoots.has(m.name))
+      .map((m) => ({ name: m.name, seriesCount: m.seriesCount, rank: rankMetric(m.name, m.seriesCount) }))
+      .sort((a, b) => a.rank - b.rank || b.seriesCount - a.seriesCount || a.name.localeCompare(b.name));
+
+    const picks = candidates.slice(0, APP_METRIC_LIMIT_PER_SERVICE);
+    if (picks.length === 0) continue;
+
+    for (const pick of picks) {
+      service.metrics.push(formatMetricQuery(pick.name));
+      added++;
+    }
+  }
+  logger.info({
+    servicesProcessed: services.length,
+    totalCandidates,
+    totalFiltered,
+    metricsAdded: added,
+    servicesEnriched: services.filter((s) => s.metrics.length > 1).length,
+  }, "enrich: done");
 }
 
 /**
@@ -266,16 +494,22 @@ function buildFallbackCandidates(rawServiceName: string): string[] {
 async function tryMetricFallback(
   promTool: [string, Tool],
   serviceName: string,
+  promDsUid: string | undefined,
   config: ValidateStepConfig,
 ): Promise<string | undefined> {
   for (const candidate of buildFallbackCandidates(serviceName)) {
     try {
       const start = Date.now();
-      const result = await promTool[1].execute!({ expr: candidate, queryType: "instant" }, {} as any);
+      const result = await promTool[1].execute!(buildPromQueryArgs(candidate, promDsUid), {} as any);
       const duration = Date.now() - start;
       const resultStr = typeof result === "string" ? result : JSON.stringify(result);
       config.onToolCall?.(promTool[0], { expr: candidate }, resultStr, duration, undefined, "validation");
-      if (resultStr.length > 10 && !resultStr.includes('"result":[]')) {
+      // Same MCP-error guard as Phase 2 — without it the fallback loop
+      // accepts the "Tool input validation failed" error string as a
+      // successful hit and stops searching for a real query.
+      if (resultStr.length > 10
+          && !resultStr.includes('"result":[]')
+          && !resultStr.includes('"error":true')) {
         return candidate;
       }
     } catch {
@@ -284,6 +518,26 @@ async function tryMetricFallback(
     }
   }
   return undefined;
+}
+
+/**
+ * Build the args object the grafana-mcp `query_prometheus` tool requires —
+ * `expr`, `queryType`, `datasourceUid`, plus a 5-minute time window for
+ * instant queries. Centralized so every caller (Phase 2 metric verification,
+ * tryMetricFallback, and Phase 3 enrichment) passes the same shape; the
+ * iter-5/6 fix proved that omitting any of these flips the response into
+ * `{"error":true,"message":"Tool input validation failed..."}`.
+ */
+function buildPromQueryArgs(expr: string, promDsUid: string | undefined): Record<string, string> {
+  const now = new Date();
+  const args: Record<string, string> = {
+    expr,
+    queryType: "instant",
+    startTime: new Date(now.getTime() - 5 * 60 * 1000).toISOString(),
+    endTime: now.toISOString(),
+  };
+  if (promDsUid) args["datasourceUid"] = promDsUid;
+  return args;
 }
 
 /**
@@ -442,6 +696,34 @@ function parsePodsList(raw: string): Array<{ name: string; namespace: string; la
 /**
  * Find the Loki datasource UID by querying list_datasources.
  */
+async function findPrometheusDatasourceUid(
+  listDsTool: [string, Tool] | undefined,
+  config: ValidateStepConfig,
+): Promise<string | undefined> {
+  if (!listDsTool) return undefined;
+  try {
+    const start = Date.now();
+    const result = await listDsTool[1].execute!({}, {} as any);
+    const duration = Date.now() - start;
+    const resultStr = typeof result === "string" ? result : JSON.stringify(result);
+    config.onToolCall?.(listDsTool[0], {}, resultStr, duration, undefined, "validation");
+
+    const dsData = unwrapMcpJson(result);
+    const datasources = Array.isArray(dsData) ? dsData : dsData?.datasources ?? [];
+    const prom = datasources.find((ds: any) =>
+      ds.type === "prometheus" || ds.typeName === "Prometheus" || ds.name?.toLowerCase().includes("prometheus") || ds.name?.toLowerCase() === "metrics"
+    );
+    if (prom?.uid) {
+      logger.debug(`Found Prometheus datasource: uid=${prom.uid}, name=${prom.name}`);
+      return prom.uid;
+    }
+    logger.warn(`No Prometheus datasource found in: ${JSON.stringify(datasources.map((d: any) => ({ name: d.name, type: d.type, uid: d.uid }))).slice(0, 500)}`);
+  } catch (err) {
+    logger.warn(`Failed to find Prometheus datasource: ${err}`);
+  }
+  return undefined;
+}
+
 async function findLokiDatasourceUid(
   listDsTool: [string, Tool] | undefined,
   config: ValidateStepConfig,

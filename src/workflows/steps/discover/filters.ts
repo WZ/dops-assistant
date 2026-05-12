@@ -3,9 +3,13 @@
  *
  * These predicates decide which services flow through to `services.yaml`:
  *   - `isExcludedService` honors the operator's `excludeServices` config
- *   - `isLowSignalInfrastructureService` drops shard sweeps and node agents
- *     (DaemonSets per-node, sharded StatefulSets) that would otherwise flood
- *     the registry without meaningful per-instance signal
+ *   - `isLowSignalInfrastructureService` drops per-node DaemonSet sweeps
+ *     (node agents, kube-proxy, etc.) that flood the registry without
+ *     meaningful per-instance signal
+ *
+ * StatefulSet shards (`*-shard\d+`) are NOT filtered — they're often the
+ * data-plane (ClickHouse shards, sharded DBs). Operators can hide spammy
+ * shards via `/api/services/hidden` if needed.
  *
  * These functions are the load-bearing recall filter — touched by PR #205's
  * kill-test fix that recovered 7 systematically-missed services. Future
@@ -40,7 +44,9 @@ export function isStatefulSetBackedService(service: ServiceConfig): boolean {
 
 export function isLowSignalInfrastructureService(service: ServiceConfig): boolean {
   const name = normalizeServiceName(service.name);
-  if (isStatefulSetBackedService(service) && /-shard\d+$/.test(name)) return true;
+  // StatefulSet shards are real production services (ClickHouse, sharded DBs).
+  // Keep them. The 2026-04 filter that dropped `*-shard\d+$` killed data-plane
+  // visibility on multi-shard stacks and is intentionally removed.
   if (!isDaemonSetBackedService(service)) return false;
   return (
     /^kube-(proxy|flannel(?:-ds-.+)?)$/.test(name) ||

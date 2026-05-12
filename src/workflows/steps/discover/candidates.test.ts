@@ -28,11 +28,16 @@ describe("discover deterministic candidate backfill", () => {
         logLabels: { namespace: "checkout", container_name: "checkout-api" },
       }),
     ]);
+    expect(deployment[0]?.restartQuery).toBe(
+      'rate(kube_pod_container_status_restarts_total{namespace="checkout",pod=~"checkout-api-[a-z0-9]+-[a-z0-9]+$"}[5m])',
+    );
     expect(catalog).toEqual([
       expect.objectContaining({
         name: "warehouse",
         source: "consul",
-        metricQuery: 'consul_health_service_status{service_name="warehouse"}',
+        // status="passing" + max by collapses the (node × status) cross-product
+        // so the per-service rule actually behaves like service_availability.
+        metricQuery: 'max by (service_name) (consul_health_service_status{service_name="warehouse",status="passing"})',
         logLabels: {},
       }),
     ]);
@@ -76,7 +81,11 @@ describe("discover deterministic candidate backfill", () => {
     ]);
   });
 
-  it("omits pod_restarts from statefulset/daemonset candidates (no statefulset/daemonset label on the restart counter)", () => {
+  it("emits pod_restarts for statefulset candidates via ordinal-anchored pod regex, but omits it for daemonsets", () => {
+    // StatefulSets name pods as <set>-<ordinal>; the anchored regex
+    // `pod=~"<set>-[0-9]+$"` catches every ordinal without false-matching
+    // sibling workloads. DaemonSets still lack a stable per-pod regex
+    // anchor (random pod-hash suffix), so they continue to omit the rule.
     const stsCandidates = new Map<string, ReturnType<typeof discoverStepTestHooks.extractDiscoveryCandidates>[number]>();
     for (const candidate of discoverStepTestHooks.extractDiscoveryCandidates(
       { expr: "count by (namespace, statefulset) (kube_statefulset_status_replicas_ready)" },
@@ -105,17 +114,24 @@ describe("discover deterministic candidate backfill", () => {
       [],
     );
 
-    expect(stsMerged.services.find((s) => s.name === "single-sts")?.probeRules.map((r) => r.name)).toEqual([
+    const sts = stsMerged.services.find((s) => s.name === "single-sts");
+    expect(sts?.probeRules.map((r) => r.name)).toEqual([
       "service_availability",
+      "pod_restarts",
       "log_errors",
     ]);
+    const stsRestart = sts?.probeRules.find((r) => r.name === "pod_restarts");
+    expect(stsRestart?.query).toBe(
+      'rate(kube_pod_container_status_restarts_total{namespace="data",pod=~"single-sts-[0-9]+$"}[5m])',
+    );
+
     expect(dsMerged.services.find((s) => s.name === "telemetry-collector")?.probeRules.map((r) => r.name)).toEqual([
       "service_availability",
       "log_errors",
     ]);
   });
 
-  it("drops shard-suffixed StatefulSets regardless of count", () => {
+  it("admits shard-suffixed StatefulSets — they're the data-plane on sharded stacks", () => {
     const candidates = new Map<string, ReturnType<typeof discoverStepTestHooks.extractDiscoveryCandidates>[number]>();
     const rows = Array.from({ length: 12 }, (_, i) => ({ namespace: "db", statefulset: `db-shard${i}` }));
     for (const candidate of discoverStepTestHooks.extractDiscoveryCandidates(
@@ -132,9 +148,12 @@ describe("discover deterministic candidate backfill", () => {
       [],
     );
 
-    // Shards filtered by the `-shard\d+$` regex in isLowSignalInfrastructureService,
-    // not by the (now-removed) blanket source-count skip.
-    expect(merged.services).toEqual([]);
+    // Shards are kept (regression of the 2026-04 `-shard\d+$` filter that
+    // killed ClickHouse shard visibility on stack 120). Operators hide
+    // spammy shards via /api/services/hidden instead.
+    expect(merged.services.map((s) => s.name).sort()).toEqual(
+      Array.from({ length: 12 }, (_, i) => `db-shard${i}`).sort(),
+    );
   });
 
   it("admits non-shard StatefulSets even with 12+ of them", () => {
@@ -182,7 +201,7 @@ describe("discover deterministic candidate backfill", () => {
     expect(merged.services.map((s) => s.name)).toEqual(["openebs-jiva-csi-controller"]);
   });
 
-  it("drops low-signal node agents and StatefulSet shards from LLM output", () => {
+  it("drops low-signal node agents but keeps StatefulSet shards from LLM output", () => {
     const merged = discoverStepTestHooks.mergeCandidatesIntoDiscoveryResult(
       {
         services: [
@@ -211,6 +230,8 @@ describe("discover deterministic candidate backfill", () => {
       [],
     );
 
-    expect(merged.services.map((service) => service.name)).toEqual(["checkout-api"]);
+    expect(merged.services.map((service) => service.name).sort()).toEqual(
+      ["ch-clickhouse-shard4", "checkout-api"],
+    );
   });
 });

@@ -172,11 +172,15 @@ export function matchResultsToServices(
 
   for (const entry of entries) {
     const metric = entry.metric ?? {};
-    // Candidate labels to match against service names (priority order)
+    // Candidate labels to match against service names (priority order).
+    // `service_name` is Consul's identity label — required so the 5th
+    // (consul_health_service_status) batch can resolve bare-metal services
+    // that have no kube_* presence.
     const candidates = [
       metric["deployment"],
       metric["statefulset"],
       metric["daemonset"],
+      metric["service_name"],
       metric["job"],
       metric["instance"],
       metric["service"],
@@ -362,19 +366,32 @@ export class ServiceHealthPoller {
       //     auto-investigations on server boot.
       //   - up metric (0 = scrape target unreachable, real outage): always
       //     fires onTransition, including on first poll.
-      const [deploymentEntries, statefulsetEntries, daemonsetEntries, upEntries] = await Promise.all([
+      // Consul bare-metal services (HDFS, Impala, Kudu, Hive, host-process
+      // workloads registered in Consul, etc.) don't
+      // appear in any kube_* batch and rarely surface as up{job=<name>}. The
+      // discover agent emits `consul_health_service_status{service_name="X"}`
+      // for them; without this 5th batch the poller cannot resolve any of them
+      // → permanent UNKNOWN in the UI. `max by (service_name) (...)` collapses
+      // the (passing × node) cross-product into one row per service that the
+      // existing `service_name` candidate match (matchResultsToServices) picks
+      // up: value=1 → healthy, value=0 → down.
+      const [deploymentEntries, statefulsetEntries, daemonsetEntries, upEntries, consulEntries] = await Promise.all([
         this.runQuery(queryTool, "kube_deployment_status_replicas", promDsUid),
         this.runQuery(queryTool, "kube_statefulset_status_replicas", promDsUid),
         this.runQuery(queryTool, "kube_daemonset_status_desired_number_scheduled", promDsUid),
         this.runQuery(queryTool, "up", promDsUid),
+        this.runQuery(queryTool, "max by (service_name) (consul_health_service_status{status=\"passing\"})", promDsUid),
       ]);
 
       // Match each batch separately, then merge with priority healthy > down > unknown.
+      // Consul batch behaves like `up`: a 0 means the service is currently NOT passing
+      // (critical or warning is active), which IS a real outage signal — non-silent.
       const batches = [
         { entries: deploymentEntries, silentOnFirstPoll: true },
         { entries: statefulsetEntries, silentOnFirstPoll: true },
         { entries: daemonsetEntries, silentOnFirstPoll: true },
         { entries: upEntries, silentOnFirstPoll: false },
+        { entries: consulEntries, silentOnFirstPoll: false },
       ];
       const newHealth = new Map<string, HealthStatus>();
       // Services whose DOWN status came from a non-silent batch (i.e. real

@@ -82,9 +82,9 @@ describe("buildDiscoverInstructions / availability metric guidance", () => {
   it("teaches pod_restarts selectors that disambiguate sibling-prefix services", () => {
     // The bare `pod=~"<svc>-.*"` form falsely matches sibling services that
     // share a name prefix (`api` matches `api-internal-*`). The fix steers
-    // toward exact-match labels (`container=`, `deployment=`) and anchored
-    // pod-name regexes (trailing `$`).
+    // toward exact container labels and anchored pod-name regexes (trailing `$`).
     expect(prompt).toMatch(/Service-specific selector required/i);
+    expect(prompt).toContain("does NOT have `deployment` or `statefulset` labels");
     expect(prompt).toMatch(/last-resort fallback/i);
     expect(prompt).toContain('container="');
     // Anchored pod-name regex (trailing `$`) must be present.
@@ -249,7 +249,39 @@ describe("buildDiscoverInstructions / layered structure (Option B)", () => {
     // labels on the bounding rows so the model can scan-read.
     expect(prompt).toMatch(/\| Priority\s+\| Selector/);
     expect(prompt).toMatch(/1 \(best\)/);
-    expect(prompt).toMatch(/4 \(last-resort fallback\)/);
+    expect(prompt).toMatch(/3 \(last-resort fallback\)/);
+  });
+
+  it("documents the Consul status='passing' filter so per-service metrics are interpretable", () => {
+    // Before this fix, the Consul row in Layer 6.1 said
+    //   "USE: consul_health_service_status — DO NOT USE: n/a"
+    // which is too vague: that metric returns 1 row per (node × status) and only
+    // the row whose status equals the current health has value=1. The discover
+    // agent dutifully emitted `consul_health_service_status{service_name="X"}`,
+    // the health poller couldn't interpret the multi-row result, and all 11
+    // bare-metal services on stack-120 stuck at UNKNOWN.
+    expect(prompt).toContain('consul_health_service_status{service_name="X",status="passing"}');
+    expect(prompt).toContain('max by (service_name)');
+    // The "DO NOT USE" cell explicitly calls out the bare query as broken.
+    expect(prompt).toContain('consul_health_service_status{service_name="X"}');
+  });
+
+  it("includes Layer 6.5 (application metrics, with deterministic enrichment) before LAYER 7", () => {
+    // Iter 1 made 6.5 a hard requirement with a per-service `count by (__name__)`
+    // probe; eval showed the LLM blew its iteration budget on those probes and
+    // missed the global service-name sweep (recall dropped 0.998 → 0.779).
+    // Iter 2 softens 6.5 to a brief note that defers app-metric enrichment to
+    // a deterministic post-discovery step; the LLM keeps its budget for the
+    // service sweep.
+    const section65 = prompt.indexOf("### 6.5 Application metrics");
+    const layer7 = prompt.indexOf("## LAYER 7: OUTPUT STRICTNESS");
+    expect(section65).toBeGreaterThan(-1);
+    expect(layer7).toBeGreaterThan(section65);
+    // The section names the metrics[0] vs metrics[1..] split and points at the
+    // deterministic enrichment step so the LLM doesn't try to do it itself.
+    expect(prompt).toMatch(/metrics\[1\.\.\]/);
+    expect(prompt).toMatch(/deterministic post-discovery step/);
+    expect(prompt).toMatch(/Layer 4 service-name sweep/);
   });
 
   it("appends the exclude list inside LAYER 2: CONSTRAINTS, not the strictness tail", () => {
