@@ -80,6 +80,40 @@ function detectWorkloadFromQuery(query: string): { kind: "deployment" | "statefu
 }
 
 /**
+ * Derive a per-service `pod=~"<workload>-.*$"`-style selector from log labels
+ * when the LLM's metrics[0] shape (e.g. `up{job="<svc>"}`) doesn't reveal a
+ * kube-state workload kind. Priority order matches discover-prompt
+ * Layer 6.3.B priority ladder:
+ *   1. container — exact kube_pod_container_status_restarts_total label
+ *   2. namespace + workload-name pod regex (anchored)
+ *
+ * Returns the selector body (without the surrounding `{}`), or null when
+ * no safe selector can be built. The anchored `$` on the pod regex is
+ * critical — without it, `pod=~"api-.*"` false-matches `api-internal-*`.
+ */
+function deriveRestartSelectorFromLogLabels(
+  serviceName: string,
+  rawLogLabels: unknown,
+): string | null {
+  if (!rawLogLabels || typeof rawLogLabels !== "object") return null;
+  const labels = rawLogLabels as Record<string, unknown>;
+  const container = typeof labels["container"] === "string" ? labels["container"] : undefined;
+  const namespace = typeof labels["namespace"] === "string" ? labels["namespace"] : undefined;
+
+  // Priority 1: container (Layer 6.3.B priority 2).
+  if (container) {
+    const parts = [`container="${container.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`];
+    if (namespace) parts.unshift(`namespace="${namespace.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`);
+    return parts.join(",");
+  }
+  // Priority 2: namespace + anchored pod regex (Layer 6.3.B priority 3).
+  if (namespace) {
+    return `namespace="${namespace.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}",pod=~"${serviceName}-.+$"`;
+  }
+  return null;
+}
+
+/**
  * Deterministic pod_restarts backfill. Mirrors the discover-prompt's
  * Layer 6.3.B priority ladder using the kube-state label (`deployment`
  * or `statefulset`). For statefulsets the selector is
@@ -92,6 +126,7 @@ function detectWorkloadFromQuery(query: string): { kind: "deployment" | "statefu
 function backfillPodRestarts(
   serviceName: string,
   rawMetrics: unknown,
+  rawLogLabels: unknown,
   probeRules: ProbeMetricRule[],
 ): void {
   if (probeRules.some((r) => r.name === "pod_restarts")) return;
@@ -99,12 +134,29 @@ function backfillPodRestarts(
   const first = rawMetrics[0] as Record<string, unknown> | undefined;
   const query = first && typeof first.query === "string" ? first.query.trim() : "";
   if (!query) return;
-  const workload = detectWorkloadFromQuery(query);
-  if (!workload) return;
 
-  const selector = workload.kind === "deployment"
-    ? `{deployment="${workload.name}"}`
-    : `{pod=~"${workload.name}-[0-9]+$"}`;
+  let selector: string | null = null;
+  let kind: string = "unknown";
+  // Priority 1: workload-kind selector from kube_*_status_* metric query.
+  const workload = detectWorkloadFromQuery(query);
+  if (workload) {
+    kind = workload.kind;
+    selector = workload.kind === "deployment"
+      ? `{deployment="${workload.name}"}`
+      : `{pod=~"${workload.name}-[0-9]+$"}`;
+  } else {
+    // Priority 2 (iter 9): when the LLM picked an `up{job=...}`-style metric
+    // (no kube-state label), fall back to log-label-derived selector. This
+    // recovers `pod_restarts` coverage on the LLM-bad-seed rounds where the
+    // discover agent took the simpler `up{}` path instead of kube-state.
+    const bodyFromLabels = deriveRestartSelectorFromLogLabels(serviceName, rawLogLabels);
+    if (bodyFromLabels) {
+      kind = "log-label-derived";
+      selector = `{${bodyFromLabels}}`;
+    }
+  }
+
+  if (!selector) return;
   probeRules.push({
     name: "pod_restarts",
     query: `rate(kube_pod_container_status_restarts_total${selector}[5m])`,
@@ -112,8 +164,8 @@ function backfillPodRestarts(
     consecutiveTicks: 2,
     source: "metrics",
   });
-  logger.debug({ service: serviceName, selector }, "discovery: backfilled pod_restarts rule");
-  quirkHit("backfill:pod-restarts", { service: serviceName, kind: workload.kind });
+  logger.debug({ service: serviceName, selector, kind }, "discovery: backfilled pod_restarts rule");
+  quirkHit("backfill:pod-restarts", { service: serviceName, kind });
 }
 
 /**
@@ -165,7 +217,7 @@ function validateDiscoveredServices(raw: unknown[]): ServiceConfig[] {
     }
     const rawProbeRules = Array.isArray(svc.probeRules) ? svc.probeRules : [];
     const probeRules = validateDiscoveredRules(rawProbeRules, `service.${svc.name}.probeRules`);
-    backfillPodRestarts(svc.name, svc.metrics, probeRules);
+    backfillPodRestarts(svc.name, svc.metrics, svc.logLabels, probeRules);
     backfillLogErrors(svc.name, svc.logLabels, probeRules);
     out.push({ ...(svc as ServiceConfig), probeRules });
   }

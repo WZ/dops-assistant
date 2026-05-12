@@ -90,9 +90,9 @@ describe("parsePrimaryOrReasoning — service-level backfills", () => {
       );
     });
 
-    it("does NOT backfill pod_restarts for bare-metal Consul services", () => {
-      // No deployment= / statefulset= label in metrics[0] → no safe selector → skip.
-      // Operator can still hand-add a rule; we just don't guess one wrong.
+    it("does NOT backfill pod_restarts for bare-metal Consul services (empty logLabels)", () => {
+      // No deployment= / statefulset= label in metrics[0], no logLabels →
+      // no safe selector → skip. Operator can still hand-add a rule.
       const services = parse({
         services: [{
           name: "hdfs-datanode",
@@ -106,6 +106,41 @@ describe("parsePrimaryOrReasoning — service-level backfills", () => {
       });
       const names = (services?.[0]?.probeRules ?? []).map((r) => r.name);
       expect(names).not.toContain("pod_restarts");
+    });
+
+    it("backfills pod_restarts from logLabels.container when metrics[0] is `up{job=...}` (iter 9)", () => {
+      // The LLM sometimes converges on `up{job=<name>}` instead of
+      // `kube_deployment_status_replicas_available{deployment=<name>}`. iter 9
+      // falls back to log-label-derived selectors so this path doesn't lose
+      // pod_restarts coverage on bad-seed runs.
+      const services = parse({
+        services: [{
+          name: "ingestion-server",
+          metrics: [{ query: 'up{job="ingestion-server"}', description: "up" }],
+          logLabels: { namespace: "default", container: "ingestion-server" },
+          probeRules: [],
+        }],
+      });
+      const restart = (services?.[0]?.probeRules ?? []).find((r) => r.name === "pod_restarts");
+      expect(restart).toBeDefined();
+      expect(restart?.query).toBe(
+        'rate(kube_pod_container_status_restarts_total{namespace="default",container="ingestion-server"}[5m])',
+      );
+    });
+
+    it("falls back to `namespace + pod=~<svc>-.+$` when logLabels has namespace but no container", () => {
+      const services = parse({
+        services: [{
+          name: "checkout-api",
+          metrics: [{ query: 'up{job="checkout-api"}', description: "up" }],
+          logLabels: { namespace: "shop" },
+          probeRules: [],
+        }],
+      });
+      const restart = (services?.[0]?.probeRules ?? []).find((r) => r.name === "pod_restarts");
+      expect(restart?.query).toBe(
+        'rate(kube_pod_container_status_restarts_total{namespace="shop",pod=~"checkout-api-.+$"}[5m])',
+      );
     });
 
     it("does NOT backfill pod_restarts when the LLM already emitted it", () => {
