@@ -28,6 +28,9 @@ describe("discover deterministic candidate backfill", () => {
         logLabels: { namespace: "checkout", container_name: "checkout-api" },
       }),
     ]);
+    expect(deployment[0]?.restartQuery).toBe(
+      'rate(kube_pod_container_status_restarts_total{namespace="checkout",pod=~"checkout-api-[a-z0-9]+-[a-z0-9]+$"}[5m])',
+    );
     expect(catalog).toEqual([
       expect.objectContaining({
         name: "warehouse",

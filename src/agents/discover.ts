@@ -252,16 +252,19 @@ one service. When multiple services share a namespace (e.g. several DBs in
 namespace and they all blame each other. Always narrow further when you have
 the data.
 
+\`kube_pod_container_status_restarts_total\` has \`namespace\`, \`pod\`, \`container\`,
+and \`uid\` labels. It does NOT have \`deployment\` or \`statefulset\` labels. Use
+pod-name regexes for workload owners, or exact container labels when available.
+
 Selector priority (use the FIRST that applies):
 
 | Priority    | Selector                                       | Notes                                             |
 |-------------|------------------------------------------------|---------------------------------------------------|
-| 1 (best)    | \`{deployment="<name>"}\`, etc.                | KSM-emitted workload label. Exact match.          |
-| 2           | \`{namespace=...,container="<workload>"}\`     | Exact container name.                             |
-| 3           | \`{namespace=...,pod=~"<workload>-...$"}\`     | Trailing \`$\` is CRITICAL — anchors the regex.   |
-| 4 (last-resort fallback) | \`{namespace=...}\`                | Only when namespace has exactly one workload.     |
+| 1 (best)    | \`{namespace=...,container="<workload>"}\`     | Exact container name.                             |
+| 2           | \`{namespace=...,pod=~"<workload>-...$"}\`     | Anchored workload pod regex.                      |
+| 3 (last-resort fallback) | \`{namespace=...}\`                | Only when namespace has exactly one workload.     |
 
-Priority-3 regex examples:
+Priority-2 regex examples:
 - Deployment:   \`pod=~"checkout-api-[a-f0-9]+-[a-z0-9]+$"\` (ReplicaSet hash + pod hash)
 - StatefulSet:  \`pod=~"stolon-keeper-[0-9]+$"\` (ordinal suffix)
 

@@ -82,9 +82,9 @@ describe("buildDiscoverInstructions / availability metric guidance", () => {
   it("teaches pod_restarts selectors that disambiguate sibling-prefix services", () => {
     // The bare `pod=~"<svc>-.*"` form falsely matches sibling services that
     // share a name prefix (`api` matches `api-internal-*`). The fix steers
-    // toward exact-match labels (`container=`, `deployment=`) and anchored
-    // pod-name regexes (trailing `$`).
+    // toward exact container labels and anchored pod-name regexes (trailing `$`).
     expect(prompt).toMatch(/Service-specific selector required/i);
+    expect(prompt).toContain("does NOT have `deployment` or `statefulset` labels");
     expect(prompt).toMatch(/last-resort fallback/i);
     expect(prompt).toContain('container="');
     // Anchored pod-name regex (trailing `$`) must be present.
@@ -249,7 +249,7 @@ describe("buildDiscoverInstructions / layered structure (Option B)", () => {
     // labels on the bounding rows so the model can scan-read.
     expect(prompt).toMatch(/\| Priority\s+\| Selector/);
     expect(prompt).toMatch(/1 \(best\)/);
-    expect(prompt).toMatch(/4 \(last-resort fallback\)/);
+    expect(prompt).toMatch(/3 \(last-resort fallback\)/);
   });
 
   it("documents the Consul status='passing' filter so per-service metrics are interpretable", () => {

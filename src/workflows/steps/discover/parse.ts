@@ -32,6 +32,32 @@ const logger = createLogger("discover");
  */
 const SAFE_RULE_NAME_RE = /^[^:]+$/;
 
+function promLabelEscape(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
+}
+
+function promRegexEscape(value: string): string {
+  return value.replace(/[\\^$*+?.()|[\]{}]/g, "\\$&");
+}
+
+function workloadPodRegex(kind: "deployment" | "statefulset", name: string): string {
+  const escaped = promRegexEscape(name);
+  return kind === "deployment"
+    ? `${escaped}-[a-z0-9]+-[a-z0-9]+$`
+    : `${escaped}-[0-9]+$`;
+}
+
+function buildPodRegexSelector(
+  kind: "deployment" | "statefulset",
+  name: string,
+  namespace: string | undefined,
+): string {
+  const parts: string[] = [];
+  if (namespace) parts.push(`namespace="${promLabelEscape(namespace)}"`);
+  parts.push(`pod=~"${promLabelEscape(workloadPodRegex(kind, name))}"`);
+  return `{${parts.join(",")}}`;
+}
+
 /**
  * Zod-validate LLM-written probe rules before they touch the registry or
  * the scan probe. Drops (and logs) any rule that fails shape validation
@@ -71,11 +97,12 @@ function validateDiscoveredRules(raw: unknown[], source: string): ProbeMetricRul
  * where `name` is the workload label value. Returns null when the query
  * shape doesn't reveal a workload.
  */
-function detectWorkloadFromQuery(query: string): { kind: "deployment" | "statefulset"; name: string } | null {
+function detectWorkloadFromQuery(query: string): { kind: "deployment" | "statefulset"; name: string; namespace?: string } | null {
+  const namespace = /\bnamespace="([^"\\]+)"/.exec(query)?.[1];
   const dep = /\bdeployment="([^"\\]+)"/.exec(query);
-  if (dep && dep[1]) return { kind: "deployment", name: dep[1] };
+  if (dep && dep[1]) return { kind: "deployment", name: dep[1], namespace };
   const sts = /\bstatefulset="([^"\\]+)"/.exec(query);
-  if (sts && sts[1]) return { kind: "statefulset", name: sts[1] };
+  if (sts && sts[1]) return { kind: "statefulset", name: sts[1], namespace };
   return null;
 }
 
@@ -102,13 +129,14 @@ function deriveRestartSelectorFromLogLabels(
 
   // Priority 1: container (Layer 6.3.B priority 2).
   if (container) {
-    const parts = [`container="${container.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`];
-    if (namespace) parts.unshift(`namespace="${namespace.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`);
+    const parts = [`container="${promLabelEscape(container)}"`];
+    if (namespace) parts.unshift(`namespace="${promLabelEscape(namespace)}"`);
     return parts.join(",");
   }
   // Priority 2: namespace + anchored pod regex (Layer 6.3.B priority 3).
   if (namespace) {
-    return `namespace="${namespace.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}",pod=~"${serviceName}-.+$"`;
+    const pattern = `${promRegexEscape(serviceName)}(-[0-9]+|-[a-z0-9]+-[a-z0-9]+)$`;
+    return `namespace="${promLabelEscape(namespace)}",pod=~"${promLabelEscape(pattern)}"`;
   }
   return null;
 }
@@ -141,9 +169,7 @@ export function backfillPodRestarts(
   const workload = detectWorkloadFromQuery(query);
   if (workload) {
     kind = workload.kind;
-    selector = workload.kind === "deployment"
-      ? `{deployment="${workload.name}"}`
-      : `{pod=~"${workload.name}-[0-9]+$"}`;
+    selector = buildPodRegexSelector(workload.kind, workload.name, workload.namespace);
   } else {
     // Priority 2 (iter 9): when the LLM picked an `up{job=...}`-style metric
     // (no kube-state label), fall back to log-label-derived selector. This
@@ -185,7 +211,7 @@ export function backfillLogErrors(
     .filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0);
   if (entries.length === 0) return;
   const selector = entries
-    .map(([k, v]) => `${k}="${v.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`)
+    .map(([k, v]) => `${k}="${promLabelEscape(v)}"`)
     .join(",");
   probeRules.push({
     name: "log_errors",

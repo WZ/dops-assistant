@@ -45,6 +45,10 @@ function promLabelEscape(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
+function promRegexEscape(value: string): string {
+  return value.replace(/[\\^$*+?.()|[\]{}]/g, "\\$&");
+}
+
 function selector(labels: Record<string, string | undefined>): string {
   const parts = Object.entries(labels)
     .filter((entry): entry is [string, string] => Boolean(entry[1]))
@@ -152,6 +156,9 @@ export function extractDiscoveryCandidates(
     const namespace = metric["namespace"];
     if (metric["deployment"]) {
       const name = metric["deployment"];
+      const restartSelector = namespace
+        ? `{namespace="${promLabelEscape(namespace)}",pod=~"${promLabelEscape(`${promRegexEscape(name)}-[a-z0-9]+-[a-z0-9]+$`)}"}`
+        : `{pod=~"${promLabelEscape(`${promRegexEscape(name)}-[a-z0-9]+-[a-z0-9]+$`)}"}`;
       out.push({
         name,
         source: "deployment",
@@ -159,7 +166,7 @@ export function extractDiscoveryCandidates(
         metricQuery: `kube_deployment_status_replicas_available${selector({ deployment: name, namespace })}`,
         metricDescription: "Deployment available replicas",
         logLabels: namespace ? { namespace, container_name: name } : { container_name: name },
-        restartQuery: `rate(kube_pod_container_status_restarts_total${selector({ deployment: name })}[5m])`,
+        restartQuery: `rate(kube_pod_container_status_restarts_total${restartSelector}[5m])`,
       });
     } else if (metric["statefulset"]) {
       const name = metric["statefulset"];

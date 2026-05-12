@@ -13,7 +13,7 @@ describe("parsePrimaryOrReasoning — service-level backfills", () => {
   // its own. Tests for it deleted alongside.
 
   describe("backfillPodRestarts (iter 7)", () => {
-    it("backfills deployment-flavored pod_restarts from metrics[0] when omitted", () => {
+    it("backfills deployment-flavored pod_restarts with namespace plus pod regex", () => {
       const services = parse({
         services: [{
           name: "checkout-api",
@@ -28,8 +28,9 @@ describe("parsePrimaryOrReasoning — service-level backfills", () => {
       const restart = (services?.[0]?.probeRules ?? []).find((r) => r.name === "pod_restarts");
       expect(restart).toBeDefined();
       expect(restart?.query).toBe(
-        'rate(kube_pod_container_status_restarts_total{deployment="checkout-api"}[5m])',
+        'rate(kube_pod_container_status_restarts_total{namespace="shop",pod=~"checkout-api-[a-z0-9]+-[a-z0-9]+$"}[5m])',
       );
+      expect(restart?.query).not.toContain('deployment="checkout-api"');
       expect(restart?.threshold).toEqual({ op: "gt", value: 0.033 });
       expect(restart?.consecutiveTicks).toBe(2);
     });
@@ -48,7 +49,7 @@ describe("parsePrimaryOrReasoning — service-level backfills", () => {
       });
       const restart = (services?.[0]?.probeRules ?? []).find((r) => r.name === "pod_restarts");
       expect(restart?.query).toBe(
-        'rate(kube_pod_container_status_restarts_total{pod=~"stolon-keeper-[0-9]+$"}[5m])',
+        'rate(kube_pod_container_status_restarts_total{namespace="db",pod=~"stolon-keeper-[0-9]+$"}[5m])',
       );
     });
 
@@ -101,7 +102,7 @@ describe("parsePrimaryOrReasoning — service-level backfills", () => {
       });
       const restart = (services?.[0]?.probeRules ?? []).find((r) => r.name === "pod_restarts");
       expect(restart?.query).toBe(
-        'rate(kube_pod_container_status_restarts_total{namespace="shop",pod=~"checkout-api-.+$"}[5m])',
+        'rate(kube_pod_container_status_restarts_total{namespace="shop",pod=~"checkout-api(-[0-9]+|-[a-z0-9]+-[a-z0-9]+)$"}[5m])',
       );
     });
 
