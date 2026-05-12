@@ -344,7 +344,10 @@ async function enrichApplicationMetrics(
   promTool: [string, Tool],
   config: ValidateStepConfig,
 ): Promise<void> {
+  logger.info({ serviceCount: services.length, toolName: promTool[0] }, "enrich: start app-metric enrichment");
   let added = 0;
+  let totalCandidates = 0;
+  let totalFiltered = 0;
   for (const service of services) {
     throwIfDiscoveryAborted(config.abortSignal);
 
@@ -368,12 +371,17 @@ async function enrichApplicationMetrics(
     }
 
     const parsed = parseCountByName(resultText);
-    if (parsed.length === 0) continue;
+    if (parsed.length === 0) {
+      logger.debug({ service: service.name, query, resultLen: resultText.length, resultPreview: resultText.slice(0, 200) }, "enrich: zero candidates from parseCountByName");
+      continue;
+    }
+    totalCandidates += parsed.length;
 
     // Drop generic infra metrics by prefix; rank what remains.
     const filtered = parsed.filter(
       (m) => !GENERIC_METRIC_PREFIXES.some((p) => m.name.startsWith(p)),
     );
+    totalFiltered += filtered.length;
     if (filtered.length === 0) continue;
 
     // Drop metrics whose name is exactly the existing metrics[0] root.
@@ -393,9 +401,13 @@ async function enrichApplicationMetrics(
       added++;
     }
   }
-  if (added > 0) {
-    logger.info({ servicesEnriched: services.filter((s) => s.metrics.length > 1).length, metricsAdded: added }, "discovery validation: app metrics enriched");
-  }
+  logger.info({
+    servicesProcessed: services.length,
+    totalCandidates,
+    totalFiltered,
+    metricsAdded: added,
+    servicesEnriched: services.filter((s) => s.metrics.length > 1).length,
+  }, "enrich: done");
 }
 
 /**
