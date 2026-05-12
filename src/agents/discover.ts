@@ -75,17 +75,6 @@ that the proactive scan probe can use without operator hand-editing.
        count by (job) (up)
        \`\`\`
 
-   **Truncation recovery (only on literal marker).** If any sweep response
-   ends with \`... (truncated from N chars)\`, the enumeration is INCOMPLETE
-   — tail rows (often operator-managed shards like \`*-shard0\`, \`*-shard1\`,
-   …) were dropped before you saw them. Re-run the SAME sweep query once
-   per non-system namespace from step 2's infra call:
-       \`count by (deployment) (kube_deployment_status_replicas{namespace="<ns>"})\`
-   Per-namespace responses stay under the cap. The per-namespace results
-   SUPERSEDE the truncated bare sweep for that metric — do NOT also count
-   rows from the truncated response. Trigger ONLY on the literal marker;
-   do NOT pre-emptively re-query when no marker is present.
-
 4. Don't miss APPLICATION services — infrastructure often dominates basic
    queries. Query workload-specific metrics for APIs, data processors, web
    servers.
