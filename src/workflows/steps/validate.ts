@@ -315,10 +315,13 @@ function rankMetric(name: string, seriesCount: number): number {
 
 function parseCountByName(resultText: string): Array<{ name: string; seriesCount: number }> {
   try {
-    const obj = JSON.parse(resultText) as unknown;
+    // MCP results are commonly wrapped in {"content":[{"text":"<inner JSON>"}]};
+    // `unwrapMcpJson` peels both layers and returns the parsed inner object.
+    const obj = unwrapMcpJson(resultText) as unknown;
     const rows: unknown[] =
       (obj as { data?: { result?: unknown[] } })?.data?.result
       ?? (obj as { result?: unknown[] })?.result
+      ?? (Array.isArray((obj as { data?: unknown })?.data) ? ((obj as { data: unknown[] }).data) : [])
       ?? [];
     const out: Array<{ name: string; seriesCount: number }> = [];
     for (const row of rows) {
