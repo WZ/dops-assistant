@@ -101,6 +101,13 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
   const listDsTool = findToolBySuffix(dashboardsTools, "list_datasources")
     ?? findToolBySuffix(metricsTools, "list_datasources");
   const lokiDsUid = await findLokiDatasourceUid(listDsTool, config);
+  // Prometheus UID is required by grafana-mcp `query_prometheus` (alongside
+  // startTime/endTime). Without it Phase 2's metric verification call and the
+  // tryMetricFallback path get an MCP "Tool input validation failed" error
+  // string back; the existing `metricsOk = !resultStr.includes('"result":[]')`
+  // heuristic false-positives that error as a successful query, so the
+  // operator never sees the broken-metric flag and the fallback never runs.
+  const promDsUid = await findPrometheusDatasourceUid(listDsTool, config);
 
   config.onIteration?.("validation", 0, config.services.length, "Enriching log labels from K8s...");
 
@@ -127,19 +134,28 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
 
     // Check metrics — and repair if the agent's pick returns empty.
     if (promTool && service.metrics.length > 0) {
+      const query = service.metrics[0].query;
       try {
-        const query = service.metrics[0].query;
         const start = Date.now();
-        const result = await promTool[1].execute!({ expr: query, queryType: "instant" }, {} as any);
+        const result = await promTool[1].execute!(buildPromQueryArgs(query, promDsUid), {} as any);
         const duration = Date.now() - start;
         const resultStr = typeof result === "string" ? result : JSON.stringify(result);
         config.onToolCall?.(promTool[0], { expr: query }, resultStr, duration, undefined, "validation");
 
-        metricsOk = resultStr.length > 10 && !resultStr.includes('"result":[]');
+        // Iter-6 added the `"error":true` check. Pre-iter-6, the
+        // `query_prometheus` MCP tool rejected every Phase 2 call with
+        // `{"error":true,"message":"Tool input validation failed..."}`
+        // because the args list omitted `datasourceUid`/`startTime`/`endTime`.
+        // The old `metricsOk = !resultStr.includes('"result":[]')` heuristic
+        // false-positived the error envelope as success and the fallback
+        // path never ran.
+        metricsOk = resultStr.length > 10
+          && !resultStr.includes('"result":[]')
+          && !resultStr.includes('"error":true');
         notes.push(metricsOk ? "metrics \u2713" : "metrics \u2717 no data");
       } catch (err) {
         notes.push("metrics \u2717 query failed");
-        config.onToolCall?.(promTool[0], { expr: service.metrics[0].query }, undefined, 0, String(err), "validation");
+        config.onToolCall?.(promTool[0], { expr: query }, undefined, 0, String(err), "validation");
       }
 
       // Verify-before-keep: the agent's metric pick returned empty. This is
@@ -150,7 +166,7 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
       // service's metrics[0] AND the paired service_availability probe
       // rule so the probe actually uses the working query next tick.
       if (!metricsOk) {
-        const replacement = await tryMetricFallback(promTool, service.name, config);
+        const replacement = await tryMetricFallback(promTool, service.name, promDsUid, config);
         if (replacement) {
           service.metrics[0] = { query: replacement, description: "validate-step fallback (original returned empty)" };
           syncServiceAvailabilityRule(service, replacement);
@@ -211,7 +227,7 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
   // then a quick scoring pass picks 3 informative metrics.
   if (promTool) {
     config.onIteration?.("validation", results.length, results.length, "Enriching app metrics...");
-    await enrichApplicationMetrics(results, promTool, config);
+    await enrichApplicationMetrics(results, promTool, promDsUid, config);
   }
 
   const verified = results.filter((r) => r.confidence === "verified").length;
@@ -342,21 +358,11 @@ function parseCountByName(resultText: string): Array<{ name: string; seriesCount
 async function enrichApplicationMetrics(
   services: ValidatedServiceConfig[],
   promTool: [string, Tool],
+  promDsUid: string | undefined,
   config: ValidateStepConfig,
 ): Promise<void> {
-  // The grafana-mcp `query_prometheus` tool requires `datasourceUid`,
-  // `startTime`, and `endTime` in its input schema. Without these the MCP
-  // returns `{"error":true,"message":"Tool input validation failed..."}` for
-  // every call and the function silently adds zero metrics. Resolve the
-  // Prometheus UID the same way `findLokiDatasourceUid` does for Loki —
-  // a single `list_datasources` call against the metrics-role MCP.
-  const metricsTools = await getToolsByRole(config.providers, "metrics").catch(() => ({}));
-  const listDsTool = findToolBySuffix(metricsTools as Record<string, Tool>, "list_datasources");
-  const promDsUid = await findPrometheusDatasourceUid(listDsTool, config);
-
-  logger.info({ serviceCount: services.length, toolName: promTool[0], promDsUid: promDsUid ? "set" : "missing" }, "enrich: start app-metric enrichment");
   if (!promDsUid) {
-    logger.warn("enrich: no Prometheus datasourceUid available, skipping app-metric enrichment");
+    logger.warn("enrich: no Prometheus datasourceUid available; skipping app-metric enrichment");
     return;
   }
 
@@ -373,25 +379,14 @@ async function enrichApplicationMetrics(
     const regex = prefixes.join("|");
     const query = `count by (__name__) ({__name__=~"${regex}"})`;
 
-    const now = new Date();
-    const startTime = new Date(now.getTime() - 5 * 60 * 1000).toISOString();
-    const endTime = now.toISOString();
-
     let resultText = "";
     try {
       const start = Date.now();
-      const raw = await promTool[1].execute!({
-        expr: query,
-        queryType: "instant",
-        datasourceUid: promDsUid,
-        startTime,
-        endTime,
-      }, {} as any);
+      const raw = await promTool[1].execute!(buildPromQueryArgs(query, promDsUid), {} as any);
       const duration = Date.now() - start;
       resultText = typeof raw === "string" ? raw : JSON.stringify(raw);
       config.onToolCall?.(promTool[0], { expr: query }, resultText, duration, undefined, "validation");
     } catch (err) {
-      logger.warn({ service: service.name, err: String(err) }, "enrich: query threw");
       config.onToolCall?.(promTool[0], { expr: query }, undefined, 0, String(err), "validation");
       continue;
     }
@@ -487,16 +482,22 @@ function buildFallbackCandidates(rawServiceName: string): string[] {
 async function tryMetricFallback(
   promTool: [string, Tool],
   serviceName: string,
+  promDsUid: string | undefined,
   config: ValidateStepConfig,
 ): Promise<string | undefined> {
   for (const candidate of buildFallbackCandidates(serviceName)) {
     try {
       const start = Date.now();
-      const result = await promTool[1].execute!({ expr: candidate, queryType: "instant" }, {} as any);
+      const result = await promTool[1].execute!(buildPromQueryArgs(candidate, promDsUid), {} as any);
       const duration = Date.now() - start;
       const resultStr = typeof result === "string" ? result : JSON.stringify(result);
       config.onToolCall?.(promTool[0], { expr: candidate }, resultStr, duration, undefined, "validation");
-      if (resultStr.length > 10 && !resultStr.includes('"result":[]')) {
+      // Same MCP-error guard as Phase 2 — without it the fallback loop
+      // accepts the "Tool input validation failed" error string as a
+      // successful hit and stops searching for a real query.
+      if (resultStr.length > 10
+          && !resultStr.includes('"result":[]')
+          && !resultStr.includes('"error":true')) {
         return candidate;
       }
     } catch {
@@ -505,6 +506,26 @@ async function tryMetricFallback(
     }
   }
   return undefined;
+}
+
+/**
+ * Build the args object the grafana-mcp `query_prometheus` tool requires —
+ * `expr`, `queryType`, `datasourceUid`, plus a 5-minute time window for
+ * instant queries. Centralized so every caller (Phase 2 metric verification,
+ * tryMetricFallback, and Phase 3 enrichment) passes the same shape; the
+ * iter-5/6 fix proved that omitting any of these flips the response into
+ * `{"error":true,"message":"Tool input validation failed..."}`.
+ */
+function buildPromQueryArgs(expr: string, promDsUid: string | undefined): Record<string, string> {
+  const now = new Date();
+  const args: Record<string, string> = {
+    expr,
+    queryType: "instant",
+    startTime: new Date(now.getTime() - 5 * 60 * 1000).toISOString(),
+    endTime: now.toISOString(),
+  };
+  if (promDsUid) args["datasourceUid"] = promDsUid;
+  return args;
 }
 
 /**
