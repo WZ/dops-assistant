@@ -96,7 +96,7 @@ export async function prepareDiscoveryStep(args: PrepareDiscoveryStepArgs): Prom
   // wrapToolsWithCallbacks must run even when the caller didn't wire an
   // onToolCall — its execute path applies coercePrometheusArgs and coerceLokiArgs,
   // which are load-bearing for cold-start discovery.
-  const { hintBlock: datasourceHints, uidMap: datasourceUidMap } = await fetchDatasourceHints(discoveryTools);
+  const { hintBlock: datasourceHints } = await fetchDatasourceHints(discoveryTools);
 
   // Cap each tool result so accumulated history doesn't blow past the model's
   // context window and trigger "max_tokens must be at least 1, got -N" from
@@ -106,7 +106,6 @@ export async function prepareDiscoveryStep(args: PrepareDiscoveryStepArgs): Prom
     discoveryTools,
     wrappedOnToolCall,
     "discovery",
-    datasourceUidMap,
     maxToolResultChars,
     recordRawDiscoveryToolResult,
   );

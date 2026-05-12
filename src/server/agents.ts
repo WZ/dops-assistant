@@ -486,7 +486,6 @@ export interface MastraAdapterDeps {
   providers: MastraProvider[];
   noHistory?: boolean;
   registryStore?: ServiceRegistryStore;
-  datasourceUidMap?: Map<string, string>;
   /**
    * Pair `db` + `stackId` to enable learned-pattern injection into planner
    * and synthesis prompts. The adapter binds them into a stack-scoped
@@ -569,7 +568,6 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
     projectRoot: deps.noHistory ? undefined : process.cwd(),
     useQuirkHandling: true,
     maxCharsPerSkill: config.skills?.maxCharsPerSkill,
-    datasourceUidMap: deps.datasourceUidMap,
     getSimilarPatterns: db && stackId
       ? (service, limit = 5) => db.findSimilarPatterns(stackId, service, limit)
       : undefined,

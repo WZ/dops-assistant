@@ -57,16 +57,6 @@ let mockDiscoverNeverSettles = false;
 const discoverGenerateSignals: AbortSignal[] = [];
 const discoverGenerateSignalStates: Array<{ sameAsFirst: boolean; abortedOnEntry: boolean }> = [];
 
-// Stall-recovery test plumbing. When `mockDiscoverStallThenRecover` is true,
-// the FIRST discover.generate() call returns empty text (the stall failure
-// mode); the SECOND returns parseable JSON (the recovery turn invoked by
-// runDiscoverStep). Each call also records its options so the test can
-// assert toolChoice: "none" on the recovery turn.
-let mockDiscoverStallThenRecover = false;
-let mockDiscoverEmptyArrayThenRecover = false;
-let mockDiscoverRecoveryFailsOnce = false;
-const discoverGenerateCalls: Array<{ promptType: "primary" | "recovery"; prompt: string; opts: any }> = [];
-
 vi.mock("@mastra/core/agent", () => ({
   Agent: class MockAgent {
     id: string;
@@ -103,37 +93,6 @@ vi.mock("@mastra/core/agent", () => ({
             });
             throw signal.reason;
           }
-        }
-        if (mockDiscoverStallThenRecover || mockDiscoverEmptyArrayThenRecover) {
-          // Recovery prompt is recognizable by its leading sentence — the
-          // primary prompt is the bare "Discover all monitored services..."
-          // sentence the production code passes to agent.generate().
-          const isRecovery = prompt.startsWith("You previously made");
-          discoverGenerateCalls.push({ promptType: isRecovery ? "recovery" : "primary", prompt, opts });
-          if (!isRecovery) {
-            // Simulate a tool call via onStepFinish so recoveryToolHistory
-            // populates — the recovery path requires non-empty history to
-            // fire.
-            opts?.onStepFinish?.({
-              toolResults: [{
-                toolName: "fake_tool",
-                args: { q: "x" },
-                result: { content: [{ text: '{"data":[{"metric":{"deployment":"svc-a"}}]}' }] },
-              }],
-            });
-            return { text: mockDiscoverEmptyArrayThenRecover ? "[]" : "" };
-          }
-          if (mockDiscoverRecoveryFailsOnce && discoverGenerateCalls.filter((call) => call.promptType === "recovery").length === 1) {
-            throw new Error("ECONNRESET recovery");
-          }
-          return {
-            text: JSON.stringify({
-              services: [
-                { name: "recovered-svc", metrics: [{ query: 'up{a="1"}', description: "" }], logLabels: {} },
-              ],
-              globalProbeRules: [],
-            }),
-          };
         }
         if (mockDiscoverNeverSettles) {
           return new Promise(() => {});
@@ -344,11 +303,8 @@ describe("runDiscoverStep — adversarial-review fixes (2026-04-22)", () => {
     mockDiscoverTimeoutFirstGenerate = false;
     mockDiscoverTimeoutAfterToolData = false;
     mockDiscoverNeverSettles = false;
-    mockDiscoverEmptyArrayThenRecover = false;
-    mockDiscoverRecoveryFailsOnce = false;
     discoverGenerateSignals.length = 0;
     discoverGenerateSignalStates.length = 0;
-    discoverGenerateCalls.length = 0;
     vi.useRealTimers();
   });
 
@@ -396,130 +352,9 @@ describe("runDiscoverStep — adversarial-review fixes (2026-04-22)", () => {
     expect(result.globalProbeRules).toEqual([]);
   });
 
-  it("backfills a global availability rule from repeated up labels", async () => {
-    mockDiscoverReplyOverride = JSON.stringify({
-      services: [
-        { name: "svc-a", metrics: [{ query: 'up{app="svc-a"}', description: "" }], logLabels: {}, probeRules: [] },
-        { name: "svc-b", metrics: [{ query: 'up{app="svc-b"}', description: "" }], logLabels: {}, probeRules: [] },
-        { name: "svc-c", metrics: [{ query: 'up{app="svc-c"} == 1', description: "" }], logLabels: {}, probeRules: [] },
-      ],
-      globalProbeRules: [],
-    });
-    const result = await runDiscovery(baseConfig);
-    expect(result.globalProbeRules).toHaveLength(1);
-    expect(result.globalProbeRules[0]).toMatchObject({
-      name: "app_availability",
-      query: 'up{app="{service}"}',
-      threshold: { op: "lt", value: 1 },
-      consecutiveTicks: 3,
-      source: "metrics",
-    });
-  });
-
-  it("backfills a global availability rule after validation repairs metric queries", async () => {
-    const { getToolsByRole } = await import("../mcp/provider.js");
-    const mocked = vi.mocked(getToolsByRole);
-    const promTool = {
-      execute: vi.fn(async (args: Record<string, unknown>) => {
-        const query = String(args.expr ?? args.query ?? "");
-        const ok = query === 'up{app="svc-a"}' || query === 'up{app="svc-b"}';
-        return { status: "success", data: { result: ok ? [{ metric: {}, value: [0, "1"] }] : [] } };
-      }),
-    };
-
-    mockDiscoverReplyOverride = JSON.stringify({
-      services: [
-        { name: "svc-a", metrics: [{ query: 'missing_metric{service="svc-a"}', description: "" }], logLabels: {}, probeRules: [] },
-        { name: "svc-b", metrics: [{ query: 'missing_metric{service="svc-b"}', description: "" }], logLabels: {}, probeRules: [] },
-      ],
-      globalProbeRules: [],
-    });
-
-    mocked.mockImplementation(async (_providers, role) => {
-      if (role === "metrics") return { grafana_query_prometheus: promTool as any };
-      return {};
-    });
-    try {
-      const result = await runDiscovery(baseConfig);
-      expect(result.services.map((svc) => svc.metrics[0]?.query)).toEqual([
-        'up{app="svc-a"}',
-        'up{app="svc-b"}',
-      ]);
-      expect(result.globalProbeRules).toHaveLength(1);
-      expect(result.globalProbeRules[0]).toMatchObject({
-        name: "app_availability",
-        query: 'up{app="{service}"}',
-        threshold: { op: "lt", value: 1 },
-        consecutiveTicks: 3,
-        source: "metrics",
-      });
-    } finally {
-      mocked.mockReset();
-      mocked.mockResolvedValue({ grafana_query_prometheus: {} });
-    }
-  });
-
-  it("backfills service_availability when the LLM omits it but metrics[0] exists", async () => {
-    // Real-world regression: gpt-oss-120b consistently skips the
-    // service_availability rule no matter how explicit the prompt gets. The
-    // rule is mechanically derivable from metrics[0].query, so
-    // validateDiscoveredServices prepends it deterministically.
-    mockDiscoverReplyOverride = JSON.stringify({
-      services: [
-        {
-          name: "svc-from-consul",
-          metrics: [{ query: 'consul_health_service_status{service_name="svc-from-consul"}', description: "" }],
-          logLabels: { container: "svc-from-consul" },
-          probeRules: [
-            // LLM wrote log_errors but NOT service_availability.
-            { name: "log_errors", query: 'sum(count_over_time({container="svc-from-consul"} |= `error` [15m]))', threshold: { op: "gt", value: 75 }, consecutiveTicks: 2, source: "logs" },
-          ],
-        },
-      ],
-      globalProbeRules: [],
-    });
-    const result = await runDiscovery(baseConfig);
-    expect(result.services).toHaveLength(1);
-    const svc = result.services[0]!;
-    const names = (svc.probeRules ?? []).map((r) => r.name);
-    expect(names).toContain("service_availability");
-    expect(names).toContain("log_errors");
-    const availability = (svc.probeRules ?? []).find((r) => r.name === "service_availability")!;
-    expect(availability.query).toBe('consul_health_service_status{service_name="svc-from-consul"}');
-    expect(availability.threshold).toEqual({ op: "lt", value: 1 });
-    expect(availability.consecutiveTicks).toBe(3);
-  });
-
-  it("does not backfill service_availability if metrics is empty", async () => {
-    mockDiscoverReplyOverride = JSON.stringify({
-      services: [
-        { name: "no-metrics-service", metrics: [], logLabels: {}, probeRules: [] },
-      ],
-      globalProbeRules: [],
-    });
-    const result = await runDiscovery(baseConfig);
-    const names = (result.services[0]?.probeRules ?? []).map((r) => r.name);
-    expect(names).not.toContain("service_availability");
-  });
-
-  it("does not double-backfill when the LLM already wrote service_availability", async () => {
-    mockDiscoverReplyOverride = JSON.stringify({
-      services: [
-        {
-          name: "svc",
-          metrics: [{ query: 'up{app="svc"}', description: "" }],
-          logLabels: {},
-          probeRules: [
-            { name: "service_availability", query: 'up{app="svc"}', threshold: { op: "lt", value: 1 }, consecutiveTicks: 3, source: "metrics" },
-          ],
-        },
-      ],
-      globalProbeRules: [],
-    });
-    const result = await runDiscovery(baseConfig);
-    const availRules = (result.services[0]?.probeRules ?? []).filter((r) => r.name === "service_availability");
-    expect(availRules).toHaveLength(1);
-  });
+  // backfill:service-availability / global-availability tests removed in 2026-05
+  // alongside the backfill code in src/workflows/steps/discover/parse.ts —
+  // 51 stress iters showed 0 fires; the LLM emits availability rules itself.
 
   it("passes a non-aborted AbortSignal to discover agent.generate when llmCallMs is set", async () => {
     lastDiscoverGenerateOpts.value = undefined;
@@ -601,73 +436,10 @@ describe("runDiscoverStep — adversarial-review fixes (2026-04-22)", () => {
     expect(phases[phases.length - 1]).toBe("complete-failed");
   });
 
-  // Regression: gpt-oss-120b on saturated context sometimes stops calling
-  // tools AND emits 0 chars of synthesis text. The prepareStep wind-down
-  // doesn't help (model exits the agent loop before the wind-down step
-  // fires), so runDiscoverStep manually invokes a follow-up call with
-  // toolChoice: "none" and the captured tool data inline.
-  it("invokes a stall-recovery follow-up when the primary attempt returns empty text", async () => {
-    mockDiscoverStallThenRecover = true;
-    discoverGenerateCalls.length = 0;
-    try {
-      const result = await runDiscovery(baseConfig);
-      // Both calls fired: primary (empty) + recovery (JSON).
-      expect(discoverGenerateCalls).toHaveLength(2);
-      expect(discoverGenerateCalls[0]!.promptType).toBe("primary");
-      expect(discoverGenerateCalls[1]!.promptType).toBe("recovery");
-      // Recovery turn must disable tools — that's the whole point of the
-      // intervention; the model already decided not to call more tools and
-      // we don't want to give it the option to backtrack.
-      expect(discoverGenerateCalls[1]!.opts?.toolChoice).toBe("none");
-      expect(discoverGenerateCalls[1]!.prompt).toContain("<untrusted_tool_result>");
-      expect(discoverGenerateCalls[1]!.prompt).toContain("</untrusted_tool_result>");
-      // Service recovered from the synthetic JSON.
-      expect(result.services).toHaveLength(1);
-      expect(result.services[0]!.name).toBe("recovered-svc");
-    } finally {
-      mockDiscoverStallThenRecover = false;
-      discoverGenerateCalls.length = 0;
-    }
-  });
-
-  it("invokes recovery when a tool-using primary attempt returns an empty array", async () => {
-    mockDiscoverEmptyArrayThenRecover = true;
-    discoverGenerateCalls.length = 0;
-    try {
-      const result = await runDiscovery(baseConfig);
-      expect(result.services).toHaveLength(1);
-      expect(result.services[0]!.name).toBe("recovered-svc");
-      expect(discoverGenerateCalls.map((c) => c.promptType)).toEqual(["primary", "recovery"]);
-      expect(discoverGenerateCalls[1]!.opts?.toolChoice).toBe("none");
-    } finally {
-      mockDiscoverEmptyArrayThenRecover = false;
-      discoverGenerateCalls.length = 0;
-    }
-  });
-
-  it("forwards stall-recovery retry callbacks", async () => {
-    mockDiscoverStallThenRecover = true;
-    mockDiscoverRecoveryFailsOnce = true;
-    discoverGenerateCalls.length = 0;
-    const retries: Array<{ attempt: number; maxRetries: number; reason: string }> = [];
-    try {
-      const result = await runDiscovery({
-        ...baseConfig,
-        llmRetry: { maxAttempts: 2, initialDelayMs: 1, maxDelayMs: 1, jitterPercent: 0 },
-        onRetry: (attempt, maxRetries, reason) => retries.push({ attempt, maxRetries, reason }),
-      });
-
-      expect(result.services[0]!.name).toBe("recovered-svc");
-      expect(discoverGenerateCalls.map((call) => call.promptType)).toEqual(["primary", "recovery", "recovery"]);
-      expect(retries).toEqual([
-        { attempt: 1, maxRetries: 2, reason: "ECONNRESET recovery" },
-      ]);
-    } finally {
-      mockDiscoverStallThenRecover = false;
-      mockDiscoverRecoveryFailsOnce = false;
-      discoverGenerateCalls.length = 0;
-    }
-  });
+  // stall-recovery tests removed in 2026-05 alongside the recovery code in
+  // src/workflows/steps/discover/stall-recovery.ts — 51 stress iters showed
+  // 0 fires; the timeout-fallback path + deterministic-merge rescue handle
+  // the same failure modes without a second LLM call.
 
   // Regression: the OpenAI-compatible gateway rejects requests with
   // "max_tokens must be at least 1, got -N" when prompt_tokens plus the

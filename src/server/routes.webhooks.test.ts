@@ -69,7 +69,6 @@ function makeApp(opts: MakeAppOptions = {}): TestCtx {
     serviceRegistry: { load: () => services },
     providerRegistry: {
       getProviders: () => opts.hasProviders ? [{ name: "mock" }] : [],
-      buildDatasourceUidMap: () => new Map(),
       getAll: () => [],
     },
   } as any);

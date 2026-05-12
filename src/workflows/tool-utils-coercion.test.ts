@@ -24,18 +24,18 @@ describe("wrapToolsWithCallbacks — end-to-end coercion", () => {
     const wrapped = wrapToolsWithCallbacks(tools, undefined, "test");
     // Invoke the wrapped tool the way Mastra would: tool.execute(inputData, ctx)
     const result = await wrapped.grafana_query_prometheus.execute(
-      { datasourceUid: "prometheus", expr: "up", queryType: "instant",
-        startTime: null, endTime: null, stepSeconds: null },
+      { datasourceUid: "prometheus", expr: "up", startTime: "now", endTime: "now",
+        queryType: null, stepSeconds: null },
       { mastra: {} } as any,
     );
 
     expect(result).toEqual({ ok: true, sawArgs: expect.anything() });
     expect(innerExecute).toHaveBeenCalledTimes(1);
     const [seenArgs] = innerExecute.mock.calls[0]!;
-    // The inner tool must see coerced, non-null values.
-    expect(seenArgs.startTime).not.toBeNull();
-    expect(seenArgs.endTime).not.toBeNull();
+    // stepSeconds + queryType still get coerced (CANARY defenses); startTime/endTime
+    // coercion was removed in 2026-05 — model reliably supplies both fields now.
     expect(seenArgs.stepSeconds).toBe(0);
+    expect(seenArgs.queryType).toBe("instant");
   });
 
   it("strips the Mastra tool marker so Mastra treats it as a Vercel tool", () => {
@@ -92,11 +92,12 @@ describe("wrapToolsWithCallbacks — end-to-end coercion", () => {
     );
 
     const schema = (wrapped.grafana_query_prometheus as any).inputSchema;
-    expect(schema.required).toEqual(["datasourceUid", "expr"]);
-    expect(schema.properties.startTime.type).toEqual(["string", "null"]);
-    expect(schema.properties.endTime.type).toEqual(["string", "null"]);
+    // startTime/endTime no longer relaxed — their null-coerce was removed in 2026-05.
+    expect(schema.required).toEqual(["datasourceUid", "expr", "startTime", "endTime"]);
     expect(schema.properties.stepSeconds.type).toEqual(["integer", "null"]);
     expect(schema.properties.queryType.type).toEqual(["string", "null"]);
+    expect(schema.properties.startTime.type).toBe("string");
+    expect(schema.properties.endTime.type).toBe("string");
     expect(schema.properties.expr.type).toBe("string");
   });
 
@@ -121,109 +122,9 @@ describe("wrapToolsWithCallbacks — end-to-end coercion", () => {
     expect((wrapped.grafana_query_loki_logs as any).inputSchema).toBe(inputSchema);
   });
 
-  it("coerces hallucinated datasourceUid short name to real UID", async () => {
-    const innerExecute = vi.fn(async (args: any) => ({ ok: true, sawArgs: args }));
-    const tools = {
-      grafana_query_prometheus: {
-        id: "grafana_query_prometheus",
-        inputSchema: { properties: {} },
-        execute: innerExecute,
-      },
-    };
-    const uidMap = new Map([["prometheus", "abc-real-uid-123"]]);
-
-    const wrapped = wrapToolsWithCallbacks(tools, undefined, "test", uidMap);
-    await wrapped.grafana_query_prometheus.execute(
-      { datasourceUid: "prometheus", expr: "up" },
-      {} as any,
-    );
-
-    const [seenArgs] = innerExecute.mock.calls[0]!;
-    expect(seenArgs.datasourceUid).toBe("abc-real-uid-123");
-  });
-
-  it("leaves datasourceUid unchanged when it already matches the real UID", async () => {
-    const innerExecute = vi.fn(async (args: any) => ({ ok: true, sawArgs: args }));
-    const tools = {
-      grafana_query_prometheus: {
-        id: "grafana_query_prometheus",
-        inputSchema: { properties: {} },
-        execute: innerExecute,
-      },
-    };
-    const uidMap = new Map([["prometheus", "abc-real-uid-123"]]);
-
-    const wrapped = wrapToolsWithCallbacks(tools, undefined, "test", uidMap);
-    await wrapped.grafana_query_prometheus.execute(
-      { datasourceUid: "abc-real-uid-123", expr: "up" },
-      {} as any,
-    );
-
-    const [seenArgs] = innerExecute.mock.calls[0]!;
-    expect(seenArgs.datasourceUid).toBe("abc-real-uid-123");
-  });
-
-  it("passes through unknown datasourceUid values without coercion", async () => {
-    const innerExecute = vi.fn(async (args: any) => ({ ok: true, sawArgs: args }));
-    const tools = {
-      grafana_query_prometheus: {
-        id: "grafana_query_prometheus",
-        inputSchema: { properties: {} },
-        execute: innerExecute,
-      },
-    };
-    const uidMap = new Map([["prometheus", "abc-real-uid-123"]]);
-
-    const wrapped = wrapToolsWithCallbacks(tools, undefined, "test", uidMap);
-    await wrapped.grafana_query_prometheus.execute(
-      { datasourceUid: "some-other-uid", expr: "up" },
-      {} as any,
-    );
-
-    const [seenArgs] = innerExecute.mock.calls[0]!;
-    expect(seenArgs.datasourceUid).toBe("some-other-uid");
-  });
-
-  it("skips datasourceUid coercion when map is undefined", async () => {
-    const innerExecute = vi.fn(async (args: any) => ({ ok: true, sawArgs: args }));
-    const tools = {
-      grafana_query_prometheus: {
-        id: "grafana_query_prometheus",
-        inputSchema: { properties: {} },
-        execute: innerExecute,
-      },
-    };
-
-    const wrapped = wrapToolsWithCallbacks(tools, undefined, "test");
-    await wrapped.grafana_query_prometheus.execute(
-      { datasourceUid: "prometheus", expr: "up" },
-      {} as any,
-    );
-
-    const [seenArgs] = innerExecute.mock.calls[0]!;
-    expect(seenArgs.datasourceUid).toBe("prometheus");
-  });
-
-  it("does not coerce datasourceUid on non-grafana tools", async () => {
-    const innerExecute = vi.fn(async (args: any) => ({ ok: true, sawArgs: args }));
-    const tools = {
-      k8s_pods_list: {
-        id: "k8s_pods_list",
-        inputSchema: { properties: {} },
-        execute: innerExecute,
-      },
-    };
-    const uidMap = new Map([["prometheus", "abc-real-uid-123"]]);
-
-    const wrapped = wrapToolsWithCallbacks(tools, undefined, "test", uidMap);
-    await wrapped.k8s_pods_list.execute(
-      { datasourceUid: "prometheus", namespace: "default" },
-      {} as any,
-    );
-
-    const [seenArgs] = innerExecute.mock.calls[0]!;
-    expect(seenArgs.datasourceUid).toBe("prometheus");
-  });
+  // uid-hallucination:coerced tests removed in 2026-05 alongside the
+  // wrapper-level UID rewrite — 51 stress iters showed 0 fires;
+  // `datasource-hints:emitted` prevents the failure mode upstream.
 
   it("coerces queryType: null to 'instant'", async () => {
     const innerExecute = vi.fn(async (args: any) => ({ ok: true, sawArgs: args }));
@@ -265,7 +166,7 @@ describe("wrapToolsWithCallbacks — end-to-end coercion", () => {
     expect(seenArgs.queryType).toBe("range");
   });
 
-  it("coerceLokiArgs drops stepSeconds and forces direction=backward", async () => {
+  it("coerceLokiArgs forces direction=backward and bumps limit", async () => {
     const innerExecute = vi.fn(async (args: any) => ({ ok: true, sawArgs: args }));
     const tools = {
       grafana_query_loki_logs: {
@@ -278,13 +179,12 @@ describe("wrapToolsWithCallbacks — end-to-end coercion", () => {
     const wrapped = wrapToolsWithCallbacks(tools, undefined, "test");
     await wrapped.grafana_query_loki_logs.execute(
       { datasourceUid: "loki", logql: '{app="foo"}', direction: "forward",
-        limit: 20, stepSeconds: 300 },
+        limit: 20 },
       {} as any,
     );
 
     const [seenArgs] = innerExecute.mock.calls[0]!;
     expect(seenArgs.direction).toBe("backward");
     expect(seenArgs.limit).toBe(50);
-    expect(seenArgs).not.toHaveProperty("stepSeconds");
   });
 });

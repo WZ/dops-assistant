@@ -293,7 +293,7 @@ async function main() {
 
     // Create agents lazily for the investigation
     const providers = ctx.providerRegistry.getProviders();
-    createMastraAdapters({ config, providers, registryStore: ctx.serviceRegistry, datasourceUidMap: ctx.providerRegistry.buildDatasourceUidMap(), db, stackId })
+    createMastraAdapters({ config, providers, registryStore: ctx.serviceRegistry, db, stackId })
       .then(({ investigationAgent }) => {
         const runner = new InvestigationRunner({ db, investigationAgent, skillStore, globalOnComplete });
         return runner.run({
@@ -375,7 +375,6 @@ async function main() {
       config,
       providers,
       registryStore: ctx.serviceRegistry,
-      datasourceUidMap: ctx.providerRegistry.buildDatasourceUidMap(),
       db,
       stackId,
     })
@@ -451,7 +450,7 @@ async function main() {
       }, "ScanScheduler: triggering auto-investigate");
 
       const providers = ctx.providerRegistry.getProviders();
-      createMastraAdapters({ config, providers, registryStore: ctx.serviceRegistry, datasourceUidMap: ctx.providerRegistry.buildDatasourceUidMap(), db, stackId })
+      createMastraAdapters({ config, providers, registryStore: ctx.serviceRegistry, db, stackId })
         .then(({ investigationAgent }) => {
           const runner = new InvestigationRunner({ db, investigationAgent, skillStore, globalOnComplete });
           return runner.run({
@@ -538,7 +537,7 @@ async function main() {
         const defaultStackId = stackManager.getDefaultStackId();
         const defaultCtx = stackManager.getDefaultContext();
         const providers = defaultCtx.providerRegistry.getProviders();
-        const { investigationAgent } = await createMastraAdapters({ config, providers, registryStore: defaultCtx.serviceRegistry, datasourceUidMap: defaultCtx.providerRegistry.buildDatasourceUidMap(), db, stackId: defaultStackId });
+        const { investigationAgent } = await createMastraAdapters({ config, providers, registryStore: defaultCtx.serviceRegistry, db, stackId: defaultStackId });
         const runner = new InvestigationRunner({ db, investigationAgent, skillStore, globalOnComplete });
         defaultWebhookDelegate = createWebhookHandler({
           runner,

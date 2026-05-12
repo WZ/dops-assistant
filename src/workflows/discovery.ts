@@ -1,4 +1,4 @@
-import { backfillGlobalAvailabilityRules, runDiscoverStep } from "./steps/discover/index.js";
+import { runDiscoverStep } from "./steps/discover/index.js";
 import { runValidateStep } from "./steps/validate.js";
 import { createLogger } from "../logger.js";
 import type { LanguageModel } from "ai";
@@ -103,7 +103,6 @@ export async function runDiscovery(config: DiscoveryWorkflowConfig): Promise<Dis
         abortSignal: config.abortSignal,
       });
       const globalProbeRules = [...discovered.globalProbeRules];
-      backfillGlobalAvailabilityRules(validated, globalProbeRules);
       result = { services: validated, globalProbeRules };
       terminalPhase = "complete";
     } catch (err) {

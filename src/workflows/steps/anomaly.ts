@@ -51,7 +51,7 @@ export function buildAnomalyStep(config: WorkflowConfig) {
         if (config.readOnlyTools) {
           rawTools = filterToReadOnlyTools(rawTools);
         }
-        const tools = wrapToolsWithCallbacks(rawTools, config.onToolCall, undefined, config.datasourceUidMap);
+        const tools = wrapToolsWithCallbacks(rawTools, config.onToolCall, undefined);
 
         const agent = createAnomalyDetectorAgent({
           model: config.model,

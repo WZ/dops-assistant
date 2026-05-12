@@ -2198,7 +2198,6 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       config,
       providers,
       registryStore: ctx.serviceRegistry,
-      datasourceUidMap: ctx.providerRegistry.buildDatasourceUidMap(),
       db,
       stackId,
     });
