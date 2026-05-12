@@ -6,6 +6,7 @@ import type { OnToolCallEnriched, OnIteration } from "../../types/agent-interfac
 import type { Tool } from "@mastra/core/tools";
 import { createLogger } from "../../logger.js";
 import { throwIfDiscoveryAborted } from "./discover/index.js";
+import { backfillPodRestarts, backfillLogErrors } from "./discover/parse.js";
 
 const logger = createLogger("validate");
 
@@ -119,6 +120,17 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
   const labelMap = await buildLabelMap(lokiLabelNamesTool, lokiLabelValuesTool, lokiDsUid, config, SERVICE_LABEL_KEYS);
   const enriched = enrichLogLabels(k8sEnriched, labelMap);
   throwIfDiscoveryAborted(config.abortSignal);
+
+  // Phase 1b (iter 10): re-run the parse-time backfills now that logLabels
+  // are populated by K8s + Loki. The parse-time backfills run before any
+  // enrichment, so when the LLM emits `logLabels: {}` they skip log_errors
+  // and the logLabel-derived pod_restarts fallback. Re-running here closes
+  // the gap — a bad-seed LLM run that produces empty logLabels still ends
+  // up with full 3-rule coverage in the registry.
+  for (const service of enriched) {
+    backfillPodRestarts(service.name, service.metrics, service.logLabels, service.probeRules ?? (service.probeRules = []));
+    backfillLogErrors(service.name, service.logLabels, service.probeRules ?? []);
+  }
 
   // Phase 2: Validate metrics and logs for each service
   const results: ValidatedServiceConfig[] = [];

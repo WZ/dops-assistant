@@ -123,7 +123,7 @@ function deriveRestartSelectorFromLogLabels(
  * reveals a deployment or statefulset workload. Bare-metal Consul services
  * and DaemonSets fall through and leave the rule unset.
  */
-function backfillPodRestarts(
+export function backfillPodRestarts(
   serviceName: string,
   rawMetrics: unknown,
   rawLogLabels: unknown,
@@ -174,7 +174,7 @@ function backfillPodRestarts(
  * discover-prompt Layer 6.3.C). Only fires when the LLM omitted log_errors
  * AND emitted at least one logLabel.
  */
-function backfillLogErrors(
+export function backfillLogErrors(
   serviceName: string,
   rawLogLabels: unknown,
   probeRules: ProbeMetricRule[],
