@@ -51,8 +51,6 @@ export interface WorkflowConfig {
   onIteration?: (phase: string, iteration: number, maxIterations: number, label: string) => void;
   onToolCall?: (name: string, args: Record<string, unknown>, result?: string, duration?: number, error?: string, phase?: string) => void;
   onTokenUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
-  /** Short-name → real datasource UID map for intercepting LLM hallucinations. */
-  datasourceUidMap?: Map<string, string>;
   /**
    * Fetch up-to-N learned `incident_patterns` rows scoped to the adapter's
    * stack, by service. Wired in by the adapter factory so workflow steps

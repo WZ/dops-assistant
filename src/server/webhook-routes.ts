@@ -43,7 +43,6 @@ export function createStackScopedWebhookHandler(deps: StackScopedWebhookHandlerD
       config: deps.config,
       providers: stackProviders,
       registryStore: ctx.serviceRegistry,
-      datasourceUidMap: ctx.providerRegistry.buildDatasourceUidMap(),
       db: deps.db,
       stackId: stackRow.id,
     });

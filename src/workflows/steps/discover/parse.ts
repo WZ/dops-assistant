@@ -6,9 +6,10 @@
  *   - parses the JSON text or reasoning_content fallback (gpt-oss quirk)
  *   - Zod-validates each rule against `ProbeMetricRuleSchema`
  *   - drops rules with unsafe names (`:` is reserved for scheduler state-key encoding)
- *   - deterministically backfills `service_availability` per-service when the
- *     LLM forgot, and a global `{label}_availability` rule when N services
- *     share a `up{label}` pattern
+ *
+ * `backfillServiceAvailability` / `backfillGlobalAvailabilityRules` were
+ * removed in 2026-05 — 51 stress iters showed 0 fires; the model emits
+ * availability rules reliably on its own.
  *
  * Pure transformations — no I/O, no orchestration state.
  */
@@ -30,8 +31,6 @@ const logger = createLogger("discover");
  * an embedded colon would silently corrupt state-key parsing.
  */
 const SAFE_RULE_NAME_RE = /^[^:]+$/;
-
-const PROM_LABEL_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /**
  * Zod-validate LLM-written probe rules before they touch the registry or
@@ -67,46 +66,6 @@ function validateDiscoveredRules(raw: unknown[], source: string): ProbeMetricRul
 }
 
 /**
- * Deterministic backfill of the `service_availability` probe rule.
- *
- * The prompt asks the LLM to promote the service's `metrics[0].query` into
- * a `service_availability` rule (the query is, by definition, known to
- * identify this specific service). In practice LLM compliance on this is
- * unreliable — a real run on gpt-oss-120b against an 82-service stack
- * produced 0 of 61 services with the rule, and the remaining blind spots
- * were exactly the services whose global availability rule silently missed.
- *
- * The rule is mechanically derivable — query = metrics[0].query, threshold
- * = lt 1, consecutiveTicks = 3 (matches globalProbeRule hysteresis). There
- * is no discovery-time judgment the LLM needs to contribute beyond picking
- * metrics[0], which it already did. So we do it here, deterministically.
- *
- * Pre-prepended (not appended) so operators reading services.yaml see the
- * cross-workload availability signal first, before the namespace-scoped
- * pod_restarts / log-source rules.
- */
-function backfillServiceAvailability(
-  serviceName: string,
-  rawMetrics: unknown,
-  probeRules: ProbeMetricRule[],
-): void {
-  if (probeRules.some((r) => r.name === "service_availability")) return;
-  if (!Array.isArray(rawMetrics) || rawMetrics.length === 0) return;
-  const first = rawMetrics[0] as Record<string, unknown> | undefined;
-  const query = first && typeof first.query === "string" ? first.query.trim() : "";
-  if (!query) return;
-  probeRules.unshift({
-    name: "service_availability",
-    query,
-    threshold: { op: "lt", value: 1 },
-    consecutiveTicks: 3,
-    source: "metrics",
-  });
-  logger.debug({ service: serviceName, query }, "discovery: backfilled service_availability rule from metrics[0]");
-  quirkHit("backfill:service-availability", { service: serviceName });
-}
-
-/**
  * Best-effort shape check for an LLM-written services array. The full
  * `ServiceSchema` is Zod-validated downstream via runValidateStep, which
  * drops services that fail shape. Here we only scrub the `probeRules`
@@ -125,78 +84,9 @@ function validateDiscoveredServices(raw: unknown[]): ServiceConfig[] {
     }
     const rawProbeRules = Array.isArray(svc.probeRules) ? svc.probeRules : [];
     const probeRules = validateDiscoveredRules(rawProbeRules, `service.${svc.name}.probeRules`);
-    backfillServiceAvailability(svc.name, svc.metrics, probeRules);
     out.push({ ...(svc as ServiceConfig), probeRules });
   }
   return out;
-}
-
-function decodePromLabelValue(rawValue: string): string {
-  try {
-    return JSON.parse(`"${rawValue}"`) as string;
-  } catch {
-    return rawValue.replace(/\\"/g, "\"").replace(/\\\\/g, "\\");
-  }
-}
-
-function extractUpLabelValues(query: string): Array<{ label: string; value: string }> {
-  const out: Array<{ label: string; value: string }> = [];
-  const selectorRe = /\bup\s*\{([^}]*)\}/g;
-  let selectorMatch: RegExpExecArray | null;
-  while ((selectorMatch = selectorRe.exec(query)) !== null) {
-    const selector = selectorMatch[1] ?? "";
-    const labelRe = /\b([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"((?:\\.|[^"\\])*)"/g;
-    let labelMatch: RegExpExecArray | null;
-    while ((labelMatch = labelRe.exec(selector)) !== null) {
-      out.push({
-        label: labelMatch[1]!,
-        value: decodePromLabelValue(labelMatch[2] ?? ""),
-      });
-    }
-  }
-  return out;
-}
-
-export function backfillGlobalAvailabilityRules(
-  services: ServiceConfig[],
-  globalProbeRules: ProbeMetricRule[],
-): void {
-  if (services.length < 2) return;
-  if (globalProbeRules.some((rule) => rule.query.includes("{service}"))) return;
-
-  const counts = new Map<string, number>();
-  for (const service of services) {
-    const seenForService = new Set<string>();
-    for (const metric of service.metrics ?? []) {
-      for (const { label, value } of extractUpLabelValues(metric.query)) {
-        if (value === service.name) seenForService.add(label);
-      }
-    }
-    for (const label of seenForService) {
-      counts.set(label, (counts.get(label) ?? 0) + 1);
-    }
-  }
-
-  const minimumMatches = Math.max(2, Math.ceil(services.length * 0.5));
-  const best = [...counts.entries()]
-    .filter(([label, count]) => PROM_LABEL_NAME_RE.test(label) && count >= minimumMatches)
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
-  if (!best) return;
-
-  const [label, matchedServices] = best;
-  const name = `${label}_availability`;
-  if (globalProbeRules.some((rule) => rule.name === name)) return;
-
-  const query = `up{${label}="{service}"}`;
-  globalProbeRules.unshift({
-    name,
-    query,
-    threshold: { op: "lt", value: 1 },
-    consecutiveTicks: 3,
-    source: "metrics",
-  });
-  logger.debug({ rule: name, query, matchedServices, serviceCount: services.length }, "discovery: backfilled global availability rule");
-  quirkHit("backfill:global-availability", { label, matchedServices, serviceCount: services.length });
 }
 
 function tryParseDiscoverResponse(text: string | undefined): DiscoverStepResult | null {
@@ -205,7 +95,6 @@ function tryParseDiscoverResponse(text: string | undefined): DiscoverStepResult 
   if (Array.isArray(parsed) && parsed.length > 0) {
     const services = validateDiscoveredServices(parsed);
     const globalProbeRules: ProbeMetricRule[] = [];
-    backfillGlobalAvailabilityRules(services, globalProbeRules);
     return { services, globalProbeRules };
   }
   if (parsed && typeof parsed === "object") {
@@ -213,7 +102,6 @@ function tryParseDiscoverResponse(text: string | undefined): DiscoverStepResult 
     const rawGlobals = Array.isArray((parsed as { globalProbeRules?: unknown }).globalProbeRules) ? (parsed as { globalProbeRules: unknown[] }).globalProbeRules : [];
     const globalProbeRules = validateDiscoveredRules(rawGlobals, "globalProbeRules");
     const services = validateDiscoveredServices(rawServices);
-    backfillGlobalAvailabilityRules(services, globalProbeRules);
     if (services.length > 0 || globalProbeRules.length > 0) {
       return { services, globalProbeRules };
     }

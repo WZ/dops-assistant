@@ -50,7 +50,6 @@ function mockCtx(): StackContext {
         { config: { name: "test", roles: ["metrics"] }, source: "config", status: "connected", toolCount: 1, enabledToolCount: 1 },
       ]),
       initialize: vi.fn().mockResolvedValue(undefined),
-      buildDatasourceUidMap: vi.fn().mockReturnValue(new Map()),
     },
     conversationMemory: {
       get: vi.fn().mockReturnValue([]),

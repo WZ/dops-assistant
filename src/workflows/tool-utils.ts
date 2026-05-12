@@ -12,10 +12,8 @@ import type { WorkflowConfig } from "./investigation.js";
 import { extractTimeRange, suggestStepSeconds, toRfc3339Window } from "./helpers.js";
 import type { ServiceConfig } from "../config/schema.js";
 import { getTimeContext } from "../agents/shared/time-context.js";
-import { createLogger } from "../logger.js";
 import { quirkHit } from "../agents/shared/quirk-telemetry.js";
 
-const coercionLogger = createLogger("tool-coercion");
 
 // ── Debug logger (no-op in production; set DOPS_DEBUG=1 to enable) ───────────
 export const debug = process.env.DOPS_DEBUG ? (...args: unknown[]) => console.error("[INVESTIGATION]", ...args) : (..._args: unknown[]) => {};
@@ -85,27 +83,26 @@ export function coerceToolArgs(args: Record<string, unknown>, toolSchema: any): 
 }
 
 /**
- * Fill in Grafana query_prometheus time arguments that LLMs default to null.
+ * Fill in Grafana query_prometheus arguments that LLMs default to null.
  *
- * The Grafana MCP tool's schema requires startTime/endTime as strings and
- * stepSeconds as a number — even for instant queries where these are logically
- * meaningless. LLMs pass null for them on instant queries, which fails schema
- * validation and costs a retry round-trip. Default to "now" / 0 so the request
- * goes through on the first attempt. The "now" string is then converted to
- * RFC3339 by coerceToolArgs in the normal path.
+ * The Grafana MCP tool's schema requires stepSeconds as a number and queryType
+ * as a string — even for instant queries where these are logically meaningless.
+ * LLMs pass null for them on instant queries, which fails schema validation and
+ * costs a retry round-trip. Default to 0 / "instant" so the request goes
+ * through on the first attempt.
+ *
+ * startTime/endTime null-coercion was removed in 2026-05 — 51 stress iters
+ * (waves 1, 1B, 2, 3) showed 0 fires across baseline and adversarial config;
+ * the model reliably supplies both fields.
  */
 export function coercePrometheusArgs(args: Record<string, unknown>): Record<string, unknown> {
   const coerced = { ...args };
-  if (coerced.startTime == null) { coerced.startTime = "now"; quirkHit("prom-coerce:startTime-null"); }
-  if (coerced.endTime == null) { coerced.endTime = "now"; quirkHit("prom-coerce:endTime-null"); }
   if (coerced.stepSeconds == null) { coerced.stepSeconds = 0; quirkHit("prom-coerce:stepSeconds-null"); }
   if (coerced.queryType == null) { coerced.queryType = "instant"; quirkHit("prom-coerce:queryType-null"); }
   return coerced;
 }
 
 const PROMETHEUS_DEFAULTED_FIELDS = new Set([
-  "startTime",
-  "endTime",
   "stepSeconds",
   "queryType",
 ]);
@@ -177,12 +174,8 @@ function relaxInputSchemaForWrapperCoercion(toolName: string, inputSchema: unkno
  */
 export function coerceLokiArgs(args: Record<string, unknown>): Record<string, unknown> {
   const coerced = { ...args };
-  // stepSeconds is a Prometheus concept — Loki's query_loki_logs doesn't accept it.
-  // LLMs consistently pass it; drop it so the tool call isn't rejected.
-  if ("stepSeconds" in coerced) {
-    delete coerced.stepSeconds;
-    quirkHit("loki-coerce:stepSeconds-dropped");
-  }
+  // stepSeconds-dropped coercion was removed in 2026-05 — 51 stress iters
+  // showed 0 fires; the model doesn't send stepSeconds on Loki tools anymore.
   // Always use backward (newest-first) — errors at the end of a window are more relevant
   if (coerced.direction === "forward" || !coerced.direction) {
     if (coerced.direction === "forward") quirkHit("loki-coerce:direction-forced");
@@ -315,14 +308,12 @@ export function wrapToolsWithCallbacks(
   tools: Record<string, any>,
   onToolCall?: WorkflowConfig["onToolCall"],
   phase?: string,
-  datasourceUidMap?: Map<string, string>,
   maxToolResultChars?: number,
   onRawToolResult?: (toolName: string, args: Record<string, unknown>, result: string, phase?: string) => void,
 ): Record<string, any> {
-  const needsDatasourceCoercion = (n: string) =>
-    n.includes("query_prometheus") || n.includes("query_loki") ||
-    n.includes("list_prometheus") || n.includes("list_loki");
-
+  // uid-hallucination coercion was removed in 2026-05 — 51 stress iters showed
+  // 0 fires; `datasource-hints:emitted` (still active) prevents the failure mode
+  // upstream by injecting real UIDs into the discovery prompt.
   const wrapped: Record<string, any> = {};
   for (const [name, tool] of Object.entries(tools)) {
     // Spread everything, then explicitly drop the Mastra class marker and
@@ -337,26 +328,10 @@ export function wrapToolsWithCallbacks(
     wrapped[name] = {
       ...wrappedTool,
       execute: async (...execArgs: any[]) => {
-        // Intercept hallucinated datasource short names (e.g. "prometheus" instead
-        // of the real UID). Runs first so all downstream coercers see the correct UID.
-        if (datasourceUidMap?.size && needsDatasourceCoercion(name) &&
-            execArgs[0] && typeof execArgs[0] === "object") {
-          const args = execArgs[0] as Record<string, unknown>;
-          const uid = args["datasourceUid"];
-          if (typeof uid === "string" && datasourceUidMap.has(uid)) {
-            const realUid = datasourceUidMap.get(uid)!;
-            if (realUid !== uid) {
-              args["datasourceUid"] = realUid;
-              coercionLogger.info(
-                { phase, tool: name, from: uid, to: realUid },
-                `Coerced datasourceUid: ${uid} → ${realUid}`,
-              );
-              quirkHit("uid-hallucination:coerced", { from: uid, to: realUid });
-            }
-          }
-        }
-        // Fill null prometheus time args BEFORE schema coercion — LLMs send null
-        // on instant queries but the MCP schema requires strings, wasting a retry.
+        // Fill null prometheus stepSeconds/queryType BEFORE schema coercion — LLMs
+        // send null for these on instant queries but the MCP schema requires a
+        // number/string, wasting a retry. (startTime/endTime null-coerce removed
+        // in 2026-05 — see coercePrometheusArgs.)
         if (name.includes("query_prometheus") && execArgs[0] && typeof execArgs[0] === "object") {
           execArgs[0] = coercePrometheusArgs(execArgs[0] as Record<string, unknown>);
         }

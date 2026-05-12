@@ -20,11 +20,6 @@ import {
 export const createDiscoveryAbortError = createAbortError;
 export const throwIfDiscoveryAborted = throwIfAborted;
 export { isAbortError };
-import {
-  RECOVERY_TOOL_RESULT_CHARS,
-  runStallRecovery,
-  type RecoveryToolEntry,
-} from "./stall-recovery.js";
 import { logLlmCall, logLlmCallStart, logToolCall, newCallId, type ToolCallEvent } from "../../../server/llm-logger.js";
 import { createLogger } from "../../../logger.js";
 import {
@@ -36,7 +31,6 @@ import { parsePrimaryOrReasoning } from "./parse.js";
 import { prepareDiscoveryStep } from "./context.js";
 
 export type { DiscoverStepResult } from "./candidates.js";
-export { backfillGlobalAvailabilityRules } from "./parse.js";
 
 const logger = createLogger("discover");
 
@@ -70,7 +64,6 @@ const MAX_RETRIES = 3;
 
 const AGENT_NAME = "discover";
 const attemptPhase = (n: number): string => `attempt-${n}`;
-const recoveryPhase = (n: number): string => `attempt-${n}-recovery`;
 
 export const discoverStepTestHooks = {
   extractDiscoveryCandidates,
@@ -98,9 +91,6 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
     const discoverCallId = newCallId();
     const discoverStartMs = Date.now();
     const discoverToolCalls: ToolCallEvent[] = [];
-    // Recovery prompt needs more per-result context than the 500-char
-    // observability slice; allocate a separate, larger budget.
-    const recoveryToolHistory: RecoveryToolEntry[] = [];
 
     const logAttempt = (phase: string, opts: {
       promptText: string;
@@ -157,11 +147,6 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
                 };
                 discoverToolCalls.push(toolEvent);
                 logToolCall(discoverCallId, AGENT_NAME, toolEvent);
-                recoveryToolHistory.push({
-                  tool: toolName,
-                  args: argsStr.slice(0, 500),
-                  result: resultStr.slice(0, RECOVERY_TOOL_RESULT_CHARS),
-                });
               } catch (err) {
                 // Observability must never crash the discover step.
                 logger.warn({ err }, "discover: onStepFinish failed to record tool call");
@@ -189,28 +174,9 @@ export async function runDiscoverStep(config: DiscoverStepConfig): Promise<Disco
         return mergeCandidatesIntoDiscoveryResult(primary, ctx.discoveredCandidates, ctx.excludeServices);
       }
 
-      const recovered = await runStallRecovery<DiscoverStepResult>({
-        agent: ctx.agent,
-        attempt,
-        recoveryHistory: recoveryToolHistory,
-        primaryResponseChars: result.text?.length ?? 0,
-        maxOutputTokens: config.discoveryConfig.maxOutputTokens,
-        abortSignal: config.abortSignal,
-        callerAbortRacing: runWithHardTimeout,
-        recoveryPhase,
-        agentName: AGENT_NAME,
-        onTokenUsage: config.onTokenUsage,
-        llmRetry: config.llmRetry,
-        onRetry: config.onRetry,
-        parse: (r) => {
-          const parsed = parsePrimaryOrReasoning(r);
-          return parsed
-            ? mergeCandidatesIntoDiscoveryResult(parsed, ctx.discoveredCandidates, ctx.excludeServices)
-            : null;
-        },
-      });
-      if (recovered) return recovered;
-
+      // stall-recovery follow-up call was removed in 2026-05 — 51 stress iters
+      // showed 0 fires; the timeout-fallback path below + the deterministic
+      // candidates rescue at end-of-loop handle the same failure modes.
       const respLen = result.text?.length ?? 0;
       logger.warn(
         {

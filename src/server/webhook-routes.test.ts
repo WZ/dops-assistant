@@ -73,7 +73,6 @@ describe("stack-scoped alert webhook route", () => {
         getContext: vi.fn().mockReturnValue({
           providerRegistry: {
             getProviders: vi.fn().mockReturnValue([]),
-            buildDatasourceUidMap: vi.fn().mockReturnValue(new Map()),
           },
           serviceRegistry: {
             load: vi.fn().mockReturnValue([]),

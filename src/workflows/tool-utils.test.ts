@@ -58,27 +58,24 @@ describe("coerceToolArgs — malformed .Z RFC3339 suffix", () => {
   });
 });
 
-describe("coerceLokiArgs — strip stepSeconds", () => {
-  // Fix #6 (plan-eng-review 2026-04-15): stepSeconds is a Prometheus concept.
-  // grafana_query_loki_logs doesn't accept it, but the LLM consistently passes
-  // it. Drop it before the tool sees it.
+describe("coerceLokiArgs — direction/limit", () => {
+  // stepSeconds-dropped coercion was removed in 2026-05 — 51 stress iters
+  // showed 0 fires; the model doesn't send stepSeconds on Loki tools anymore.
+  // The direction-forced + limit-bumped coercions stay (pre-assigned KEEP).
 
-  it("deletes stepSeconds when present", () => {
+  it("forces direction=backward and limit=50 when LLM under-specifies", () => {
     const out = coerceLokiArgs({
-      stepSeconds: 300,
       direction: "forward",
       limit: 20,
       logql: '{app="foo"}',
     });
-    expect(out).not.toHaveProperty("stepSeconds");
-    expect(out.direction).toBe("backward"); // existing coercion still runs
-    expect(out.limit).toBe(50);              // existing coercion still runs
-    expect(out.logql).toBe('{app="foo"}');   // unrelated fields untouched
+    expect(out.direction).toBe("backward");
+    expect(out.limit).toBe(50);
+    expect(out.logql).toBe('{app="foo"}');
   });
 
-  it("is a no-op for stepSeconds when already absent", () => {
+  it("preserves direction/limit when already at safe values", () => {
     const out = coerceLokiArgs({ direction: "backward", limit: 100 });
-    expect(out).not.toHaveProperty("stepSeconds");
     expect(out.direction).toBe("backward");
     expect(out.limit).toBe(100);
   });
