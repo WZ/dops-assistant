@@ -364,8 +364,10 @@ async function enrichApplicationMetrics(
       const raw = await promTool[1].execute!({ expr: query, queryType: "instant" }, {} as any);
       const duration = Date.now() - start;
       resultText = typeof raw === "string" ? raw : JSON.stringify(raw);
+      logger.debug({ service: service.name, queryLen: query.length, rawType: typeof raw, resultLen: resultText.length, resultPreview: resultText.slice(0, 250), duration }, "enrich: query response");
       config.onToolCall?.(promTool[0], { expr: query }, resultText, duration, undefined, "validation");
     } catch (err) {
+      logger.warn({ service: service.name, err: String(err) }, "enrich: query threw");
       config.onToolCall?.(promTool[0], { expr: query }, undefined, 0, String(err), "validation");
       continue;
     }
