@@ -179,6 +179,10 @@ describe("parseUrl", () => {
     expect(parseUrl("/settings/notifications")).toEqual({ type: "settings", initialTab: "notifications" });
   });
 
+  it("parses /settings/discovery as the discovery tab", () => {
+    expect(parseUrl("/settings/discovery")).toEqual({ type: "settings", initialTab: "discovery" });
+  });
+
   it("parses /settings/webhooks as the alert webhooks tab", () => {
     expect(parseUrl("/settings/webhooks")).toEqual({ type: "settings", initialTab: "webhooks" });
   });

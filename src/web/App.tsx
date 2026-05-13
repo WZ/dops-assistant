@@ -58,7 +58,7 @@ export type LeftPaneView =
   | { type: "pattern"; id: string }
   | ActivityView
   | { type: "services"; initialService?: string }
-  | { type: "settings"; initialTab?: "providers" | "skills" | "stacks" | "scan" | "webhooks" | "notifications" }
+  | { type: "settings"; initialTab?: "providers" | "skills" | "stacks" | "scan" | "webhooks" | "discovery" | "notifications" }
   | { type: "scanrun"; runId: string }
   | { type: "notfound"; path: string };
 
@@ -635,7 +635,8 @@ export function App() {
                         ws.send({ type: "discover" });
                         setLeftPane({ type: "services" });
                       }}
-                      initialTab={leftPane.initialTab}
+                      activeTab={leftPane.initialTab ?? "providers"}
+                      onChangeTab={(tab) => setLeftPane({ type: "settings", initialTab: tab })}
                       stacks={stacks}
                       activeStackId={activeStackId}
                       onSwitchStack={switchStack}

@@ -1,5 +1,4 @@
 // src/web/components/SettingsPage.tsx
-import { useEffect, useState } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ProvidersPage } from "./ProvidersPage";
 import { AlertWebhooksTab } from "./AlertWebhooksTab";
@@ -10,9 +9,19 @@ import { ScanTab } from "./ScanTab";
 import { DiscoveryTab } from "./DiscoveryTab";
 import type { StackSummary } from "../../types/stack-types.js";
 
+export type SettingsTab =
+  | "providers"
+  | "webhooks"
+  | "skills"
+  | "stacks"
+  | "scan"
+  | "discovery"
+  | "notifications";
+
 interface SettingsPageProps {
   onRunDiscovery: () => void;
-  initialTab?: "providers" | "webhooks" | "skills" | "stacks" | "scan" | "discovery" | "notifications";
+  activeTab: SettingsTab;
+  onChangeTab: (tab: SettingsTab) => void;
   stacks: StackSummary[];
   activeStackId: string;
   onSwitchStack: (stackId: string) => void;
@@ -20,15 +29,16 @@ interface SettingsPageProps {
   onProviderSaved?: () => void;
 }
 
-export function SettingsPage({ onRunDiscovery, initialTab = "providers", stacks, activeStackId, onSwitchStack, onRefetchStacks, onProviderSaved }: SettingsPageProps) {
-  // Controlled tabs: parent re-navigations (e.g. "New Stack" while already on
-  // Settings) update `initialTab` but the component stays mounted, so an
-  // uncontrolled `defaultValue` would ignore the change.
-  const [activeTab, setActiveTab] = useState<string>(initialTab);
-  useEffect(() => {
-    setActiveTab(initialTab);
-  }, [initialTab]);
-
+// Fully parent-controlled tabs. Earlier versions used uncontrolled tabs with
+// a defaultValue (and later a useEffect-resynced useState). Both let the
+// internal Tabs state diverge from the parent's URL/leftPane state: clicking
+// a tab inside SettingsPage moved the visible tab without updating the URL,
+// so a follow-up external nav targeting the same URL-tab (e.g. "New Stack"
+// while the URL already pointed at /settings/stacks) saw no prop change and
+// could not snap the divergent internal state back. Making the tab fully
+// owned by App.tsx removes the divergence by construction: every click flows
+// through onChangeTab → setLeftPane → URL + state in lockstep.
+export function SettingsPage({ onRunDiscovery, activeTab, onChangeTab, stacks, activeStackId, onSwitchStack, onRefetchStacks, onProviderSaved }: SettingsPageProps) {
   return (
     <div className="h-full overflow-y-auto px-4 py-5">
       <h1 className="font-display text-2xl font-extrabold tracking-tight text-foreground/90 mb-1">
@@ -38,7 +48,7 @@ export function SettingsPage({ onRunDiscovery, initialTab = "providers", stacks,
         Providers, skills, stacks, scans, and notifications
       </p>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
+      <Tabs value={activeTab} onValueChange={(v) => onChangeTab(v as SettingsTab)}>
         <TabsList className="bg-transparent border-b border-border rounded-none p-0 h-auto gap-1">
           <TabsTrigger
             value="providers"
