@@ -4,21 +4,37 @@ import { shouldResetOnStackSwitch, autoRouteTargetForSetupStage } from "./App";
 
 describe("shouldResetOnStackSwitch", () => {
   it("resets when viewing stack-specific panes", () => {
-    // A service open from stack A would render stale data under stack B,
-    // so we need to unmount it and fall back to the dashboard.
-    expect(shouldResetOnStackSwitch("services")).toBe(true);
-    expect(shouldResetOnStackSwitch("investigation")).toBe(true);
+    expect(shouldResetOnStackSwitch({ type: "services" })).toBe(true);
+    expect(shouldResetOnStackSwitch({ type: "investigation", id: "x", stackId: "s" })).toBe(true);
+    expect(shouldResetOnStackSwitch({ type: "pattern", id: "p" })).toBe(true);
+    expect(shouldResetOnStackSwitch({ type: "scanrun", runId: "r" })).toBe(true);
+    expect(shouldResetOnStackSwitch({ type: "activity", tab: "investigations", query: {} })).toBe(true);
   });
 
-  it("does NOT reset when on stack-neutral panes", () => {
-    // Regression guard for QA #19 — a sidebar click to Settings raced with
-    // a stack switch and the switch's blanket reset clobbered the click
-    // target, causing a visible "double redirect" flash (/ → /settings).
-    // Settings/dashboard/notfound don't depend on stack data, so the
-    // reset is pure noise here.
-    expect(shouldResetOnStackSwitch("settings")).toBe(false);
-    expect(shouldResetOnStackSwitch("dashboard")).toBe(false);
-    expect(shouldResetOnStackSwitch("notfound")).toBe(false);
+  it("resets from any Settings tab so the switch is visible", () => {
+    // Without this redirect, switching stacks while on /settings/providers
+    // (or any other stack-scoped tab) silently re-keys the provider list
+    // and the user has no visual confirmation that the switch actually
+    // landed.
+    expect(shouldResetOnStackSwitch({ type: "settings" })).toBe(true);
+    expect(shouldResetOnStackSwitch({ type: "settings", initialTab: "providers" })).toBe(true);
+    expect(shouldResetOnStackSwitch({ type: "settings", initialTab: "webhooks" })).toBe(true);
+    expect(shouldResetOnStackSwitch({ type: "settings", initialTab: "discovery" })).toBe(true);
+  });
+
+  it("does NOT reset from Settings → Stacks (managing all stacks)", () => {
+    // The Stacks tab IS the stack-management surface; bouncing the user
+    // to the dashboard mid-management would yank them out of the task
+    // they just used to trigger the switch.
+    expect(shouldResetOnStackSwitch({ type: "settings", initialTab: "stacks" })).toBe(false);
+  });
+
+  it("does NOT reset on dashboard or notfound", () => {
+    // Dashboard is already the redirect target — no-op.
+    // NotFound shows the 404 for the URL the user typed; bouncing to the
+    // dashboard would mask the typo'd URL.
+    expect(shouldResetOnStackSwitch({ type: "dashboard" })).toBe(false);
+    expect(shouldResetOnStackSwitch({ type: "notfound", path: "/bogus" })).toBe(false);
   });
 });
 
