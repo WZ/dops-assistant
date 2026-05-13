@@ -185,23 +185,29 @@ export function resolveTimeRangeToAbsolute(range: { from: string; to: string }):
 /** Suggest step size for Prometheus range queries. Aims for ~100 data points. */
 export function suggestStepSeconds(window: { from: string; to: string }): number {
   try {
+    // Throws on unparseable input so the 900 fallback fires deterministically.
+    // Previously returned `new Date()` for garbage, making two such calls
+    // race a few ms apart under CI load and yield a tiny positive
+    // durationSec (→ 300 instead of the intended 900).
     const parseTimeExpr = (expr: string): Date => {
-      if (/^\d{4}-\d{2}-\d{2}/.test(expr)) return new Date(expr);
-      const m = expr.match(/^now(?:-(\d+)([smhdw]))?(?:\/d)?$/);
-      const d = new Date();
-      if (m) {
-        const amount = m[1] ? parseInt(m[1], 10) : 0;
-        const unit = m[2];
-        if (amount > 0 && unit) {
-          switch (unit) {
-            case "s": d.setSeconds(d.getSeconds() - amount); break;
-            case "m": d.setMinutes(d.getMinutes() - amount); break;
-            case "h": d.setHours(d.getHours() - amount); break;
-            case "d": d.setDate(d.getDate() - amount); break;
-            case "w": d.setDate(d.getDate() - amount * 7); break;
-          }
-        }
+      if (/^\d{4}-\d{2}-\d{2}/.test(expr)) {
+        const d = new Date(expr);
+        if (Number.isNaN(d.getTime())) throw new Error("invalid ISO date");
         return d;
+      }
+      const m = expr.match(/^now(?:-(\d+)([smhdw]))?(?:\/d)?$/);
+      if (!m) throw new Error("unparseable time expression");
+      const d = new Date();
+      const amount = m[1] ? parseInt(m[1], 10) : 0;
+      const unit = m[2];
+      if (amount > 0 && unit) {
+        switch (unit) {
+          case "s": d.setSeconds(d.getSeconds() - amount); break;
+          case "m": d.setMinutes(d.getMinutes() - amount); break;
+          case "h": d.setHours(d.getHours() - amount); break;
+          case "d": d.setDate(d.getDate() - amount); break;
+          case "w": d.setDate(d.getDate() - amount * 7); break;
+        }
       }
       return d;
     };
