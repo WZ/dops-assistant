@@ -13,6 +13,12 @@ vi.mock("./ProvidersPage", () => ({
 vi.mock("./SkillsPage", () => ({
   SkillsPage: () => <div data-testid="skills-page">Skills</div>,
 }));
+vi.mock("./StacksManagePage", () => ({
+  StacksManagePage: () => <div data-testid="stacks-page">Stacks</div>,
+}));
+vi.mock("./ScanTab", () => ({
+  ScanTab: () => <div data-testid="scan-page">Scan</div>,
+}));
 
 const stacks: StackSummary[] = [{ id: "alpha", name: "alpha", slug: "alpha" } as StackSummary];
 
@@ -45,5 +51,46 @@ describe("SettingsPage", () => {
     fireEvent.click(screen.getByRole("tab", { name: /Skills/ }));
     fireEvent.click(screen.getByRole("tab", { name: /Providers/ }));
     expect(screen.getByTestId("providers-page")).toBeDefined();
+  });
+
+  // Regression: clicking "New Stack" in the top nav while already on Settings
+  // re-renders SettingsPage with a new initialTab. Uncontrolled defaultValue
+  // ignored the change and left the tab where it was.
+  it("re-syncs to the new initialTab when the prop changes after mount", () => {
+    const { rerender } = render(
+      <SettingsPage
+        onRunDiscovery={() => {}}
+        initialTab="providers"
+        stacks={stacks}
+        activeStackId="alpha"
+        onSwitchStack={() => {}}
+        onRefetchStacks={async () => {}}
+      />,
+    );
+    expect(screen.getByTestId("providers-page")).toBeDefined();
+
+    rerender(
+      <SettingsPage
+        onRunDiscovery={() => {}}
+        initialTab="stacks"
+        stacks={stacks}
+        activeStackId="alpha"
+        onSwitchStack={() => {}}
+        onRefetchStacks={async () => {}}
+      />,
+    );
+    expect(screen.getByTestId("stacks-page")).toBeDefined();
+
+    rerender(
+      <SettingsPage
+        onRunDiscovery={() => {}}
+        initialTab="scan"
+        stacks={stacks}
+        activeStackId="alpha"
+        onSwitchStack={() => {}}
+        onRefetchStacks={async () => {}}
+      />,
+    );
+    expect(screen.getByTestId("scan-page")).toBeDefined();
   });
 });
