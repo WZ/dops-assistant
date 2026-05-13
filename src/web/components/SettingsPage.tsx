@@ -1,4 +1,5 @@
 // src/web/components/SettingsPage.tsx
+import { useEffect, useState } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ProvidersPage } from "./ProvidersPage";
 import { AlertWebhooksTab } from "./AlertWebhooksTab";
@@ -20,6 +21,14 @@ interface SettingsPageProps {
 }
 
 export function SettingsPage({ onRunDiscovery, initialTab = "providers", stacks, activeStackId, onSwitchStack, onRefetchStacks, onProviderSaved }: SettingsPageProps) {
+  // Controlled tabs: parent re-navigations (e.g. "New Stack" while already on
+  // Settings) update `initialTab` but the component stays mounted, so an
+  // uncontrolled `defaultValue` would ignore the change.
+  const [activeTab, setActiveTab] = useState<string>(initialTab);
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
+
   return (
     <div className="h-full overflow-y-auto px-4 py-5">
       <h1 className="font-display text-2xl font-extrabold tracking-tight text-foreground/90 mb-1">
@@ -29,7 +38,7 @@ export function SettingsPage({ onRunDiscovery, initialTab = "providers", stacks,
         Providers, skills, stacks, scans, and notifications
       </p>
 
-      <Tabs defaultValue={initialTab}>
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="bg-transparent border-b border-border rounded-none p-0 h-auto gap-1">
           <TabsTrigger
             value="providers"
