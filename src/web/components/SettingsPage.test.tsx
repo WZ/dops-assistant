@@ -1,8 +1,9 @@
 // src/web/components/SettingsPage.test.tsx
 // @vitest-environment jsdom
+import { useState } from "react";
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
-import { SettingsPage } from "./SettingsPage";
+import { act, render, screen, fireEvent } from "@testing-library/react";
+import { SettingsPage, type SettingsTab } from "./SettingsPage";
 import type { StackSummary } from "../../types/stack-types.js";
 
 vi.mock("./ProvidersPage", () => ({
@@ -19,78 +20,100 @@ vi.mock("./StacksManagePage", () => ({
 vi.mock("./ScanTab", () => ({
   ScanTab: () => <div data-testid="scan-page">Scan</div>,
 }));
+vi.mock("./NotificationsTab", () => ({
+  NotificationsTab: () => <div data-testid="notifications-page">Notifications</div>,
+}));
 
 const stacks: StackSummary[] = [{ id: "alpha", name: "alpha", slug: "alpha" } as StackSummary];
 
-function renderPage() {
-  return render(
+// Stateful harness — mirrors how App.tsx hosts SettingsPage. Internal tab
+// clicks fire onChangeTab → harness state updates → SettingsPage re-renders
+// with the new activeTab. Always-in-sync, no divergence possible.
+function Harness({ initial, onChange }: { initial: SettingsTab; onChange?: (tab: SettingsTab) => void }) {
+  const [tab, setTab] = useState<SettingsTab>(initial);
+  return (
     <SettingsPage
       onRunDiscovery={() => {}}
+      activeTab={tab}
+      onChangeTab={(t) => {
+        setTab(t);
+        onChange?.(t);
+      }}
       stacks={stacks}
       activeStackId="alpha"
       onSwitchStack={() => {}}
       onRefetchStacks={async () => {}}
-    />,
+    />
   );
 }
 
 describe("SettingsPage", () => {
-  it("shows Providers tab by default", () => {
-    renderPage();
+  it("shows the activeTab on mount", () => {
+    render(<Harness initial="providers" />);
     expect(screen.getByTestId("providers-page")).toBeDefined();
   });
 
-  it("switches to Skills tab when clicked", () => {
-    renderPage();
+  it("propagates internal tab clicks through onChangeTab", () => {
+    const spy = vi.fn();
+    render(<Harness initial="providers" onChange={spy} />);
     fireEvent.click(screen.getByRole("tab", { name: /Skills/ }));
+    expect(spy).toHaveBeenCalledWith("skills");
     expect(screen.getByTestId("skills-page")).toBeDefined();
   });
 
-  it("switches back to Providers tab", () => {
-    renderPage();
+  it("switches between tabs as the harness state updates", () => {
+    render(<Harness initial="providers" />);
     fireEvent.click(screen.getByRole("tab", { name: /Skills/ }));
+    expect(screen.getByTestId("skills-page")).toBeDefined();
     fireEvent.click(screen.getByRole("tab", { name: /Providers/ }));
     expect(screen.getByTestId("providers-page")).toBeDefined();
   });
 
-  // Regression: clicking "New Stack" in the top nav while already on Settings
-  // re-renders SettingsPage with a new initialTab. Uncontrolled defaultValue
-  // ignored the change and left the tab where it was.
-  it("re-syncs to the new initialTab when the prop changes after mount", () => {
-    const { rerender } = render(
-      <SettingsPage
-        onRunDiscovery={() => {}}
-        initialTab="providers"
-        stacks={stacks}
-        activeStackId="alpha"
-        onSwitchStack={() => {}}
-        onRefetchStacks={async () => {}}
-      />,
-    );
-    expect(screen.getByTestId("providers-page")).toBeDefined();
-
-    rerender(
-      <SettingsPage
-        onRunDiscovery={() => {}}
-        initialTab="stacks"
-        stacks={stacks}
-        activeStackId="alpha"
-        onSwitchStack={() => {}}
-        onRefetchStacks={async () => {}}
-      />,
-    );
+  // Regression for the production bug behind both #217 and this PR:
+  //
+  // 1. Land on /settings/stacks → activeTab="stacks", Stacks visible.
+  // 2. User clicks Notifications inside Settings.
+  // 3. User clicks "New Stack" in the top-nav StackSwitcher, which targets
+  //    initialTab="stacks" — the same value as the URL already had.
+  //
+  // The earlier uncontrolled-tabs / useState+useEffect version stayed on
+  // Notifications because step 2 mutated only the local Tabs state, then
+  // step 3 didn't change the initialTab prop so the useEffect skipped the
+  // re-sync. The controlled rewrite makes step 2 propagate up through
+  // onChangeTab, so step 3 always works.
+  it("regression: external nav back to the URL's tab snaps the view back when an internal click moved it away", () => {
+    // Parent owns the active tab. We surface it via a ref-style closure so
+    // we can re-trigger an external nav targeting the same tab.
+    let externalSetTab: (tab: SettingsTab) => void = () => {};
+    function ExternalNavHarness() {
+      const [tab, setTab] = useState<SettingsTab>("stacks");
+      externalSetTab = setTab;
+      return (
+        <SettingsPage
+          onRunDiscovery={() => {}}
+          activeTab={tab}
+          onChangeTab={setTab}
+          stacks={stacks}
+          activeStackId="alpha"
+          onSwitchStack={() => {}}
+          onRefetchStacks={async () => {}}
+        />
+      );
+    }
+    render(<ExternalNavHarness />);
     expect(screen.getByTestId("stacks-page")).toBeDefined();
 
-    rerender(
-      <SettingsPage
-        onRunDiscovery={() => {}}
-        initialTab="scan"
-        stacks={stacks}
-        activeStackId="alpha"
-        onSwitchStack={() => {}}
-        onRefetchStacks={async () => {}}
-      />,
-    );
-    expect(screen.getByTestId("scan-page")).toBeDefined();
+    // (2) Internal click moves the parent state too — there is no longer any
+    //     hidden local state to diverge.
+    fireEvent.click(screen.getByRole("tab", { name: /Notifications/ }));
+    expect(screen.getByTestId("notifications-page")).toBeDefined();
+
+    // (3) External "New Stack" click. App.tsx wires this as
+    //     setLeftPane({ type: "settings", initialTab: "stacks" }), which
+    //     ends up calling onChangeTab("stacks") on this component. The view
+    //     must snap back to Stacks even though the parent state value
+    //     ("stacks") matches what (1) set it to.
+    act(() => externalSetTab("stacks"));
+    expect(screen.getByTestId("stacks-page")).toBeDefined();
   });
 });
