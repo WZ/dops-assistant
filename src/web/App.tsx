@@ -63,21 +63,31 @@ export type LeftPaneView =
   | { type: "notfound"; path: string };
 
 /**
- * Pure helper: given the current pane type, decide whether a stack switch
- * should forcibly redirect the user to the dashboard.
+ * Pure helper: given the current pane, decide whether a stack switch should
+ * forcibly redirect the user to the Operations Desk.
  *
- * Exported for unit testing. Only panes that render stack-specific data
- * (investigation, services) reset — stack-neutral panes (settings, dashboard,
- * notfound) are left alone so a concurrent sidebar click isn't clobbered.
+ * Policy: redirect on every stack switch so the change is visually obvious.
+ * Without this, switching stacks while on Settings (or any non-dashboard
+ * page) silently re-keys the data underneath and the user has no
+ * confirmation that the switch actually landed.
+ *
+ * Carve-outs (return false):
+ *   - dashboard: already at the target — pointless redirect
+ *   - notfound:  bouncing would mask the typo'd URL the 404 is showing
+ *   - settings → stacks: the Stacks tab IS the stack-management surface;
+ *                        yanking the user off it mid-management is wrong
+ *
+ * The investigation-deep-link case (URL like /stacks/:stackId/investigations/:id
+ * driving an automatic switchStack) is handled separately at the call site
+ * via the `investigationOwnsThisStack` check.
+ *
+ * Exported for unit testing.
  */
-export function shouldResetOnStackSwitch(paneType: LeftPaneView["type"]): boolean {
-  return (
-    paneType === "services" ||
-    paneType === "investigation" ||
-    paneType === "pattern" ||
-    paneType === "scanrun" ||
-    paneType === "activity"
-  );
+export function shouldResetOnStackSwitch(pane: LeftPaneView): boolean {
+  if (pane.type === "dashboard") return false;
+  if (pane.type === "notfound") return false;
+  if (pane.type === "settings" && pane.initialTab === "stacks") return false;
+  return true;
 }
 
 /**
@@ -416,12 +426,9 @@ export function App() {
 
   // Reset view + discovery state on stack switch.
   //
-  // The reset-to-dashboard is only needed for panes that render
-  // stack-specific data (a service from stack A would be stale under stack
-  // B). For stack-neutral panes (settings, notfound) we leave the view
-  // alone — otherwise a sidebar click + stack switch racing together would
-  // briefly land on `/`, then snap to the clicked target, producing the
-  // QA-reported "double redirect" flash.
+  // Policy: redirect to the Operations Desk so the switch is visually
+  // obvious. shouldResetOnStackSwitch encodes the carve-outs (dashboard,
+  // notfound, Settings → Stacks).
   const prevStackRef = useRef(activeStackId);
   useEffect(() => {
     if (prevStackRef.current !== activeStackId && prevStackRef.current) {
@@ -434,7 +441,7 @@ export function App() {
       // genuinely doesn't match the pane's intent.
       const investigationOwnsThisStack =
         pane.type === "investigation" && pane.stackId === activeStackId;
-      if (shouldResetOnStackSwitch(pane.type) && !investigationOwnsThisStack) {
+      if (shouldResetOnStackSwitch(pane) && !investigationOwnsThisStack) {
         setLeftPane({ type: "dashboard" });
       }
     }
