@@ -37,6 +37,18 @@ const BUCKETS: { key: Bucket; label: string; hint: string }[] = [
 const SELECT_CLASS =
   "font-mono text-[11px] bg-secondary/30 border border-border/50 rounded-md px-2 py-1.5 min-w-[160px]";
 
+/**
+ * What the upstream model uses when `reasoning_effort` is omitted from the
+ * request. OpenAI's Harmony format (gpt-oss models, plus most OpenAI-compatible
+ * gateways exposing reasoning controls) documents the default as `medium`.
+ * We surface it in the UI so "Inherit (unset)" reads as a concrete level
+ * instead of a mystery.
+ *
+ * If you switch to a model whose unspecified default isn't `medium`, update
+ * this and the "from upstream default" label.
+ */
+const UPSTREAM_DEFAULT_EFFORT: Effort = "medium";
+
 function inheritedFor(view: StackLlmView, bucket: Bucket): Effort | undefined {
   return view.config[bucket] ?? view.config.default;
 }
@@ -113,8 +125,11 @@ export function LlmTab({ stack }: LlmTabProps) {
           Per-stack override for the upstream model's{" "}
           <code className="font-mono text-[11px]">reasoning_effort</code> parameter, applied to
           the <strong>active stack only</strong>. Switch stacks from the header to tune another.
-          Inherits from <code className="font-mono text-[11px]">config.llm.reasoningEffort</code>{" "}
-          when set to "Inherit". Higher effort = slower + more thorough; lower = faster + cheaper.
+          "Inherit" falls back to{" "}
+          <code className="font-mono text-[11px]">config.llm.reasoningEffort</code>; when nothing
+          is set there either, the parameter is omitted and the upstream model uses its built-in
+          default ({UPSTREAM_DEFAULT_EFFORT} on gpt-oss / OpenAI Harmony). Higher effort = slower
+          + more thorough; lower = faster + cheaper.
         </p>
       </div>
 
@@ -163,23 +178,24 @@ export function LlmTab({ stack }: LlmTabProps) {
                   }}
                   data-testid={`llm-select-${stack.slug}-${key}`}
                 >
-                  <option value="">Inherit{inherited ? ` (${inherited})` : " (unset)"}</option>
+                  <option value="">
+                    Inherit ({inherited ?? `${UPSTREAM_DEFAULT_EFFORT} · upstream`})
+                  </option>
                   <option value="low">Low</option>
                   <option value="medium">Medium</option>
                   <option value="high">High</option>
                 </select>
                 <span className="font-body text-[10px] text-muted-foreground/60">{hint}</span>
-                {effective?.effort && (
+                {effective?.effort ? (
                   <span className="font-mono text-[10px] text-muted-foreground/50">
                     effective: {effective.effort}
                     {effective.source && effective.source !== "stack" && ` · from ${effective.source}`}
                   </span>
-                )}
-                {!effective?.effort && view && (
+                ) : view ? (
                   <span className="font-mono text-[10px] text-muted-foreground/50">
-                    effective: (param omitted)
+                    effective: {UPSTREAM_DEFAULT_EFFORT} · upstream default (param omitted)
                   </span>
-                )}
+                ) : null}
               </label>
             );
           })}
