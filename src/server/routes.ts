@@ -978,6 +978,10 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     }
     db.setStackReasoningEffort(id, update);
     clearStackCaches(id);
+    // Mirror the per-request activity bump for the targeted stack — the global
+    // middleware bumps `req.stackId` (the X-Stack-Id header), which may differ
+    // from the route param when the operator tunes a non-active stack.
+    try { stackManager.bumpActivity(id); } catch { /* best-effort */ }
     res.json(getStackLlmSettingsView(db, config, id));
   });
 

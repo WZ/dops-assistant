@@ -45,15 +45,20 @@ export function LlmTab({ stacks }: LlmTabProps) {
   const [error, setError] = useState<string | null>(null);
 
   const fetchAll = useCallback(async () => {
+    const results = await Promise.all(
+      stacks.map(async (stack) => {
+        try {
+          const res = await fetch(withBase(`/api/stacks/${stack.id}/llm/settings`));
+          if (!res.ok) return null;
+          return [stack.id, (await res.json()) as StackLlmView] as const;
+        } catch {
+          return null;
+        }
+      }),
+    );
     const next: Record<string, StackLlmView> = {};
-    for (const stack of stacks) {
-      try {
-        const res = await fetch(withBase(`/api/stacks/${stack.id}/llm/settings`));
-        if (!res.ok) continue;
-        next[stack.id] = (await res.json()) as StackLlmView;
-      } catch {
-        /* skip — leaves row in loading state */
-      }
+    for (const r of results) {
+      if (r) next[r[0]] = r[1];
     }
     setViews(next);
   }, [stacks]);
