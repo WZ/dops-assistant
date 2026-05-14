@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { withBase } from "../lib/createStackFetch";
+import { useStackContext } from "../contexts/StackContext";
 import type { StackSummary } from "../../types/stack-types.js";
 
 type Effort = "low" | "medium" | "high";
@@ -54,41 +54,53 @@ function inheritedFor(view: StackLlmView, bucket: Bucket): Effort | undefined {
 }
 
 export function LlmTab({ stack }: LlmTabProps) {
+  const { stackFetch } = useStackContext();
   const [view, setView] = useState<StackLlmView | null>(null);
-  const [savingKey, setSavingKey] = useState<Bucket | null>(null);
+  // Track in-flight buckets as a Set so two concurrent saves on different
+  // dropdowns don't fight over a single `savingKey` slot.
+  const [savingKeys, setSavingKeys] = useState<Set<Bucket>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
 
   const stackId = stack?.id;
 
-  const fetchOne = useCallback(async () => {
+  useEffect(() => {
     if (!stackId) {
       setView(null);
       return;
     }
-    try {
-      const res = await fetch(withBase(`/api/stacks/${stackId}/llm/settings`));
-      if (!res.ok) {
-        setError(`Failed to load settings: HTTP ${res.status}`);
-        return;
+    // AbortController on the effect cleanup: when the operator switches stacks
+    // mid-fetch, abort the in-flight request so its delayed response doesn't
+    // overwrite the new stack's view (A→B→A switching could otherwise paint
+    // B's data on A).
+    const ctrl = new AbortController();
+    (async () => {
+      try {
+        const res = await stackFetch(`/api/stacks/${stackId}/llm/settings`, { signal: ctrl.signal });
+        if (!res.ok) {
+          setError(`Failed to load settings: HTTP ${res.status}`);
+          return;
+        }
+        setView((await res.json()) as StackLlmView);
+        setError(null);
+      } catch (err) {
+        if ((err as { name?: string }).name === "AbortError") return;
+        setError(err instanceof Error ? err.message : "Failed to load settings");
       }
-      setView((await res.json()) as StackLlmView);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load settings");
-    }
-  }, [stackId]);
-
-  useEffect(() => {
-    void fetchOne();
-  }, [fetchOne]);
+    })();
+    return () => ctrl.abort();
+  }, [stackId, stackFetch]);
 
   const updateBucket = useCallback(
     async (bucket: Bucket, value: Effort | null) => {
       if (!stackId) return;
-      setSavingKey(bucket);
+      setSavingKeys((prev) => {
+        const next = new Set(prev);
+        next.add(bucket);
+        return next;
+      });
       setError(null);
       try {
-        const res = await fetch(withBase(`/api/stacks/${stackId}/llm/settings`), {
+        const res = await stackFetch(`/api/stacks/${stackId}/llm/settings`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ [bucket]: value }),
@@ -101,10 +113,14 @@ export function LlmTab({ stack }: LlmTabProps) {
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to update");
       } finally {
-        setSavingKey(null);
+        setSavingKeys((prev) => {
+          const next = new Set(prev);
+          next.delete(bucket);
+          return next;
+        });
       }
     },
-    [stackId],
+    [stackId, stackFetch],
   );
 
   if (!stack) {
@@ -162,7 +178,7 @@ export function LlmTab({ stack }: LlmTabProps) {
             const stackValue = view?.stack[key];
             const inherited = view ? inheritedFor(view, key) : undefined;
             const effective = view?.effective[key];
-            const saving = savingKey === key;
+            const saving = savingKeys.has(key);
             return (
               <label key={key} className="flex flex-col gap-1.5">
                 <span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground/80">

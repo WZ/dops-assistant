@@ -125,13 +125,29 @@ async function main() {
   } else {
     logger.info("demo mode: skipping background health monitor");
   }
+  // Rate limit even the early-stage GETs (kubelet polls cheaply, but anyone
+  // probing /api/health/quirks shouldn't get unbounded uptime + per-quirk
+  // telemetry). Registered before the routes below so it applies to them.
+  app.use("/api", globalLimiter);
   app.get("/api/health", healthHandler);
   app.get("/api/health/quirks", (_req: Request, res: Response) => {
     res.json({ hits: getQuirkHits(), uptime: process.uptime() });
   });
-  app.post("/api/health/quirks/reset", (_req: Request, res: Response) => {
-    resetQuirkHits();
-    res.json({ ok: true });
+  // POST /api/health/quirks/reset is registered LATER (after apiKeyMiddleware
+  // installs) so the api-key gate still protects writes when auth is enabled.
+  // GET routes above are deliberately exempt from auth: kubelet probes need
+  // /api/health, and quirks GET is read-only telemetry.
+
+  // Warming-up gate: between server.listen() and registerRoutes(), any /api/*
+  // (other than the already-registered health routes) would otherwise fall
+  // through to Express's default HTML 404. SPA clients calling fetch()
+  // expect JSON and crash on `<!DOCTYPE…`. Once init completes we flip the
+  // flag so this middleware becomes a no-op, then `registerRoutes` wires the
+  // real handlers.
+  let initComplete = false;
+  app.use("/api", (req, res, next) => {
+    if (initComplete) return next();
+    res.status(503).json({ error: "service warming up", retryAfterSeconds: 5 });
   });
 
   const server = createServer(app);
@@ -142,9 +158,17 @@ async function main() {
     logger.info({ port, version: ver }, `dops-assistant v${ver} listening on port ${port} (init pending)`);
   });
 
-  // Initialize StackManager — replaces singleton registryStore, ProviderRegistry, memory, healthPoller
+  // Initialize StackManager — replaces singleton registryStore, ProviderRegistry, memory, healthPoller.
+  // If init throws, close the bound socket BEFORE we rethrow so kubelet doesn't
+  // briefly see a healthy listener for a process that's about to exit(1).
   const stackManager = new StackManager(db, config);
-  await stackManager.initialize();
+  try {
+    await stackManager.initialize();
+  } catch (err) {
+    logger.error({ err }, "StackManager init failed — closing listener and exiting");
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    throw err;
+  }
 
   // Legacy yaml-token migration runs AFTER StackManager — the default stack
   // must exist before we can scope imported tokens to it. Re-running is
@@ -178,8 +202,9 @@ async function main() {
   // it precedes the routes that depend on it.
 
   // ── Rate limiting (applied before auth so abusive traffic is rejected early) ──
-  // Global: 300 req/min per IP for all /api/* routes
-  app.use("/api", globalLimiter);
+  // Global limiter is already installed up-front (above the warming-up gate)
+  // so the early /api/health* GETs are rate-limited. Strict + moderate apply
+  // to specific routes registered AFTER this block.
   // Strict: 10 req/min per IP for LLM-triggering routes
   app.use("/api/skills/generate", strictLimiter);
   app.use("/api/metrics/extract", strictLimiter);
@@ -503,10 +528,19 @@ async function main() {
 
   registerRoutes(app, { db, stackManager, config, skillStore, sharedDedup, llmModel: model, globalOnComplete });
 
+  // Flip the warming-up gate to a no-op: every /api/* route the SPA expects
+  // is now wired. Subsequent requests fall through to the real handlers.
+  initComplete = true;
+
   // Health check endpoint with background DB monitoring.
-  // /api/health, /api/health/quirks, and /api/health/quirks/reset are
-  // registered above (before stackManager.initialize) so kubelet probes
-  // succeed during boot. startHealthMonitor() is also called there.
+  // GET /api/health and GET /api/health/quirks are registered above (before
+  // stackManager.initialize) so kubelet probes succeed during boot. The
+  // mutating POST /api/health/quirks/reset registers here, AFTER the
+  // apiKeyMiddleware, so it remains auth-gated when `config.apiKey` is set.
+  app.post("/api/health/quirks/reset", (_req: Request, res: Response) => {
+    resetQuirkHits();
+    res.json({ ok: true });
+  });
 
   // Alert webhook endpoint.
   // The route is always registered. When no DB-managed webhook tokens exist,
