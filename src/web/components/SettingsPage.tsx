@@ -128,7 +128,7 @@ export function SettingsPage({ onRunDiscovery, activeTab, onChangeTab, stacks, a
           <NotificationsTab />
         </TabsContent>
         <TabsContent value="llm" className="mt-4">
-          <LlmTab stacks={stacks} />
+          <LlmTab stack={stacks.find((s) => s.id === activeStackId)} />
         </TabsContent>
       </Tabs>
     </div>
