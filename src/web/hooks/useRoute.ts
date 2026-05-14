@@ -148,7 +148,8 @@ export function parseUrl(pathname: string, search: string = ""): LeftPaneView {
       rawTab === "scan" ||
       rawTab === "webhooks" ||
       rawTab === "discovery" ||
-      rawTab === "notifications"
+      rawTab === "notifications" ||
+      rawTab === "llm"
     ) {
       return { type: "settings", initialTab: rawTab };
     }

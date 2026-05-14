@@ -89,11 +89,25 @@ const LlmRetrySchema = z.object({
   jitterPercent: z.number().min(0).max(2).default(0.3),
 }).default({});
 
+export const ReasoningEffortSchema = z.enum(["low", "medium", "high"]);
+export type ReasoningEffort = z.infer<typeof ReasoningEffortSchema>;
+
+export const ReasoningBucketSchema = z.enum(["chat", "investigation", "discovery"]);
+export type ReasoningBucket = z.infer<typeof ReasoningBucketSchema>;
+
+const LlmReasoningEffortSchema = z.object({
+  default: ReasoningEffortSchema.optional(),
+  chat: ReasoningEffortSchema.optional(),
+  investigation: ReasoningEffortSchema.optional(),
+  discovery: ReasoningEffortSchema.optional(),
+}).optional();
+
 const LlmSchema = z.object({
   model: z.string().default("gpt-4"),
   apiKey: z.string(),
   baseURL: z.string().optional(),
   retry: LlmRetrySchema,
+  reasoningEffort: LlmReasoningEffortSchema,
 });
 
 const ConversationMemorySchema = z.object({

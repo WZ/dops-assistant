@@ -7,6 +7,7 @@ import { StacksManagePage } from "./StacksManagePage";
 import { NotificationsTab } from "./NotificationsTab";
 import { ScanTab } from "./ScanTab";
 import { DiscoveryTab } from "./DiscoveryTab";
+import { LlmTab } from "./LlmTab";
 import type { StackSummary } from "../../types/stack-types.js";
 
 export type SettingsTab =
@@ -16,7 +17,8 @@ export type SettingsTab =
   | "stacks"
   | "scan"
   | "discovery"
-  | "notifications";
+  | "notifications"
+  | "llm";
 
 interface SettingsPageProps {
   onRunDiscovery: () => void;
@@ -92,6 +94,12 @@ export function SettingsPage({ onRunDiscovery, activeTab, onChangeTab, stacks, a
           >
             Notifications
           </TabsTrigger>
+          <TabsTrigger
+            value="llm"
+            className="font-mono text-[10px] font-medium px-4 py-2 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+          >
+            LLM
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="providers" className="mt-4">
           <ProvidersPage onRunDiscovery={onRunDiscovery} onProviderSaved={onProviderSaved} />
@@ -118,6 +126,9 @@ export function SettingsPage({ onRunDiscovery, activeTab, onChangeTab, stacks, a
         </TabsContent>
         <TabsContent value="notifications" className="mt-4">
           <NotificationsTab />
+        </TabsContent>
+        <TabsContent value="llm" className="mt-4">
+          <LlmTab stacks={stacks} />
         </TabsContent>
       </Tabs>
     </div>

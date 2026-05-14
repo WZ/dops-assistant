@@ -2,7 +2,8 @@ import BetterSqlite3 from "better-sqlite3";
 import type { StackRow } from "../types/stack-types.js";
 import type { SeverityLevel, NotificationSource, EmailRecipient } from "../types/notifications.js";
 import { ALL_SEVERITIES, ALL_SOURCES } from "../types/notifications.js";
-import type { PeriodicDiscoveryConfig } from "../config/schema.js";
+import type { PeriodicDiscoveryConfig, ReasoningEffort, ReasoningBucket } from "../config/schema.js";
+import { ReasoningEffortSchema, ReasoningBucketSchema } from "../config/schema.js";
 import { createLogger as _createLoggerForRecipientParser } from "../logger.js";
 const _emailRecipientLogger = _createLoggerForRecipientParser();
 
@@ -2027,6 +2028,52 @@ export class Database {
 
   setPeriodicDiscoverySettings(stackId: string, settings: PeriodicDiscoveryConfig): void {
     this.setSetting(`discovery.periodic.${stackId}`, JSON.stringify(settings));
+  }
+
+  /**
+   * Per-stack reasoning effort overrides for the gpt-oss / OpenAI-compatible
+   * `reasoning_effort` parameter. Stored as a JSON blob of
+   * `{ chat?, investigation?, discovery? }` under a kv key per stack.
+   * A missing key, missing bucket, or invalid value falls back to
+   * `config.llm.reasoningEffort` via the resolver in `llm-settings.ts`.
+   * Re-validates on read so a hand-edited row can't poison a model call.
+   */
+  getStackReasoningEffort(stackId: string): Partial<Record<ReasoningBucket, ReasoningEffort>> {
+    const raw = this.getSetting(`llm.reasoningEffort.${stackId}`);
+    if (!raw) return {};
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw); } catch { return {}; }
+    if (!parsed || typeof parsed !== "object") return {};
+    const out: Partial<Record<ReasoningBucket, ReasoningEffort>> = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      const bucket = ReasoningBucketSchema.safeParse(k);
+      const effort = ReasoningEffortSchema.safeParse(v);
+      if (bucket.success && effort.success) out[bucket.data] = effort.data;
+    }
+    return out;
+  }
+
+  setStackReasoningEffort(
+    stackId: string,
+    update: Partial<Record<ReasoningBucket, ReasoningEffort | null>>,
+  ): Partial<Record<ReasoningBucket, ReasoningEffort>> {
+    const current = this.getStackReasoningEffort(stackId);
+    for (const [k, v] of Object.entries(update)) {
+      const bucket = ReasoningBucketSchema.safeParse(k);
+      if (!bucket.success) continue;
+      if (v === null || v === undefined) {
+        delete current[bucket.data];
+      } else {
+        const effort = ReasoningEffortSchema.safeParse(v);
+        if (effort.success) current[bucket.data] = effort.data;
+      }
+    }
+    if (Object.keys(current).length === 0) {
+      this.deleteSetting(`llm.reasoningEffort.${stackId}`);
+    } else {
+      this.setSetting(`llm.reasoningEffort.${stackId}`, JSON.stringify(current));
+    }
+    return current;
   }
 
   /**

@@ -35,6 +35,7 @@ import { createInvestigationWorkflow, type WorkflowConfig } from "../workflows/i
 import { runDiscovery } from "../workflows/discovery.js";
 import { createModel } from "../mastra/index.js";
 import type { Config } from "../config/schema.js";
+import { getEffectiveReasoningEffort } from "./llm-settings.js";
 import type { MastraProvider } from "../mcp/provider.js";
 import { getAllTools } from "../mcp/provider.js";
 import { coerceLokiArgs } from "../workflows/tool-utils.js";
@@ -504,7 +505,23 @@ export interface MastraAdapterDeps {
  */
 export async function createMastraAdapters(deps: MastraAdapterDeps) {
   const { config, providers } = deps;
-  const model = createModel(config.llm);
+
+  // Per-bucket reasoning effort: when the call site provides db + stackId we
+  // resolve per-stack overrides; otherwise we fall back to a single model
+  // (config defaults still apply via the resolver). Three models in flight is
+  // intentional — chat, investigation, and discovery can each be tuned
+  // independently from Settings → LLM.
+  const buildModel = (bucket: "chat" | "investigation" | "discovery") => {
+    if (deps.db && deps.stackId) {
+      const effort = getEffectiveReasoningEffort(deps.db, config, deps.stackId, bucket);
+      return createModel(config.llm, effort ? { reasoningEffort: effort } : {});
+    }
+    const fallback = config.llm.reasoningEffort?.[bucket] ?? config.llm.reasoningEffort?.default;
+    return createModel(config.llm, fallback ? { reasoningEffort: fallback } : {});
+  };
+  const chatModel = buildModel("chat");
+  const investigationModel = buildModel("investigation");
+  const discoveryModel = buildModel("discovery");
 
   // Web chat renders charts inline from metrics data. CLI still needs panel-image tools.
   // Exclude tools whose descriptions indicate they produce images/screenshots/rendered panels.
@@ -544,14 +561,14 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
     {
       inlineCharts: createChatAgent({
         agentId: "chat-inline",
-        model,
+        model: chatModel,
         tools: inlineChartTools,
         maxSteps: config.agent.maxIterations,
         supportsInlineCharts: true,
       }),
       imageAttachments: createChatAgent({
         agentId: "chat-attachments",
-        model,
+        model: chatModel,
         tools: allTools,
         maxSteps: config.agent.maxIterations,
         supportsInlineCharts: false,
@@ -562,7 +579,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
 
   const { db, stackId } = deps;
   const workflowConfig: WorkflowConfig = {
-    model,
+    model: investigationModel,
     providers,
     services: config.services,
     projectRoot: deps.noHistory ? undefined : process.cwd(),
@@ -578,7 +595,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
 
   const discoverAgent = deps.registryStore
     ? new MastraDiscoverAdapter({
-        model,
+        model: discoveryModel,
         providers,
         discoveryConfig: config.discovery,
         registryStore: deps.registryStore,

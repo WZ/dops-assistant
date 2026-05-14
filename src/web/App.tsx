@@ -58,7 +58,7 @@ export type LeftPaneView =
   | { type: "pattern"; id: string }
   | ActivityView
   | { type: "services"; initialService?: string }
-  | { type: "settings"; initialTab?: "providers" | "skills" | "stacks" | "scan" | "webhooks" | "discovery" | "notifications" }
+  | { type: "settings"; initialTab?: "providers" | "skills" | "stacks" | "scan" | "webhooks" | "discovery" | "notifications" | "llm" }
   | { type: "scanrun"; runId: string }
   | { type: "notfound"; path: string };
 
