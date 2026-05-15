@@ -19,6 +19,9 @@ import { queryServiceMetrics } from "./prometheus-query.js";
 import type { MetricSeries } from "./prometheus-query.js";
 import { inferDependencyGraph } from "./dependency-graph.js";
 import { buildServiceBrief } from "./service-brief.js";
+import { getEffectiveReasoningEffort, getStackLlmSettingsView } from "./llm-settings.js";
+import { createModel } from "../mastra/index.js";
+import { ReasoningEffortSchema, ReasoningBucketSchema } from "../config/schema.js";
 import { isDemoMode } from "./demo-mode.js";
 import type { LanguageModel } from "ai";
 import { eventLog } from "./event-log.js";
@@ -931,6 +934,57 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     res.json({ ok: true });
   });
 
+  // ── Per-stack LLM reasoning-effort settings ──────────────────────────────
+  //
+  // GET returns the effective per-bucket effort (chat / investigation /
+  // discovery) plus the raw stack override and the config defaults — the UI
+  // uses the latter to show "Inherit (<value>)" hints. PUT accepts a partial
+  // body where `null` clears a bucket back to inheritance and a valid effort
+  // sets the override. Anything else is a 400. After write we bust the
+  // per-stack agent cache so the next chat turn rebuilds with new options.
+  app.get("/api/stacks/:id/llm/settings", (req: Request, res: Response) => {
+    const id = req.params["id"] as string;
+    const stack = db.getStack(id);
+    if (!stack) { res.status(404).json({ error: "Stack not found" }); return; }
+    res.json(getStackLlmSettingsView(db, config, id));
+  });
+
+  app.put("/api/stacks/:id/llm/settings", (req: Request, res: Response) => {
+    const id = req.params["id"] as string;
+    const stack = db.getStack(id);
+    if (!stack) { res.status(404).json({ error: "Stack not found" }); return; }
+    const body = req.body as Record<string, unknown>;
+    if (!body || typeof body !== "object") {
+      res.status(400).json({ error: "Body must be an object" });
+      return;
+    }
+    const update: Partial<Record<"chat" | "investigation" | "discovery", "low" | "medium" | "high" | null>> = {};
+    for (const [k, v] of Object.entries(body)) {
+      const bucket = ReasoningBucketSchema.safeParse(k);
+      if (!bucket.success) {
+        res.status(400).json({ error: `Unknown bucket: ${k}` });
+        return;
+      }
+      if (v === null) {
+        update[bucket.data] = null;
+        continue;
+      }
+      const effort = ReasoningEffortSchema.safeParse(v);
+      if (!effort.success) {
+        res.status(400).json({ error: `Invalid effort for ${k}: must be low|medium|high|null` });
+        return;
+      }
+      update[bucket.data] = effort.data;
+    }
+    db.setStackReasoningEffort(id, update);
+    clearStackCaches(id);
+    // Mirror the per-request activity bump for the targeted stack — the global
+    // middleware bumps `req.stackId` (the X-Stack-Id header), which may differ
+    // from the route param when the operator tunes a non-active stack.
+    try { stackManager.bumpActivity(id); } catch { /* best-effort */ }
+    res.json(getStackLlmSettingsView(db, config, id));
+  });
+
   app.delete("/api/stacks/:id", async (req: Request, res: Response) => {
     try {
       const id = req.params["id"] as string;
@@ -1274,11 +1328,15 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     }
     try {
       const allServices = getAllServices(config, req);
+      const chatEffort = getEffectiveReasoningEffort(db, config, req.stackId, "chat");
+      const briefModel = deps.llmModel && chatEffort
+        ? createModel(config.llm, { reasoningEffort: chatEffort })
+        : deps.llmModel;
       const brief = await buildServiceBrief(name, {
         providers: req.stackContext.providerRegistry.getProviders(),
         services: allServices,
         healthPoller: req.stackContext.healthPoller,
-        llmModel: deps.llmModel,
+        llmModel: briefModel,
       });
       res.json(brief);
     } catch (err) {

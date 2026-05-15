@@ -53,6 +53,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const logger = createLogger();
 
 async function main() {
+  // @mastra/mcp's MCPClient.connect() adds a `process.on("SIGTERM", ...)`
+  // listener per instance (node_modules/@mastra/mcp/dist/index.js — search
+  // for `this.sigTermHandler`). With multiple stacks × multiple providers
+  // we pile up enough listeners to trip the default MaxListeners=10 warning.
+  // Bump the limit to silence the noise; we don't actually leak (each
+  // MCPClient is held for the life of its provider entry).
+  process.setMaxListeners(64);
+
   const configPath = process.env["CONFIG_PATH"] ?? "config.yaml";
   const config = loadConfig(configPath);
 
@@ -85,9 +93,82 @@ async function main() {
     logger.warn({ err }, "Failed to clean up stale investigations");
   }
 
-  // Initialize StackManager — replaces singleton registryStore, ProviderRegistry, memory, healthPoller
+  // ── Bind HTTP socket + /api/health BEFORE the rest of init ─────────────
+  // Rationale: `stackManager.initialize()` below awaits MCP connects (SSE →
+  // HTTP retry budget, ~10-30s per unreachable upstream). With multiple
+  // stacks and providers that easily exceeds the kubelet liveness window
+  // (default 30s initial + 3×30s = 120s) and the pod gets SIGKILL'd before
+  // it can bind port 3000 — kubelet sees "connection refused" and never
+  // even reaches `/api/health`. The fix is to register the health route on
+  // a minimal express app, listen on the socket, THEN do the heavy init.
+  // `healthHandler` is a pure cached-status reader (zero MCP deps), and
+  // `cachedStatus` initializes to "healthy", so we respond 200 from second
+  // one. The full route stack (rate limits, auth, stack-scoped routes)
+  // registers later on the same `app` instance — Express picks them up
+  // live, no listen-restart needed.
+  const app = express();
+  const trustProxyHops = Number(process.env["TRUST_PROXY_HOPS"] ?? 1);
+  app.set("trust proxy", Number.isFinite(trustProxyHops) && trustProxyHops >= 0 ? trustProxyHops : 1);
+  app.use(express.json({ limit: "1mb" }));
+  app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
+    if (err instanceof SyntaxError && "body" in (err as SyntaxError & { body?: unknown })) {
+      res.status(400).json({ error: "Invalid JSON in request body" });
+      return;
+    }
+    next(err);
+  });
+
+  // Health probe + monitor — registered early so kubelet sees a healthy
+  // bind before stackManager.initialize() touches any MCP.
+  if (!isDemoMode()) {
+    startHealthMonitor({ db });
+  } else {
+    logger.info("demo mode: skipping background health monitor");
+  }
+  // Rate limit even the early-stage GETs (kubelet polls cheaply, but anyone
+  // probing /api/health/quirks shouldn't get unbounded uptime + per-quirk
+  // telemetry). Registered before the routes below so it applies to them.
+  app.use("/api", globalLimiter);
+  app.get("/api/health", healthHandler);
+  app.get("/api/health/quirks", (_req: Request, res: Response) => {
+    res.json({ hits: getQuirkHits(), uptime: process.uptime() });
+  });
+  // POST /api/health/quirks/reset is registered LATER (after apiKeyMiddleware
+  // installs) so the api-key gate still protects writes when auth is enabled.
+  // GET routes above are deliberately exempt from auth: kubelet probes need
+  // /api/health, and quirks GET is read-only telemetry.
+
+  // Warming-up gate: between server.listen() and registerRoutes(), any /api/*
+  // (other than the already-registered health routes) would otherwise fall
+  // through to Express's default HTML 404. SPA clients calling fetch()
+  // expect JSON and crash on `<!DOCTYPE…`. Once init completes we flip the
+  // flag so this middleware becomes a no-op, then `registerRoutes` wires the
+  // real handlers.
+  let initComplete = false;
+  app.use("/api", (req, res, next) => {
+    if (initComplete) return next();
+    res.status(503).json({ error: "service warming up", retryAfterSeconds: 5 });
+  });
+
+  const server = createServer(app);
+  const port = Number(process.env["PORT"] ?? 3000);
+  server.listen(port, () => {
+    const pkg = JSON.parse(readFileSync(path.join(__dirname, "../../package.json"), "utf-8"));
+    const ver = pkg.version ?? "unknown";
+    logger.info({ port, version: ver }, `dops-assistant v${ver} listening on port ${port} (init pending)`);
+  });
+
+  // Initialize StackManager — replaces singleton registryStore, ProviderRegistry, memory, healthPoller.
+  // If init throws, close the bound socket BEFORE we rethrow so kubelet doesn't
+  // briefly see a healthy listener for a process that's about to exit(1).
   const stackManager = new StackManager(db, config);
-  await stackManager.initialize();
+  try {
+    await stackManager.initialize();
+  } catch (err) {
+    logger.error({ err }, "StackManager init failed — closing listener and exiting");
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    throw err;
+  }
 
   // Legacy yaml-token migration runs AFTER StackManager — the default stack
   // must exist before we can scope imported tokens to it. Re-running is
@@ -114,43 +195,16 @@ async function main() {
   await skillStore.loadAll();
   stackManager.setSkillStore(skillStore);
 
-  const app = express();
-  // Trust proxy configuration for Express.
-  //
-  // Default: 1 (trust one hop — correct for a single k8s ingress that
-  // overwrites X-Forwarded-For, which is the nginx-ingress default when
-  // `use-forwarded-headers: false`).
-  //
-  // Override with TRUST_PROXY_HOPS env var when the topology has more hops
-  // (e.g., CDN + ingress = 2, service mesh + ingress = 2). Setting a wrong
-  // value has consequences:
-  //   - Too low: real clients share a single rate-limit bucket (false 429s).
-  //   - Too high: attackers can spoof X-Forwarded-For and bypass rate limits.
-  //
-  // If the ingress is configured with `use-forwarded-headers: true` (pass
-  // through client XFF unchanged), set TRUST_PROXY_HOPS to the number of
-  // trusted hops in front of the application, NOT counting the client.
-  const trustProxyHops = Number(process.env["TRUST_PROXY_HOPS"] ?? 1);
-  app.set("trust proxy", Number.isFinite(trustProxyHops) && trustProxyHops >= 0 ? trustProxyHops : 1);
-  app.use(express.json({ limit: "1mb" }));
-
-  // ── JSON error shim for body-parser ──────────────────────────────
-  // Without this, a malformed JSON POST falls through to Express's default
-  // HTML error page (`<!DOCTYPE html>...<pre>Bad Request</pre>`). SPA clients
-  // that `res.json()` on the response crash with "SyntaxError: Unexpected
-  // token <". Only catches SyntaxError-shaped errors from express.json so
-  // we don't accidentally intercept unrelated downstream errors.
-  app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
-    if (err instanceof SyntaxError && "body" in (err as SyntaxError & { body?: unknown })) {
-      res.status(400).json({ error: "Invalid JSON in request body" });
-      return;
-    }
-    next(err);
-  });
+  // express app, trust-proxy, json body parser, and the JSON error shim are
+  // registered up-front (above) so the /api/health probe binds the socket
+  // before MCP connects can stall boot. Trust-proxy + body parsing still
+  // happen there — only the per-route middleware below registers here so
+  // it precedes the routes that depend on it.
 
   // ── Rate limiting (applied before auth so abusive traffic is rejected early) ──
-  // Global: 300 req/min per IP for all /api/* routes
-  app.use("/api", globalLimiter);
+  // Global limiter is already installed up-front (above the warming-up gate)
+  // so the early /api/health* GETs are rate-limited. Strict + moderate apply
+  // to specific routes registered AFTER this block.
   // Strict: 10 req/min per IP for LLM-triggering routes
   app.use("/api/skills/generate", strictLimiter);
   app.use("/api/metrics/extract", strictLimiter);
@@ -173,8 +227,8 @@ async function main() {
   ]);
   app.use("/api", apiKeyMiddleware);
 
-  const server = createServer(app);
-  const port = Number(process.env["PORT"] ?? 3000);
+  // `server` and `port` are constructed/listened up-front (above the
+  // stackManager.initialize() block) so kubelet probes succeed during init.
 
   // Shared dedup for both webhook and health-poller auto-investigate
   // Pass db for fallback dedup checks that survive server restarts
@@ -474,24 +528,15 @@ async function main() {
 
   registerRoutes(app, { db, stackManager, config, skillStore, sharedDedup, llmModel: model, globalOnComplete });
 
-  // Health check endpoint with background DB monitoring.
-  // In demo mode the endpoint still works (for liveness probes / banner
-  // freshness checks), but the background probe loop is skipped to keep
-  // the static demo build noise-free.
-  if (!isDemoMode()) {
-    startHealthMonitor({ db });
-  } else {
-    logger.info("demo mode: skipping background health monitor");
-  }
-  app.get("/api/health", healthHandler);
+  // Flip the warming-up gate to a no-op: every /api/* route the SPA expects
+  // is now wired. Subsequent requests fall through to the real handlers.
+  initComplete = true;
 
-  // Hit-counter inspector for gpt-oss-120b quirk defenses. Phase 1 of the
-  // quirk-validation plan — see docs/plans/gpt-oss-quirks-validation.html.
-  // Counters reset on server restart; daily cron is expected to GET this
-  // endpoint, persist to CSV, then POST /api/health/quirks/reset.
-  app.get("/api/health/quirks", (_req: Request, res: Response) => {
-    res.json({ hits: getQuirkHits(), uptime: process.uptime() });
-  });
+  // Health check endpoint with background DB monitoring.
+  // GET /api/health and GET /api/health/quirks are registered above (before
+  // stackManager.initialize) so kubelet probes succeed during boot. The
+  // mutating POST /api/health/quirks/reset registers here, AFTER the
+  // apiKeyMiddleware, so it remains auth-gated when `config.apiKey` is set.
   app.post("/api/health/quirks/reset", (_req: Request, res: Response) => {
     resetQuirkHits();
     res.json({ ok: true });
@@ -696,11 +741,7 @@ async function main() {
     logger.info("demo mode: skipping health pollers, scan schedulers, and TTL reaper");
   }
 
-  server.listen(port, () => {
-    const pkg = JSON.parse(readFileSync(path.join(__dirname, "../../package.json"), "utf-8"));
-    const ver = pkg.version ?? "unknown";
-    logger.info({ port, version: ver }, `dops-assistant v${ver} web server running on port ${port}`);
-  });
+  logger.info("dops-assistant init complete — all routes + WS + pollers wired");
 
   const shutdown = async () => {
     logger.info("Shutting down...");

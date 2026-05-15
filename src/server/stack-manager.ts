@@ -39,6 +39,8 @@ import { runDiscovery } from "../workflows/discovery.js";
 import type { LanguageModel } from "ai";
 import { getEffectiveScanConfig } from "./scan-settings.js";
 import { getEffectiveK8sEventsConfig } from "./k8s-events-settings.js";
+import { getEffectiveReasoningEffort } from "./llm-settings.js";
+import { createModel } from "../mastra/index.js";
 import type { Database } from "./db.js";
 import type { SkillStore } from "../skills/store.js";
 import type { StackRow, StackSummary, StackConfig } from "../types/stack-types.js";
@@ -275,8 +277,15 @@ export class StackManager {
         if (!this.llmModel) {
           throw new Error("periodic-discovery: LLM model not set on StackManager");
         }
+        // Build a discovery-bucket model honoring the current per-stack
+        // reasoning-effort override. Rebuild per run so a settings change
+        // takes effect on the next periodic tick without server restart.
+        const discoveryEffort = getEffectiveReasoningEffort(this.db, this.config, row.id, "discovery");
+        const discoveryModel = discoveryEffort
+          ? createModel(this.config.llm, { reasoningEffort: discoveryEffort })
+          : this.llmModel;
         return runDiscovery({
-          model: this.llmModel,
+          model: discoveryModel,
           providers: args.providers,
           discoveryConfig: args.discoveryConfig,
           onTokenUsage: args.onTokenUsage,
