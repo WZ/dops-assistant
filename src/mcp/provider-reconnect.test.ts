@@ -238,24 +238,32 @@ describe("ProviderRegistry.rebuildClient", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("disconnects the old client, creates a new one, and swaps it in place", async () => {
+  it("disconnects the old client and swaps it in place (preserves the MastraProvider reference)", async () => {
     const first = makeFakeProvider("grafana");
     const second = makeFakeProvider("grafana");
+    // Capture the stale disconnect before the rebuild mutates entry.provider.client
+    // — once the swap happens, first.client points at second.client and the
+    // original disconnect mock is no longer reachable through that path.
+    const staleDisconnect = first.client.disconnect;
+    const freshClient = second.client;
     mockCreateMcpProvider.mockReturnValueOnce(first).mockReturnValueOnce(second);
 
     const registry = new ProviderRegistry([makeConfig("grafana")], providersPath);
     await registry.initialize();
 
     const entry = registry.getAll()[0];
-    expect(entry.provider).toBe(first);
+    const providerRef = entry.provider;
+    expect(providerRef).toBe(first);
 
     await registry.rebuildClient(entry);
 
-    expect(first.client.disconnect).toHaveBeenCalledTimes(1);
-    expect(entry.provider).toBe(second);
-    // The reconnect hook must be re-installed on the new provider so the next
-    // tool wrapper still has an escape hatch.
-    expect(typeof entry.provider.reconnect).toBe("function");
+    expect(staleDisconnect).toHaveBeenCalledTimes(1);
+    // Reference identity preserved; only internals mutated.
+    expect(entry.provider).toBe(providerRef);
+    expect(providerRef.client).toBe(freshClient);
+    // The reconnect hook must be re-installed so the next tool wrapper still
+    // has an escape hatch.
+    expect(typeof providerRef.reconnect).toBe("function");
   });
 
   it("preserves the user-curated enabledTools across the rebuild", async () => {
@@ -277,6 +285,7 @@ describe("ProviderRegistry.rebuildClient", () => {
     const first = makeFakeProvider("grafana");
     (first.client.disconnect as any).mockRejectedValue(new Error("disconnect failed"));
     const second = makeFakeProvider("grafana");
+    const freshClient = second.client;
     mockCreateMcpProvider.mockReturnValueOnce(first).mockReturnValueOnce(second);
 
     const registry = new ProviderRegistry([makeConfig("grafana")], providersPath);
@@ -284,18 +293,21 @@ describe("ProviderRegistry.rebuildClient", () => {
     const entry = registry.getAll()[0];
 
     await registry.rebuildClient(entry);
-    expect(entry.provider).toBe(second);
+    // Reference preserved, client swapped despite the disconnect throw.
+    expect(entry.provider.client).toBe(freshClient);
   });
 
   it("deduplicates concurrent rebuilds on the same entry", async () => {
     const first = makeFakeProvider("grafana");
     const second = makeFakeProvider("grafana");
+    const freshClient = second.client;
     // Block disconnect on the first client so the rebuild stays in-flight
     // while we issue a second concurrent call. createMcpProvider stays
     // synchronous (registry calls it that way) — the deferral lives in
     // disconnect, which is the rebuild's first await point.
     let releaseDisconnect: () => void = () => {};
-    (first.client.disconnect as ReturnType<typeof vi.fn>).mockImplementation(
+    const staleDisconnect = first.client.disconnect as ReturnType<typeof vi.fn>;
+    staleDisconnect.mockImplementation(
       () => new Promise<void>((res) => { releaseDisconnect = res; }),
     );
     mockCreateMcpProvider.mockReturnValueOnce(first).mockReturnValueOnce(second);
@@ -315,8 +327,8 @@ describe("ProviderRegistry.rebuildClient", () => {
     // in-flight async work but each call returns its own outer Promise — async
     // functions can't be reference-compared.)
     expect(mockCreateMcpProvider).toHaveBeenCalledTimes(2); // 1 init + 1 rebuild
-    expect(first.client.disconnect).toHaveBeenCalledTimes(1);
-    expect(entry.provider).toBe(second);
+    expect(staleDisconnect).toHaveBeenCalledTimes(1);
+    expect(entry.provider.client).toBe(freshClient);
   });
 });
 
@@ -341,6 +353,8 @@ describe("ProviderRegistry.test() reconnect path", () => {
   it("rebuilds the client and retries when listTools fails with a connection error", async () => {
     const first = makeFakeProvider("grafana");
     const second = makeFakeProvider("grafana");
+    const staleDisconnect = first.client.disconnect;
+    const freshClient = second.client;
     mockCreateMcpProvider.mockReturnValueOnce(first).mockReturnValueOnce(second);
 
     const registry = new ProviderRegistry([makeConfig("grafana")], providersPath);
@@ -357,8 +371,10 @@ describe("ProviderRegistry.test() reconnect path", () => {
     const result = await registry.test("grafana");
 
     expect(result.status).toBe("ok");
-    expect(entry.provider).toBe(second);
-    expect(first.client.disconnect).toHaveBeenCalledTimes(1);
+    // Reference preserved (mutate-in-place rebuild), but the inner client is
+    // the new one and the stale disconnect was called exactly once.
+    expect(entry.provider.client).toBe(freshClient);
+    expect(staleDisconnect).toHaveBeenCalledTimes(1);
   });
 
   it("does NOT rebuild when listTools fails with a non-connection error", async () => {
