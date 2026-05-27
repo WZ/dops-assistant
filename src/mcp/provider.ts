@@ -2,12 +2,53 @@ import { MCPClient } from "@mastra/mcp";
 import type { MastraMCPServerDefinition } from "@mastra/mcp";
 import type { Tool } from "@mastra/core/tools";
 import type { ProviderConfig, ProviderRole } from "../config/schema.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger();
 
 export interface MastraProvider {
   name: string;
   roles: ProviderRole[];
   client: MCPClient;
   enabledTools?: string[];
+  /**
+   * Optional reconnect hook installed by the registry. Triggers a teardown +
+   * rebuild of the underlying MCPClient and mutates `provider.client` in
+   * place. Tool wrappers call this when they detect a session/transport
+   * error so the next tool call hits a fresh client.
+   *
+   * Best-effort: callers must catch and tolerate failure (the upstream may
+   * still be down). Repeated concurrent calls are deduped by the registry.
+   */
+  reconnect?: () => Promise<void>;
+}
+
+/**
+ * Classify whether an error looks like an MCP transport/session failure that
+ * a fresh client could recover from. Used by both the registry's `test()`
+ * retry path and the per-tool execute wrapper.
+ *
+ * Matches:
+ *  - Mastra's structured `MCP_CLIENT_GET_TOOLS_FAILED` error
+ *  - "Could not connect to server with any available HTTP transport"
+ *    (the streamable-http → SSE fallback exhaustion message)
+ *  - "Already connected to a transport" (the SDK's fallback-cascade symptom
+ *    that surfaces when the Protocol instance is reused after a failed
+ *    streamable-http handshake — observed when grafana-mcp restarts)
+ *  - "Not connected" / connection-level errno strings
+ */
+export function isMcpConnectionError(err: unknown): boolean {
+  if (err == null) return false;
+  const message = err instanceof Error ? err.message : String(err);
+  const code = typeof err === "object" && err !== null ? (err as { code?: unknown }).code : undefined;
+  if (typeof code === "string" && code === "MCP_CLIENT_GET_TOOLS_FAILED") return true;
+  return (
+    /MCP_CLIENT_GET_TOOLS_FAILED/i.test(message) ||
+    /Could not connect to server/i.test(message) ||
+    /Already connected to a transport/i.test(message) ||
+    /Not connected/i.test(message) ||
+    /\b(ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EPIPE)\b/.test(message)
+  );
 }
 
 /**
@@ -102,7 +143,83 @@ function filterToolsForProvider(provider: MastraProvider, tools: Record<string, 
 
 export async function listProviderTools(provider: MastraProvider): Promise<Record<string, Tool>> {
   const tools = await provider.client.listTools();
-  return filterToolsForProvider(provider, tools);
+  return wrapToolsForReconnect(provider, filterToolsForProvider(provider, tools));
+}
+
+/**
+ * Wrap each tool's `execute` so that an MCP connection error triggers the
+ * provider's reconnect hook (if any) and — for read-only tools — retries the
+ * call once against the fresh client.
+ *
+ * Write tools never auto-retry: the original call may have already partially
+ * succeeded on the upstream, and replaying it could double-execute. We still
+ * trigger reconnect so the next call hits a healthy client.
+ *
+ * No-op when the provider has no reconnect hook or a tool exposes no
+ * `execute` function — preserves backward compatibility with the registry's
+ * stub providers (created when MCPClient construction itself fails).
+ */
+export function wrapToolsForReconnect(
+  provider: MastraProvider,
+  tools: Record<string, Tool>,
+): Record<string, Tool> {
+  if (!provider.reconnect) return tools;
+  const wrapped: Record<string, Tool> = {};
+  for (const [name, tool] of Object.entries(tools)) {
+    wrapped[name] = wrapToolExecute(provider, name, tool);
+  }
+  return wrapped;
+}
+
+function wrapToolExecute(provider: MastraProvider, namespacedName: string, tool: Tool): Tool {
+  const originalExecute = (tool as { execute?: (...args: unknown[]) => Promise<unknown> }).execute;
+  if (typeof originalExecute !== "function") return tool;
+  const reconnect = provider.reconnect;
+  if (!reconnect) return tool;
+
+  const unprefixed = namespacedName.startsWith(`${provider.name}_`)
+    ? namespacedName.slice(provider.name.length + 1)
+    : namespacedName;
+  const isReadOnly = classifyToolAccess(unprefixed) === "read";
+
+  const wrappedExecute = async function (this: unknown, ...args: unknown[]): Promise<unknown> {
+    try {
+      return await originalExecute.apply(tool, args);
+    } catch (err) {
+      if (!isMcpConnectionError(err)) throw err;
+      try {
+        await reconnect();
+      } catch (reErr) {
+        logger.warn(
+          { err: reErr, provider: provider.name, tool: namespacedName },
+          "MCP reconnect failed during tool execution",
+        );
+        throw err;
+      }
+      if (!isReadOnly) {
+        // Reconnected but don't replay — write tool side effects may already
+        // have landed upstream.
+        throw err;
+      }
+      // Re-list against the now-fresh client to grab a tool bound to it.
+      let freshTools: Record<string, Tool>;
+      try {
+        freshTools = await provider.client.listTools();
+      } catch (listErr) {
+        logger.warn(
+          { err: listErr, provider: provider.name, tool: namespacedName },
+          "MCP listTools failed after reconnect — surfacing original error",
+        );
+        throw err;
+      }
+      const freshTool = freshTools[namespacedName] ?? freshTools[unprefixed];
+      const freshExecute = (freshTool as { execute?: (...args: unknown[]) => Promise<unknown> } | undefined)?.execute;
+      if (typeof freshExecute !== "function") throw err;
+      return await freshExecute.apply(freshTool, args);
+    }
+  };
+
+  return { ...tool, execute: wrappedExecute } as Tool;
 }
 
 /**

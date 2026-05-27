@@ -15,13 +15,20 @@ const mockListAllProviderTools = vi.fn();
 const mockGetToolsWithMetadata = vi.fn();
 const mockComputeDefaultEnabledTools = vi.fn();
 
-vi.mock("./provider.js", () => ({
-  createMcpProvider: (...args: unknown[]) => mockCreateMcpProvider(...args),
-  listProviderTools: (...args: unknown[]) => mockListProviderTools(...args),
-  listAllProviderTools: (...args: unknown[]) => mockListAllProviderTools(...args),
-  getToolsWithMetadata: (...args: unknown[]) => mockGetToolsWithMetadata(...args),
-  computeDefaultEnabledTools: (...args: unknown[]) => mockComputeDefaultEnabledTools(...args),
-}));
+vi.mock("./provider.js", async (importOriginal) => {
+  // Preserve `isMcpConnectionError` (and other pure helpers) — registry's
+  // test() calls it synchronously to classify errors, and a missing export
+  // would turn the error path into a thrown ReferenceError.
+  const actual = await importOriginal<typeof import("./provider.js")>();
+  return {
+    ...actual,
+    createMcpProvider: (...args: unknown[]) => mockCreateMcpProvider(...args),
+    listProviderTools: (...args: unknown[]) => mockListProviderTools(...args),
+    listAllProviderTools: (...args: unknown[]) => mockListAllProviderTools(...args),
+    getToolsWithMetadata: (...args: unknown[]) => mockGetToolsWithMetadata(...args),
+    computeDefaultEnabledTools: (...args: unknown[]) => mockComputeDefaultEnabledTools(...args),
+  };
+});
 
 import { ProviderRegistry } from "./provider-registry.js";
 
