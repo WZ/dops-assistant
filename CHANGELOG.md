@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.4.2] - 2026-05-27
+
+### Fixed
+- MCP providers self-heal after an upstream restart. Previously, a `grafana-mcp` (or any MCP server) restart left dops-assistant holding a dead session forever — every tool call failed with `Could not connect to server with any available HTTP transport` until the dops-assistant pod itself restarted. Now `ProviderRegistry.test()` rebuilds the cached client on connection errors and retries once, a 60s background ticker re-tests any errored provider so recovery is automatic, and each tool's `execute` is wrapped to trigger reconnect on connection errors (read-only tools retry once; write tools never replay). (#222)
+
 ## [0.4.4.1] - 2026-05-11
 
 ### Fixed
