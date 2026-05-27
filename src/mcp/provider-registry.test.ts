@@ -15,13 +15,20 @@ const mockListAllProviderTools = vi.fn();
 const mockGetToolsWithMetadata = vi.fn();
 const mockComputeDefaultEnabledTools = vi.fn();
 
-vi.mock("./provider.js", () => ({
-  createMcpProvider: (...args: unknown[]) => mockCreateMcpProvider(...args),
-  listProviderTools: (...args: unknown[]) => mockListProviderTools(...args),
-  listAllProviderTools: (...args: unknown[]) => mockListAllProviderTools(...args),
-  getToolsWithMetadata: (...args: unknown[]) => mockGetToolsWithMetadata(...args),
-  computeDefaultEnabledTools: (...args: unknown[]) => mockComputeDefaultEnabledTools(...args),
-}));
+vi.mock("./provider.js", async (importOriginal) => {
+  // Preserve `isMcpConnectionError` (and other pure helpers) — registry's
+  // test() calls it synchronously to classify errors, and a missing export
+  // would turn the error path into a thrown ReferenceError.
+  const actual = await importOriginal<typeof import("./provider.js")>();
+  return {
+    ...actual,
+    createMcpProvider: (...args: unknown[]) => mockCreateMcpProvider(...args),
+    listProviderTools: (...args: unknown[]) => mockListProviderTools(...args),
+    listAllProviderTools: (...args: unknown[]) => mockListAllProviderTools(...args),
+    getToolsWithMetadata: (...args: unknown[]) => mockGetToolsWithMetadata(...args),
+    computeDefaultEnabledTools: (...args: unknown[]) => mockComputeDefaultEnabledTools(...args),
+  };
+});
 
 import { ProviderRegistry } from "./provider-registry.js";
 
@@ -431,6 +438,41 @@ describe("ProviderRegistry", () => {
       expect(entry?.toolCount).toBe(0);
     });
 
+    it("rebuilds and retries when a stale client returns zero raw tools during test", async () => {
+      const initialTools = { grafana_query_prometheus: {} };
+      mockListProviderTools.mockResolvedValue(initialTools);
+      mockListAllProviderTools.mockResolvedValue(initialTools);
+      mockComputeDefaultEnabledTools.mockReturnValue(["query_prometheus"]);
+
+      const registry = new ProviderRegistry([makeConfig("grafana")], providersPath);
+      await registry.initialize();
+
+      mockCreateMcpProvider.mockClear();
+      mockListProviderTools.mockReset();
+      mockListAllProviderTools.mockReset();
+
+      const recoveredTools = {
+        grafana_query_prometheus: {},
+        grafana_get_metrics: {},
+      };
+      mockListProviderTools
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce(recoveredTools);
+      mockListAllProviderTools
+        .mockResolvedValueOnce({})
+        .mockResolvedValue(recoveredTools);
+
+      const result = await registry.test("grafana");
+
+      expect(mockCreateMcpProvider).toHaveBeenCalledTimes(1);
+      expect(result.status).toBe("ok");
+      expect(result.toolCount).toBe(2);
+      const entry = registry.getAll().find((p) => p.config.name === "grafana");
+      expect(entry?.status).toBe("connected");
+      expect(entry?.provider.enabledTools).toEqual(["query_prometheus"]);
+      expect(entry?.enabledToolCount).toBe(1);
+    });
+
     it("keeps disabled-all tools disabled when Test confirms the raw server has tools", async () => {
       mockListProviderTools.mockResolvedValue({ grafana_query_prometheus: {} });
       mockListAllProviderTools.mockResolvedValue({ grafana_query_prometheus: {} });
@@ -539,6 +581,48 @@ describe("ProviderRegistry", () => {
       // "a" survives, so the user's selection wins ("d" is NOT added automatically).
       expect(after?.provider.enabledTools).toEqual(["a"]);
       expect(after?.enabledToolCount).toBe(1);
+    });
+  });
+
+  describe("rebuildClient()", () => {
+    it("mutates the existing provider object so handed-out wrappers keep the fresh client", async () => {
+      const staleDisconnect = vi.fn().mockResolvedValue(undefined);
+      const staleClient = {
+        listTools: vi.fn(),
+        disconnect: staleDisconnect,
+      } as unknown as MastraProvider["client"];
+      const freshClient = {
+        listTools: vi.fn(),
+        disconnect: vi.fn(),
+      } as unknown as MastraProvider["client"];
+      mockCreateMcpProvider
+        .mockReturnValueOnce({
+          name: "grafana",
+          roles: ["metrics"],
+          client: staleClient,
+        })
+        .mockReturnValueOnce({
+          name: "grafana",
+          roles: ["metrics"],
+          client: freshClient,
+        });
+      mockListProviderTools.mockResolvedValue({ grafana_query_prometheus: {} });
+      mockListAllProviderTools.mockResolvedValue({ grafana_query_prometheus: {} });
+      mockComputeDefaultEnabledTools.mockReturnValue(["query_prometheus"]);
+
+      const registry = new ProviderRegistry([makeConfig("grafana")], providersPath);
+      await registry.initialize();
+
+      const entry = registry.getAll()[0];
+      const providerRef = entry.provider;
+
+      await registry.rebuildClient(entry);
+
+      expect(staleDisconnect).toHaveBeenCalledTimes(1);
+      expect(entry.provider).toBe(providerRef);
+      expect(providerRef.client).toBe(freshClient);
+      expect(providerRef.enabledTools).toEqual(["query_prometheus"]);
+      expect(providerRef.reconnect).toEqual(expect.any(Function));
     });
   });
 

@@ -3,6 +3,7 @@ import { parse, stringify } from "yaml";
 import { ProviderSchema, type ProviderConfig, type ProviderRole } from "../config/schema.js";
 import {
   createMcpProvider,
+  isMcpConnectionError,
   listProviderTools,
   listAllProviderTools,
   getToolsWithMetadata,
@@ -107,12 +108,26 @@ export type ProviderRegistryListener = (event: ProviderRegistryChangeEvent) => v
 
 const GuiProvidersSchema = z.array(ProviderSchema);
 
+/**
+ * Default interval for the periodic reconnect ticker. Errored providers are
+ * re-tested at this cadence so that an upstream blip (grafana-mcp restart,
+ * brief network glitch) self-heals within a minute without requiring a UI
+ * click or an app restart. 60s is a deliberate compromise between recovery
+ * latency and noise — short enough that a webhook investigation triggered
+ * after the upstream comes back will usually find healthy tools, long enough
+ * that the listTools probes don't show up as background traffic.
+ */
+export const DEFAULT_RECONNECT_INTERVAL_MS = 60_000;
+
 export class ProviderRegistry {
   private entries: Map<string, ProviderInfo> = new Map();
   private configProviders: ProviderConfig[];
   private providersFilePath: string;
   private connectTimeoutMs: number | undefined;
   private listeners: Set<ProviderRegistryListener> = new Set();
+  private rebuildInFlight: Map<string, Promise<void>> = new Map();
+  private reconnectTimer: ReturnType<typeof setInterval> | null = null;
+  private reconnectTickInFlight = false;
 
   constructor(configProviders: ProviderConfig[], providersFilePath: string, connectTimeoutMs?: number) {
     this.configProviders = configProviders;
@@ -267,7 +282,121 @@ export class ProviderRegistry {
   }
 
   /**
+   * Tear down the underlying MCPClient and rebuild it in place, preserving
+   * the user's enabledTools selection. Mutates the registry-issued
+   * MastraProvider object so callers holding that reference automatically
+   * pick up the fresh client on their next call.
+   *
+   * Concurrent calls for the same provider are deduped to a single in-flight
+   * rebuild. The old client's `disconnect()` is best-effort — a failure
+   * there is logged but does not block the rebuild, since the goal is to
+   * stop using the dead client regardless.
+   */
+  async rebuildClient(entry: ProviderInfo): Promise<void> {
+    const name = entry.config.name;
+    const existing = this.rebuildInFlight.get(name);
+    if (existing) return existing;
+    const p = (async () => {
+      try {
+        try {
+          const disconnect = (entry.provider.client as { disconnect?: () => Promise<void> | void }).disconnect;
+          if (typeof disconnect === "function") {
+            await disconnect.call(entry.provider.client);
+          }
+        } catch (err) {
+          logger.warn(
+            { err, name },
+            "ProviderRegistry: disconnect of stale MCP client failed (continuing rebuild)",
+          );
+        }
+        const newProvider = createMcpProvider(entry.config, this.connectTimeoutMs);
+        entry.provider.name = newProvider.name;
+        entry.provider.roles = newProvider.roles;
+        entry.provider.client = newProvider.client;
+        entry.provider.reconnect = this.makeReconnectHook(name);
+        logger.info({ name }, "ProviderRegistry: rebuilt MCP client");
+      } finally {
+        this.rebuildInFlight.delete(name);
+      }
+    })();
+    this.rebuildInFlight.set(name, p);
+    return p;
+  }
+
+  /**
+   * Build the reconnect closure stored on `provider.reconnect`. We look up
+   * the entry at call time (not capture) so the closure stays valid across
+   * `update()` calls that swap the entry.
+   */
+  private makeReconnectHook(name: string): () => Promise<void> {
+    return async () => {
+      const entry = this.entries.get(name);
+      if (!entry) return;
+      await this.rebuildClient(entry);
+    };
+  }
+
+  /**
+   * Start a background ticker that re-tests any provider currently in
+   * `status === "error"`. Combined with the rebuild-on-error logic in
+   * `test()`, this lets the registry self-heal after an upstream restart
+   * without requiring a UI click or app restart.
+   *
+   * Idempotent — calling twice does not start two tickers.
+   * Pair with `stopPeriodicReconnect()` on shutdown to clear the interval.
+   */
+  startPeriodicReconnect(intervalMs: number = DEFAULT_RECONNECT_INTERVAL_MS): void {
+    if (this.reconnectTimer) return;
+    this.reconnectTimer = setInterval(() => { void this.reconnectTick(); }, intervalMs);
+    // setInterval keeps the event loop alive — unref so this background task
+    // doesn't prevent graceful shutdown in tests or short-lived CLI flows.
+    if (typeof (this.reconnectTimer as { unref?: () => void }).unref === "function") {
+      (this.reconnectTimer as { unref: () => void }).unref();
+    }
+  }
+
+  stopPeriodicReconnect(): void {
+    if (this.reconnectTimer) {
+      clearInterval(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+  }
+
+  private async reconnectTick(): Promise<void> {
+    if (this.reconnectTickInFlight) return;
+    this.reconnectTickInFlight = true;
+    try {
+      const erroredNames: string[] = [];
+      for (const [name, info] of this.entries) {
+        if (info.status === "error") erroredNames.push(name);
+      }
+      for (const name of erroredNames) {
+        try {
+          const result = await this.test(name);
+          if (result.status === "ok") {
+            logger.info(
+              { name, toolCount: result.toolCount },
+              "ProviderRegistry: periodic reconnect recovered provider",
+            );
+          }
+        } catch (err) {
+          logger.warn({ err, name }, "ProviderRegistry: periodic reconnect threw");
+        }
+      }
+    } finally {
+      this.reconnectTickInFlight = false;
+    }
+  }
+
+  /**
    * Test connection for a named provider. Updates status in the registry.
+   *
+   * When the first `listTools` call fails with an MCP connection/session
+   * error (upstream restarted, transport mid-cascade, "Already connected"
+   * after streamable-http→SSE fallback), the underlying MCPClient is torn
+   * down and rebuilt, and the test retried once. Without this, the cached
+   * MCPClient holds a dead session forever and even the UI's manual Test
+   * button can't recover the provider — only a full app restart does.
    */
   async test(name: string): Promise<{ status: "ok" | "error"; toolCount: number; error?: string }> {
     const entry = this.entries.get(name);
@@ -276,7 +405,7 @@ export class ProviderRegistry {
     }
 
     try {
-      const tools = await listProviderTools(entry.provider);
+      let tools = await this.listProviderToolsWithReconnect(entry);
       let toolCount = Object.keys(tools).length;
       let rawToolNames = Object.keys(tools);
       let allRawTools: Awaited<ReturnType<typeof listAllProviderTools>> | undefined;
@@ -291,14 +420,27 @@ export class ProviderRegistry {
         rawToolNames = Object.keys(allRawTools);
         toolCount = rawToolNames.length;
         if (toolCount === 0) {
-          const message = "MCP server returned no tools (likely unreachable or misconfigured)";
-          entry.status = "error";
-          entry.toolCount = 0;
-          entry.error = message;
-          entry.enabledToolCount = 0;
-          entry.toolNames = [];
-          this.emit({ kind: "test", name });
-          return { status: "error", toolCount: 0, error: message };
+          logger.info(
+            { name },
+            "ProviderRegistry: MCP returned zero raw tools during test — rebuilding client and retrying",
+          );
+          await this.rebuildClient(entry);
+          tools = await this.listProviderToolsWithReconnect(entry);
+          toolCount = Object.keys(tools).length;
+          rawToolNames = Object.keys(tools);
+          allRawTools = await listAllProviderTools(entry.provider);
+          rawToolNames = Object.keys(allRawTools);
+          toolCount = rawToolNames.length;
+          if (toolCount === 0) {
+            const message = "MCP server returned no tools (likely unreachable or misconfigured)";
+            entry.status = "error";
+            entry.toolCount = 0;
+            entry.error = message;
+            entry.enabledToolCount = 0;
+            entry.toolNames = [];
+            this.emit({ kind: "test", name });
+            return { status: "error", toolCount: 0, error: message };
+          }
         }
       }
 
@@ -357,6 +499,22 @@ export class ProviderRegistry {
       entry.error = message;
       this.emit({ kind: "test", name });
       return { status: "error", toolCount: 0, error: message };
+    }
+  }
+
+  private async listProviderToolsWithReconnect(
+    entry: ProviderInfo,
+  ): Promise<Awaited<ReturnType<typeof listProviderTools>>> {
+    try {
+      return await listProviderTools(entry.provider);
+    } catch (err) {
+      if (!isMcpConnectionError(err)) throw err;
+      logger.info(
+        { name: entry.config.name, err: err instanceof Error ? err.message : String(err) },
+        "ProviderRegistry: MCP connection error during test — rebuilding client and retrying",
+      );
+      await this.rebuildClient(entry);
+      return listProviderTools(entry.provider);
     }
   }
 
@@ -470,6 +628,7 @@ export class ProviderRegistry {
 
     try {
       provider = createMcpProvider(config, this.connectTimeoutMs);
+      provider.reconnect = this.makeReconnectHook(config.name);
     } catch (err) {
       // If MCP client creation fails, create a stub so we can still track it
       const message = err instanceof Error ? err.message : String(err);

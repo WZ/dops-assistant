@@ -43,6 +43,8 @@ vi.mock("../mcp/provider-registry.js", () => {
     getByRole = vi.fn().mockReturnValue([]);
     add = vi.fn().mockResolvedValue({});
     remove = vi.fn().mockResolvedValue(undefined);
+    startPeriodicReconnect = vi.fn();
+    stopPeriodicReconnect = vi.fn();
     onChange = vi.fn((listener: (event: { kind: string; name: string }) => void) => {
       this.__listeners.push(listener);
       return () => { this.__listeners = this.__listeners.filter(l => l !== listener); };

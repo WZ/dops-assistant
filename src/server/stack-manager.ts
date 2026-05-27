@@ -187,6 +187,12 @@ export class StackManager {
       this.config.timeouts?.mcpConnectMs,
     );
     await providerRegistry.initialize();
+    // Self-heal errored providers in the background. Without this, a transient
+    // upstream blip (e.g. a `grafana-mcp` pod restart) leaves dops-assistant
+    // serving stale "error" state until the operator clicks Test in the UI or
+    // the whole pod restarts. Interval reuses `mcpConnectMs` if configured, or
+    // falls back to the registry default (60s).
+    providerRegistry.startPeriodicReconnect();
 
     // ConversationMemory: per-stack, uses config defaults
     const memOpts = this.config.agent?.conversationMemory ?? { maxMessages: 50, ttlMinutes: 30 };
@@ -518,6 +524,7 @@ export class StackManager {
     ctx.k8sEventPoller.stop();
     ctx.scanScheduler.stop();
     ctx.periodicDiscoveryScheduler.stop();
+    ctx.providerRegistry.stopPeriodicReconnect();
 
     // Destroy conversation memory (clears eviction interval)
     ctx.conversationMemory.destroy();
@@ -635,6 +642,7 @@ export class StackManager {
           try { ctx.k8sEventPoller.stop(); } catch { /* ignore */ }
           try { ctx.scanScheduler.stop(); } catch { /* ignore */ }
           try { ctx.periodicDiscoveryScheduler.stop(); } catch { /* ignore */ }
+          try { ctx.providerRegistry.stopPeriodicReconnect(); } catch { /* ignore */ }
           try { ctx.conversationMemory.destroy(); } catch { /* ignore */ }
           this.stacks.delete(stackId);
           this.skippedPollers.delete(stackId);
@@ -705,7 +713,8 @@ export class StackManager {
       ctx.healthPoller.stop();
       ctx.k8sEventPoller.stop();
       ctx.scanScheduler.stop();
-    ctx.periodicDiscoveryScheduler.stop();
+      ctx.periodicDiscoveryScheduler.stop();
+      ctx.providerRegistry.stopPeriodicReconnect();
     }
   }
 
