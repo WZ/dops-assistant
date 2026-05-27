@@ -283,10 +283,9 @@ export class ProviderRegistry {
 
   /**
    * Tear down the underlying MCPClient and rebuild it in place, preserving
-   * the user's enabledTools selection. Mutates `entry.provider` so callers
-   * holding the registry-issued MastraProvider reference automatically pick
-   * up the fresh client on their next call (`getProviders()` returns the
-   * live reference; nothing caches the inner `.client`).
+   * the user's enabledTools selection. Mutates the registry-issued
+   * MastraProvider object so callers holding that reference automatically
+   * pick up the fresh client on their next call.
    *
    * Concurrent calls for the same provider are deduped to a single in-flight
    * rebuild. The old client's `disconnect()` is best-effort — a failure
@@ -300,7 +299,10 @@ export class ProviderRegistry {
     const p = (async () => {
       try {
         try {
-          await entry.provider.client.disconnect();
+          const disconnect = (entry.provider.client as { disconnect?: () => Promise<void> | void }).disconnect;
+          if (typeof disconnect === "function") {
+            await disconnect.call(entry.provider.client);
+          }
         } catch (err) {
           logger.warn(
             { err, name },
@@ -308,9 +310,10 @@ export class ProviderRegistry {
           );
         }
         const newProvider = createMcpProvider(entry.config, this.connectTimeoutMs);
-        newProvider.enabledTools = entry.provider.enabledTools;
-        newProvider.reconnect = this.makeReconnectHook(name);
-        entry.provider = newProvider;
+        entry.provider.name = newProvider.name;
+        entry.provider.roles = newProvider.roles;
+        entry.provider.client = newProvider.client;
+        entry.provider.reconnect = this.makeReconnectHook(name);
         logger.info({ name }, "ProviderRegistry: rebuilt MCP client");
       } finally {
         this.rebuildInFlight.delete(name);
@@ -402,18 +405,7 @@ export class ProviderRegistry {
     }
 
     try {
-      let tools: Awaited<ReturnType<typeof listProviderTools>>;
-      try {
-        tools = await listProviderTools(entry.provider);
-      } catch (err) {
-        if (!isMcpConnectionError(err)) throw err;
-        logger.info(
-          { name, err: err instanceof Error ? err.message : String(err) },
-          "ProviderRegistry: MCP connection error during test — rebuilding client and retrying",
-        );
-        await this.rebuildClient(entry);
-        tools = await listProviderTools(entry.provider);
-      }
+      let tools = await this.listProviderToolsWithReconnect(entry);
       let toolCount = Object.keys(tools).length;
       let rawToolNames = Object.keys(tools);
       let allRawTools: Awaited<ReturnType<typeof listAllProviderTools>> | undefined;
@@ -428,14 +420,27 @@ export class ProviderRegistry {
         rawToolNames = Object.keys(allRawTools);
         toolCount = rawToolNames.length;
         if (toolCount === 0) {
-          const message = "MCP server returned no tools (likely unreachable or misconfigured)";
-          entry.status = "error";
-          entry.toolCount = 0;
-          entry.error = message;
-          entry.enabledToolCount = 0;
-          entry.toolNames = [];
-          this.emit({ kind: "test", name });
-          return { status: "error", toolCount: 0, error: message };
+          logger.info(
+            { name },
+            "ProviderRegistry: MCP returned zero raw tools during test — rebuilding client and retrying",
+          );
+          await this.rebuildClient(entry);
+          tools = await this.listProviderToolsWithReconnect(entry);
+          toolCount = Object.keys(tools).length;
+          rawToolNames = Object.keys(tools);
+          allRawTools = await listAllProviderTools(entry.provider);
+          rawToolNames = Object.keys(allRawTools);
+          toolCount = rawToolNames.length;
+          if (toolCount === 0) {
+            const message = "MCP server returned no tools (likely unreachable or misconfigured)";
+            entry.status = "error";
+            entry.toolCount = 0;
+            entry.error = message;
+            entry.enabledToolCount = 0;
+            entry.toolNames = [];
+            this.emit({ kind: "test", name });
+            return { status: "error", toolCount: 0, error: message };
+          }
         }
       }
 
@@ -494,6 +499,22 @@ export class ProviderRegistry {
       entry.error = message;
       this.emit({ kind: "test", name });
       return { status: "error", toolCount: 0, error: message };
+    }
+  }
+
+  private async listProviderToolsWithReconnect(
+    entry: ProviderInfo,
+  ): Promise<Awaited<ReturnType<typeof listProviderTools>>> {
+    try {
+      return await listProviderTools(entry.provider);
+    } catch (err) {
+      if (!isMcpConnectionError(err)) throw err;
+      logger.info(
+        { name: entry.config.name, err: err instanceof Error ? err.message : String(err) },
+        "ProviderRegistry: MCP connection error during test — rebuilding client and retrying",
+      );
+      await this.rebuildClient(entry);
+      return listProviderTools(entry.provider);
     }
   }
 
