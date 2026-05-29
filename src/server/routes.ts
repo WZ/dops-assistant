@@ -1701,6 +1701,36 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     }
   });
 
+  // Trust instrument: did the operator re-verify this investigation in Grafana?
+  // Captured independently of the thumbs rating. Primary metric for the
+  // "deeper investigation" measurement gate.
+  app.get("/api/investigations/:id/reverify", (req: Request, res: Response) => {
+    const investigationId = Array.isArray(req.params["id"]) ? req.params["id"][0]! : (req.params["id"] as string);
+    const existing = db.getReVerify(req.stackId, investigationId);
+    res.json({ reVerified: existing?.reVerified ?? null, created_at: existing?.created_at ?? null });
+  });
+
+  app.post("/api/investigations/:id/reverify", async (req: Request, res: Response) => {
+    try {
+      const investigationId = Array.isArray(req.params["id"]) ? req.params["id"][0]! : (req.params["id"] as string);
+      const { reVerified } = req.body as { reVerified: unknown };
+      if (typeof reVerified !== "boolean") {
+        res.status(400).json({ error: "reVerified must be a boolean" });
+        return;
+      }
+      const investigation = db.getInvestigation(req.stackId, investigationId);
+      if (!investigation) {
+        res.status(404).json({ error: "Investigation not found" });
+        return;
+      }
+      const { ulid: makeId } = await import("ulid");
+      db.upsertReVerify(req.stackId, { id: `rv_${makeId()}`, investigationId, reVerified });
+      res.json({ ok: true, reVerified });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : "Failed to save re-verify signal" });
+    }
+  });
+
   app.get("/api/patterns/:id", (req: Request, res: Response) => {
     const patternId = Array.isArray(req.params["id"]) ? req.params["id"][0]! : (req.params["id"] as string);
     const seed = db.getPattern(req.stackId, patternId);

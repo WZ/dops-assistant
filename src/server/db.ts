@@ -640,6 +640,18 @@ export class Database {
         rating            TEXT NOT NULL CHECK(rating IN ('useful', 'not_useful')),
         created_at        TEXT NOT NULL DEFAULT (datetime('now'))
       );
+      -- Trust instrument: did the operator re-verify the conclusion in Grafana
+      -- themselves? Captured independently of the thumbs rating (an operator may
+      -- re-verify regardless of whether they rated). Primary metric for the
+      -- "deeper investigation" measurement gate. One row per (investigation, stack).
+      CREATE TABLE IF NOT EXISTS investigation_reverify (
+        id                TEXT PRIMARY KEY,
+        investigation_id  TEXT NOT NULL REFERENCES investigations(id),
+        stack_id          TEXT,
+        re_verified       INTEGER NOT NULL CHECK(re_verified IN (0, 1)),
+        created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_inv_reverify_unique ON investigation_reverify (investigation_id, stack_id);
       CREATE TABLE IF NOT EXISTS incident_patterns (
         id                TEXT PRIMARY KEY,
         service           TEXT NOT NULL,
@@ -1174,6 +1186,7 @@ export class Database {
       this.db.prepare("DELETE FROM disabled_skills WHERE stack_id = ?").run(id);
       this.db.prepare("DELETE FROM incident_patterns WHERE stack_id = ?").run(id);
       this.db.prepare("DELETE FROM investigation_feedback WHERE stack_id = ?").run(id);
+      this.db.prepare("DELETE FROM investigation_reverify WHERE stack_id = ?").run(id);
       this.db.prepare("DELETE FROM service_health_checks WHERE stack_id = ?").run(id);
       this.db.prepare("DELETE FROM messages WHERE stack_id = ?").run(id);
       // Delete child tables of investigations before investigations (FK enforcement is OFF)
@@ -1477,6 +1490,36 @@ export class Database {
       )
       .get(investigationId, stackId) as { rating: string; created_at: string } | undefined;
     return row ? normalizeRow(row) : undefined;
+  }
+
+  /**
+   * Record whether the operator re-verified an investigation in Grafana.
+   * Upserted on (investigation_id, stack_id) — re-answering replaces the prior
+   * value rather than stacking rows. Independent of the thumbs rating.
+   */
+  upsertReVerify(
+    stackId: string,
+    rv: { id: string; investigationId: string; reVerified: boolean },
+  ): void {
+    this.db
+      .prepare(
+        `INSERT INTO investigation_reverify (id, investigation_id, re_verified, stack_id)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(investigation_id, stack_id)
+         DO UPDATE SET re_verified = excluded.re_verified, created_at = datetime('now')`,
+      )
+      .run(rv.id, rv.investigationId, rv.reVerified ? 1 : 0, stackId);
+  }
+
+  getReVerify(stackId: string, investigationId: string): { reVerified: boolean; created_at: string } | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT re_verified, created_at FROM investigation_reverify
+         WHERE investigation_id = ? AND stack_id = ?
+         ORDER BY created_at DESC LIMIT 1`,
+      )
+      .get(investigationId, stackId) as { re_verified: number; created_at: string } | undefined;
+    return row ? { reVerified: row.re_verified === 1, created_at: row.created_at } : undefined;
   }
 
   // ── Incident patterns ───────────────────────────────────────────────────

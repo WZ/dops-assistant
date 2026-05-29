@@ -16,6 +16,7 @@ function Wrapper({ children }: { children: ReactNode }) {
  */
 function mockFetch(opts: {
   initialRating?: "useful" | "not_useful" | null;
+  initialReVerified?: boolean | null;
   postFails?: boolean;
 } = {}) {
   const calls: Array<{ url: string; method: string; body?: unknown }> = [];
@@ -28,6 +29,12 @@ function mockFetch(opts: {
       body: init?.body ? JSON.parse(init.body as string) : undefined,
     });
     if (method === "GET") {
+      if (u.includes("/reverify")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ reVerified: opts.initialReVerified ?? null }),
+        });
+      }
       return Promise.resolve({
         ok: true,
         json: () => Promise.resolve({ rating: opts.initialRating ?? null }),
@@ -140,5 +147,39 @@ describe("InvestigationFeedback", () => {
     });
     // Rolled back: button returned to neutral.
     expect(screen.getByLabelText("Mark as useful").getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("clicking a re-verify answer posts reVerified independently of the rating", async () => {
+    const { fn, calls } = mockFetch({ initialRating: null, initialReVerified: null });
+    globalThis.fetch = fn;
+
+    render(<InvestigationFeedback investigationId="inv_1" />, { wrapper: Wrapper });
+
+    await waitFor(() => {
+      expect(calls.some((c) => c.method === "GET" && c.url.includes("/reverify"))).toBe(true);
+    });
+
+    fireEvent.click(screen.getByLabelText("Yes, I re-checked in Grafana"));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Yes, I re-checked in Grafana").getAttribute("aria-pressed")).toBe("true");
+    });
+    const post = calls.find((c) => c.method === "POST" && c.url.includes("/reverify"));
+    expect(post).toBeDefined();
+    expect(post?.url).toContain("/api/investigations/inv_1/reverify");
+    expect(post?.body).toEqual({ reVerified: true });
+    // No rating was posted — the two signals are independent.
+    expect(calls.some((c) => c.method === "POST" && c.url.includes("/feedback"))).toBe(false);
+  });
+
+  it("reflects an existing re-verify signal in aria-pressed on mount", async () => {
+    const { fn } = mockFetch({ initialReVerified: true });
+    globalThis.fetch = fn;
+
+    render(<InvestigationFeedback investigationId="inv_1" />, { wrapper: Wrapper });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Yes, I re-checked in Grafana").getAttribute("aria-pressed")).toBe("true");
+    });
   });
 });

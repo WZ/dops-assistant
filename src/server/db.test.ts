@@ -1267,6 +1267,44 @@ describe("Database", () => {
     });
   });
 
+  describe("re-verify instrument", () => {
+    beforeEach(() => {
+      db.createInvestigation(S, { id: "inv_1", service: "svc", query: "q", status: "complete" });
+    });
+
+    it("records and reads back a re-verify signal", () => {
+      db.upsertReVerify(S, { id: "rv_1", investigationId: "inv_1", reVerified: true });
+      expect(db.getReVerify(S, "inv_1")).toMatchObject({ reVerified: true });
+    });
+
+    it("upsert replaces the prior value (no duplicate rows)", () => {
+      db.upsertReVerify(S, { id: "rv_1", investigationId: "inv_1", reVerified: true });
+      db.upsertReVerify(S, { id: "rv_2", investigationId: "inv_1", reVerified: false });
+      expect(db.getReVerify(S, "inv_1")?.reVerified).toBe(false);
+      const raw = (db as unknown as { db: { prepare: (s: string) => { all: (...args: unknown[]) => unknown[] } } }).db;
+      const rows = raw.prepare(
+        "SELECT id FROM investigation_reverify WHERE investigation_id = ? AND stack_id = ?",
+      ).all("inv_1", S);
+      expect(rows).toHaveLength(1);
+    });
+
+    it("is independent of the thumbs rating", () => {
+      // Re-verify can be recorded with no rating present, and vice versa.
+      db.upsertReVerify(S, { id: "rv_1", investigationId: "inv_1", reVerified: true });
+      expect(db.getFeedback(S, "inv_1")).toBeUndefined();
+      expect(db.getReVerify(S, "inv_1")?.reVerified).toBe(true);
+    });
+
+    it("is stack-scoped", () => {
+      db.upsertReVerify(S, { id: "rv_1", investigationId: "inv_1", reVerified: true });
+      expect(db.getReVerify("other", "inv_1")).toBeUndefined();
+    });
+
+    it("returns undefined when never recorded", () => {
+      expect(db.getReVerify(S, "inv_1")).toBeUndefined();
+    });
+  });
+
   describe("hasPatternForInvestigation", () => {
     it("returns false when no pattern ever extracted", () => {
       db.createInvestigation(S, { id: "inv_1", service: "svc", query: "q", status: "complete" });

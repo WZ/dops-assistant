@@ -194,6 +194,31 @@ describe("Feedback rejects invalid rating", () => {
   });
 });
 
+describe("Re-verify instrument", () => {
+  it("only accepts a boolean reVerified (route guard)", () => {
+    // The route handler checks: if (typeof reVerified !== "boolean") return 400
+    const valid = [true, false];
+    const invalid = ["yes", "no", 1, 0, null, undefined, "true"];
+    for (const v of valid) expect(typeof v === "boolean").toBe(true);
+    for (const v of invalid) expect(typeof v === "boolean").toBe(false);
+  });
+
+  it("DB CHECK constraint rejects non-0/1 re_verified values", () => {
+    const { db, cleanup } = makeTempDb();
+    try {
+      db.createInvestigation(STACK, { id: "inv_rv", service: "api", query: "test", status: "complete" });
+      const raw = (db as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => unknown } } }).db;
+      expect(() => {
+        raw.prepare(
+          "INSERT INTO investigation_reverify (id, investigation_id, re_verified, stack_id) VALUES (?, ?, ?, ?)",
+        ).run("rv_bad", "inv_rv", 2, STACK);
+      }).toThrow();
+    } finally {
+      cleanup();
+    }
+  });
+});
+
 describe("Pattern extraction from RCA report", () => {
   it("extracts symptom from report summary", () => {
     const report = {

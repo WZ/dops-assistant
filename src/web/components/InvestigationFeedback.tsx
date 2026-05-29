@@ -20,6 +20,7 @@ interface InvestigationFeedbackProps {
 export function InvestigationFeedback({ investigationId }: InvestigationFeedbackProps) {
   const { stackFetch } = useStackContext();
   const [rating, setRating] = useState<Rating | null>(null);
+  const [reVerified, setReVerified] = useState<boolean | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -34,6 +35,20 @@ export function InvestigationFeedback({ investigationId }: InvestigationFeedback
       })
       .catch((err) => {
         if (err.name !== "AbortError") setRating(null);
+      });
+    return () => controller.abort();
+  }, [stackFetch, investigationId]);
+
+  // Fetch the current re-verify signal on mount (independent of the rating).
+  useEffect(() => {
+    const controller = new AbortController();
+    stackFetch(`/api/investigations/${investigationId}/reverify`, { signal: controller.signal })
+      .then((res) => (res.ok ? res.json() : Promise.resolve({ reVerified: null })))
+      .then((data: { reVerified: boolean | null }) => {
+        setReVerified(data.reVerified);
+      })
+      .catch((err) => {
+        if (err.name !== "AbortError") setReVerified(null);
       });
     return () => controller.abort();
   }, [stackFetch, investigationId]);
@@ -64,6 +79,29 @@ export function InvestigationFeedback({ investigationId }: InvestigationFeedback
     }
   };
 
+  const submitReVerify = async (next: boolean) => {
+    const previous = reVerified;
+    setSubmitting(true);
+    setError(null);
+    setReVerified(next);
+    try {
+      const res = await stackFetch(`/api/investigations/${investigationId}/reverify`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ reVerified: next }),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(body || `HTTP ${res.status}`);
+      }
+    } catch (err) {
+      setReVerified(previous);
+      setError(err instanceof Error ? err.message : "Failed to save re-verify signal");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const confirmation =
     rating === "useful"
       ? "Thanks — this feeds the pattern learner."
@@ -74,44 +112,86 @@ export function InvestigationFeedback({ investigationId }: InvestigationFeedback
   return (
     <section
       aria-label="Rate this investigation"
-      className="mt-6 pt-4 border-t border-border/30 flex flex-wrap items-center gap-3"
+      className="mt-6 pt-4 border-t border-border/30 flex flex-col items-start gap-3"
     >
-      <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/60">
-        Was this useful?
-      </span>
-      <div className="flex items-center gap-1.5">
-        <button
-          type="button"
-          onClick={() => submit("useful")}
-          disabled={submitting}
-          aria-pressed={rating === "useful"}
-          aria-label="Mark as useful"
-          className={`h-8 w-8 rounded-md border text-sm transition-colors disabled:opacity-60 disabled:cursor-wait ${
-            rating === "useful"
-              ? "bg-success/15 border-success/60 text-success"
-              : "border-border/40 text-foreground/65 hover:bg-card/70 hover:text-foreground"
-          }`}
-        >
-          👍
-        </button>
-        <button
-          type="button"
-          onClick={() => submit("not_useful")}
-          disabled={submitting}
-          aria-pressed={rating === "not_useful"}
-          aria-label="Mark as not useful"
-          className={`h-8 w-8 rounded-md border text-sm transition-colors disabled:opacity-60 disabled:cursor-wait ${
-            rating === "not_useful"
-              ? "bg-destructive/15 border-destructive/60 text-destructive"
-              : "border-border/40 text-foreground/65 hover:bg-card/70 hover:text-foreground"
-          }`}
-        >
-          👎
-        </button>
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/60">
+          Was this useful?
+        </span>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => submit("useful")}
+            disabled={submitting}
+            aria-pressed={rating === "useful"}
+            aria-label="Mark as useful"
+            className={`h-8 w-8 rounded-md border text-sm transition-colors disabled:opacity-60 disabled:cursor-wait ${
+              rating === "useful"
+                ? "bg-success/15 border-success/60 text-success"
+                : "border-border/40 text-foreground/65 hover:bg-card/70 hover:text-foreground"
+            }`}
+          >
+            👍
+          </button>
+          <button
+            type="button"
+            onClick={() => submit("not_useful")}
+            disabled={submitting}
+            aria-pressed={rating === "not_useful"}
+            aria-label="Mark as not useful"
+            className={`h-8 w-8 rounded-md border text-sm transition-colors disabled:opacity-60 disabled:cursor-wait ${
+              rating === "not_useful"
+                ? "bg-destructive/15 border-destructive/60 text-destructive"
+                : "border-border/40 text-foreground/65 hover:bg-card/70 hover:text-foreground"
+            }`}
+          >
+            👎
+          </button>
+        </div>
+        {confirmation && (
+          <span className="font-mono text-[10px] text-muted-foreground/70">{confirmation}</span>
+        )}
       </div>
-      {confirmation && (
-        <span className="font-mono text-[10px] text-muted-foreground/70">{confirmation}</span>
-      )}
+
+      {/* Trust instrument: did the operator re-verify in Grafana themselves?
+          Captured independently of the rating — the primary signal for whether
+          richer reports are reducing the manual re-check reflex. */}
+      <div className="flex flex-wrap items-center gap-3" aria-label="Did you re-verify in Grafana?">
+        <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/60">
+          Re-verified in Grafana?
+        </span>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => submitReVerify(false)}
+            disabled={submitting}
+            aria-pressed={reVerified === false}
+            aria-label="No, I trusted the report"
+            className={`h-8 px-3 rounded-md border font-mono text-[11px] transition-colors disabled:opacity-60 disabled:cursor-wait ${
+              reVerified === false
+                ? "bg-success/15 border-success/60 text-success"
+                : "border-border/40 text-foreground/65 hover:bg-card/70 hover:text-foreground"
+            }`}
+          >
+            No — trusted it
+          </button>
+          <button
+            type="button"
+            onClick={() => submitReVerify(true)}
+            disabled={submitting}
+            aria-pressed={reVerified === true}
+            aria-label="Yes, I re-checked in Grafana"
+            className={`h-8 px-3 rounded-md border font-mono text-[11px] transition-colors disabled:opacity-60 disabled:cursor-wait ${
+              reVerified === true
+                ? "bg-warning/15 border-warning/60 text-warning"
+                : "border-border/40 text-foreground/65 hover:bg-card/70 hover:text-foreground"
+            }`}
+          >
+            Yes — re-checked
+          </button>
+        </div>
+      </div>
+
       {error && (
         <span role="alert" className="font-mono text-[10px] text-destructive">
           {error}
