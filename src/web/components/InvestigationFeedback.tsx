@@ -21,8 +21,12 @@ export function InvestigationFeedback({ investigationId }: InvestigationFeedback
   const { stackFetch } = useStackContext();
   const [rating, setRating] = useState<Rating | null>(null);
   const [reVerified, setReVerified] = useState<boolean | null>(null);
+  // Per-instrument submit/error state so a failed (or in-flight) rating doesn't
+  // disable the re-verify control or surface its error there, and vice-versa.
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [rvSubmitting, setRvSubmitting] = useState(false);
+  const [rvError, setRvError] = useState<string | null>(null);
 
   // Fetch the current rating on mount. If the investigation has never been
   // rated the server returns { rating: null } and the buttons render neutral.
@@ -81,8 +85,8 @@ export function InvestigationFeedback({ investigationId }: InvestigationFeedback
 
   const submitReVerify = async (next: boolean) => {
     const previous = reVerified;
-    setSubmitting(true);
-    setError(null);
+    setRvSubmitting(true);
+    setRvError(null);
     setReVerified(next);
     try {
       const res = await stackFetch(`/api/investigations/${investigationId}/reverify`, {
@@ -96,9 +100,9 @@ export function InvestigationFeedback({ investigationId }: InvestigationFeedback
       }
     } catch (err) {
       setReVerified(previous);
-      setError(err instanceof Error ? err.message : "Failed to save re-verify signal");
+      setRvError(err instanceof Error ? err.message : "Failed to save re-verify signal");
     } finally {
-      setSubmitting(false);
+      setRvSubmitting(false);
     }
   };
 
@@ -151,6 +155,11 @@ export function InvestigationFeedback({ investigationId }: InvestigationFeedback
         {confirmation && (
           <span className="font-mono text-[10px] text-muted-foreground/70">{confirmation}</span>
         )}
+        {error && (
+          <span role="alert" className="font-mono text-[10px] text-destructive">
+            {error}
+          </span>
+        )}
       </div>
 
       {/* Trust instrument: did the operator re-verify in Grafana themselves?
@@ -164,7 +173,7 @@ export function InvestigationFeedback({ investigationId }: InvestigationFeedback
           <button
             type="button"
             onClick={() => submitReVerify(false)}
-            disabled={submitting}
+            disabled={rvSubmitting}
             aria-pressed={reVerified === false}
             aria-label="No, I trusted the report"
             className={`h-8 px-3 rounded-md border font-mono text-[11px] transition-colors disabled:opacity-60 disabled:cursor-wait ${
@@ -178,7 +187,7 @@ export function InvestigationFeedback({ investigationId }: InvestigationFeedback
           <button
             type="button"
             onClick={() => submitReVerify(true)}
-            disabled={submitting}
+            disabled={rvSubmitting}
             aria-pressed={reVerified === true}
             aria-label="Yes, I re-checked in Grafana"
             className={`h-8 px-3 rounded-md border font-mono text-[11px] transition-colors disabled:opacity-60 disabled:cursor-wait ${
@@ -190,13 +199,12 @@ export function InvestigationFeedback({ investigationId }: InvestigationFeedback
             Yes — re-checked
           </button>
         </div>
+        {rvError && (
+          <span role="alert" className="font-mono text-[10px] text-destructive">
+            {rvError}
+          </span>
+        )}
       </div>
-
-      {error && (
-        <span role="alert" className="font-mono text-[10px] text-destructive">
-          {error}
-        </span>
-      )}
     </section>
   );
 }

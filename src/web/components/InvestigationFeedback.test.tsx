@@ -182,4 +182,24 @@ describe("InvestigationFeedback", () => {
       expect(screen.getByLabelText("Yes, I re-checked in Grafana").getAttribute("aria-pressed")).toBe("true");
     });
   });
+
+  it("a failed rating does not disable the re-verify control (state is per-instrument)", async () => {
+    const { fn } = mockFetch({ initialRating: null, postFails: true });
+    globalThis.fetch = fn;
+
+    render(<InvestigationFeedback investigationId="inv_1" />, { wrapper: Wrapper });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Mark as useful").getAttribute("aria-pressed")).toBe("false");
+    });
+
+    fireEvent.click(screen.getByLabelText("Mark as useful"));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toBeTruthy(); // rating error surfaced
+    });
+    // The re-verify buttons remain usable — the failure was isolated to rating.
+    expect((screen.getByLabelText("Yes, I re-checked in Grafana") as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByLabelText("No, I trusted the report") as HTMLButtonElement).disabled).toBe(false);
+  });
 });
