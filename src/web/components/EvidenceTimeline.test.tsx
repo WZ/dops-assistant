@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { EvidenceTimeline } from "./EvidenceTimeline";
 import { StackProvider } from "../contexts/StackContext";
 import type { TimeSeriesData } from "./MetricChart";
@@ -187,5 +187,46 @@ describe("EvidenceTimeline", () => {
       { wrapper: Wrapper },
     );
     expect(screen.getByText(/OOMKilled/)).toBeDefined();
+  });
+
+  it("surfaces a collapsed 'Queries run' receipt panel from evidenceToolCalls", () => {
+    const providers = [{ role: "metrics", webUrl: "https://grafana.example", datasource: "prom" }];
+    const evidenceToolCalls = {
+      metrics: [{ tool: "query_prometheus", args: '{"expr":"up{job=\\"payments\\"}"}', resultChars: 64 }],
+    };
+    render(
+      <EvidenceTimeline
+        evidence={evidenceWithInfra as any}
+        timeSeries={[]}
+        service="payments-api"
+        providers={providers}
+        timeRange={{ from: "2026-03-14T11:00:00Z", to: "2026-03-14T12:00:00Z" }}
+        evidenceToolCalls={evidenceToolCalls}
+      />,
+      { wrapper: Wrapper },
+    );
+    // Count is visible while collapsed
+    expect(screen.getByText(/Queries run \(1\)/)).toBeDefined();
+    // Expand to reveal the actual re-runnable query + Grafana link
+    fireEvent.click(screen.getByText(/Queries run \(1\)/));
+    expect(screen.getByText(/up\{job="payments"\}/)).toBeDefined();
+    const link = screen.getByTitle("Open in Grafana") as HTMLAnchorElement;
+    expect(link.href).toContain("grafana.example");
+  });
+
+  it("hides the 'Queries run' panel when no query is extractable", () => {
+    const providers = [{ role: "metrics", webUrl: "https://grafana.example" }];
+    render(
+      <EvidenceTimeline
+        evidence={evidenceWithInfra as any}
+        timeSeries={[]}
+        service="payments-api"
+        providers={providers}
+        timeRange={{ from: "2026-03-14T11:00:00Z", to: "2026-03-14T12:00:00Z" }}
+        evidenceToolCalls={{ metrics: [{ tool: "list_datasources", args: "{}", resultChars: 10 }] }}
+      />,
+      { wrapper: Wrapper },
+    );
+    expect(screen.queryByText(/Queries run/)).toBeNull();
   });
 });

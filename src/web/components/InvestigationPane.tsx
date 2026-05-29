@@ -722,6 +722,7 @@ export function InvestigationPane({
                     const { phaseActions: pa } = buildPhaseActions(undefined, providers, service, tr);
                     return pa;
                   })()}
+                  evidenceToolCalls={(report as any)?.evidenceToolCalls}
                 />
               </section>
             )}
