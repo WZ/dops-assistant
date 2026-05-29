@@ -56,6 +56,15 @@ export type TimelineEvent = {
   event: string;
 };
 
+/** A single tool call captured during an evidence phase. Mirrors
+ *  `ToolCallRecordSchema` in `src/workflows/schemas.ts`. Used to build
+ *  observation-level Grafana deep links in the web UI. */
+export type EvidenceToolCall = {
+  tool: string;
+  args: string;
+  resultChars: number;
+};
+
 export type RcaReport = {
   service: string;
   severity: "low" | "medium" | "high" | "critical";
@@ -81,6 +90,10 @@ export type RcaReport = {
   investigatedAt: string;
   skillsUsed?: string[];
   timeRange?: { from: string; to: string };
+  /** Tool calls captured per evidence phase (keyed by phase: metrics/logs/infra/changes).
+   *  Carried through from the workflow so the UI can build observation-level
+   *  Grafana deep links. */
+  evidenceToolCalls?: Record<string, EvidenceToolCall[]>;
 };
 
 export type InvestigationIntent =
