@@ -118,6 +118,9 @@ export function buildPostSynthesisStep(config: WorkflowConfig) {
         savedToHistory,
         investigatedAt,
         timeRange: inputData.timeRange,
+        hypotheses: inputData.hypotheses,
+        ruledOut: inputData.ruledOut,
+        loopOutcome: inputData.loopOutcome,
       };
     },
   });

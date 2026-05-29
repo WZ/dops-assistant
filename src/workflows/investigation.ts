@@ -62,6 +62,13 @@ export interface WorkflowConfig {
    *  to `{ maxAttempts: 1 }` (no retry) when omitted — production paths
    *  always set it from `config.llm.retry`. */
   llmRetry?: LlmRetryConfig;
+  /**
+   * Max rounds for the synthesis hypothesis loop (Step 2). Default 1 = the
+   * current single-pass behaviour (loop inert). >1 enables the bounded
+   * rank → test → rule-out loop. Off by default until validated on real
+   * incidents; see src/workflows/steps/hypothesis-loop.ts.
+   */
+  synthesisLoopRounds?: number;
 }
 
 // ── Workflow factory ──────────────────────────────────────────────────────────

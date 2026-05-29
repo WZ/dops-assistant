@@ -317,6 +317,69 @@ describe("synthesis step degradation and defaults", () => {
     expect((result as any).confidenceScore).toBe(0.9);
   });
 
+  it("N=1 (default) leaves hypothesis-loop fields unset", async () => {
+    const { createSynthesisAgent } = await import("../agents/synthesis.js");
+    vi.mocked(createSynthesisAgent).mockReturnValue({
+      generate: vi.fn().mockResolvedValue({
+        text: JSON.stringify({ severity: "high", summary: "s", rootCause: "rc", trigger: "t", confidence: "high", confidenceScore: 0.9 }),
+      }),
+    } as any);
+    const step = buildSynthesisStep({ model: fakeModel, providers: [], services: [] });
+    const result = await step.execute(makeStepCtx(evidenceInputData)) as any;
+    expect(result.loopOutcome).toBeUndefined();
+    expect(result.ruledOut).toBeUndefined();
+    expect(result.hypotheses).toBeUndefined();
+  });
+
+  it("N>1 runs the hypothesis loop: rules out a weak hypothesis, confirms the discriminating one", async () => {
+    const { createSynthesisAgent } = await import("../agents/synthesis.js");
+    // Model emits two hypotheses with discriminating predictions. Evidence
+    // satisfies the backpressure metric but not the leak log pattern.
+    vi.mocked(createSynthesisAgent).mockReturnValue({
+      generate: vi.fn().mockResolvedValue({
+        text: JSON.stringify({
+          severity: "critical",
+          summary: "checkout OOM",
+          rootCause: "payments backpressure",
+          trigger: "payments latency",
+          confidence: "high",
+          confidenceScore: 0.8,
+          hypotheses: [
+            { hypothesis: "memory leak", prediction: { kind: "log-pattern", pattern: "leak", present: true } },
+            { hypothesis: "payments backpressure", prediction: { kind: "metric-threshold", metric: "payments p99", op: ">", value: 5 } },
+          ],
+        }),
+      }),
+    } as any);
+
+    const evidence = {
+      "metrics-evidence": { summary: "latency", observations: [{ metric: "payments p99 latency", currentValue: "8.0s" }] },
+      "logs-evidence": { summary: "logs", observations: [{ pattern: "request ok", sample: "200" }] },
+      "infra-evidence": { summary: "", observations: [] },
+    };
+    const step = buildSynthesisStep({ model: fakeModel, providers: [], services: [], synthesisLoopRounds: 3 });
+    const result = await step.execute(makeStepCtx(evidence)) as any;
+
+    expect(result.loopOutcome).toBe("confirmed");
+    expect(result.ruledOut.map((r: any) => r.hypothesis)).toEqual(["memory leak"]);
+    expect(result.hypotheses).toHaveLength(2);
+    // No-regression: the single-pass rootCause is preserved.
+    expect(result.rootCause).toBe("payments backpressure");
+  });
+
+  it("N>1 with no model-emitted hypotheses falls back cleanly (loop fields unset)", async () => {
+    const { createSynthesisAgent } = await import("../agents/synthesis.js");
+    vi.mocked(createSynthesisAgent).mockReturnValue({
+      generate: vi.fn().mockResolvedValue({
+        text: JSON.stringify({ severity: "high", summary: "s", rootCause: "rc", trigger: "t", confidence: "high", confidenceScore: 0.9 }),
+      }),
+    } as any);
+    const step = buildSynthesisStep({ model: fakeModel, providers: [], services: [], synthesisLoopRounds: 3 });
+    const result = await step.execute(makeStepCtx(evidenceInputData)) as any;
+    expect(result.loopOutcome).toBeUndefined();
+    expect(result.rootCause).toBe("rc");
+  });
+
   it("synthesis step degrades gracefully when agent.generate throws", async () => {
     const { createSynthesisAgent } = await import("../agents/synthesis.js");
     // Use a non-transient (application-level) error so withLlmRetry rethrows
