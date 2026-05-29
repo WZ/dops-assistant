@@ -62,7 +62,7 @@ const PHASE_ROLE: Record<string, string> = {
   changes: "changes",
 };
 
-type QueryReceipt = { phase: string; tool: string; query: string; url?: string };
+type QueryReceipt = { phase: string; tool: string; query: string; url?: string; resultExcerpt?: string };
 
 /** Collapsed-by-default list of the actual queries the investigation ran, each
  *  with a Grafana deep link. This is the receipts-lite trust artifact: the
@@ -80,19 +80,24 @@ function QueriesRunPanel({ queries }: { queries: QueryReceipt[] }) {
       </CollapsibleTrigger>
       <CollapsibleContent className="mt-2 space-y-1 animate-fade-in">
         {queries.map((q, i) => (
-          <div key={i} className="flex items-start gap-2 text-[10px] font-mono">
-            <span className="text-muted-foreground/45 shrink-0 w-12 uppercase tracking-[0.08em]" title={q.tool}>{q.phase}</span>
-            <code className="flex-1 min-w-0 break-all text-foreground/65 bg-background/30 border border-border/10 rounded px-1.5 py-0.5">{q.query}</code>
-            {q.url && (
-              <a
-                href={q.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-primary/60 hover:text-primary shrink-0 mt-0.5 transition-colors"
-                title="Open in Grafana"
-              >
-                <ExternalLink size={10} />
-              </a>
+          <div key={i} className="text-[10px] font-mono">
+            <div className="flex items-start gap-2">
+              <span className="text-muted-foreground/45 shrink-0 w-12 uppercase tracking-[0.08em]" title={q.tool}>{q.phase}</span>
+              <code className="flex-1 min-w-0 break-all text-foreground/65 bg-background/30 border border-border/10 rounded px-1.5 py-0.5">{q.query}</code>
+              {q.url && (
+                <a
+                  href={q.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-primary/60 hover:text-primary shrink-0 mt-0.5 transition-colors"
+                  title="Open in Grafana"
+                >
+                  <ExternalLink size={10} />
+                </a>
+              )}
+            </div>
+            {q.resultExcerpt && (
+              <pre className="ml-14 mt-0.5 text-[9.5px] text-muted-foreground/55 bg-background/20 border border-border/10 rounded px-1.5 py-1 whitespace-pre-wrap break-all max-h-16 overflow-y-auto">{q.resultExcerpt}</pre>
             )}
           </div>
         ))}
@@ -198,7 +203,7 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange, pha
               to: timeRange.to,
             })
           : undefined;
-        out.push({ phase, tool: c.tool, query: extracted.query, url });
+        out.push({ phase, tool: c.tool, query: extracted.query, url, resultExcerpt: c.resultExcerpt });
       }
     }
     return out;

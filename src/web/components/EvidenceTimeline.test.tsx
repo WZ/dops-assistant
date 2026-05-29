@@ -192,7 +192,7 @@ describe("EvidenceTimeline", () => {
   it("surfaces a collapsed 'Queries run' receipt panel from evidenceToolCalls", () => {
     const providers = [{ role: "metrics", webUrl: "https://grafana.example", datasource: "prom" }];
     const evidenceToolCalls = {
-      metrics: [{ tool: "query_prometheus", args: '{"expr":"up{job=\\"payments\\"}"}', resultChars: 64 }],
+      metrics: [{ tool: "query_prometheus", args: '{"expr":"up{job=\\"payments\\"}"}', resultChars: 64, resultExcerpt: "result: 0 instances up (baseline 1)" }],
     };
     render(
       <EvidenceTimeline
@@ -212,6 +212,9 @@ describe("EvidenceTimeline", () => {
     expect(screen.getByText(/up\{job="payments"\}/)).toBeDefined();
     const link = screen.getByTitle("Open in Grafana") as HTMLAnchorElement;
     expect(link.href).toContain("grafana.example");
+    // The result excerpt is shown inline so the operator sees the value
+    // without clicking through to Grafana.
+    expect(screen.getByText(/0 instances up \(baseline 1\)/)).toBeDefined();
   });
 
   it("hides the 'Queries run' panel when no query is extractable", () => {

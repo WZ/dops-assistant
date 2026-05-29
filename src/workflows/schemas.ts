@@ -60,6 +60,8 @@ const ToolCallRecordSchema = z.object({
   tool: z.string(),
   args: z.string(),
   resultChars: z.number(),
+  /** Short snippet of the actual tool result, for inline receipts. */
+  resultExcerpt: z.string().optional(),
 });
 
 export const EvidenceOutputSchema = z.object({

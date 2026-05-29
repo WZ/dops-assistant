@@ -63,6 +63,9 @@ export type EvidenceToolCall = {
   tool: string;
   args: string;
   resultChars: number;
+  /** Short snippet of the actual tool result, shown inline in receipts so the
+   *  operator sees the value without clicking through to Grafana. */
+  resultExcerpt?: string;
 };
 
 export type RcaReport = {

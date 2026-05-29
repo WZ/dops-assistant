@@ -363,7 +363,7 @@ export class MastraInvestigationAdapter {
       savedToHistory: boolean;
       investigatedAt: string;
       timeRange?: { from: string; to: string };
-      evidenceToolCalls?: Record<string, Array<{ tool: string; args: string; resultChars: number }>>;
+      evidenceToolCalls?: Record<string, Array<{ tool: string; args: string; resultChars: number; resultExcerpt?: string }>>;
     } | undefined;
 
     // createRun() returns a Promise<Run>, then we call .start() on the Run
