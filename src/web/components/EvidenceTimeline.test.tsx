@@ -232,4 +232,22 @@ describe("EvidenceTimeline", () => {
     );
     expect(screen.queryByText(/Queries run/)).toBeNull();
   });
+
+  it("still shows queries + excerpt without a timeRange, but omits the Grafana link", () => {
+    const providers = [{ role: "metrics", webUrl: "https://grafana.example", datasource: "prom" }];
+    render(
+      <EvidenceTimeline
+        evidence={evidenceWithInfra as any}
+        timeSeries={[]}
+        service="payments-api"
+        providers={providers}
+        evidenceToolCalls={{ metrics: [{ tool: "query_prometheus", args: '{"expr":"up"}', resultChars: 8, resultExcerpt: "up => 0" }] }}
+      />,
+      { wrapper: Wrapper },
+    );
+    fireEvent.click(screen.getByText(/Queries run \(1\)/));
+    expect(screen.getByText(/up => 0/)).toBeDefined();
+    // No timeRange → no deep link rendered.
+    expect(screen.queryByTitle("Open in Grafana")).toBeNull();
+  });
 });

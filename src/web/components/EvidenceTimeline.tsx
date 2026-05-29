@@ -97,7 +97,7 @@ function QueriesRunPanel({ queries }: { queries: QueryReceipt[] }) {
               )}
             </div>
             {q.resultExcerpt && (
-              <pre className="ml-14 mt-0.5 text-[9.5px] text-muted-foreground/55 bg-background/20 border border-border/10 rounded px-1.5 py-1 whitespace-pre-wrap break-all max-h-16 overflow-y-auto">{q.resultExcerpt}</pre>
+              <pre className="ml-14 mt-0.5 text-[9px] text-muted-foreground/55 bg-background/20 border border-border/10 rounded px-1.5 py-1 whitespace-pre-wrap break-all max-h-16 overflow-y-auto">{q.resultExcerpt}</pre>
             )}
           </div>
         ))}
@@ -182,7 +182,9 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange, pha
   // Build the "Queries run" receipt list from captured tool calls. Each query
   // gets a Grafana deep link via its phase's provider. Deduped per phase.
   const queriesRun = useMemo<QueryReceipt[]>(() => {
-    if (!evidenceToolCalls || !timeRange) return [];
+    // The query + result excerpt are useful on their own; only the Grafana
+    // deep link needs a timeRange. Build receipts regardless, gate the URL.
+    if (!evidenceToolCalls) return [];
     const out: QueryReceipt[] = [];
     const seen = new Set<string>();
     for (const [phase, calls] of Object.entries(evidenceToolCalls)) {
@@ -194,7 +196,7 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange, pha
         seen.add(key);
         const role = PHASE_ROLE[phase] ?? phase;
         const provider = providers?.find(p => p.role === role);
-        const url = provider?.webUrl
+        const url = (provider?.webUrl && timeRange)
           ? buildExploreUrl({
               webUrl: provider.webUrl,
               datasource: extracted.datasource ?? provider.datasource,

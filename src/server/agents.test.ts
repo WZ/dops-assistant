@@ -289,7 +289,7 @@ describe("MastraInvestigationAdapter", () => {
 
   it("carries evidenceToolCalls through to the RcaReport (regression: was dropped at the adapter)", async () => {
     const toolCalls = {
-      metrics: [{ tool: "query_prometheus", args: '{"expr":"up"}', resultChars: 128 }],
+      metrics: [{ tool: "query_prometheus", args: '{"expr":"up"}', resultChars: 128, resultExcerpt: "up => 0" }],
       logs: [{ tool: "query_loki", args: '{"query":"{app=\\"payments\\"}"}', resultChars: 256 }],
     };
     mockRunStart.mockResolvedValueOnce({
