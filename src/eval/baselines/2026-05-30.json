@@ -1,0 +1,50 @@
+{
+  "generatedAt": "2026-05-30T07:45:07.850Z",
+  "entries": [
+    {
+      "id": "fixture-payments-db-pool",
+      "service": "payments-api",
+      "createdAt": "2026-04-21T10:32:00Z",
+      "source": "scan",
+      "scores": {
+        "rootCause": 20,
+        "evidence": 20,
+        "trigger": 20,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 100,
+        "pass": true
+      }
+    },
+    {
+      "id": "fixture-redis-eviction",
+      "service": "session-cache",
+      "createdAt": "2026-04-22T03:35:00Z",
+      "source": "scan",
+      "scores": {
+        "rootCause": 20,
+        "evidence": 20,
+        "trigger": 20,
+        "actionability": 20,
+        "factualGrounding": 20,
+        "total": 100,
+        "pass": true
+      }
+    },
+    {
+      "id": "fixture-clean-window",
+      "service": "ingestion-server",
+      "createdAt": "2026-04-23T20:36:00Z",
+      "source": "scan",
+      "scores": {
+        "rootCause": 20,
+        "evidence": 20,
+        "trigger": 20,
+        "actionability": 10,
+        "factualGrounding": 20,
+        "total": 90,
+        "pass": true
+      }
+    }
+  ]
+}
