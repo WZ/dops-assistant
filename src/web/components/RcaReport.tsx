@@ -17,6 +17,16 @@ interface RcaReportData {
   dashboardLinks: string[];
   skillsUsed?: string[];
   timeRange?: { from: string; to: string };
+  /** Hypothesis-loop output (Step 2). Unset on the single-pass path. */
+  ruledOut?: { hypothesis: string; reason: string }[];
+  loopOutcome?: "confirmed" | "undetermined" | "exhausted";
+}
+
+/** Human-readable gloss for a deterministic rule-out verdict. */
+function ruleOutReason(reason: string): string {
+  if (reason === "contradicted") return "evidence contradicted it";
+  if (reason === "absent") return "no supporting evidence found";
+  return reason;
 }
 
 /** Format a time range as human-readable local time. */
@@ -180,6 +190,35 @@ export function RcaReport({ report, hideOldDashboardLinks }: { report: RcaReport
               ))}
             </ul>
           </Section>
+        )}
+
+        {/* Ruled Out — the hypothesis loop's falsification receipts (Step 2).
+            The symmetric negative of contributing factors: alternatives tested
+            and demoted, each with the deterministic verdict that demoted it. */}
+        {report.ruledOut && report.ruledOut.length > 0 && (
+          <Section label="Ruled Out" count={report.ruledOut.length}>
+            <ul className="space-y-1.5 ml-1">
+              {report.ruledOut.map((r, i) => (
+                <li key={i} className="flex items-start gap-2 text-[13px] font-body leading-relaxed">
+                  <span className="text-destructive/70 mt-0.5 shrink-0 font-mono text-[11px]">&times;</span>
+                  <span>
+                    <span className="text-muted-foreground line-through decoration-muted-foreground/40">{renderInline(r.hypothesis)}</span>
+                    <span className="text-muted-foreground/80"> — {ruleOutReason(r.reason)}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </Section>
+        )}
+
+        {/* Undetermined outcome — two hypotheses the evidence couldn't separate.
+            Honest signal: don't imply a confirmed cause. */}
+        {report.loopOutcome === "undetermined" && (
+          <div className="px-3 py-2 rounded-md bg-warning/8 border border-warning/15">
+            <span className="text-[11px] font-body text-warning/80">
+              Multiple causes remained consistent with the evidence — none could be distinguished. Consider a deeper investigation.
+            </span>
+          </div>
         )}
 
         {/* Recommended Actions — renderInline (not renderMarkdown) so every item
