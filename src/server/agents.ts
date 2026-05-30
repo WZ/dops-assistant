@@ -597,6 +597,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       ? (service, limit = 5) => db.findSimilarPatterns(stackId, service, limit)
       : undefined,
     llmRetry: config.llm.retry,
+    synthesisLoopRounds: config.agent?.synthesisLoopRounds,
   };
 
   const investigationAgent = new MastraInvestigationAdapter(workflowConfig);

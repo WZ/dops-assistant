@@ -20,6 +20,7 @@ import { LlmUnavailableError } from "../../agents/shared/llm-errors.js";
 import { RankedHypothesisSchema } from "../schemas.js";
 import { runHypothesisLoop } from "./hypothesis-loop.js";
 import { normalizeObservations } from "./observation-normalize.js";
+import { createGatherEvidence } from "./hypothesis-requery.js";
 import type { RankedHypothesis } from "./corroboration.js";
 
 /**
@@ -256,9 +257,9 @@ export function buildSynthesisStep(config: WorkflowConfig) {
       //    model emitted structured hypotheses. Deterministic + discriminating:
       //    it ranks/rules-out against the gathered evidence via the corroboration
       //    keystone. No-regression: this only ADDS hypotheses/ruledOut metadata;
-      //    it never overrides the single-pass rootCause. gatherEvidence is a
-      //    no-op for now (re-reason over existing evidence); the tool-enabled
-      //    read-only re-query is the next step and needs live validation.
+      //    it never overrides the single-pass rootCause. gatherEvidence issues a
+      //    targeted read-only re-query per round (see ./hypothesis-requery.ts) to
+      //    fetch the observable that distinguishes the leader from its runner-up.
       let loopHypotheses: RankedHypothesis[] | undefined;
       let loopRuledOut: Array<{ hypothesis: string; reason: string }> | undefined;
       let loopOutcome: "confirmed" | "undetermined" | "exhausted" | undefined;
@@ -276,12 +277,22 @@ export function buildSynthesisStep(config: WorkflowConfig) {
               infra: { observations: infraFindings.observations as unknown[] | undefined },
               changes: { observations: changesFindings?.observations as unknown[] | undefined },
             });
+            const loopCtx = { incidentTime: timeRange?.from };
             const loop = await runHypothesisLoop({
               hypotheses: validated,
               maxRounds: loopRounds,
               initialObservations: observations,
-              gatherEvidence: async () => [],
-              ctx: { incidentTime: timeRange?.from },
+              gatherEvidence: createGatherEvidence({
+                providers: config.providers,
+                model: config.model,
+                timeRange,
+                useQuirkHandling: config.useQuirkHandling,
+                onToolCall: config.onToolCall,
+                onTokenUsage: config.onTokenUsage,
+                llmRetry: config.llmRetry,
+                ctx: loopCtx,
+              }),
+              ctx: loopCtx,
             });
             loopHypotheses = validated;
             loopRuledOut = loop.ruledOut.map((r) => ({ hypothesis: r.hypothesis, reason: r.reason }));
