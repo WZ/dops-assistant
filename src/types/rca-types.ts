@@ -68,6 +68,20 @@ export type EvidenceToolCall = {
   resultExcerpt?: string;
 };
 
+/** A candidate root cause the hypothesis loop ranked (Step 2). Mirrors
+ *  RankedHypothesisSchema in src/workflows/schemas.ts. */
+export type RankedHypothesis = {
+  hypothesis: string;
+  prediction: Record<string, unknown>;
+};
+
+/** A hypothesis the loop tested and ruled out, with the deterministic verdict
+ *  ("contradicted" | "absent") that demoted it. */
+export type RuledOutHypothesis = {
+  hypothesis: string;
+  reason: string;
+};
+
 export type RcaReport = {
   service: string;
   severity: "low" | "medium" | "high" | "critical";
@@ -97,6 +111,10 @@ export type RcaReport = {
    *  Carried through from the workflow so the UI can build observation-level
    *  Grafana deep links. */
   evidenceToolCalls?: Record<string, EvidenceToolCall[]>;
+  /** Hypothesis-loop output (Step 2). Unset on the default single-pass path. */
+  hypotheses?: RankedHypothesis[];
+  ruledOut?: RuledOutHypothesis[];
+  loopOutcome?: "confirmed" | "undetermined" | "exhausted";
 };
 
 export type InvestigationIntent =

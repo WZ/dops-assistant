@@ -364,6 +364,9 @@ export class MastraInvestigationAdapter {
       investigatedAt: string;
       timeRange?: { from: string; to: string };
       evidenceToolCalls?: Record<string, Array<{ tool: string; args: string; resultChars: number; resultExcerpt?: string }>>;
+      hypotheses?: Array<{ hypothesis: string; prediction: Record<string, unknown> }>;
+      ruledOut?: Array<{ hypothesis: string; reason: string }>;
+      loopOutcome?: "confirmed" | "undetermined" | "exhausted";
     } | undefined;
 
     // createRun() returns a Promise<Run>, then we call .start() on the Run
@@ -415,6 +418,9 @@ export class MastraInvestigationAdapter {
       investigatedAt,
       timeRange: output?.timeRange,
       evidenceToolCalls: output?.evidenceToolCalls,
+      hypotheses: output?.hypotheses,
+      ruledOut: output?.ruledOut,
+      loopOutcome: output?.loopOutcome,
     };
 
     return report;
@@ -591,6 +597,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       ? (service, limit = 5) => db.findSimilarPatterns(stackId, service, limit)
       : undefined,
     llmRetry: config.llm.retry,
+    synthesisLoopRounds: config.agent?.synthesisLoopRounds,
   };
 
   const investigationAgent = new MastraInvestigationAdapter(workflowConfig);

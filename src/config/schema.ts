@@ -122,6 +122,13 @@ const MemorySchema = z.object({
 
 const AgentSchema = z.object({
   maxIterations: z.number().default(20),
+  /**
+   * Hypothesis-loop rounds in the synthesis step. 1 (default) = single-pass,
+   * loop inert — byte-identical to the pre-loop behavior. >1 enables the bounded
+   * rank → test → rule-out loop with discriminating read-only re-queries.
+   * Opt-in while the loop is validated against labeled incidents.
+   */
+  synthesisLoopRounds: z.number().int().min(1).max(5).default(1),
   // @deprecated: use top-level `memory` config instead; will be removed in a future version
   conversationMemory: ConversationMemorySchema.optional().default({}),
   investigationTriggerPhrases: z.array(z.string()).optional().default([

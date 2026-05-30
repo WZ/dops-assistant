@@ -17,6 +17,11 @@ import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
 import { formatPatterns } from "../../agents/shared/patterns.js";
 import { withLlmRetry, safeAgentRetryConfig } from "../../agents/shared/llm-retry.js";
 import { LlmUnavailableError } from "../../agents/shared/llm-errors.js";
+import { RankedHypothesisSchema } from "../schemas.js";
+import { runHypothesisLoop } from "./hypothesis-loop.js";
+import { normalizeObservations } from "./observation-normalize.js";
+import { createGatherEvidence } from "./hypothesis-requery.js";
+import type { RankedHypothesis } from "./corroboration.js";
 
 /**
  * Build a synthesis step that combines evidence and runs quality validation.
@@ -132,6 +137,22 @@ export function buildSynthesisStep(config: WorkflowConfig) {
         } catch { /* no patterns available — graceful degradation */ }
       }
 
+      // Hypothesis loop (Step 2): only when enabled (rounds>1). Appended ONLY in
+      // that case so the default single-pass prompt stays byte-identical. Asks
+      // the model for a ranked hypothesis list with structured, falsifiable
+      // predictions the deterministic corroboration check can evaluate.
+      const loopRounds = config.synthesisLoopRounds ?? 1;
+      if (loopRounds > 1) {
+        promptParts.push(
+          '\nAlso emit a `hypotheses` array (most-likely first) of candidate root causes, each with a structured `prediction` the system can check against evidence. Prediction kinds:',
+          '  {"kind":"metric-threshold","metric":"<name>","op":">"|"<"|">="|"<=","value":<number>}',
+          '  {"kind":"log-pattern","pattern":"<substring>","present":true|false}',
+          '  {"kind":"infra-status","resource":"<name>","status":"<status>"}',
+          '  {"kind":"change-in-window","withinMinutesBefore":<number>}',
+          'Shape: "hypotheses":[{"hypothesis":"<text>","prediction":{...}}]. Pick the prediction that best DISTINGUISHES each hypothesis from the others — not one that any of them would satisfy.',
+        );
+      }
+
       const prompt = promptParts.filter(Boolean).join("\n");
 
       let agentResult: { text: string; usage?: any } = { text: "" };
@@ -232,6 +253,57 @@ export function buildSynthesisStep(config: WorkflowConfig) {
       );
       if (correctedSeverity) severity = correctedSeverity;
 
+      // ── Hypothesis loop (Step 2) — runs only when enabled (rounds>1) and the
+      //    model emitted structured hypotheses. Deterministic + discriminating:
+      //    it ranks/rules-out against the gathered evidence via the corroboration
+      //    keystone. No-regression: this only ADDS hypotheses/ruledOut metadata;
+      //    it never overrides the single-pass rootCause. gatherEvidence issues a
+      //    targeted read-only re-query per round (see ./hypothesis-requery.ts) to
+      //    fetch the observable that distinguishes the leader from its runner-up.
+      let loopHypotheses: RankedHypothesis[] | undefined;
+      let loopRuledOut: Array<{ hypothesis: string; reason: string }> | undefined;
+      let loopOutcome: "confirmed" | "undetermined" | "exhausted" | undefined;
+      if (loopRounds > 1 && Array.isArray(synthesisParsed?.hypotheses) && synthesisParsed.hypotheses.length > 0) {
+        try {
+          const validated: RankedHypothesis[] = [];
+          for (const h of synthesisParsed.hypotheses) {
+            const parsed = RankedHypothesisSchema.safeParse(h);
+            if (parsed.success) validated.push(parsed.data as RankedHypothesis);
+          }
+          if (validated.length > 0) {
+            const observations = normalizeObservations({
+              metrics: { observations: metricsFindings.observations as unknown[] | undefined },
+              logs: { observations: logsFindings.observations as unknown[] | undefined },
+              infra: { observations: infraFindings.observations as unknown[] | undefined },
+              changes: { observations: changesFindings?.observations as unknown[] | undefined },
+            });
+            const loopCtx = { incidentTime: timeRange?.from };
+            const loop = await runHypothesisLoop({
+              hypotheses: validated,
+              maxRounds: loopRounds,
+              initialObservations: observations,
+              gatherEvidence: createGatherEvidence({
+                providers: config.providers,
+                model: config.model,
+                timeRange,
+                useQuirkHandling: config.useQuirkHandling,
+                onToolCall: config.onToolCall,
+                onTokenUsage: config.onTokenUsage,
+                llmRetry: config.llmRetry,
+                ctx: loopCtx,
+              }),
+              ctx: loopCtx,
+            });
+            loopHypotheses = validated;
+            loopRuledOut = loop.ruledOut.map((r) => ({ hypothesis: r.hypothesis, reason: r.reason }));
+            loopOutcome = loop.outcome;
+            debug("SYNTHESIS hypothesis loop:", loop.outcome, "ruledOut:", loop.ruledOut.length);
+          }
+        } catch (err) {
+          debug("SYNTHESIS hypothesis loop error (non-fatal):", err);
+        }
+      }
+
       return {
         severity,
         summary,
@@ -247,6 +319,9 @@ export function buildSynthesisStep(config: WorkflowConfig) {
         confidence,
         confidenceScore,
         timeRange,
+        hypotheses: loopHypotheses,
+        ruledOut: loopRuledOut,
+        loopOutcome,
       };
     },
   });

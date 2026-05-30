@@ -83,6 +83,26 @@ export const ParallelEvidenceSchema = z.object({
   planningContext: PlanningOutputSchema,
 });
 
+// ── Hypothesis loop (Step 2) — additive, optional. Populated only when the
+//    synthesis loop runs (N>1); the default single-pass path leaves these unset.
+const HypothesisPredictionSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("metric-threshold"), metric: z.string(), op: z.enum([">", "<", ">=", "<="]), value: z.number() }),
+  z.object({ kind: z.literal("log-pattern"), pattern: z.string(), present: z.boolean().optional() }),
+  z.object({ kind: z.literal("infra-status"), resource: z.string().optional(), status: z.string() }),
+  z.object({ kind: z.literal("change-in-window"), withinMinutesBefore: z.number() }),
+]);
+
+export const RankedHypothesisSchema = z.object({
+  hypothesis: z.string(),
+  prediction: HypothesisPredictionSchema,
+});
+
+export const RuledOutSchema = z.object({
+  hypothesis: z.string(),
+  /** Deterministic verdict that demoted it: contradicted | absent. */
+  reason: z.string(),
+});
+
 export const SynthesisOutputSchema = z.object({
   severity: z.enum(["low", "medium", "high", "critical"]).default("medium"),
   summary: z.string().default("Investigation complete"),
@@ -110,6 +130,10 @@ export const SynthesisOutputSchema = z.object({
   confidence: z.enum(["low", "medium", "high"]).default("low"),
   confidenceScore: z.number().default(0.5),
   timeRange: TimeRangeSchema.optional(),
+  // Hypothesis loop output (unset on the single-pass path).
+  hypotheses: z.array(RankedHypothesisSchema).optional(),
+  ruledOut: z.array(RuledOutSchema).optional(),
+  loopOutcome: z.enum(["confirmed", "undetermined", "exhausted"]).optional(),
 });
 
 export const PostSynthesisOutputSchema = z.object({
@@ -140,4 +164,7 @@ export const PostSynthesisOutputSchema = z.object({
   savedToHistory: z.boolean(),
   investigatedAt: z.string(),
   timeRange: TimeRangeSchema.optional(),
+  hypotheses: z.array(RankedHypothesisSchema).optional(),
+  ruledOut: z.array(RuledOutSchema).optional(),
+  loopOutcome: z.enum(["confirmed", "undetermined", "exhausted"]).optional(),
 });
