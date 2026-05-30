@@ -1830,6 +1830,10 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       toolCount: p.toolCount,
       enabledToolCount: p.enabledToolCount,
       error: p.error,
+      // Resolved Prometheus datasource UID — lets the UI point metric deep links
+      // at the right datasource instead of falling through to Grafana's default
+      // (which may be Loki, breaking PromQL in Explore).
+      prometheusDatasourceUid: p.prometheusDatasourceUid,
     })));
   });
 

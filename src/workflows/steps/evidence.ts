@@ -280,8 +280,20 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
         workflowConfig.onToolCall?.("llm_error", {}, undefined, undefined, `LLM unreachable: ${llmError}`, phaseName);
       }
 
-      // 9. Build stripped tool call records for deep links (only query-relevant fields)
-      const toolCallRecords = llmToolCalls.map(tc => ({ tool: tc.tool, args: tc.args ?? "{}", resultChars: tc.resultChars }));
+      // 9. Build stripped tool call records for deep links + receipts.
+      //    Keep a short result excerpt (separate, tighter cap than the model's
+      //    TOOL_RESULT_TRUNCATION_LIMIT) so the UI can show the value inline
+      //    without the operator clicking through to Grafana. Capped to keep
+      //    persisted reports small.
+      const RECEIPT_EXCERPT_LIMIT = 240;
+      const toolCallRecords = llmToolCalls.map(tc => ({
+        tool: tc.tool,
+        args: tc.args ?? "{}",
+        resultChars: tc.resultChars,
+        resultExcerpt: tc.result
+          ? (tc.result.length > RECEIPT_EXCERPT_LIMIT ? tc.result.slice(0, RECEIPT_EXCERPT_LIMIT) + "…" : tc.result)
+          : undefined,
+      }));
 
       // 10. Return findings, agent text as summary, or fallback
       if (parsed) {

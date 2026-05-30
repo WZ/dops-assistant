@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { EvidenceTimeline } from "./EvidenceTimeline";
 import { StackProvider } from "../contexts/StackContext";
 import type { TimeSeriesData } from "./MetricChart";
@@ -187,5 +187,93 @@ describe("EvidenceTimeline", () => {
       { wrapper: Wrapper },
     );
     expect(screen.getByText(/OOMKilled/)).toBeDefined();
+  });
+
+  it("surfaces a collapsed 'Queries run' receipt panel from evidenceToolCalls", () => {
+    const providers = [{ role: "metrics", webUrl: "https://grafana.example", datasource: "prom" }];
+    const evidenceToolCalls = {
+      metrics: [{ tool: "query_prometheus", args: '{"expr":"up{job=\\"payments\\"}"}', resultChars: 64, resultExcerpt: "result: 0 instances up (baseline 1)" }],
+    };
+    render(
+      <EvidenceTimeline
+        evidence={evidenceWithInfra as any}
+        timeSeries={[]}
+        service="payments-api"
+        providers={providers}
+        timeRange={{ from: "2026-03-14T11:00:00Z", to: "2026-03-14T12:00:00Z" }}
+        evidenceToolCalls={evidenceToolCalls}
+      />,
+      { wrapper: Wrapper },
+    );
+    // Count is visible while collapsed
+    expect(screen.getByText(/Queries run \(1\)/)).toBeDefined();
+    // Expand to reveal the actual re-runnable query + Grafana link
+    fireEvent.click(screen.getByText(/Queries run \(1\)/));
+    expect(screen.getByText(/up\{job="payments"\}/)).toBeDefined();
+    const link = screen.getByTitle("Open in Grafana") as HTMLAnchorElement;
+    expect(link.href).toContain("grafana.example");
+    // The result excerpt is shown inline so the operator sees the value
+    // without clicking through to Grafana.
+    expect(screen.getByText(/0 instances up \(baseline 1\)/)).toBeDefined();
+  });
+
+  it("hides the 'Queries run' panel when no query is extractable", () => {
+    const providers = [{ role: "metrics", webUrl: "https://grafana.example" }];
+    render(
+      <EvidenceTimeline
+        evidence={evidenceWithInfra as any}
+        timeSeries={[]}
+        service="payments-api"
+        providers={providers}
+        timeRange={{ from: "2026-03-14T11:00:00Z", to: "2026-03-14T12:00:00Z" }}
+        evidenceToolCalls={{ metrics: [{ tool: "list_datasources", args: "{}", resultChars: 10 }] }}
+      />,
+      { wrapper: Wrapper },
+    );
+    expect(screen.queryByText(/Queries run/)).toBeNull();
+  });
+
+  it("still shows queries + excerpt without a timeRange, but omits the Grafana link", () => {
+    const providers = [{ role: "metrics", webUrl: "https://grafana.example", datasource: "prom" }];
+    render(
+      <EvidenceTimeline
+        evidence={evidenceWithInfra as any}
+        timeSeries={[]}
+        service="payments-api"
+        providers={providers}
+        evidenceToolCalls={{ metrics: [{ tool: "query_prometheus", args: '{"expr":"up"}', resultChars: 8, resultExcerpt: "up => 0" }] }}
+      />,
+      { wrapper: Wrapper },
+    );
+    fireEvent.click(screen.getByText(/Queries run \(1\)/));
+    expect(screen.getByText(/up => 0/)).toBeDefined();
+    // No timeRange → no deep link rendered.
+    expect(screen.queryByTitle("Open in Grafana")).toBeNull();
+  });
+
+  it("routes a PromQL query to the METRICS datasource even when it ran in the infra phase", () => {
+    // Regression: a metric query surfaced under a non-metrics phase must open
+    // against the Prometheus datasource, not the phase's (log/infra) one — else
+    // Grafana parses PromQL as LogQL and errors.
+    const providers = [
+      { role: "metrics", webUrl: "https://grafana.example", datasource: "prom-uid" },
+      { role: "infrastructure", webUrl: "https://grafana.example", datasource: "loki-uid" },
+    ];
+    render(
+      <EvidenceTimeline
+        evidence={evidenceWithInfra as any}
+        timeSeries={[]}
+        service="payments-api"
+        providers={providers}
+        timeRange={{ from: "2026-03-14T11:00:00Z", to: "2026-03-14T12:00:00Z" }}
+        evidenceToolCalls={{ infra: [{ tool: "query_prometheus", args: '{"expr":"kube_pod_status_phase"}', resultChars: 8 }] }}
+      />,
+      { wrapper: Wrapper },
+    );
+    fireEvent.click(screen.getByText(/Queries run \(1\)/));
+    const link = screen.getByTitle("Open in Grafana") as HTMLAnchorElement;
+    // Uses the metrics provider's datasource (prom-uid), NOT the infra one (loki-uid).
+    expect(decodeURIComponent(link.href)).toContain("prom-uid");
+    expect(decodeURIComponent(link.href)).not.toContain("loki-uid");
   });
 });

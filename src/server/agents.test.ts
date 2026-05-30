@@ -287,6 +287,46 @@ describe("MastraInvestigationAdapter", () => {
     expect(report.confidenceScore).toBe(0.85);
   });
 
+  it("carries evidenceToolCalls through to the RcaReport (regression: was dropped at the adapter)", async () => {
+    const toolCalls = {
+      metrics: [{ tool: "query_prometheus", args: '{"expr":"up"}', resultChars: 128, resultExcerpt: "up => 0" }],
+      logs: [{ tool: "query_loki", args: '{"query":"{app=\\"payments\\"}"}', resultChars: 256 }],
+    };
+    mockRunStart.mockResolvedValueOnce({
+      status: "success",
+      result: {
+        severity: "high",
+        summary: "Connection pool exhaustion",
+        rootCause: "Leaked database connections after deploy v2.3.1",
+        trigger: "Deploy of v2.3.1",
+        confidence: "high",
+        confidenceScore: 0.85,
+        savedToHistory: true,
+        investigatedAt: "2026-03-14T12:00:00Z",
+        evidenceToolCalls: toolCalls,
+      },
+    });
+
+    const config: WorkflowConfig = {
+      model: {} as any,
+      providers: [],
+      services: [],
+      projectRoot: "/tmp/test",
+    };
+    const adapter = new MastraInvestigationAdapter(config);
+    const report = await adapter.investigate(
+      { name: "payments", metrics: [], logLabels: {} },
+      undefined,
+      undefined,
+      undefined,
+      "investigate high latency on payments",
+    );
+
+    // Before the fix, the adapter omitted evidenceToolCalls from both the output
+    // type and the report mapping, so this field was always undefined.
+    expect(report.evidenceToolCalls).toEqual(toolCalls);
+  });
+
   it("passes progress callbacks and skillContext through to the workflow", async () => {
     const { createInvestigationWorkflow } = await import("../workflows/investigation.js");
     const config: WorkflowConfig = {

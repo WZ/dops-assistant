@@ -1,11 +1,14 @@
-import { useMemo, useCallback } from "react";
-import { ExternalLink } from "lucide-react";
+import { useMemo, useCallback, useState } from "react";
+import { ExternalLink, ChevronRight } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { cn } from "@/lib/utils";
 import { MetricsPanel } from "./evidence/MetricsPanel";
 import { TimelineEntry, type TimelineEntryData } from "./evidence/TimelineEntry";
 import type { TimeSeriesData } from "./MetricChart";
 import type { EvidenceAction } from "../../types/evidence.js";
-import { buildExploreUrl } from "../lib/grafana-links.js";
+import type { EvidenceToolCall } from "../../types/rca-types.js";
+import { buildExploreUrl, extractQueryFromToolCall } from "../lib/grafana-links.js";
 
 interface StructuredLog {
   pattern: string;
@@ -46,6 +49,53 @@ export interface EvidenceTimelineProps {
   phaseActions?: Record<string, EvidenceAction>;
   /** Provider configs for building chart-level deep links */
   providers?: Array<{ role: string; webUrl: string; datasource?: string }>;
+  /** Tool calls captured per evidence phase, used to surface the actual
+   *  re-runnable queries the investigation ran ("Queries run" receipt panel). */
+  evidenceToolCalls?: Record<string, EvidenceToolCall[]>;
+}
+
+type QueryReceipt = { phase: string; tool: string; query: string; url?: string; resultExcerpt?: string };
+
+/** Collapsed-by-default list of the actual queries the investigation ran, each
+ *  with a Grafana deep link. This is the receipts-lite trust artifact: the
+ *  operator can re-run any query in one click instead of reconstructing it. */
+function QueriesRunPanel({ queries }: { queries: QueryReceipt[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} className="mt-3 border-t border-border/20 pt-2.5">
+      <CollapsibleTrigger className="flex items-center gap-2 group cursor-pointer w-full text-left">
+        <ChevronRight size={9} className={cn("!size-auto transition-transform duration-200 text-muted-foreground/60 shrink-0", open && "rotate-90")} />
+        <span className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">
+          Queries run ({queries.length})
+        </span>
+        <span className="font-mono text-[9px] text-muted-foreground/40 ml-auto">re-runnable receipts</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="mt-2 space-y-1 animate-fade-in">
+        {queries.map((q, i) => (
+          <div key={i} className="text-[10px] font-mono">
+            <div className="flex items-start gap-2">
+              <span className="text-muted-foreground/45 shrink-0 w-12 uppercase tracking-[0.08em]" title={q.tool}>{q.phase}</span>
+              <code className="flex-1 min-w-0 break-all text-foreground/65 bg-background/30 border border-border/10 rounded px-1.5 py-0.5">{q.query}</code>
+              {q.url && (
+                <a
+                  href={q.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-primary/60 hover:text-primary shrink-0 mt-0.5 transition-colors"
+                  title="Open in Grafana"
+                >
+                  <ExternalLink size={10} />
+                </a>
+              )}
+            </div>
+            {q.resultExcerpt && (
+              <pre className="ml-14 mt-0.5 text-[9px] text-muted-foreground/55 bg-background/20 border border-border/10 rounded px-1.5 py-1 whitespace-pre-wrap break-all max-h-16 overflow-y-auto">{q.resultExcerpt}</pre>
+            )}
+          </div>
+        ))}
+      </CollapsibleContent>
+    </Collapsible>
+  );
 }
 
 function isStructuredLog(obs: Observation): obs is StructuredLog {
@@ -118,8 +168,43 @@ function tryParseTimestamp(ts: string | undefined): number {
   }
 }
 
-export function EvidenceTimeline({ evidence, timeSeries, service, timeRange, phaseActions, providers }: EvidenceTimelineProps) {
+export function EvidenceTimeline({ evidence, timeSeries, service, timeRange, phaseActions, providers, evidenceToolCalls }: EvidenceTimelineProps) {
   const metricsProvider = providers?.find(p => p.role === "metrics");
+
+  // Build the "Queries run" receipt list from captured tool calls. Each query
+  // gets a Grafana deep link via its phase's provider. Deduped per phase.
+  const queriesRun = useMemo<QueryReceipt[]>(() => {
+    // The query + result excerpt are useful on their own; only the Grafana
+    // deep link needs a timeRange. Build receipts regardless, gate the URL.
+    if (!evidenceToolCalls) return [];
+    const out: QueryReceipt[] = [];
+    const seen = new Set<string>();
+    for (const [phase, calls] of Object.entries(evidenceToolCalls)) {
+      for (const c of calls ?? []) {
+        const extracted = extractQueryFromToolCall(c.tool, c.args);
+        if (!extracted) continue;
+        const key = `${phase}:${extracted.query}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        // Pick the datasource by the query's LANGUAGE, not the phase it ran in:
+        // a PromQL query surfaced in any phase must open against the metrics
+        // (Prometheus) datasource, or Grafana parses it as LogQL and errors.
+        const targetRole = extracted.kind === "logs" ? "logs" : "metrics";
+        const provider = providers?.find(p => p.role === targetRole);
+        const url = (provider?.webUrl && timeRange)
+          ? buildExploreUrl({
+              webUrl: provider.webUrl,
+              datasource: extracted.datasource ?? provider.datasource,
+              query: extracted.query,
+              from: timeRange.from,
+              to: timeRange.to,
+            })
+          : undefined;
+        out.push({ phase, tool: c.tool, query: extracted.query, url, resultExcerpt: c.resultExcerpt });
+      }
+    }
+    return out;
+  }, [evidenceToolCalls, providers, timeRange]);
 
   // Parse metric observations — objects stay as structured, strings get parsed if they match
   // the pattern "metric_name (instance) = value (baseline value) – severity"
@@ -311,7 +396,7 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange, pha
 
   const hasTimeline = timelineEntries.length > 0;
 
-  if (!hasMetricData && !hasTimeline) {
+  if (!hasMetricData && !hasTimeline && queriesRun.length === 0) {
     return null;
   }
 
@@ -319,6 +404,8 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange, pha
   const defaultTab = hasMetricData ? "metrics" : "timeline";
 
   return (
+    <div className="w-full">
+    {(hasMetricData || hasTimeline) && (
     <Tabs defaultValue={defaultTab} className="w-full">
       <TabsList className="w-full bg-secondary/20 border border-border/25 rounded-lg p-0.5">
         {hasMetricData && (
@@ -417,5 +504,8 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange, pha
         </TabsContent>
       )}
     </Tabs>
+    )}
+    {queriesRun.length > 0 && <QueriesRunPanel queries={queriesRun} />}
+    </div>
   );
 }
