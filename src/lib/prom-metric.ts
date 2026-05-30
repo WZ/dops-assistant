@@ -33,12 +33,33 @@ function looksLikeMetric(name: string, hasSelector: boolean): boolean {
   return hasSelector || /[_:]/.test(name);
 }
 
+/** True if the body of an aggregation call contains at least one real metric
+ *  ANYWHERE, not just as its leading token. Needed for calls where the metric
+ *  isn't first: `histogram_quantile(0.99, ...)` (leading scalar arg) and
+ *  `sum(rate(metric[5m]))` (leading nested function). Scans every identifier
+ *  token and asks whether it looks like a metric (has `_`/`:` or a selector),
+ *  which filters out function names (sum, rate, le) and bare keywords (by). */
+function bodyContainsMetric(inner: string): boolean {
+  const tokenRe = /([a-zA-Z_:][a-zA-Z0-9_:]*)\s*(\{)?/g;
+  let match: RegExpExecArray | null;
+  while ((match = tokenRe.exec(inner)) !== null) {
+    if (looksLikeMetric(match[1]!, match[2] !== undefined)) return true;
+  }
+  return false;
+}
+
 /**
  * Extract a concrete PromQL metric expression from an observation string.
  *
  * Handles (in order of preference):
  *   1. Aggregation-wrapped:  `sum(http_requests_total{code="500"}) was high`
  *                            → `sum(http_requests_total{code="500"})`
+ *      Including calls where the metric isn't the first token — a leading
+ *      scalar arg or a nested function:
+ *        `histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))`
+ *          → the full expression (NOT bare `histogram_quantile`)
+ *        `sum(rate(http_requests_total{code="500"}[5m]))`
+ *          → the full expression (NOT `undefined`)
  *   2. Rate with range:      `rate(http_requests_total[5m]) spiked`
  *                            → `rate(http_requests_total[5m])`
  *   3. Bare + selector:      `kube_deployment_status_replicas{deployment="x"} was 13`
@@ -60,12 +81,8 @@ export function extractMetricExpression(text: string): string | undefined {
     const fn = aggMatch[1]!;
     // position of the `(` is at aggMatch[0].length - 1
     const call = sliceBalancedParens(trimmed, aggMatch[0].length - 1);
-    if (call) {
-      const inner = call.slice(1, -1).trim();
-      const innerMetric = inner.match(PROM_BARE_RE);
-      if (innerMetric && looksLikeMetric(innerMetric[1]!, !!innerMetric[2])) {
-        return `${fn}${call}`;
-      }
+    if (call && bodyContainsMetric(call.slice(1, -1))) {
+      return `${fn}${call}`;
     }
     // Aggregation opened but no real metric inside — fall through to bare.
   }
