@@ -947,6 +947,12 @@ export async function handleClientMessage(
   const isSlashInvestigate = SLASH_INVESTIGATE_RE.test(msg.message);
   const routedMessage = isSlashInvestigate ? msg.message.replace(SLASH_INVESTIGATE_RE, "").trim() : msg.message;
 
+  // Explicit investigation requests (slash command OR the `immediate` flag set
+  // by the Investigate button) are unambiguous user intent: force investigation
+  // without the LLM router and skip the confirm-dispatch countdown below.
+  const isImmediateInvestigate = msg.immediate === true;
+  const isExplicitInvestigate = isSlashInvestigate || isImmediateInvestigate;
+
   // If a serviceContext is provided, resolve it authoritatively and skip text/LLM matching
   const pinnedService = serviceContext
     ? visibleServices.find(s => s.name === serviceContext)
@@ -967,8 +973,8 @@ export async function handleClientMessage(
   }
 
   let intent: { intent: string; service?: string };
-  if (isSlashInvestigate) {
-    logger.info({ routeSource: "slash", intent: "investigation" }, "Router: classified");
+  if (isExplicitInvestigate) {
+    logger.info({ routeSource: isSlashInvestigate ? "slash" : "immediate", intent: "investigation" }, "Router: classified");
     intent = { intent: "investigation", service: undefined };
   } else {
     intent = await deps.router.route(routedMessage, serviceNames);
@@ -997,7 +1003,7 @@ export async function handleClientMessage(
     // "/investigate timeout spike" with no service named — almost certainly
     // not what they meant. For non-slash investigations (STRONG_KEYWORD or
     // LLM-classified), keep the full resolution chain including history.
-    const service = isSlashInvestigate
+    const service = isExplicitInvestigate
       ? (
           pinnedService ??
           deps.matchServiceFromText(routedMessage, visibleServices) ??
@@ -1022,44 +1028,47 @@ export async function handleClientMessage(
     const invId = `inv_${ulid()}`;
     memory.append(threadId, { role: "user", content: msg.message });
 
-    // Confirm-dispatch flow: chat-originated investigations get a (default 5s)
-    // cancellable window before the multi-agent runner kicks off. Webhook /
-    // scan / health-poller paths go straight to InvestigationRunner.run() and
-    // skip this flow entirely (alert-driven RCAs need no human consent).
-    const DISPATCH_CONFIRM_MS = deps.chatDispatchConfirmMs ?? 5000;
-    const cancelController = new AbortController();
-    pendingDispatches.set(invId, cancelController);
-    send({
-      type: "investigation:confirm_dispatch",
-      id: invId,
-      service: service.name,
-      query: routedMessage,
-      timerMs: DISPATCH_CONFIRM_MS,
-    });
+    // Confirm-dispatch flow: typed chat-originated investigations get a
+    // (default 5s) cancellable window before the multi-agent runner kicks off.
+    // Explicit dispatches (the Investigate button → `immediate`) skip the window
+    // and start at once — an explicit button press needs no undo grace period,
+    // and the countdown surfaced in the chat pane reads as a hang. Webhook /
+    // scan / health-poller paths bypass this flow entirely upstream.
+    const DISPATCH_CONFIRM_MS = isImmediateInvestigate ? 0 : (deps.chatDispatchConfirmMs ?? 5000);
 
-    const cancelled = DISPATCH_CONFIRM_MS <= 0
-      ? false
-      : await new Promise<boolean>((resolve) => {
-          const timer = setTimeout(() => {
-            cancelController.signal.removeEventListener("abort", onAbort);
-            resolve(false);
-          }, DISPATCH_CONFIRM_MS);
-          const onAbort = () => {
-            clearTimeout(timer);
-            resolve(true);
-          };
-          cancelController.signal.addEventListener("abort", onAbort, { once: true });
-        });
-    pendingDispatches.delete(invId);
+    if (DISPATCH_CONFIRM_MS > 0) {
+      const cancelController = new AbortController();
+      pendingDispatches.set(invId, cancelController);
+      send({
+        type: "investigation:confirm_dispatch",
+        id: invId,
+        service: service.name,
+        query: routedMessage,
+        timerMs: DISPATCH_CONFIRM_MS,
+      });
 
-    if (cancelled) {
-      send({ type: "investigation:dispatch_cancelled", id: invId, service: service.name });
-      const cancelMsgId = `msg_${ulid()}`;
-      const cancelContent = `Investigation of \`${service.name}\` cancelled.`;
-      send({ type: "chat", role: "assistant", content: cancelContent, id: cancelMsgId, createdAt: new Date().toISOString() } as ServerMessage);
-      db.createMessage(stackId, { id: cancelMsgId, role: "assistant", content: cancelContent });
-      memory.append(threadId, { role: "assistant", content: cancelContent });
-      return;
+      const cancelled = await new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => {
+          cancelController.signal.removeEventListener("abort", onAbort);
+          resolve(false);
+        }, DISPATCH_CONFIRM_MS);
+        const onAbort = () => {
+          clearTimeout(timer);
+          resolve(true);
+        };
+        cancelController.signal.addEventListener("abort", onAbort, { once: true });
+      });
+      pendingDispatches.delete(invId);
+
+      if (cancelled) {
+        send({ type: "investigation:dispatch_cancelled", id: invId, service: service.name });
+        const cancelMsgId = `msg_${ulid()}`;
+        const cancelContent = `Investigation of \`${service.name}\` cancelled.`;
+        send({ type: "chat", role: "assistant", content: cancelContent, id: cancelMsgId, createdAt: new Date().toISOString() } as ServerMessage);
+        db.createMessage(stackId, { id: cancelMsgId, role: "assistant", content: cancelContent });
+        memory.append(threadId, { role: "assistant", content: cancelContent });
+        return;
+      }
     }
 
     send({ type: "investigation:started", id: invId, service: service.name, query: routedMessage });
