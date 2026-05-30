@@ -196,8 +196,33 @@ describe("handleClientMessage", () => {
     if (started && (started as any).type === "investigation:started") {
       expect((started as any).query).toBe("the timeout in payments-api");
     }
-    // Confirm-dispatch was emitted (timerMs=0 in tests, so it doesn't block)
-    expect(messages.some((m: any) => m.type === "investigation:confirm_dispatch")).toBe(true);
+    // A zero-length window (test default) skips the confirm-dispatch banner
+    // entirely and dispatches straight away — no useless zero-duration flash.
+    expect(messages.some((m: any) => m.type === "investigation:confirm_dispatch")).toBe(false);
+  });
+
+  it("immediate flag skips the router AND the confirm-dispatch window, dispatching at once", async () => {
+    const deps = mockDeps();
+    // Give a non-zero window: a typed chat would show the banner, but `immediate`
+    // must bypass it regardless of the configured window.
+    deps.chatDispatchConfirmMs = 5000;
+    (deps.matchServiceFromText as ReturnType<typeof vi.fn>).mockReturnValue({ name: "payments-api", metrics: [], logLabels: {} });
+
+    const messages: unknown[] = [];
+    const send = (msg: unknown) => messages.push(msg);
+
+    await callHandler(
+      { type: "chat", message: "investigate payments-api", serviceContext: "payments-api", immediate: true },
+      send as any,
+      deps,
+    );
+
+    // Explicit intent — the LLM router is never consulted
+    expect(deps.router.route).not.toHaveBeenCalled();
+    // No countdown banner emitted
+    expect(messages.some((m: any) => m.type === "investigation:confirm_dispatch")).toBe(false);
+    // Runner kicked off right away
+    expect(messages.some((m: any) => m.type === "investigation:started")).toBe(true);
   });
 
   it("slash command without resolvable service replies with help, no dispatch", async () => {

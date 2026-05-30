@@ -4,7 +4,11 @@ import type { StackSummary } from "./stack-types.js";
 
 // Client to Server
 export type ClientMessage =
-  | { type: "chat"; message: string; serviceContext?: string }
+  // `immediate` marks an explicit, unambiguous investigation request (e.g. the
+  // Investigate button on the service detail page). The server skips both the
+  // LLM intent router and the cancellable confirm-dispatch window and kicks the
+  // runner off at once. Typed free-text chat omits it and keeps both safeguards.
+  | { type: "chat"; message: string; serviceContext?: string; immediate?: boolean }
   | { type: "deep_investigate"; investigationId: string; message: string }
   | { type: "rerun"; investigationId: string; template?: "quick" | "standard" | "full" }
   | { type: "new_session" }

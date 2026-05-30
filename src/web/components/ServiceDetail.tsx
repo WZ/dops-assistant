@@ -94,7 +94,10 @@ export function ServiceDetail({
   }, [serviceName]);
 
   const handleInvestigate = useCallback(() => {
-    ws.send({ type: "chat", message: `investigate ${serviceName}`, serviceContext: serviceName });
+    // Explicit button press is unambiguous intent — `immediate` tells the server
+    // to skip the LLM router and the confirm-dispatch countdown and start the
+    // investigation right away (which also switches the view to the run).
+    ws.send({ type: "chat", message: `investigate ${serviceName}`, serviceContext: serviceName, immediate: true });
   }, [ws, serviceName]);
 
   const handleEditAlias = useCallback(() => {
