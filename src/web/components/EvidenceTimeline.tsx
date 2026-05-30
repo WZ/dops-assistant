@@ -54,14 +54,6 @@ export interface EvidenceTimelineProps {
   evidenceToolCalls?: Record<string, EvidenceToolCall[]>;
 }
 
-/** Map an evidence-phase key to the provider role that serves it. */
-const PHASE_ROLE: Record<string, string> = {
-  metrics: "metrics",
-  logs: "logs",
-  infra: "infrastructure",
-  changes: "changes",
-};
-
 type QueryReceipt = { phase: string; tool: string; query: string; url?: string; resultExcerpt?: string };
 
 /** Collapsed-by-default list of the actual queries the investigation ran, each
@@ -194,8 +186,11 @@ export function EvidenceTimeline({ evidence, timeSeries, service, timeRange, pha
         const key = `${phase}:${extracted.query}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        const role = PHASE_ROLE[phase] ?? phase;
-        const provider = providers?.find(p => p.role === role);
+        // Pick the datasource by the query's LANGUAGE, not the phase it ran in:
+        // a PromQL query surfaced in any phase must open against the metrics
+        // (Prometheus) datasource, or Grafana parses it as LogQL and errors.
+        const targetRole = extracted.kind === "logs" ? "logs" : "metrics";
+        const provider = providers?.find(p => p.role === targetRole);
         const url = (provider?.webUrl && timeRange)
           ? buildExploreUrl({
               webUrl: provider.webUrl,

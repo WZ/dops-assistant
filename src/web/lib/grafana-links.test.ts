@@ -83,7 +83,7 @@ describe("extractQueryFromToolCall", () => {
       "query_prometheus",
       JSON.stringify({ expr: 'rate(http_errors[5m])', startTime: "2026-04-08T17:30:00Z" }),
     );
-    expect(result).toEqual({ query: 'rate(http_errors[5m])', datasource: undefined });
+    expect(result).toEqual({ query: 'rate(http_errors[5m])', datasource: undefined, kind: "metrics" });
   });
 
   it("extracts logql from query_loki_logs args", () => {
@@ -91,7 +91,7 @@ describe("extractQueryFromToolCall", () => {
       "query_loki_logs",
       JSON.stringify({ logql: '{app="api"} |= "error"', limit: 50 }),
     );
-    expect(result).toEqual({ query: '{app="api"} |= "error"', datasource: undefined });
+    expect(result).toEqual({ query: '{app="api"} |= "error"', datasource: undefined, kind: "logs" });
   });
 
   it("returns null for unrecognized args", () => {

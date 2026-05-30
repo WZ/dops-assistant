@@ -62,19 +62,23 @@ export function buildPhaseLink(params: {
 export function extractQueryFromToolCall(
   toolName: string,
   argsJson: string,
-): { query: string; datasource?: string } | null {
+): { query: string; datasource?: string; kind: "metrics" | "logs" } | null {
   try {
     const args = JSON.parse(argsJson);
 
-    // query_prometheus / query_* tools use expr or expression
-    if (args.expr) return { query: args.expr, datasource: args.datasource };
-    if (args.expression) return { query: args.expression, datasource: args.datasource };
+    // query_prometheus / query_* tools use expr or expression → PromQL (metrics)
+    if (args.expr) return { query: args.expr, datasource: args.datasource, kind: "metrics" };
+    if (args.expression) return { query: args.expression, datasource: args.datasource, kind: "metrics" };
 
-    // query_loki_logs uses logql or expr
-    if (args.logql) return { query: args.logql, datasource: args.datasource };
+    // query_loki_logs uses logql → LogQL (logs)
+    if (args.logql) return { query: args.logql, datasource: args.datasource, kind: "logs" };
 
-    // Generic query field
-    if (args.query && typeof args.query === "string") return { query: args.query, datasource: args.datasource };
+    // Generic query field — infer the language from the tool name.
+    if (args.query && typeof args.query === "string") {
+      const t = toolName.toLowerCase();
+      const kind = t.includes("loki") || t.includes("log") ? "logs" : "metrics";
+      return { query: args.query, datasource: args.datasource, kind };
+    }
 
     return null;
   } catch {

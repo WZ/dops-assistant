@@ -250,4 +250,30 @@ describe("EvidenceTimeline", () => {
     // No timeRange → no deep link rendered.
     expect(screen.queryByTitle("Open in Grafana")).toBeNull();
   });
+
+  it("routes a PromQL query to the METRICS datasource even when it ran in the infra phase", () => {
+    // Regression: a metric query surfaced under a non-metrics phase must open
+    // against the Prometheus datasource, not the phase's (log/infra) one — else
+    // Grafana parses PromQL as LogQL and errors.
+    const providers = [
+      { role: "metrics", webUrl: "https://grafana.example", datasource: "prom-uid" },
+      { role: "infrastructure", webUrl: "https://grafana.example", datasource: "loki-uid" },
+    ];
+    render(
+      <EvidenceTimeline
+        evidence={evidenceWithInfra as any}
+        timeSeries={[]}
+        service="payments-api"
+        providers={providers}
+        timeRange={{ from: "2026-03-14T11:00:00Z", to: "2026-03-14T12:00:00Z" }}
+        evidenceToolCalls={{ infra: [{ tool: "query_prometheus", args: '{"expr":"kube_pod_status_phase"}', resultChars: 8 }] }}
+      />,
+      { wrapper: Wrapper },
+    );
+    fireEvent.click(screen.getByText(/Queries run \(1\)/));
+    const link = screen.getByTitle("Open in Grafana") as HTMLAnchorElement;
+    // Uses the metrics provider's datasource (prom-uid), NOT the infra one (loki-uid).
+    expect(decodeURIComponent(link.href)).toContain("prom-uid");
+    expect(decodeURIComponent(link.href)).not.toContain("loki-uid");
+  });
 });

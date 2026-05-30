@@ -178,12 +178,15 @@ export function InvestigationPane({
   useEffect(() => {
     stackFetch("/api/providers")
       .then(r => r.ok ? r.json() : [])
-      .then((provs: Array<{ roles?: string[]; webUrl?: string }>) => {
+      .then((provs: Array<{ roles?: string[]; webUrl?: string; prometheusDatasourceUid?: string }>) => {
         const mapped = provs
           .filter(p => p.webUrl && p.roles?.length)
           .flatMap(p => (p.roles ?? []).map(role => ({
             role,
             webUrl: p.webUrl!,
+            // Metric deep links need the resolved Prometheus datasource UID so
+            // Explore opens with Prometheus (not Grafana's default, often Loki).
+            datasource: role === "metrics" ? p.prometheusDatasourceUid : undefined,
           })));
         setProviders(mapped);
       })
