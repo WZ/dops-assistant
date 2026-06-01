@@ -462,18 +462,37 @@ async function handleDeepModeInvestigate(
   }
 
   send({ type: "deep_mode:started", investigationId: msg.investigationId });
+  // Stream the re-examination as live "thinking" in the Console, reusing the
+  // same chat reasoning channel the deep_investigate follow-up uses — so deep
+  // mode shows step-by-step progress instead of jumping straight to the result.
+  send({ type: "chat:stream_start" });
   try {
     const agents = await getOrCreateAgents(stackId, ctx, deps.config, deps.db);
     const deepMode = await agents.deepModeReexamine(report, {
+      onProgress: (text) => {
+        send({ type: "chat:stream_delta", content: `${text}\n`, reasoning: true });
+      },
       onToolCall: (tool, _args, _result, _dur, error) => {
-        send({ type: "deep_mode:tool_call", investigationId: msg.investigationId, tool, status: error ? "error" : "success" });
+        send({ type: "chat:stream_delta", content: `   → ${tool}${error ? " (error)" : ""}\n`, reasoning: true });
       },
     });
     const updated: RcaReport = { ...report, deepMode };
     db.updateInvestigation(msg.investigationId, { report: JSON.stringify(updated) });
+
+    // Final Console message: a plain-language summary of the outcome.
+    const n = deepMode.reexamined.length;
+    const resurrected = deepMode.resurrected.map((h) => h.hypothesis);
+    const summary =
+      deepMode.outcome === "resurrected-candidate"
+        ? `**Deep mode** brought back ${resurrected.length} ruled-out ${resurrected.length === 1 ? "cause" : "causes"} after deeper queries:\n${resurrected.map((h) => `- ${h}`).join("\n")}\n\nThe original conclusion may be incomplete — these warrant another look.`
+        : deepMode.outcome === "rule-outs-confirmed"
+          ? `**Deep mode** re-tested ${n} ruled-out ${n === 1 ? "cause" : "causes"} with deeper queries; none came back. The original conclusion stands.`
+          : `**Deep mode** found no ruled-out causes to re-examine.`;
+    send({ type: "chat:stream_end", content: summary, investigationId: msg.investigationId });
     send({ type: "deep_mode:complete", investigationId: msg.investigationId, report: updated });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    send({ type: "chat:stream_end", content: `Deep mode failed: ${message}` });
     send({ type: "deep_mode:error", investigationId: msg.investigationId, message: `Deep mode failed: ${message}` });
   }
 }

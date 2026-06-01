@@ -613,13 +613,16 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
    */
   async function deepModeReexamine(
     report: RcaReport,
-    opts?: { onToolCall?: WorkflowConfig["onToolCall"]; maxReexamine?: number },
+    opts?: { onToolCall?: WorkflowConfig["onToolCall"]; maxReexamine?: number; onProgress?: (text: string) => void },
   ): Promise<DeepModeReport> {
     const targets = matchRuledOutToPredictions(report.hypotheses ?? [], report.ruledOut ?? []);
     const examinedAt = new Date().toISOString();
     if (targets.length === 0) {
       return { reexamined: [], resurrected: [], outcome: "nothing-to-examine", examinedAt };
     }
+    const maxReexamine = opts?.maxReexamine ?? 3;
+    const willExamine = Math.min(targets.length, maxReexamine);
+    opts?.onProgress?.(`Re-examining ${willExamine} ruled-out ${willExamine === 1 ? "cause" : "causes"} with deeper queries…`);
     const timeRange = report.timeRange;
     const ctx = { incidentTime: timeRange?.from };
     const gather = createGatherEvidence({
@@ -634,10 +637,23 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
     const result = await runDeepMode({
       ruledOut: targets,
       priorObservations: [],
-      maxReexamine: opts?.maxReexamine ?? 3,
-      gatherDeepEvidence: (h) => gather(h, 1),
+      maxReexamine,
+      // Announce each hypothesis as the loop reaches it (gatherDeepEvidence is
+      // called once per target, in priority order, at the start of its round).
+      gatherDeepEvidence: (h) => {
+        opts?.onProgress?.(`↪ testing: ${h.hypothesis}`);
+        return gather(h, 1);
+      },
       ctx,
     });
+    // Per-hypothesis verdicts are known only after the loop finishes.
+    for (const r of result.reexamined) {
+      opts?.onProgress?.(
+        r.resurrected
+          ? `  ✓ RESURRECTED — deeper evidence now supports "${r.hypothesis}"`
+          : `  · still ruled out (${r.deepVerdict}) — "${r.hypothesis}"`,
+      );
+    }
     return {
       reexamined: result.reexamined.map((r) => ({
         hypothesis: r.hypothesis,

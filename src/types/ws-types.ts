@@ -65,9 +65,10 @@ export type ServerMessage =
   | { type: "investigation:complete"; id: string; report: unknown }
   | { type: "investigation:failed"; id: string; error: string }
   | { type: "deep_investigate:tool_call"; investigationId: string; tool: string; args: Record<string, unknown>; status: "calling" | "success" | "error" }
-  // Deep mode (Step 3) progress + result.
+  // Deep mode (Step 3) lifecycle. Step-by-step "thinking" progress streams
+  // through the chat reasoning channel (chat:stream_delta reasoning:true), not
+  // here — these three just drive the trigger button + report update.
   | { type: "deep_mode:started"; investigationId: string }
-  | { type: "deep_mode:tool_call"; investigationId: string; tool: string; status: "calling" | "success" | "error" }
   | { type: "deep_mode:complete"; investigationId: string; report: unknown }
   | { type: "deep_mode:error"; investigationId: string; message: string }
   | { type: "session_cleared" }
