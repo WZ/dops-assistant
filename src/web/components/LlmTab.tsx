@@ -20,6 +20,7 @@ interface StackLlmView {
     investigation?: Effort;
     discovery?: Effort;
   };
+  synthesisLoopRounds: number;
 }
 
 interface LlmTabProps {
@@ -215,6 +216,29 @@ export function LlmTab({ stack }: LlmTabProps) {
               </label>
             );
           })}
+        </div>
+
+        {/* Hypothesis loop (Step 2) — read-only deployment setting. Surfaced so
+            operators can confirm whether investigations run the rank→test→rule-out
+            loop (N>1) without firing one. Not GUI-editable: it's file/Helm config. */}
+        <div className="mt-4 pt-3 border-t border-border flex items-center justify-between gap-4">
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground/80">Hypothesis Loop</span>
+            <span className="font-body text-[10px] text-muted-foreground/60">
+              Synthesis rank → test → rule-out. Read-only (<code className="font-mono">config.agent.synthesisLoopRounds</code>).
+            </span>
+          </div>
+          {view && (
+            <span
+              className={`shrink-0 font-mono text-[10px] px-2 py-1 rounded ${
+                view.synthesisLoopRounds > 1
+                  ? "text-primary bg-primary/10 border border-primary/25"
+                  : "text-muted-foreground/70 bg-secondary/50 border border-border"
+              }`}
+            >
+              {view.synthesisLoopRounds > 1 ? `ON · ${view.synthesisLoopRounds} rounds` : "OFF · single-pass"}
+            </span>
+          )}
         </div>
       </div>
     </div>

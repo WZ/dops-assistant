@@ -695,6 +695,24 @@ export function InvestigationPane({
                   {(report as any)?.severity && (
                     <MetaRow label="severity" value={String((report as any).severity).toUpperCase()} />
                   )}
+                  {/* Hypothesis loop (Step 2): present only when the synthesis loop
+                      ran (N>1). Its presence is the per-investigation proof that
+                      this wasn't a single-pass synthesis. */}
+                  {(report as any)?.loopOutcome && (
+                    <MetaRow
+                      label="loop"
+                      value={`${String((report as any).loopOutcome).toUpperCase()}${(report as any).hypotheses?.length ? ` · ${(report as any).hypotheses.length} ranked` : ""}`}
+                    />
+                  )}
+                  {/* Deep mode (Step 3): present only when re-examination ran. */}
+                  {(report as any)?.deepMode?.outcome && (report as any).deepMode.outcome !== "nothing-to-examine" && (
+                    <MetaRow
+                      label="deep mode"
+                      value={(report as any).deepMode.outcome === "resurrected-candidate"
+                        ? `RESURRECTED · ${(report as any).deepMode.resurrected?.length ?? 0}`
+                        : "RULE-OUTS HELD"}
+                    />
+                  )}
                   {totalUsage && (
                     <>
                       <MetaRow label="duration" value={`${(totalUsage.durationMs / 1000).toFixed(1)}s`} />

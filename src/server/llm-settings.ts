@@ -35,6 +35,10 @@ export interface StackLlmSettingsView {
     investigation?: ReasoningEffort;
     discovery?: ReasoningEffort;
   };
+  /** Synthesis hypothesis-loop rounds (config.agent.synthesisLoopRounds).
+   *  1 = single-pass (loop off); >1 = the rank→test→rule-out loop is on.
+   *  Read-only: this is file/Helm config, not a per-stack GUI setting. */
+  synthesisLoopRounds: number;
 }
 
 const BUCKETS: ReasoningBucket[] = ["chat", "investigation", "discovery"];
@@ -82,5 +86,6 @@ export function getStackLlmSettingsView(
       investigation: cfg.investigation,
       discovery: cfg.discovery,
     },
+    synthesisLoopRounds: config.agent?.synthesisLoopRounds ?? 1,
   };
 }
