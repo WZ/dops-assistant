@@ -628,11 +628,11 @@ export function InvestigationPane({
               re-examine. Skeptically re-tests them with deeper read-only queries. */}
           {isComplete && onDeepMode && (() => {
             const rpt = report as RcaReportType | null;
-            // Show whenever the Step 2 loop ran (loopOutcome present) — not only
-            // when it ruled something out. A cleanly-confirmed investigation
-            // (0 rule-outs) still warrants the option to dig deeper; the handler
-            // returns a calm "nothing to re-examine" if there's truly nothing.
-            if (!rpt?.loopOutcome) return null;
+            // Deep mode re-examines RULED-OUT causes — so only offer it when the
+            // loop actually ruled something out. An investigation with no
+            // rule-outs (clean confirm, or single-pass) has nothing to resurrect;
+            // showing the button there just dead-ends in "nothing to re-examine".
+            if (!rpt?.ruledOut || rpt.ruledOut.length === 0) return null;
             const alreadyDeep = !!rpt.deepMode;
             return (
               <Button
