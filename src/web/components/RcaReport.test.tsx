@@ -55,3 +55,46 @@ describe("RcaReport — hypothesis loop output", () => {
     expect(screen.queryByText(/none could be distinguished/)).toBeNull();
   });
 });
+
+describe("RcaReport — deep mode output (Step 3)", () => {
+  afterEach(() => cleanup());
+
+  it("surfaces a resurrected cause prominently", () => {
+    render(
+      <RcaReport
+        report={baseReport({
+          ruledOut: [{ hypothesis: "disk pressure", reason: "absent" }],
+          deepMode: {
+            reexamined: [{ hypothesis: "disk pressure", priorVerdict: "absent", deepVerdict: "satisfied", resurrected: true }],
+            resurrected: [{ hypothesis: "disk pressure" }],
+            outcome: "resurrected-candidate",
+          },
+        }) as any}
+      />,
+    );
+    expect(screen.getByText(/Deep Mode/)).toBeDefined();
+    expect(screen.getByText(/brought back/)).toBeDefined();
+    expect(screen.getByText(/deeper evidence now supports it/)).toBeDefined();
+  });
+
+  it("shows the rule-outs-confirmed reassurance when nothing came back", () => {
+    render(
+      <RcaReport
+        report={baseReport({
+          ruledOut: [{ hypothesis: "disk pressure", reason: "contradicted" }],
+          deepMode: {
+            reexamined: [{ hypothesis: "disk pressure", priorVerdict: "contradicted", deepVerdict: "contradicted", resurrected: false }],
+            resurrected: [],
+            outcome: "rule-outs-confirmed",
+          },
+        }) as any}
+      />,
+    );
+    expect(screen.getByText(/The original conclusion stands/)).toBeDefined();
+  });
+
+  it("omits the Deep Mode section when deep mode wasn't run", () => {
+    render(<RcaReport report={baseReport({ ruledOut: [{ hypothesis: "x", reason: "absent" }] }) as any} />);
+    expect(screen.queryByText(/Deep Mode/)).toBeNull();
+  });
+});

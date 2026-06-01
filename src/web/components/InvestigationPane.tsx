@@ -8,7 +8,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ArrowLeft, FilePlus, RotateCw, ChevronDown, Download, Link2, FileText, Image as ImageIcon, ClipboardCopy, Check } from "lucide-react";
+import { ArrowLeft, FilePlus, RotateCw, ChevronDown, Download, Link2, FileText, Image as ImageIcon, ClipboardCopy, Check, Telescope } from "lucide-react";
 import { PhaseStepper, type PhaseState } from "./PhaseStepper";
 import { EvidenceTimeline } from "./EvidenceTimeline";
 import { RcaReport } from "./RcaReport";
@@ -138,6 +138,7 @@ export function InvestigationPane({
   onBack,
   onNavigateSkills,
   onRerun,
+  onDeepMode,
   onWrongStack,
 }: {
   investigationId: string;
@@ -145,6 +146,9 @@ export function InvestigationPane({
   onBack: () => void;
   onNavigateSkills?: () => void;
   onRerun?: (investigationId: string, template?: string) => void;
+  /** Trigger deep mode (Step 3): skeptical re-examination of the loop's
+   *  ruled-out causes. Parent wires it to the deep_mode_investigate WS message. */
+  onDeepMode?: (investigationId: string) => void;
   /** Called when the investigation 404s in the active stack but the locate
    *  endpoint reports it lives in a different stack. The parent should
    *  switchStack + navigate to the correct stack-scoped URL — keeps
@@ -157,6 +161,8 @@ export function InvestigationPane({
   const [phases, setPhases] = useState<PhaseState[]>(DEFAULT_PHASES);
   const [evidence, setEvidence] = useState<Record<string, unknown>>({});
   const [report, setReport] = useState<unknown | null>(null);
+  const [deepModeRunning, setDeepModeRunning] = useState(false);
+  const [deepModeError, setDeepModeError] = useState<string | null>(null);
   const [service, setService] = useState("");
   const [query, setQuery] = useState("");
   /** Set when the REST fetch comes back 404. Visiting an investigation URL
@@ -463,6 +469,19 @@ export function InvestigationPane({
           });
         }
       }
+      // Deep mode (Step 3) — re-examination of ruled-out causes.
+      if (msg.type === "deep_mode:started" && msg.investigationId === investigationId) {
+        setDeepModeRunning(true);
+        setDeepModeError(null);
+      }
+      if (msg.type === "deep_mode:complete" && msg.investigationId === investigationId) {
+        setDeepModeRunning(false);
+        setReport(msg.report);
+      }
+      if (msg.type === "deep_mode:error" && msg.investigationId === investigationId) {
+        setDeepModeRunning(false);
+        if (typeof msg.message === "string") setDeepModeError(msg.message);
+      }
     }
   }, [wsMessages, investigationId]);
 
@@ -605,8 +624,30 @@ export function InvestigationPane({
               </DropdownMenuContent>
             </DropdownMenu>
           )}
+          {/* Deep mode (Step 3): only when the loop left ruled-out causes to
+              re-examine. Skeptically re-tests them with deeper read-only queries. */}
+          {isComplete && onDeepMode && (() => {
+            const rpt = report as RcaReportType | null;
+            if (!rpt?.ruledOut || rpt.ruledOut.length === 0) return null;
+            const alreadyDeep = !!rpt.deepMode;
+            return (
+              <Button
+                variant="outline"
+                disabled={isRunning || deepModeRunning}
+                onClick={() => { setDeepModeError(null); onDeepMode(investigationId); }}
+                title="Re-examine the ruled-out causes with deeper read-only queries"
+                className="h-9 px-4 text-[12px] font-mono border-primary/30 text-primary/70 hover:bg-primary/8 hover:text-primary rounded-lg gap-1.5"
+              >
+                <Telescope size={12} className="!size-auto" />
+                {deepModeRunning ? "Deep investigating…" : alreadyDeep ? "Re-run deep mode" : "Deep investigate"}
+              </Button>
+            );
+          })()}
         </div>
       </div>
+      {deepModeError && (
+        <div className="px-1 pb-2 text-[11px] font-mono text-destructive/80">{deepModeError}</div>
+      )}
 
       {/* Progress bar — visible while running */}
       {isRunning && (
