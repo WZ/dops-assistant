@@ -481,44 +481,35 @@ async function runDeepModeStreamed(
   send: (m: ServerMessage) => void,
 ): Promise<void> {
   send({ type: "deep_mode:started", investigationId });
-  // Stream the re-examination as live "thinking" in the Console, reusing the
-  // same chat reasoning channel the deep_investigate follow-up uses.
-  send({ type: "chat:stream_start" });
+  // Stream the re-examination as a dedicated, structured agent stream (colored,
+  // grouped, expanded) rendered in the investigation view — NOT the chat
+  // thinking block (which is collapsed + plain).
+  const startMs = Date.now();
+  let seq = 0;
+  let toolCalls = 0;
   try {
     const deepMode = await deepModeReexamine(report, {
-      onProgress: (text) => {
-        send({ type: "chat:stream_delta", content: `${text}\n`, reasoning: true });
-      },
-      onToolCall: (tool, _args, _result, _dur, error) => {
-        send({ type: "chat:stream_delta", content: `   → ${tool}${error ? " (error)" : ""}\n`, reasoning: true });
+      onStep: (ev) => {
+        if (ev.targetKind === "query") toolCalls++;
+        send({ type: "deep_mode:step", investigationId, event: { ...ev, seq: seq++ } });
       },
     });
     const updated: RcaReport = { ...report, deepMode };
     db.updateInvestigation(investigationId, { report: JSON.stringify(updated) });
-
-    // Final Console message: a plain-language summary of the outcome.
-    const n = deepMode.reexamined.length;
-    const resurrected = deepMode.resurrected.map((h) => h.hypothesis);
-    const shaken = deepMode.shaken.map((h) => h.hypothesis);
-    let summary: string;
-    switch (deepMode.outcome) {
-      case "resurrected-candidate":
-        summary = `**Deep mode** brought back ${resurrected.length} ruled-out ${resurrected.length === 1 ? "cause" : "causes"} after deeper queries:\n${resurrected.map((h) => `- ${h}`).join("\n")}\n\nThe original conclusion may be incomplete — these warrant another look.`;
-        break;
-      case "confirmation-shaken":
-        summary = `**Deep mode** could no longer support the confirmed cause under deeper queries:\n${shaken.map((h) => `- ${h}`).join("\n")}\n\nThe conclusion is shakier than the loop reported — treat it with caution.`;
-        break;
-      case "holds":
-        summary = `**Deep mode** re-tested ${n} ${n === 1 ? "hypothesis" : "hypotheses"} with deeper queries; nothing flipped. The original conclusion stands.`;
-        break;
-      default:
-        summary = `**Deep mode** found nothing to re-examine on this investigation.`;
-    }
-    send({ type: "chat:stream_end", content: summary, investigationId });
-    send({ type: "deep_mode:complete", investigationId, report: updated });
+    send({
+      type: "deep_mode:complete",
+      investigationId,
+      report: updated,
+      stats: {
+        examined: deepMode.reexamined.length,
+        toolCalls,
+        resurrected: deepMode.resurrected.length,
+        shaken: deepMode.shaken.length,
+        durationMs: Date.now() - startMs,
+      },
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    send({ type: "chat:stream_end", content: `Deep mode failed: ${message}` });
     send({ type: "deep_mode:error", investigationId, message: `Deep mode failed: ${message}` });
   }
 }

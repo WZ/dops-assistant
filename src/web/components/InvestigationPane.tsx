@@ -12,12 +12,13 @@ import { ArrowLeft, FilePlus, RotateCw, ChevronDown, Download, Link2, FileText, 
 import { PhaseStepper, type PhaseState } from "./PhaseStepper";
 import { EvidenceTimeline } from "./EvidenceTimeline";
 import { RcaReport } from "./RcaReport";
+import { DeepModeStream } from "./DeepModeStream";
 import { InvestigationFeedback } from "./InvestigationFeedback";
 import { useStackContext } from "../contexts/StackContext";
 import { useUnreadInvestigations } from "../hooks/useUnreadInvestigations";
 import type { TimelineEvent } from "./ActivityTimeline";
 import type { TimeSeriesData } from "./MetricChart";
-import type { ServerMessage } from "../../types/ws-types.js";
+import type { ServerMessage, AgentStreamEvent, AgentStreamStats } from "../../types/ws-types.js";
 import type { RcaReport as RcaReportType } from "../../types/rca-types.js";
 import { formatTokens } from "../lib/formatTokens.js";
 import { buildPhaseActions } from "../lib/grafana-links.js";
@@ -163,6 +164,8 @@ export function InvestigationPane({
   const [report, setReport] = useState<unknown | null>(null);
   const [deepModeRunning, setDeepModeRunning] = useState(false);
   const [deepModeError, setDeepModeError] = useState<string | null>(null);
+  const [deepSteps, setDeepSteps] = useState<AgentStreamEvent[]>([]);
+  const [deepStats, setDeepStats] = useState<AgentStreamStats | undefined>(undefined);
   const [service, setService] = useState("");
   const [query, setQuery] = useState("");
   /** Set when the REST fetch comes back 404. Visiting an investigation URL
@@ -473,10 +476,16 @@ export function InvestigationPane({
       if (msg.type === "deep_mode:started" && msg.investigationId === investigationId) {
         setDeepModeRunning(true);
         setDeepModeError(null);
+        setDeepSteps([]);
+        setDeepStats(undefined);
+      }
+      if (msg.type === "deep_mode:step" && msg.investigationId === investigationId) {
+        setDeepSteps((prev) => [...prev, msg.event]);
       }
       if (msg.type === "deep_mode:complete" && msg.investigationId === investigationId) {
         setDeepModeRunning(false);
         setReport(msg.report);
+        setDeepStats(msg.stats);
       }
       if (msg.type === "deep_mode:error" && msg.investigationId === investigationId) {
         setDeepModeRunning(false);
@@ -745,6 +754,9 @@ export function InvestigationPane({
                 <PhaseStepper phases={phases} events={timelineEvents} evidence={evidence} isComplete={isComplete} phaseTokens={phaseTokens} />
               </section>
             )}
+
+            {/* Deep mode (Step 3) — dedicated structured agent stream (live + final). */}
+            <DeepModeStream events={deepSteps} stats={deepStats} running={deepModeRunning} />
 
             {investigationStatus === "failed" && !report ? (
               <section className="rounded-lg border border-destructive/30 bg-destructive/5 px-5 py-4 animate-fade-up">

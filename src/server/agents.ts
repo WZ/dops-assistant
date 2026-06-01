@@ -18,6 +18,7 @@
 import { randomUUID } from "node:crypto";
 import type { ServiceConfig, DiscoveryConfig } from "../config/schema.js";
 import type { RcaReport, DeepModeReport } from "../types/rca-types.js";
+import type { AgentStreamEvent } from "../types/ws-types.js";
 import { runDeepMode, buildReexamineTargets, widenTimeRange } from "../workflows/steps/deep-mode.js";
 import { createGatherEvidence } from "../workflows/steps/hypothesis-requery.js";
 import { createLogger } from "../logger.js";
@@ -613,8 +614,9 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
    */
   async function deepModeReexamine(
     report: RcaReport,
-    opts?: { onToolCall?: WorkflowConfig["onToolCall"]; maxReexamine?: number; onProgress?: (text: string) => void },
+    opts?: { onStep?: (ev: Omit<AgentStreamEvent, "seq">) => void; maxReexamine?: number },
   ): Promise<DeepModeReport> {
+    const step = opts?.onStep ?? (() => {});
     const examinedAt = new Date().toISOString();
     const maxReexamine = opts?.maxReexamine ?? 3;
     // Resurrect ruled-out causes, or — when none were ruled out — skeptically
@@ -624,11 +626,9 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       return { reexamined: [], resurrected: [], shaken: [], outcome: "nothing-to-examine", examinedAt };
     }
     const mode = targets[0].priorStanding === "ruled-out" ? "resurrect" : "refute";
-    opts?.onProgress?.(
-      mode === "resurrect"
-        ? `Re-examining ${targets.length} ruled-out ${targets.length === 1 ? "cause" : "causes"} with deeper queries…`
-        : `No causes were ruled out — skeptically re-testing the confirmed conclusion with deeper queries…`,
-    );
+    step(mode === "resurrect"
+      ? { verb: "re-examining", target: `${targets.length} ruled-out ${targets.length === 1 ? "cause" : "causes"}`, status: "running" }
+      : { verb: "re-testing", target: "the confirmed conclusion", detail: "(no causes were ruled out)", status: "running" });
     const timeRange = report.timeRange;
     // Dig deeper than the loop did: re-query a BROADER window so precursors the
     // narrow incident window missed can surface. The change-in-window predicate
@@ -641,7 +641,8 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       model: investigationModel,
       timeRange: deeperRange,
       useQuirkHandling: true,
-      onToolCall: opts?.onToolCall,
+      onToolCall: (tool, _args, _result, _dur, error) =>
+        step({ verb: "queried", target: tool, targetKind: "query", status: error ? "rejected" : "done", indent: 1 }),
       llmRetry: config.llm.retry,
       ctx,
     });
@@ -650,24 +651,22 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       priorObservations: [],
       maxReexamine,
       gatherDeepEvidence: (h) => {
-        opts?.onProgress?.(`↪ ${mode === "resurrect" ? "testing" : "re-testing"}: ${h.hypothesis}`);
+        step({ verb: mode === "resurrect" ? "testing" : "re-testing", target: h.hypothesis, status: "running" });
         return gather(h, 1);
       },
       ctx,
     });
     // Per-hypothesis verdicts are known only after the loop finishes.
     for (const r of result.reexamined) {
-      let line: string;
       if (r.priorStanding === "ruled-out") {
-        line = r.flipped
-          ? `  ✓ RESURRECTED — deeper evidence now supports "${r.hypothesis}"`
-          : `  · still ruled out (${r.deepVerdict}) — "${r.hypothesis}"`;
+        step(r.flipped
+          ? { verb: "resurrected", target: r.hypothesis, status: "strong" }
+          : { verb: "still ruled out", target: r.hypothesis, detail: `(${r.deepVerdict})`, status: "done" });
       } else {
-        line = r.flipped
-          ? `  ⚠ SHAKEN — deeper evidence no longer supports "${r.hypothesis}"`
-          : `  ✓ holds — deeper evidence still supports "${r.hypothesis}"`;
+        step(r.flipped
+          ? { verb: "shaken", target: r.hypothesis, detail: "(no longer supported)", status: "rejected" }
+          : { verb: "holds", target: r.hypothesis, status: "strong" });
       }
-      opts?.onProgress?.(line);
     }
     const toRef = (h: { hypothesis: string; prediction: unknown }) => ({ hypothesis: h.hypothesis, prediction: h.prediction as Record<string, unknown> });
     return {
