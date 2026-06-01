@@ -82,25 +82,29 @@ export type RuledOutHypothesis = {
   reason: string;
 };
 
-/** One ruled-out hypothesis re-examined by deep mode (Step 3). Mirrors
+/** One hypothesis re-examined by deep mode (Step 3). Mirrors
  *  ReexaminedHypothesis in src/workflows/steps/deep-mode.ts. */
 export type DeepModeReexamination = {
   hypothesis: string;
-  /** Verdict the loop reached (why it was ruled out). */
+  /** How the loop left it: confirmed (re-tested to refute) or ruled-out (to resurrect). */
+  priorStanding: "confirmed" | "ruled-out";
+  /** The loop's verdict for it. */
   priorVerdict: "satisfied" | "contradicted" | "absent";
   /** Verdict after deep mode gathered deeper evidence. */
   deepVerdict: "satisfied" | "contradicted" | "absent";
-  /** Deeper evidence flipped a dismissed cause back to satisfied. */
-  resurrected: boolean;
+  /** Standing changed: ruled-out→satisfied (resurrected) or confirmed→not-satisfied (shaken). */
+  flipped: boolean;
 };
 
 /** Deep-mode output (Step 3): the skeptical re-examination of the loop's
- *  ruled-out causes. Unset unless deep mode was triggered. */
+ *  conclusion. Unset unless deep mode was triggered. */
 export type DeepModeReport = {
   reexamined: DeepModeReexamination[];
-  /** Hypotheses deeper evidence brought back as live candidates. */
+  /** Ruled-out hypotheses deeper evidence brought back as live candidates. */
   resurrected: RankedHypothesis[];
-  outcome: "resurrected-candidate" | "rule-outs-confirmed" | "nothing-to-examine";
+  /** Confirmed hypotheses deeper evidence no longer supports. */
+  shaken: RankedHypothesis[];
+  outcome: "resurrected-candidate" | "confirmation-shaken" | "holds" | "nothing-to-examine";
   examinedAt: string;
 };
 

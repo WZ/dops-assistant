@@ -455,15 +455,11 @@ async function handleDeepModeInvestigate(
     return;
   }
   // Deep mode warm-starts from the loop's output. If the investigation never
-  // ran the loop (single-pass / N=1), that's an error — nothing to start from.
+  // ran the loop (single-pass / N=1), there's nothing to start from. Otherwise
+  // deep mode handles it: resurrect ruled-out causes, or — when none were
+  // ruled out — skeptically re-test the confirmed conclusion.
   if (!report.hypotheses?.length) {
     send({ type: "deep_mode:error", investigationId: msg.investigationId, message: "This investigation ran single-pass (no hypothesis loop) — nothing for deep mode to re-examine. Run it with synthesisLoopRounds > 1 first." });
-    return;
-  }
-  // The loop ran but ruled nothing out (e.g. it confirmed a cause cleanly).
-  // That's not an error — there's just nothing to resurrect. Say so calmly.
-  if (!report.ruledOut?.length) {
-    send({ type: "chat:stream_end", content: "**Deep mode** — the hypothesis loop ruled nothing out on this investigation, so there are no dismissed causes to re-examine.", investigationId: msg.investigationId });
     return;
   }
 
@@ -503,12 +499,21 @@ async function runDeepModeStreamed(
     // Final Console message: a plain-language summary of the outcome.
     const n = deepMode.reexamined.length;
     const resurrected = deepMode.resurrected.map((h) => h.hypothesis);
-    const summary =
-      deepMode.outcome === "resurrected-candidate"
-        ? `**Deep mode** brought back ${resurrected.length} ruled-out ${resurrected.length === 1 ? "cause" : "causes"} after deeper queries:\n${resurrected.map((h) => `- ${h}`).join("\n")}\n\nThe original conclusion may be incomplete — these warrant another look.`
-        : deepMode.outcome === "rule-outs-confirmed"
-          ? `**Deep mode** re-tested ${n} ruled-out ${n === 1 ? "cause" : "causes"} with deeper queries; none came back. The original conclusion stands.`
-          : `**Deep mode** found no ruled-out causes to re-examine.`;
+    const shaken = deepMode.shaken.map((h) => h.hypothesis);
+    let summary: string;
+    switch (deepMode.outcome) {
+      case "resurrected-candidate":
+        summary = `**Deep mode** brought back ${resurrected.length} ruled-out ${resurrected.length === 1 ? "cause" : "causes"} after deeper queries:\n${resurrected.map((h) => `- ${h}`).join("\n")}\n\nThe original conclusion may be incomplete — these warrant another look.`;
+        break;
+      case "confirmation-shaken":
+        summary = `**Deep mode** could no longer support the confirmed cause under deeper queries:\n${shaken.map((h) => `- ${h}`).join("\n")}\n\nThe conclusion is shakier than the loop reported — treat it with caution.`;
+        break;
+      case "holds":
+        summary = `**Deep mode** re-tested ${n} ${n === 1 ? "hypothesis" : "hypotheses"} with deeper queries; nothing flipped. The original conclusion stands.`;
+        break;
+      default:
+        summary = `**Deep mode** found nothing to re-examine on this investigation.`;
+    }
     send({ type: "chat:stream_end", content: summary, investigationId });
     send({ type: "deep_mode:complete", investigationId, report: updated });
   } catch (err) {
@@ -1217,9 +1222,9 @@ export async function handleClientMessage(
     try {
       const report = await runner.run({ service, message: routedMessage, investigationId: invId, stackId, disabledSkillIds: deps.db.getDisabledSkills(stackId), callbacks: wsCallbacks, source: "manual" });
       // Deep-from-start: when the deployment opts in (agent.deepModeOnComplete)
-      // and the loop ran + ruled causes out, chain the deep re-examination right
-      // after — the result lands in one pass, no second click.
-      if (deps.config.agent?.deepModeOnComplete && report?.loopOutcome && report.ruledOut?.length) {
+      // and the loop ran, chain the deep re-examination right after — resurrect
+      // ruled-out causes or refute the confirmed one. One pass, no second click.
+      if (deps.config.agent?.deepModeOnComplete && report?.loopOutcome) {
         await runDeepModeStreamed(invId, report, agents.deepModeReexamine, db, send);
       }
     } catch {

@@ -628,11 +628,12 @@ export function InvestigationPane({
               re-examine. Skeptically re-tests them with deeper read-only queries. */}
           {isComplete && onDeepMode && (() => {
             const rpt = report as RcaReportType | null;
-            // Deep mode re-examines RULED-OUT causes — so only offer it when the
-            // loop actually ruled something out. An investigation with no
-            // rule-outs (clean confirm, or single-pass) has nothing to resurrect;
-            // showing the button there just dead-ends in "nothing to re-examine".
-            if (!rpt?.ruledOut || rpt.ruledOut.length === 0) return null;
+            // Offer deep mode whenever the loop ran (loopOutcome present): it
+            // resurrects ruled-out causes, or — when none were ruled out —
+            // skeptically re-tests the confirmed conclusion. Always does
+            // something useful, so no dead-end. Single-pass reports (no
+            // loopOutcome) have no loop conclusion to dig into → hidden.
+            if (!rpt?.loopOutcome) return null;
             const alreadyDeep = !!rpt.deepMode;
             return (
               <Button
@@ -712,9 +713,12 @@ export function InvestigationPane({
                   {(report as any)?.deepMode?.outcome && (report as any).deepMode.outcome !== "nothing-to-examine" && (
                     <MetaRow
                       label="deep mode"
-                      value={(report as any).deepMode.outcome === "resurrected-candidate"
-                        ? `RESURRECTED · ${(report as any).deepMode.resurrected?.length ?? 0}`
-                        : "RULE-OUTS HELD"}
+                      value={(() => {
+                        const dm = (report as any).deepMode;
+                        if (dm.outcome === "resurrected-candidate") return `RESURRECTED · ${dm.resurrected?.length ?? 0}`;
+                        if (dm.outcome === "confirmation-shaken") return `SHAKEN · ${dm.shaken?.length ?? 0}`;
+                        return "HOLDS";
+                      })()}
                     />
                   )}
                   {totalUsage && (

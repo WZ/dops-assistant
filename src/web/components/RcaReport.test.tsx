@@ -59,14 +59,15 @@ describe("RcaReport — hypothesis loop output", () => {
 describe("RcaReport — deep mode output (Step 3)", () => {
   afterEach(() => cleanup());
 
-  it("surfaces a resurrected cause prominently", () => {
+  it("surfaces a resurrected ruled-out cause prominently", () => {
     render(
       <RcaReport
         report={baseReport({
           ruledOut: [{ hypothesis: "disk pressure", reason: "absent" }],
           deepMode: {
-            reexamined: [{ hypothesis: "disk pressure", priorVerdict: "absent", deepVerdict: "satisfied", resurrected: true }],
+            reexamined: [{ hypothesis: "disk pressure", priorStanding: "ruled-out", priorVerdict: "absent", deepVerdict: "satisfied", flipped: true }],
             resurrected: [{ hypothesis: "disk pressure" }],
+            shaken: [],
             outcome: "resurrected-candidate",
           },
         }) as any}
@@ -77,15 +78,34 @@ describe("RcaReport — deep mode output (Step 3)", () => {
     expect(screen.getByText(/deeper evidence now supports it/)).toBeDefined();
   });
 
-  it("shows the rule-outs-confirmed reassurance when nothing came back", () => {
+  it("flags a shaken confirmed cause when deeper evidence drops support", () => {
+    render(
+      <RcaReport
+        report={baseReport({
+          loopOutcome: "confirmed",
+          deepMode: {
+            reexamined: [{ hypothesis: "backpressure", priorStanding: "confirmed", priorVerdict: "satisfied", deepVerdict: "contradicted", flipped: true }],
+            resurrected: [],
+            shaken: [{ hypothesis: "backpressure" }],
+            outcome: "confirmation-shaken",
+          },
+        }) as any}
+      />,
+    );
+    expect(screen.getByText(/no longer supports the confirmed cause/)).toBeDefined();
+    expect(screen.getByText(/shaken: deeper evidence no longer supports it/)).toBeDefined();
+  });
+
+  it("shows the 'holds' reassurance when nothing flipped", () => {
     render(
       <RcaReport
         report={baseReport({
           ruledOut: [{ hypothesis: "disk pressure", reason: "contradicted" }],
           deepMode: {
-            reexamined: [{ hypothesis: "disk pressure", priorVerdict: "contradicted", deepVerdict: "contradicted", resurrected: false }],
+            reexamined: [{ hypothesis: "disk pressure", priorStanding: "ruled-out", priorVerdict: "contradicted", deepVerdict: "contradicted", flipped: false }],
             resurrected: [],
-            outcome: "rule-outs-confirmed",
+            shaken: [],
+            outcome: "holds",
           },
         }) as any}
       />,

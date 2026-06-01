@@ -18,7 +18,7 @@
 import { randomUUID } from "node:crypto";
 import type { ServiceConfig, DiscoveryConfig } from "../config/schema.js";
 import type { RcaReport, DeepModeReport } from "../types/rca-types.js";
-import { runDeepMode, matchRuledOutToPredictions, widenTimeRange } from "../workflows/steps/deep-mode.js";
+import { runDeepMode, buildReexamineTargets, widenTimeRange } from "../workflows/steps/deep-mode.js";
 import { createGatherEvidence } from "../workflows/steps/hypothesis-requery.js";
 import { createLogger } from "../logger.js";
 
@@ -615,14 +615,20 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
     report: RcaReport,
     opts?: { onToolCall?: WorkflowConfig["onToolCall"]; maxReexamine?: number; onProgress?: (text: string) => void },
   ): Promise<DeepModeReport> {
-    const targets = matchRuledOutToPredictions(report.hypotheses ?? [], report.ruledOut ?? []);
     const examinedAt = new Date().toISOString();
-    if (targets.length === 0) {
-      return { reexamined: [], resurrected: [], outcome: "nothing-to-examine", examinedAt };
-    }
     const maxReexamine = opts?.maxReexamine ?? 3;
-    const willExamine = Math.min(targets.length, maxReexamine);
-    opts?.onProgress?.(`Re-examining ${willExamine} ruled-out ${willExamine === 1 ? "cause" : "causes"} with deeper queries…`);
+    // Resurrect ruled-out causes, or — when none were ruled out — skeptically
+    // re-test the loop's standing conclusion (refute the confirmed cause).
+    const targets = buildReexamineTargets(report.hypotheses ?? [], report.ruledOut ?? [], report.loopOutcome, maxReexamine);
+    if (targets.length === 0) {
+      return { reexamined: [], resurrected: [], shaken: [], outcome: "nothing-to-examine", examinedAt };
+    }
+    const mode = targets[0].priorStanding === "ruled-out" ? "resurrect" : "refute";
+    opts?.onProgress?.(
+      mode === "resurrect"
+        ? `Re-examining ${targets.length} ruled-out ${targets.length === 1 ? "cause" : "causes"} with deeper queries…`
+        : `No causes were ruled out — skeptically re-testing the confirmed conclusion with deeper queries…`,
+    );
     const timeRange = report.timeRange;
     // Dig deeper than the loop did: re-query a BROADER window so precursors the
     // narrow incident window missed can surface. The change-in-window predicate
@@ -640,36 +646,40 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       ctx,
     });
     const result = await runDeepMode({
-      ruledOut: targets,
+      targets,
       priorObservations: [],
       maxReexamine,
-      // Announce each hypothesis as the loop reaches it (gatherDeepEvidence is
-      // called once per target, in priority order, at the start of its round).
       gatherDeepEvidence: (h) => {
-        opts?.onProgress?.(`↪ testing: ${h.hypothesis}`);
+        opts?.onProgress?.(`↪ ${mode === "resurrect" ? "testing" : "re-testing"}: ${h.hypothesis}`);
         return gather(h, 1);
       },
       ctx,
     });
     // Per-hypothesis verdicts are known only after the loop finishes.
     for (const r of result.reexamined) {
-      opts?.onProgress?.(
-        r.resurrected
+      let line: string;
+      if (r.priorStanding === "ruled-out") {
+        line = r.flipped
           ? `  ✓ RESURRECTED — deeper evidence now supports "${r.hypothesis}"`
-          : `  · still ruled out (${r.deepVerdict}) — "${r.hypothesis}"`,
-      );
+          : `  · still ruled out (${r.deepVerdict}) — "${r.hypothesis}"`;
+      } else {
+        line = r.flipped
+          ? `  ⚠ SHAKEN — deeper evidence no longer supports "${r.hypothesis}"`
+          : `  ✓ holds — deeper evidence still supports "${r.hypothesis}"`;
+      }
+      opts?.onProgress?.(line);
     }
+    const toRef = (h: { hypothesis: string; prediction: unknown }) => ({ hypothesis: h.hypothesis, prediction: h.prediction as Record<string, unknown> });
     return {
       reexamined: result.reexamined.map((r) => ({
         hypothesis: r.hypothesis,
+        priorStanding: r.priorStanding,
         priorVerdict: r.priorVerdict,
         deepVerdict: r.deepVerdict,
-        resurrected: r.resurrected,
+        flipped: r.flipped,
       })),
-      resurrected: result.resurrected.map((h) => ({
-        hypothesis: h.hypothesis,
-        prediction: h.prediction as Record<string, unknown>,
-      })),
+      resurrected: result.resurrected.map(toRef),
+      shaken: result.shaken.map(toRef),
       outcome: result.outcome,
       examinedAt,
     };
