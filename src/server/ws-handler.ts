@@ -454,10 +454,16 @@ async function handleDeepModeInvestigate(
     send({ type: "deep_mode:error", investigationId: msg.investigationId, message: "Could not parse the investigation report." });
     return;
   }
-  // Deep mode warm-starts from the loop's output. Without ruled-out hypotheses
-  // (single-pass / N=1 investigations) there's nothing to re-examine.
-  if (!report.hypotheses?.length || !report.ruledOut?.length) {
-    send({ type: "deep_mode:error", investigationId: msg.investigationId, message: "No ruled-out hypotheses to re-examine — run this investigation with the hypothesis loop enabled (synthesisLoopRounds > 1) first." });
+  // Deep mode warm-starts from the loop's output. If the investigation never
+  // ran the loop (single-pass / N=1), that's an error — nothing to start from.
+  if (!report.hypotheses?.length) {
+    send({ type: "deep_mode:error", investigationId: msg.investigationId, message: "This investigation ran single-pass (no hypothesis loop) — nothing for deep mode to re-examine. Run it with synthesisLoopRounds > 1 first." });
+    return;
+  }
+  // The loop ran but ruled nothing out (e.g. it confirmed a cause cleanly).
+  // That's not an error — there's just nothing to resurrect. Say so calmly.
+  if (!report.ruledOut?.length) {
+    send({ type: "chat:stream_end", content: "**Deep mode** — the hypothesis loop ruled nothing out on this investigation, so there are no dismissed causes to re-examine.", investigationId: msg.investigationId });
     return;
   }
 
