@@ -18,7 +18,8 @@ import type { StackManager, StackContext } from "./stack-manager.js";
 import type { InvestigationDedup } from "./investigation-dedup.js";
 import { createMastraAdapters } from "./agents.js";
 import { getToolsByRole } from "../mcp/provider.js";
-import { ChatMessageSchema, DeepInvestigateMessageSchema } from "./sanitize.js";
+import { ChatMessageSchema, DeepInvestigateMessageSchema, DeepModeInvestigateMessageSchema } from "./sanitize.js";
+import type { RcaReport } from "../types/rca-types.js";
 import { wrapUntrusted } from "../agents/shared/prompt-helpers.js";
 import { WsRateLimiter, classifyWsMessage } from "./rate-limit.js";
 import { isDemoMode } from "./demo-mode.js";
@@ -117,7 +118,10 @@ export interface WsDeps {
 }
 
 /** Lazily-created agents cache per stack */
-const agentsCache = new Map<string, { chatAgent: IChatAgent; investigationAgent: IInvestigationAgent; discoverAgent?: IDiscoverAgent }>();
+/** Full adapter bundle from createMastraAdapters (incl. deepModeReexamine).
+ *  Derived so the cache + getOrCreateAgents stay in sync as it grows. */
+type StackAgents = Awaited<ReturnType<typeof createMastraAdapters>>;
+const agentsCache = new Map<string, StackAgents>();
 
 /** Metrics tool names cache per stack */
 const metricsToolNamesCache = new Map<string, Set<string>>();
@@ -133,7 +137,7 @@ async function getOrCreateAgents(
   ctx: StackContext,
   config: Config,
   db: Database,
-): Promise<{ chatAgent: IChatAgent; investigationAgent: IInvestigationAgent; discoverAgent?: IDiscoverAgent }> {
+): Promise<StackAgents> {
   const cached = agentsCache.get(stackId);
   if (cached) return cached;
 
@@ -336,6 +340,7 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
           const blockedTypes = new Set([
             "chat",
             "deep_investigate",
+            "deep_mode_investigate",
             "rerun",
             "discover",
             "discover:accept",
@@ -365,6 +370,14 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
           msg = result.data as ClientMessage;
         } else if (parsed?.type === "deep_investigate") {
           const result = DeepInvestigateMessageSchema.safeParse(parsed);
+          if (!result.success) {
+            const errors = result.error.issues.map((i: { path: (string | number)[]; message: string }) => `${i.path.join(".")}: ${i.message}`);
+            send({ type: "error", message: `Invalid message: ${errors.join("; ")}` });
+            return;
+          }
+          msg = result.data as ClientMessage;
+        } else if (parsed?.type === "deep_mode_investigate") {
+          const result = DeepModeInvestigateMessageSchema.safeParse(parsed);
           if (!result.success) {
             const errors = result.error.issues.map((i: { path: (string | number)[]; message: string }) => `${i.path.join(".")}: ${i.message}`);
             send({ type: "error", message: `Invalid message: ${errors.join("; ")}` });
@@ -415,6 +428,54 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
       logger.info({ threadId, stackId }, "WebSocket client disconnected");
     });
   });
+}
+
+async function handleDeepModeInvestigate(
+  msg: { type: "deep_mode_investigate"; investigationId: string },
+  send: (m: ServerMessage) => void,
+  deps: WsDeps,
+  stackId: string,
+  ctx: StackContext,
+): Promise<void> {
+  const { db } = deps;
+  const investigation = db.getInvestigation(stackId, msg.investigationId);
+  if (!investigation) {
+    send({ type: "deep_mode:error", investigationId: msg.investigationId, message: "Investigation not found." });
+    return;
+  }
+  if (investigation.status !== "complete" || !investigation.report) {
+    send({ type: "deep_mode:error", investigationId: msg.investigationId, message: "Deep mode needs a completed investigation with a report." });
+    return;
+  }
+  let report: RcaReport;
+  try {
+    report = JSON.parse(investigation.report) as RcaReport;
+  } catch {
+    send({ type: "deep_mode:error", investigationId: msg.investigationId, message: "Could not parse the investigation report." });
+    return;
+  }
+  // Deep mode warm-starts from the loop's output. Without ruled-out hypotheses
+  // (single-pass / N=1 investigations) there's nothing to re-examine.
+  if (!report.hypotheses?.length || !report.ruledOut?.length) {
+    send({ type: "deep_mode:error", investigationId: msg.investigationId, message: "No ruled-out hypotheses to re-examine — run this investigation with the hypothesis loop enabled (synthesisLoopRounds > 1) first." });
+    return;
+  }
+
+  send({ type: "deep_mode:started", investigationId: msg.investigationId });
+  try {
+    const agents = await getOrCreateAgents(stackId, ctx, deps.config, deps.db);
+    const deepMode = await agents.deepModeReexamine(report, {
+      onToolCall: (tool, _args, _result, _dur, error) => {
+        send({ type: "deep_mode:tool_call", investigationId: msg.investigationId, tool, status: error ? "error" : "success" });
+      },
+    });
+    const updated: RcaReport = { ...report, deepMode };
+    db.updateInvestigation(msg.investigationId, { report: JSON.stringify(updated) });
+    send({ type: "deep_mode:complete", investigationId: msg.investigationId, report: updated });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    send({ type: "deep_mode:error", investigationId: msg.investigationId, message: `Deep mode failed: ${message}` });
+  }
 }
 
 async function handleDeepInvestigate(
@@ -716,6 +777,11 @@ export async function handleClientMessage(
 
   if (msg.type === "deep_investigate") {
     await handleDeepInvestigate(msg, send, deps, threadId, stackId, ctx);
+    return;
+  }
+
+  if (msg.type === "deep_mode_investigate") {
+    await handleDeepModeInvestigate(msg, send, deps, stackId, ctx);
     return;
   }
 

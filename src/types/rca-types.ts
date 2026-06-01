@@ -82,6 +82,28 @@ export type RuledOutHypothesis = {
   reason: string;
 };
 
+/** One ruled-out hypothesis re-examined by deep mode (Step 3). Mirrors
+ *  ReexaminedHypothesis in src/workflows/steps/deep-mode.ts. */
+export type DeepModeReexamination = {
+  hypothesis: string;
+  /** Verdict the loop reached (why it was ruled out). */
+  priorVerdict: "satisfied" | "contradicted" | "absent";
+  /** Verdict after deep mode gathered deeper evidence. */
+  deepVerdict: "satisfied" | "contradicted" | "absent";
+  /** Deeper evidence flipped a dismissed cause back to satisfied. */
+  resurrected: boolean;
+};
+
+/** Deep-mode output (Step 3): the skeptical re-examination of the loop's
+ *  ruled-out causes. Unset unless deep mode was triggered. */
+export type DeepModeReport = {
+  reexamined: DeepModeReexamination[];
+  /** Hypotheses deeper evidence brought back as live candidates. */
+  resurrected: RankedHypothesis[];
+  outcome: "resurrected-candidate" | "rule-outs-confirmed" | "nothing-to-examine";
+  examinedAt: string;
+};
+
 export type RcaReport = {
   service: string;
   severity: "low" | "medium" | "high" | "critical";
@@ -115,6 +137,8 @@ export type RcaReport = {
   hypotheses?: RankedHypothesis[];
   ruledOut?: RuledOutHypothesis[];
   loopOutcome?: "confirmed" | "undetermined" | "exhausted";
+  /** Deep-mode re-examination (Step 3). Set only when deep mode was triggered. */
+  deepMode?: DeepModeReport;
 };
 
 export type InvestigationIntent =

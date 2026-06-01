@@ -10,6 +10,10 @@ export type ClientMessage =
   // runner off at once. Typed free-text chat omits it and keeps both safeguards.
   | { type: "chat"; message: string; serviceContext?: string; immediate?: boolean }
   | { type: "deep_investigate"; investigationId: string; message: string }
+  // Deep mode (Step 3): re-examine a COMPLETED investigation's ruled-out
+  // hypotheses with deeper read-only re-queries. Distinct from `deep_investigate`
+  // above, which is free-text follow-up chat about an investigation.
+  | { type: "deep_mode_investigate"; investigationId: string }
   | { type: "rerun"; investigationId: string; template?: "quick" | "standard" | "full" }
   | { type: "new_session" }
   | { type: "discover" }
@@ -61,6 +65,11 @@ export type ServerMessage =
   | { type: "investigation:complete"; id: string; report: unknown }
   | { type: "investigation:failed"; id: string; error: string }
   | { type: "deep_investigate:tool_call"; investigationId: string; tool: string; args: Record<string, unknown>; status: "calling" | "success" | "error" }
+  // Deep mode (Step 3) progress + result.
+  | { type: "deep_mode:started"; investigationId: string }
+  | { type: "deep_mode:tool_call"; investigationId: string; tool: string; status: "calling" | "success" | "error" }
+  | { type: "deep_mode:complete"; investigationId: string; report: unknown }
+  | { type: "deep_mode:error"; investigationId: string; message: string }
   | { type: "session_cleared" }
   | { type: "context_switch"; previousService: string; newService: string }
   | { type: "services:health"; data: unknown[] }

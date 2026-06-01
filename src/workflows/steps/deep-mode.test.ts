@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { runDeepMode } from "./deep-mode.js";
+import { runDeepMode, matchRuledOutToPredictions } from "./deep-mode.js";
 import type { RankedHypothesis, NormalizedObservation, Verdict } from "./corroboration.js";
 
 const hyp = (text: string, value: number): RankedHypothesis => ({
@@ -99,5 +99,35 @@ describe("runDeepMode", () => {
     expect(r.reexamined[0]).toMatchObject({ hypothesis: "first", resurrected: false });
     expect(r.reexamined[1]).toMatchObject({ hypothesis: "second", resurrected: true });
     expect(r.outcome).toBe("resurrected-candidate");
+  });
+});
+
+describe("matchRuledOutToPredictions", () => {
+  const hyps = [
+    { hypothesis: "latency breached SLO", prediction: { kind: "metric-threshold", metric: "http_p99", op: ">", value: 5 } },
+    { hypothesis: "deploy caused it", prediction: { kind: "change-in-window", withinMinutesBefore: 30 } },
+  ];
+
+  it("rejoins ruled-out text with the matching prediction and carries the verdict", () => {
+    const out = matchRuledOutToPredictions(hyps, [
+      { hypothesis: "latency breached SLO", reason: "contradicted" },
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0].hypothesis.prediction).toMatchObject({ kind: "metric-threshold", metric: "http_p99" });
+    expect(out[0].priorVerdict).toBe("contradicted");
+  });
+
+  it("drops ruled-out hypotheses with no matching prediction (can't re-test)", () => {
+    const out = matchRuledOutToPredictions(hyps, [
+      { hypothesis: "something the loop never ranked", reason: "absent" },
+    ]);
+    expect(out).toEqual([]);
+  });
+
+  it("coerces an unrecognized reason string to the 'absent' verdict", () => {
+    const out = matchRuledOutToPredictions(hyps, [
+      { hypothesis: "deploy caused it", reason: "weakened" }, // not a Verdict literal
+    ]);
+    expect(out[0].priorVerdict).toBe("absent");
   });
 });

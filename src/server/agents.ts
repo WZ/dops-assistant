@@ -17,7 +17,9 @@
 
 import { randomUUID } from "node:crypto";
 import type { ServiceConfig, DiscoveryConfig } from "../config/schema.js";
-import type { RcaReport } from "../types/rca-types.js";
+import type { RcaReport, DeepModeReport } from "../types/rca-types.js";
+import { runDeepMode, matchRuledOutToPredictions } from "../workflows/steps/deep-mode.js";
+import { createGatherEvidence } from "../workflows/steps/hypothesis-requery.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("mastra-chat");
@@ -602,6 +604,56 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
 
   const investigationAgent = new MastraInvestigationAdapter(workflowConfig);
 
+  /**
+   * Deep mode (Step 3): re-examine a completed investigation's ruled-out
+   * hypotheses with deeper read-only re-queries, resurrecting any the loop
+   * dismissed on thin evidence. Reuses the investigation providers + model
+   * wired above (no duplication). Returns a serializable DeepModeReport the
+   * caller persists onto the stored RcaReport. Read-only throughout.
+   */
+  async function deepModeReexamine(
+    report: RcaReport,
+    opts?: { onToolCall?: WorkflowConfig["onToolCall"]; maxReexamine?: number },
+  ): Promise<DeepModeReport> {
+    const targets = matchRuledOutToPredictions(report.hypotheses ?? [], report.ruledOut ?? []);
+    const examinedAt = new Date().toISOString();
+    if (targets.length === 0) {
+      return { reexamined: [], resurrected: [], outcome: "nothing-to-examine", examinedAt };
+    }
+    const timeRange = report.timeRange;
+    const ctx = { incidentTime: timeRange?.from };
+    const gather = createGatherEvidence({
+      providers,
+      model: investigationModel,
+      timeRange,
+      useQuirkHandling: true,
+      onToolCall: opts?.onToolCall,
+      llmRetry: config.llm.retry,
+      ctx,
+    });
+    const result = await runDeepMode({
+      ruledOut: targets,
+      priorObservations: [],
+      maxReexamine: opts?.maxReexamine ?? 3,
+      gatherDeepEvidence: (h) => gather(h, 1),
+      ctx,
+    });
+    return {
+      reexamined: result.reexamined.map((r) => ({
+        hypothesis: r.hypothesis,
+        priorVerdict: r.priorVerdict,
+        deepVerdict: r.deepVerdict,
+        resurrected: r.resurrected,
+      })),
+      resurrected: result.resurrected.map((h) => ({
+        hypothesis: h.hypothesis,
+        prediction: h.prediction as Record<string, unknown>,
+      })),
+      outcome: result.outcome,
+      examinedAt,
+    };
+  }
+
   const discoverAgent = deps.registryStore
     ? new MastraDiscoverAdapter({
         model: discoveryModel,
@@ -613,5 +665,5 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       })
     : undefined;
 
-  return { chatAgent, investigationAgent, discoverAgent };
+  return { chatAgent, investigationAgent, discoverAgent, deepModeReexamine };
 }

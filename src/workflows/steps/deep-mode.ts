@@ -27,6 +27,7 @@
 import {
   evaluatePrediction,
   type RankedHypothesis,
+  type HypothesisPrediction,
   type NormalizedObservation,
   type CorroborationContext,
   type Verdict,
@@ -129,4 +130,37 @@ export async function runDeepMode(opts: DeepModeOptions): Promise<DeepModeResult
     observations,
     outcome: resurrected.length > 0 ? "resurrected-candidate" : "rule-outs-confirmed",
   };
+}
+
+// ── Reconstructing re-examination targets from a stored report ────────────────
+
+const VERDICTS: ReadonlySet<string> = new Set(["satisfied", "contradicted", "absent"]);
+
+/**
+ * Rejoin a stored report's `ruledOut` (text + reason) with its `hypotheses`
+ * (text + structured prediction) so deep mode can re-test them. The report
+ * keeps the two apart — `ruledOut` carries only the hypothesis text and the
+ * verdict that demoted it, while the prediction lives on the matching
+ * `hypotheses` entry. Pure: no I/O, exhaustively testable.
+ *
+ * Ruled-out hypotheses with no matching prediction are dropped (can't re-test a
+ * prediction we don't have). The prediction is cast to the typed union — the
+ * keystone validates its shape at evaluation time.
+ */
+export function matchRuledOutToPredictions(
+  hypotheses: ReadonlyArray<{ hypothesis: string; prediction: Record<string, unknown> | HypothesisPrediction }>,
+  ruledOut: ReadonlyArray<{ hypothesis: string; reason: string }>,
+): Array<{ hypothesis: RankedHypothesis; priorVerdict: Verdict }> {
+  const predictionByText = new Map(hypotheses.map((h) => [h.hypothesis, h.prediction]));
+  const targets: Array<{ hypothesis: RankedHypothesis; priorVerdict: Verdict }> = [];
+  for (const r of ruledOut) {
+    const prediction = predictionByText.get(r.hypothesis);
+    if (!prediction) continue;
+    const priorVerdict: Verdict = VERDICTS.has(r.reason) ? (r.reason as Verdict) : "absent";
+    targets.push({
+      hypothesis: { hypothesis: r.hypothesis, prediction: prediction as HypothesisPrediction },
+      priorVerdict,
+    });
+  }
+  return targets;
 }

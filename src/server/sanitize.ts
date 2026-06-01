@@ -109,6 +109,14 @@ export const DeepInvestigateMessageSchema = z.object({
   message: boundedString(MAX_CHAT_MESSAGE_LENGTH),
 });
 
+// ── DeepModeInvestigateMessageSchema (Step 3) ───────────────────────────────
+// Deep mode re-examines a completed investigation's ruled-out hypotheses; it
+// carries no free-text, just the target investigation id.
+export const DeepModeInvestigateMessageSchema = z.object({
+  type: z.literal("deep_mode_investigate"),
+  investigationId: z.string().min(1).max(100),
+});
+
 // ── SkillInputSchema ────────────────────────────────────────────────────────
 
 const MAX_SKILL_TITLE_LENGTH = 500;
