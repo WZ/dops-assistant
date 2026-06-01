@@ -18,7 +18,7 @@
 import { randomUUID } from "node:crypto";
 import type { ServiceConfig, DiscoveryConfig } from "../config/schema.js";
 import type { RcaReport, DeepModeReport } from "../types/rca-types.js";
-import { runDeepMode, matchRuledOutToPredictions } from "../workflows/steps/deep-mode.js";
+import { runDeepMode, matchRuledOutToPredictions, widenTimeRange } from "../workflows/steps/deep-mode.js";
 import { createGatherEvidence } from "../workflows/steps/hypothesis-requery.js";
 import { createLogger } from "../logger.js";
 
@@ -624,11 +624,16 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
     const willExamine = Math.min(targets.length, maxReexamine);
     opts?.onProgress?.(`Re-examining ${willExamine} ruled-out ${willExamine === 1 ? "cause" : "causes"} with deeper queries…`);
     const timeRange = report.timeRange;
+    // Dig deeper than the loop did: re-query a BROADER window so precursors the
+    // narrow incident window missed can surface. The change-in-window predicate
+    // still anchors to the ORIGINAL incident onset (ctx.incidentTime), so a
+    // wider query window doesn't move what counts as "before the incident".
+    const deeperRange = widenTimeRange(timeRange);
     const ctx = { incidentTime: timeRange?.from };
     const gather = createGatherEvidence({
       providers,
       model: investigationModel,
-      timeRange,
+      timeRange: deeperRange,
       useQuirkHandling: true,
       onToolCall: opts?.onToolCall,
       llmRetry: config.llm.retry,

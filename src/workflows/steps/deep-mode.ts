@@ -85,6 +85,31 @@ export interface DeepModeOptions {
 }
 
 /**
+ * Widen an incident time window for deep mode's re-query — so it digs into a
+ * BROADER span than the loop did, catching precursors/aftermath the narrow
+ * synthesis window missed. Expands each side by max(duration, 30min), i.e.
+ * roughly triples the window, centered on the incident.
+ *
+ * Pure + defensive: only widens parseable ISO/epoch ranges. Non-parseable
+ * inputs (Grafana relative ranges like "now-1h", or undefined) pass through
+ * unchanged — never fabricate a window deep mode can't actually query.
+ */
+export function widenTimeRange(
+  tr: { from: string; to: string } | undefined,
+  minPadMs = 30 * 60 * 1000,
+): { from: string; to: string } | undefined {
+  if (!tr) return tr;
+  const from = Date.parse(tr.from);
+  const to = Date.parse(tr.to);
+  if (Number.isNaN(from) || Number.isNaN(to) || to <= from) return tr;
+  const pad = Math.max(to - from, minPadMs);
+  return {
+    from: new Date(from - pad).toISOString(),
+    to: new Date(to + pad).toISOString(),
+  };
+}
+
+/**
  * Re-examine the top ruled-out hypotheses with deeper evidence. Deterministic
  * given the same inputs + gatherDeepEvidence results.
  */

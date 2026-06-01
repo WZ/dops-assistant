@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { runDeepMode, matchRuledOutToPredictions } from "./deep-mode.js";
+import { runDeepMode, matchRuledOutToPredictions, widenTimeRange } from "./deep-mode.js";
 import type { RankedHypothesis, NormalizedObservation, Verdict } from "./corroboration.js";
 
 const hyp = (text: string, value: number): RankedHypothesis => ({
@@ -129,5 +129,30 @@ describe("matchRuledOutToPredictions", () => {
       { hypothesis: "deploy caused it", reason: "weakened" }, // not a Verdict literal
     ]);
     expect(out[0].priorVerdict).toBe("absent");
+  });
+});
+
+describe("widenTimeRange", () => {
+  it("expands a parseable window each side by max(duration, 30min)", () => {
+    // 1h window → pad = 1h each side → 3h total, centered.
+    const w = widenTimeRange({ from: "2026-06-01T12:00:00.000Z", to: "2026-06-01T13:00:00.000Z" })!;
+    expect(w.from).toBe("2026-06-01T11:00:00.000Z");
+    expect(w.to).toBe("2026-06-01T14:00:00.000Z");
+  });
+
+  it("uses a 30-minute floor for tiny windows", () => {
+    // 5-min window → pad floored to 30min each side.
+    const w = widenTimeRange({ from: "2026-06-01T12:00:00.000Z", to: "2026-06-01T12:05:00.000Z" })!;
+    expect(w.from).toBe("2026-06-01T11:30:00.000Z");
+    expect(w.to).toBe("2026-06-01T12:35:00.000Z");
+  });
+
+  it("passes through non-parseable ranges (e.g. Grafana relative) unchanged", () => {
+    const tr = { from: "now-1h", to: "now" };
+    expect(widenTimeRange(tr)).toEqual(tr);
+  });
+
+  it("passes through undefined", () => {
+    expect(widenTimeRange(undefined)).toBeUndefined();
   });
 });
