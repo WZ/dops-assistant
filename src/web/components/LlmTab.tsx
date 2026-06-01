@@ -21,6 +21,7 @@ interface StackLlmView {
     discovery?: Effort;
   };
   synthesisLoopRounds: number;
+  deepModeOnComplete: boolean;
 }
 
 interface LlmTabProps {
@@ -237,6 +238,28 @@ export function LlmTab({ stack }: LlmTabProps) {
               }`}
             >
               {view.synthesisLoopRounds > 1 ? `ON · ${view.synthesisLoopRounds} rounds` : "OFF · single-pass"}
+            </span>
+          )}
+        </div>
+
+        {/* Deep mode from start (Step 3) — read-only deployment setting. When on,
+            interactive investigations auto-chain the deep re-examination. */}
+        <div className="mt-3 pt-3 border-t border-border flex items-center justify-between gap-4">
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <span className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground/80">Deep Mode — auto</span>
+            <span className="font-body text-[10px] text-muted-foreground/60">
+              Re-examine ruled-out causes automatically after each investigation (<code className="font-mono">config.agent.deepModeOnComplete</code>). Otherwise on-demand only.
+            </span>
+          </div>
+          {view && (
+            <span
+              className={`shrink-0 font-mono text-[10px] px-2 py-1 rounded ${
+                view.deepModeOnComplete
+                  ? "text-primary bg-primary/10 border border-primary/25"
+                  : "text-muted-foreground/70 bg-secondary/50 border border-border"
+              }`}
+            >
+              {view.deepModeOnComplete ? "ON" : "OFF · on-demand"}
             </span>
           )}
         </div>

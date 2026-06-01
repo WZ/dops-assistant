@@ -467,14 +467,29 @@ async function handleDeepModeInvestigate(
     return;
   }
 
-  send({ type: "deep_mode:started", investigationId: msg.investigationId });
+  const agents = await getOrCreateAgents(stackId, ctx, deps.config, deps.db);
+  await runDeepModeStreamed(msg.investigationId, report, agents.deepModeReexamine, db, send);
+}
+
+/**
+ * Run deep mode for an already-loaded report, streaming progress to the Console
+ * and persisting the result. Shared by the on-demand trigger (above) and the
+ * deep-from-start chain (after an interactive investigation completes). The
+ * caller is responsible for the pre-flight guards (report has loop output).
+ */
+async function runDeepModeStreamed(
+  investigationId: string,
+  report: RcaReport,
+  deepModeReexamine: StackAgents["deepModeReexamine"],
+  db: Database,
+  send: (m: ServerMessage) => void,
+): Promise<void> {
+  send({ type: "deep_mode:started", investigationId });
   // Stream the re-examination as live "thinking" in the Console, reusing the
-  // same chat reasoning channel the deep_investigate follow-up uses — so deep
-  // mode shows step-by-step progress instead of jumping straight to the result.
+  // same chat reasoning channel the deep_investigate follow-up uses.
   send({ type: "chat:stream_start" });
   try {
-    const agents = await getOrCreateAgents(stackId, ctx, deps.config, deps.db);
-    const deepMode = await agents.deepModeReexamine(report, {
+    const deepMode = await deepModeReexamine(report, {
       onProgress: (text) => {
         send({ type: "chat:stream_delta", content: `${text}\n`, reasoning: true });
       },
@@ -483,7 +498,7 @@ async function handleDeepModeInvestigate(
       },
     });
     const updated: RcaReport = { ...report, deepMode };
-    db.updateInvestigation(msg.investigationId, { report: JSON.stringify(updated) });
+    db.updateInvestigation(investigationId, { report: JSON.stringify(updated) });
 
     // Final Console message: a plain-language summary of the outcome.
     const n = deepMode.reexamined.length;
@@ -494,12 +509,12 @@ async function handleDeepModeInvestigate(
         : deepMode.outcome === "rule-outs-confirmed"
           ? `**Deep mode** re-tested ${n} ruled-out ${n === 1 ? "cause" : "causes"} with deeper queries; none came back. The original conclusion stands.`
           : `**Deep mode** found no ruled-out causes to re-examine.`;
-    send({ type: "chat:stream_end", content: summary, investigationId: msg.investigationId });
-    send({ type: "deep_mode:complete", investigationId: msg.investigationId, report: updated });
+    send({ type: "chat:stream_end", content: summary, investigationId });
+    send({ type: "deep_mode:complete", investigationId, report: updated });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     send({ type: "chat:stream_end", content: `Deep mode failed: ${message}` });
-    send({ type: "deep_mode:error", investigationId: msg.investigationId, message: `Deep mode failed: ${message}` });
+    send({ type: "deep_mode:error", investigationId, message: `Deep mode failed: ${message}` });
   }
 }
 
@@ -1200,7 +1215,13 @@ export async function handleClientMessage(
 
     const runner = new InvestigationRunner({ db, investigationAgent, skillStore: deps.skillStore, globalOnComplete: deps.globalOnComplete });
     try {
-      await runner.run({ service, message: routedMessage, investigationId: invId, stackId, disabledSkillIds: deps.db.getDisabledSkills(stackId), callbacks: wsCallbacks, source: "manual" });
+      const report = await runner.run({ service, message: routedMessage, investigationId: invId, stackId, disabledSkillIds: deps.db.getDisabledSkills(stackId), callbacks: wsCallbacks, source: "manual" });
+      // Deep-from-start: when the deployment opts in (agent.deepModeOnComplete)
+      // and the loop ran + ruled causes out, chain the deep re-examination right
+      // after — the result lands in one pass, no second click.
+      if (deps.config.agent?.deepModeOnComplete && report?.loopOutcome && report.ruledOut?.length) {
+        await runDeepModeStreamed(invId, report, agents.deepModeReexamine, db, send);
+      }
     } catch {
       // Error already handled by runner's onFailed callback
     }

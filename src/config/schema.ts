@@ -129,6 +129,13 @@ const AgentSchema = z.object({
    * Opt-in while the loop is validated against labeled incidents.
    */
   synthesisLoopRounds: z.number().int().min(1).max(5).default(1),
+  /**
+   * Deep mode (Step 3) "from start": when true, an interactive investigation
+   * that ran the loop and ruled causes out automatically chains the deep
+   * re-examination on completion — no second click. Requires synthesisLoopRounds
+   * > 1 to have anything to re-examine. Default off (deep mode stays on-demand).
+   */
+  deepModeOnComplete: z.boolean().default(false),
   // @deprecated: use top-level `memory` config instead; will be removed in a future version
   conversationMemory: ConversationMemorySchema.optional().default({}),
   investigationTriggerPhrases: z.array(z.string()).optional().default([
