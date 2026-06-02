@@ -1,4 +1,23 @@
+import { useEffect, useState } from "react";
 import type { AgentStreamEvent } from "../../types/ws-types.js";
+
+/** Ticking "Ns" since the run went live — proves the agent is alive between
+ *  steps (decideMove thinking, a long query, a running subagent), so the stream
+ *  never looks hung. Resets each time `running` flips true. */
+function useElapsedSeconds(running: boolean): number {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!running) {
+      setElapsed(0);
+      return;
+    }
+    const start = Date.now();
+    setElapsed(0);
+    const id = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [running]);
+  return elapsed;
+}
 
 /**
  * Shared structured agent stream — colored verbs, query targets in info-blue,
@@ -70,13 +89,14 @@ export function AgentStream({
   banner?: AgentStreamBanner;
   running: boolean;
 }) {
+  const elapsed = useElapsedSeconds(running);
   if (events.length === 0 && !running) return null;
   return (
     <section className="rounded-lg border border-accent/30 bg-card overflow-hidden animate-fade-up">
       <div className="px-4 py-2 border-b border-border/60 flex items-center gap-2">
         {running && <span className="w-2 h-2 rounded-full bg-accent animate-[status-pulse_1.8s_ease-in-out_infinite]" />}
         <span className="font-mono text-[9px] tracking-[0.14em] uppercase text-accent/80">
-          {label}{running ? " · live" : ""}
+          {label}{running ? ` · live · ${elapsed}s` : ""}
         </span>
       </div>
 
@@ -99,6 +119,13 @@ export function AgentStream({
           </div>
         ))}
       </div>
+
+      {running && (
+        <div className="px-4 pb-2 flex items-center gap-2 font-mono text-[12px] text-accent/90">
+          <span className="animate-pulse">◉</span>
+          <span>working… {elapsed}s</span>
+        </div>
+      )}
 
       {banner && !running && (
         <div className={`mx-4 mb-1 px-3 py-2 rounded-md border font-body text-[12px] ${BANNER_CLASS[banner.tone]}`}>
