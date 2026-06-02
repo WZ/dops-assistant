@@ -599,6 +599,9 @@ export function App() {
                       onDeepMode={(invId) => {
                         ws.send({ type: "deep_mode_investigate", investigationId: invId });
                       }}
+                      onOrchestrate={(invId) => {
+                        ws.send({ type: "orchestrator_investigate", investigationId: invId });
+                      }}
                       onWrongStack={handleWrongStack}
                     />
                     ) : (
