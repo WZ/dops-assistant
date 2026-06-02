@@ -244,7 +244,7 @@ export function RcaReport({ report, hideOldDashboardLinks }: { report: RcaReport
             ) : report.deepMode.outcome === "confirmation-shaken" ? (
               <div className="px-3 py-2 mb-2 rounded-md bg-warning/10 border border-warning/20">
                 <span className="text-[11px] font-body text-warning/90">
-                  Deeper evidence no longer supports the confirmed cause — the conclusion is shakier than reported. Treat with caution.
+                  Deeper evidence doesn't back up the most likely cause — it's probably not the real reason. Treat the conclusion with caution and look elsewhere.
                 </span>
               </div>
             ) : (
@@ -257,8 +257,8 @@ export function RcaReport({ report, hideOldDashboardLinks }: { report: RcaReport
             <ul className="space-y-1.5 ml-1">
               {report.deepMode.reexamined.map((r, i) => {
                 const gloss = r.priorStanding === "ruled-out"
-                  ? (r.flipped ? "resurrected: deeper evidence now supports it" : `still ${ruleOutReason(r.deepVerdict)}`)
-                  : (r.flipped ? "shaken: deeper evidence no longer supports it" : "holds: deeper evidence still supports it");
+                  ? (r.flipped ? "worth another look — deeper evidence now points to it" : "still unlikely — deeper evidence still doesn't support it")
+                  : (r.flipped ? "probably not the cause — the evidence that would confirm it isn't there" : "still the likely cause — deeper evidence backs it up");
                 return (
                   <li key={i} className="flex items-start gap-2 text-[13px] font-body leading-relaxed">
                     <span className={`mt-0.5 shrink-0 font-mono text-[11px] ${r.flipped ? "text-warning/80" : "text-muted-foreground/60"}`}>

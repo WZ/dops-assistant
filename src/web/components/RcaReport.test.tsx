@@ -75,7 +75,7 @@ describe("RcaReport — deep mode output (Step 3)", () => {
     );
     expect(screen.getByText(/Deep Mode/)).toBeDefined();
     expect(screen.getByText(/brought back/)).toBeDefined();
-    expect(screen.getByText(/deeper evidence now supports it/)).toBeDefined();
+    expect(screen.getByText(/deeper evidence now points to it/)).toBeDefined();
   });
 
   it("flags a shaken confirmed cause when deeper evidence drops support", () => {
@@ -92,8 +92,8 @@ describe("RcaReport — deep mode output (Step 3)", () => {
         }) as any}
       />,
     );
-    expect(screen.getByText(/no longer supports the confirmed cause/)).toBeDefined();
-    expect(screen.getByText(/shaken: deeper evidence no longer supports it/)).toBeDefined();
+    expect(screen.getByText(/doesn't back up the most likely cause/)).toBeDefined();
+    expect(screen.getByText(/probably not the cause/)).toBeDefined();
   });
 
   it("shows the 'holds' reassurance when nothing flipped", () => {

@@ -438,6 +438,13 @@ async function handleDeepModeInvestigate(
   ctx: StackContext,
 ): Promise<void> {
   const { db } = deps;
+  // Master gate: deep mode is hidden from users until the Autonomous
+  // Orchestrator ships. The button is suppressed client-side; this rejects any
+  // direct deep_mode_investigate (e.g. a stale client) when disabled.
+  if (!deps.config.agent?.deepModeEnabled) {
+    send({ type: "deep_mode:error", investigationId: msg.investigationId, message: "Deep mode is not enabled." });
+    return;
+  }
   const investigation = db.getInvestigation(stackId, msg.investigationId);
   if (!investigation) {
     send({ type: "deep_mode:error", investigationId: msg.investigationId, message: "Investigation not found." });
@@ -1215,7 +1222,9 @@ export async function handleClientMessage(
       // Deep-from-start: when the deployment opts in (agent.deepModeOnComplete)
       // and the loop ran, chain the deep re-examination right after — resurrect
       // ruled-out causes or refute the confirmed one. One pass, no second click.
-      if (deps.config.agent?.deepModeOnComplete && report?.loopOutcome) {
+      // Gated by deepModeEnabled (deep mode is hidden from users until the
+      // Autonomous Orchestrator ships).
+      if (deps.config.agent?.deepModeEnabled && deps.config.agent?.deepModeOnComplete && report?.loopOutcome) {
         await runDeepModeStreamed(invId, report, agents.deepModeReexamine, db, send);
       }
     } catch {

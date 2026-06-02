@@ -41,6 +41,22 @@ describe("ConfigSchema – defaults", () => {
     }
   });
 
+  it("defaults deep mode (Step 3) to OFF — hidden from users until the orchestrator ships", () => {
+    const result = ConfigSchema.safeParse({
+      llm: { apiKey: "sk-test", model: "gpt-4" },
+      providers: [grafanaProvider],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Master gate must default false: the bounded deep mode only re-judges
+      // the existing RCA; the "investigate for the real cause" version is the
+      // not-yet-built Autonomous Orchestrator. Shipping ON would expose a
+      // half-feature. Both deepModeEnabled and deepModeOnComplete stay off.
+      expect(result.data.agent.deepModeEnabled).toBe(false);
+      expect(result.data.agent.deepModeOnComplete).toBe(false);
+    }
+  });
+
   it("accepts serviceAliases config", () => {
     const result = ConfigSchema.safeParse({
       llm,

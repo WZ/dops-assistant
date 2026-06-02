@@ -633,15 +633,18 @@ export function InvestigationPane({
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-          {/* Deep mode (Step 3): only when the loop left ruled-out causes to
-              re-examine. Skeptically re-tests them with deeper read-only queries. */}
+          {/* Deep mode (Step 3): hidden from users until the Autonomous
+              Orchestrator ships. Today's bounded deep mode only re-judges the
+              existing RCA's hypotheses (resurrect a dismissed cause / weaken the
+              confirmed one) — it doesn't investigate freely for the real cause.
+              Gated behind config.agent.deepModeEnabled (server injects
+              window.__DEEP_MODE_ENABLED__); off by default. */}
           {isComplete && onDeepMode && (() => {
             const rpt = report as RcaReportType | null;
-            // Offer deep mode whenever the loop ran (loopOutcome present): it
-            // resurrects ruled-out causes, or — when none were ruled out —
-            // skeptically re-tests the confirmed conclusion. Always does
-            // something useful, so no dead-end. Single-pass reports (no
-            // loopOutcome) have no loop conclusion to dig into → hidden.
+            // Master gate: deep mode is not exposed to users yet.
+            if (typeof window !== "undefined" && !window.__DEEP_MODE_ENABLED__) return null;
+            // Needs a loop conclusion to dig into. Single-pass reports (no
+            // loopOutcome) have nothing to re-examine → hidden.
             if (!rpt?.loopOutcome) return null;
             const alreadyDeep = !!rpt.deepMode;
             return (

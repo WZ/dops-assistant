@@ -657,10 +657,13 @@ async function main() {
   // depth — with validation above, this is theoretically unreachable.
   const basePathForScript = JSON.stringify(appBasePath).replace(/</g, "\\u003c");
   const demoModeActive = isDemoMode();
+  // Deep mode (Step 3) is hidden from users until the Autonomous Orchestrator
+  // ships; the web bundle reads this to suppress the "Deep investigate" button.
+  const deepModeEnabled = config.agent?.deepModeEnabled === true;
 
   function buildIndexHtml(): string {
     const raw = readFileSync(path.resolve(staticDir, "index.html"), "utf-8");
-    if (appBasePath === "/" && !demoModeActive) return raw;
+    if (appBasePath === "/" && !demoModeActive && !deepModeEnabled) return raw;
 
     // Rewrite any absolute /assets/... reference to ${base}assets/... when a
     // sub-path is configured.
@@ -676,6 +679,7 @@ async function main() {
     const globals: string[] = [];
     if (appBasePath !== "/") globals.push(`window.__APP_BASE__=${basePathForScript}`);
     if (demoModeActive) globals.push(`window.__DEMO_MODE__=true`);
+    if (deepModeEnabled) globals.push(`window.__DEEP_MODE_ENABLED__=true`);
     if (globals.length === 0) return afterAssets;
 
     const inlineScript = `<script>${globals.join(";")};</script>`;

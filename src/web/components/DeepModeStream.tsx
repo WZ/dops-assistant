@@ -46,7 +46,7 @@ export function DeepModeStream({
       <div className="px-4 py-2 border-b border-border/60 flex items-center gap-2">
         {running && <span className="w-2 h-2 rounded-full bg-accent animate-[status-pulse_1.8s_ease-in-out_infinite]" />}
         <span className="font-mono text-[9px] tracking-[0.14em] uppercase text-accent/80">
-          Deep Mode · re-examination{running ? " · live" : ""}
+          Deep Mode · second look{running ? " · live" : ""}
         </span>
       </div>
 
@@ -72,11 +72,11 @@ export function DeepModeStream({
 
       {stats && (
         <div className="px-4 py-2 border-t border-border/60 font-mono text-[10px] text-muted-foreground/70 flex gap-4 flex-wrap">
-          <span>examined <span className="text-foreground/80">{stats.examined}</span></span>
-          <span>tools <span className="text-foreground/80">{stats.toolCalls}</span></span>
-          {stats.resurrected > 0 && <span>resurrected <span className="text-warning">{stats.resurrected}</span></span>}
-          {stats.shaken > 0 && <span>shaken <span className="text-warning">{stats.shaken}</span></span>}
-          <span>elapsed <span className="text-foreground/80">{(stats.durationMs / 1000).toFixed(1)}s</span></span>
+          <span>re-checked <span className="text-foreground/80">{stats.examined}</span></span>
+          <span>checks <span className="text-foreground/80">{stats.toolCalls}</span></span>
+          {stats.resurrected > 0 && <span>brought back <span className="text-warning">{stats.resurrected}</span></span>}
+          {stats.shaken > 0 && <span>weakened <span className="text-warning">{stats.shaken}</span></span>}
+          <span>took <span className="text-foreground/80">{(stats.durationMs / 1000).toFixed(1)}s</span></span>
         </div>
       )}
     </section>

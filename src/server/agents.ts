@@ -626,9 +626,20 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       return { reexamined: [], resurrected: [], shaken: [], outcome: "nothing-to-examine", examinedAt };
     }
     const mode = targets[0].priorStanding === "ruled-out" ? "resurrect" : "refute";
+    // Translate raw MCP tool names into plain English for the stream.
+    const friendlyTool = (t: string): string => {
+      const k = t.toLowerCase();
+      if (k.includes("event")) return "cluster events";
+      if (k.includes("prometheus") || k.includes("metric")) return "metrics";
+      if (k.includes("loki") || k.includes("log")) return "logs";
+      if (k.includes("pod")) return "pods";
+      if (k.includes("deployment")) return "deployments";
+      if (k.includes("datasource")) return "data sources";
+      return t.replace(/_/g, " ");
+    };
     step(mode === "resurrect"
-      ? { verb: "re-examining", target: `${targets.length} ruled-out ${targets.length === 1 ? "cause" : "causes"}`, status: "running" }
-      : { verb: "re-testing", target: "the confirmed conclusion", detail: "(no causes were ruled out)", status: "running" });
+      ? { verb: "reopening", target: `${targets.length} dismissed ${targets.length === 1 ? "cause" : "causes"}`, status: "running" }
+      : { verb: "double-checking", target: "the most likely cause", detail: "(nothing was ruled out, so re-testing what we confirmed)", status: "running" });
     const timeRange = report.timeRange;
     // Dig deeper than the loop did: re-query a BROADER window so precursors the
     // narrow incident window missed can surface. The change-in-window predicate
@@ -642,7 +653,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       timeRange: deeperRange,
       useQuirkHandling: true,
       onToolCall: (tool, _args, _result, _dur, error) =>
-        step({ verb: "queried", target: tool, targetKind: "query", status: error ? "rejected" : "done", indent: 1 }),
+        step({ verb: "looked at", target: friendlyTool(tool), targetKind: "query", status: error ? "rejected" : "done", indent: 1 }),
       llmRetry: config.llm.retry,
       ctx,
     });
@@ -651,7 +662,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       priorObservations: [],
       maxReexamine,
       gatherDeepEvidence: (h) => {
-        step({ verb: mode === "resurrect" ? "testing" : "re-testing", target: h.hypothesis, status: "running" });
+        step({ verb: mode === "resurrect" ? "checking" : "re-checking", target: h.hypothesis, status: "running" });
         return gather(h, 1);
       },
       ctx,
@@ -660,12 +671,12 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
     for (const r of result.reexamined) {
       if (r.priorStanding === "ruled-out") {
         step(r.flipped
-          ? { verb: "resurrected", target: r.hypothesis, status: "strong" }
-          : { verb: "still ruled out", target: r.hypothesis, detail: `(${r.deepVerdict})`, status: "done" });
+          ? { verb: "Worth another look:", target: r.hypothesis, detail: "— deeper evidence now points to it", status: "strong" }
+          : { verb: "Still unlikely:", target: r.hypothesis, detail: "— deeper evidence still doesn't support it", status: "done" });
       } else {
         step(r.flipped
-          ? { verb: "shaken", target: r.hypothesis, detail: "(no longer supported)", status: "rejected" }
-          : { verb: "holds", target: r.hypothesis, status: "strong" });
+          ? { verb: "Probably not the cause:", target: r.hypothesis, detail: "— the evidence that would confirm it isn't there", status: "rejected" }
+          : { verb: "Still the likely cause:", target: r.hypothesis, detail: "— deeper evidence backs it up", status: "strong" });
       }
     }
     const toRef = (h: { hypothesis: string; prediction: unknown }) => ({ hypothesis: h.hypothesis, prediction: h.prediction as Record<string, unknown> });
