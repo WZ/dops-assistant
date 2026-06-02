@@ -475,6 +475,89 @@ async function handleDeepModeInvestigate(
 }
 
 /**
+ * Autonomous orchestrator (Approach D): run the unbounded read-only move-loop
+ * seeded from a completed investigation's context, streaming each move to the
+ * agent-stream UI. Gated behind config.agent.orchestratorEnabled — the trigger
+ * is hidden client-side; this rejects any direct message when disabled.
+ */
+async function handleOrchestratorInvestigate(
+  msg: { type: "orchestrator_investigate"; investigationId: string },
+  send: (m: ServerMessage) => void,
+  deps: WsDeps,
+  stackId: string,
+  ctx: StackContext,
+): Promise<void> {
+  const { db } = deps;
+  if (!deps.config.agent?.orchestratorEnabled) {
+    send({ type: "orchestrator:error", investigationId: msg.investigationId, message: "Autonomous orchestrator is not enabled." });
+    return;
+  }
+  const investigation = db.getInvestigation(stackId, msg.investigationId);
+  if (!investigation) {
+    send({ type: "orchestrator:error", investigationId: msg.investigationId, message: "Investigation not found." });
+    return;
+  }
+  // Seed the orchestrator from the investigation's context: the original ask
+  // as the focus, and the report's time window so re-queries stay in range.
+  let report: RcaReport | undefined;
+  try {
+    report = investigation.report ? (JSON.parse(investigation.report) as RcaReport) : undefined;
+  } catch {
+    report = undefined;
+  }
+  const focus = investigation.query?.trim() || report?.summary || `investigate ${investigation.service}`;
+  const timeRange = report?.timeRange;
+
+  const agents = await getOrCreateAgents(stackId, ctx, deps.config, deps.db);
+  await runOrchestratorStreamed(
+    msg.investigationId,
+    focus,
+    { timeRange, ctx: { incidentTime: timeRange?.from } },
+    agents.orchestrate,
+    send,
+  );
+}
+
+async function runOrchestratorStreamed(
+  investigationId: string,
+  focus: string,
+  opts: { timeRange?: { from: string; to: string }; ctx?: { incidentTime?: string } },
+  orchestrate: StackAgents["orchestrate"],
+  send: (m: ServerMessage) => void,
+): Promise<void> {
+  send({ type: "orchestrator:started", investigationId });
+  const startMs = Date.now();
+  let seq = 0;
+  try {
+    const result = await orchestrate(focus, {
+      timeRange: opts.timeRange,
+      ctx: opts.ctx,
+      onStep: (ev) => send({ type: "orchestrator:step", investigationId, event: { ...ev, seq: seq++ } }),
+    });
+    send({
+      type: "orchestrator:complete",
+      investigationId,
+      outcome: result.outcome,
+      stats: {
+        moves: result.stats.moves,
+        toolCalls: result.stats.toolCalls,
+        tokensSpent: result.stats.tokensSpent,
+        strikes: result.stats.strikes,
+        depth: result.stats.depth,
+        durationMs: Date.now() - startMs,
+      },
+    });
+  } catch (err) {
+    const message =
+      err instanceof LlmUnavailableError
+        ? "The model is unavailable right now — try again shortly."
+        : "The orchestrator hit an error.";
+    logger.error({ err, investigationId }, "Orchestrator run failed");
+    send({ type: "orchestrator:error", investigationId, message });
+  }
+}
+
+/**
  * Run deep mode for an already-loaded report, streaming progress to the Console
  * and persisting the result. Shared by the on-demand trigger (above) and the
  * deep-from-start chain (after an interactive investigation completes). The
@@ -825,6 +908,11 @@ export async function handleClientMessage(
 
   if (msg.type === "deep_mode_investigate") {
     await handleDeepModeInvestigate(msg, send, deps, stackId, ctx);
+    return;
+  }
+
+  if (msg.type === "orchestrator_investigate") {
+    await handleOrchestratorInvestigate(msg, send, deps, stackId, ctx);
     return;
   }
 

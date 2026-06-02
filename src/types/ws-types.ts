@@ -14,6 +14,10 @@ export type ClientMessage =
   // hypotheses with deeper read-only re-queries. Distinct from `deep_investigate`
   // above, which is free-text follow-up chat about an investigation.
   | { type: "deep_mode_investigate"; investigationId: string }
+  // Autonomous orchestrator (Approach D): run the unbounded read-only move-loop
+  // seeded from a completed investigation's context. Heavier opt-in than deep
+  // mode; gated behind config.agent.orchestratorEnabled.
+  | { type: "orchestrator_investigate"; investigationId: string }
   | { type: "rerun"; investigationId: string; template?: "quick" | "standard" | "full" }
   | { type: "new_session" }
   | { type: "discover" }
@@ -74,6 +78,16 @@ export type AgentStreamStats = {
   durationMs: number;
 };
 
+/** Footer stats for a completed autonomous-orchestrator run. */
+export type OrchestratorStreamStats = {
+  moves: number;
+  toolCalls: number;
+  tokensSpent: number;
+  strikes: number;
+  depth: number;
+  durationMs: number;
+};
+
 export type ServerMessage =
   | { type: "chat"; role: "user" | "assistant" | "system"; content: string; investigationId?: string; report?: unknown; chartData?: ChartSeries[] }
   | { type: "chat:tool_call"; tool: string; status: "calling" | "complete" }
@@ -99,6 +113,10 @@ export type ServerMessage =
   | { type: "deep_mode:step"; investigationId: string; event: AgentStreamEvent }
   | { type: "deep_mode:complete"; investigationId: string; report: unknown; stats?: AgentStreamStats }
   | { type: "deep_mode:error"; investigationId: string; message: string }
+  | { type: "orchestrator:started"; investigationId: string }
+  | { type: "orchestrator:step"; investigationId: string; event: AgentStreamEvent }
+  | { type: "orchestrator:complete"; investigationId: string; outcome: string; stats?: OrchestratorStreamStats }
+  | { type: "orchestrator:error"; investigationId: string; message: string }
   | { type: "session_cleared" }
   | { type: "context_switch"; previousService: string; newService: string }
   | { type: "services:health"; data: unknown[] }

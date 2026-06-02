@@ -46,6 +46,21 @@ import type { ServiceRegistryStore } from "../services/registry.js";
 import type { LanguageModel } from "ai";
 import type { LlmRetryConfig } from "../agents/shared/llm-retry.js";
 import { LlmUnavailableError } from "../agents/shared/llm-errors.js";
+import { runAutonomousOrchestrator } from "../agents/orchestrator-llm.js";
+import { traceEntryToStreamEvent } from "../agents/orchestrator-stream.js";
+import type { OrchestratorGuards, OrchestratorResult } from "../agents/orchestrator.js";
+import type { CorroborationContext } from "../workflows/steps/corroboration.js";
+
+/** Conservative default safety harness for the autonomous orchestrator. The
+ *  budget guard is the cost backstop; defaults stay low because an autonomous
+ *  run is 3-10x a normal investigation. Config-tunable knobs come later. */
+export const DEFAULT_ORCHESTRATOR_GUARDS: OrchestratorGuards = {
+  maxTokens: 150_000,
+  maxDepth: 3,
+  maxStrikes: 3,
+  maxToolCalls: 40,
+  wallClockMs: 10 * 60_000,
+};
 
 type MastraChatAgent = ReturnType<typeof createChatAgent>;
 type MastraStreamInput = Parameters<MastraChatAgent["stream"]>[0];
@@ -706,5 +721,35 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       })
     : undefined;
 
-  return { chatAgent, investigationAgent, discoverAgent, deepModeReexamine };
+  /**
+   * Autonomous orchestrator (Approach D): run the unbounded read-only move-loop
+   * for `focus`, reusing the investigation providers + model wired above. The
+   * core's TraceEntry stream is mapped to AgentStreamEvent for the UI. Read-only
+   * throughout (gather forces read-only tools); guarded by the safety harness.
+   */
+  async function orchestrate(
+    focus: string,
+    opts?: {
+      timeRange?: { from: string; to: string };
+      ctx?: CorroborationContext;
+      onStep?: (ev: Omit<AgentStreamEvent, "seq">) => void;
+      guards?: Partial<OrchestratorGuards>;
+    },
+  ): Promise<OrchestratorResult> {
+    const guards: OrchestratorGuards = { ...DEFAULT_ORCHESTRATOR_GUARDS, ...opts?.guards };
+    const onStep = opts?.onStep;
+    return runAutonomousOrchestrator({
+      focus,
+      model: investigationModel,
+      providers,
+      guards,
+      timeRange: opts?.timeRange,
+      ctx: opts?.ctx,
+      llmRetry: config.llm.retry,
+      llmCallMs: config.timeouts?.llmCallMs,
+      onStep: onStep ? (entry) => onStep(traceEntryToStreamEvent(entry)) : undefined,
+    });
+  }
+
+  return { chatAgent, investigationAgent, discoverAgent, deepModeReexamine, orchestrate };
 }

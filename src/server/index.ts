@@ -660,10 +660,13 @@ async function main() {
   // Deep mode (Step 3) is hidden from users until the Autonomous Orchestrator
   // ships; the web bundle reads this to suppress the "Deep investigate" button.
   const deepModeEnabled = config.agent?.deepModeEnabled === true;
+  // Autonomous orchestrator (Approach D) — likewise hidden until validated; the
+  // web bundle reads this to suppress the "Investigate autonomously" trigger.
+  const orchestratorEnabled = config.agent?.orchestratorEnabled === true;
 
   function buildIndexHtml(): string {
     const raw = readFileSync(path.resolve(staticDir, "index.html"), "utf-8");
-    if (appBasePath === "/" && !demoModeActive && !deepModeEnabled) return raw;
+    if (appBasePath === "/" && !demoModeActive && !deepModeEnabled && !orchestratorEnabled) return raw;
 
     // Rewrite any absolute /assets/... reference to ${base}assets/... when a
     // sub-path is configured.
@@ -680,6 +683,7 @@ async function main() {
     if (appBasePath !== "/") globals.push(`window.__APP_BASE__=${basePathForScript}`);
     if (demoModeActive) globals.push(`window.__DEMO_MODE__=true`);
     if (deepModeEnabled) globals.push(`window.__DEEP_MODE_ENABLED__=true`);
+    if (orchestratorEnabled) globals.push(`window.__ORCHESTRATOR_ENABLED__=true`);
     if (globals.length === 0) return afterAssets;
 
     const inlineScript = `<script>${globals.join(";")};</script>`;
