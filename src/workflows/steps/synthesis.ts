@@ -293,6 +293,24 @@ export function buildSynthesisStep(config: WorkflowConfig) {
                 ctx: loopCtx,
               }),
               ctx: loopCtx,
+              // Surface the loop live under the Synthesis phase ("Testing
+              // hypotheses" feed): ranking → testing each leader → verdict.
+              onRound: (ev) => {
+                const trunc = (s?: string) => (s && s.length > 64 ? `${s.slice(0, 64)}…` : s ?? "");
+                let label: string;
+                if (ev.phase === "ranking") {
+                  label = `Testing hypotheses — ranked ${ev.count} candidate ${ev.count === 1 ? "cause" : "causes"}`;
+                } else if (ev.phase === "testing") {
+                  label = `Testing H${ev.round}/${ev.maxRounds}: ${trunc(ev.hypothesis)}`;
+                } else if (ev.outcome === "confirmed") {
+                  label = `Confirmed H${ev.round}: ${trunc(ev.hypothesis)}`;
+                } else if (ev.outcome === "undetermined") {
+                  label = `Undetermined — H${ev.round} couldn't be distinguished from the runner-up`;
+                } else {
+                  label = `Ruled out H${ev.round}: ${trunc(ev.hypothesis)} (${ev.verdict})`;
+                }
+                config.onIteration?.("synthesis", ev.round || 1, loopRounds, label);
+              },
             });
             loopHypotheses = validated;
             loopRuledOut = loop.ruledOut.map((r) => ({ hypothesis: r.hypothesis, reason: r.reason }));

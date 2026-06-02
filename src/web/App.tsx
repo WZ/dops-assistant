@@ -596,6 +596,9 @@ export function App() {
                       onRerun={(invId, template) => {
                         ws.send({ type: "rerun", investigationId: invId, template: template as any });
                       }}
+                      onDeepMode={(invId) => {
+                        ws.send({ type: "deep_mode_investigate", investigationId: invId });
+                      }}
                       onWrongStack={handleWrongStack}
                     />
                     ) : (

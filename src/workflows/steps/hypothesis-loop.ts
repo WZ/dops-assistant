@@ -72,6 +72,25 @@ export interface HypothesisLoopOptions {
    */
   gatherEvidence: (leader: RankedHypothesis, round: number) => Promise<NormalizedObservation[]>;
   ctx?: CorroborationContext;
+  /**
+   * Live progress hook — fired as the loop ranks, tests, and rules out, so the
+   * caller can surface a "Testing hypotheses" feed in the UI while investigating.
+   * Optional + side-effect-only: omitting it leaves the loop pure/deterministic.
+   */
+  onRound?: (ev: LoopProgressEvent) => void;
+}
+
+/** A single live-progress beat from the loop, for UI surfacing. */
+export interface LoopProgressEvent {
+  /** ranking = before any test; testing = about to test the leader; verdict = result is in. */
+  phase: "ranking" | "testing" | "verdict";
+  round: number;
+  maxRounds: number;
+  hypothesis?: string;
+  /** Number of ranked candidates (ranking phase only). */
+  count?: number;
+  outcome?: "confirmed" | "undetermined" | "weakened";
+  verdict?: Verdict;
 }
 
 /**
@@ -86,11 +105,14 @@ export async function runHypothesisLoop(opts: HypothesisLoopOptions): Promise<Lo
   const observations: NormalizedObservation[] = [...opts.initialObservations];
 
   const maxRounds = Math.max(1, opts.maxRounds);
+  opts.onRound?.({ phase: "ranking", round: 0, maxRounds, count: ranked.length });
 
   for (let round = 1; round <= maxRounds; round++) {
     const leader = ranked[0];
     if (!leader) break; // ran out of hypotheses to test
     const runnerUp = ranked[1];
+
+    opts.onRound?.({ phase: "testing", round, maxRounds, hypothesis: leader.hypothesis });
 
     // Test the leader: gather discriminating evidence (read-only re-query).
     const fresh = await opts.gatherEvidence(leader, round);
@@ -104,6 +126,7 @@ export async function runHypothesisLoop(opts: HypothesisLoopOptions): Promise<Lo
       runnerUpVerdict: r.runnerUpVerdict,
       outcome: r.outcome,
     });
+    opts.onRound?.({ phase: "verdict", round, maxRounds, hypothesis: leader.hypothesis, outcome: r.outcome, verdict: r.leaderVerdict });
 
     if (r.outcome === "confirmed") {
       return { confirmedHypothesis: leader, ruledOut, rounds, outcome: "confirmed", observations };

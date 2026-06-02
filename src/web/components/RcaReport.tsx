@@ -20,6 +20,14 @@ interface RcaReportData {
   /** Hypothesis-loop output (Step 2). Unset on the single-pass path. */
   ruledOut?: { hypothesis: string; reason: string }[];
   loopOutcome?: "confirmed" | "undetermined" | "exhausted";
+  /** Deep-mode re-examination (Step 3). Set only when deep mode was triggered. */
+  deepMode?: {
+    reexamined: { hypothesis: string; priorStanding: "confirmed" | "ruled-out"; priorVerdict: string; deepVerdict: string; flipped: boolean }[];
+    resurrected: { hypothesis: string }[];
+    shaken: { hypothesis: string }[];
+    outcome: "resurrected-candidate" | "confirmation-shaken" | "holds" | "nothing-to-examine";
+    examinedAt?: string;
+  };
 }
 
 /** Human-readable gloss for a deterministic rule-out verdict. */
@@ -219,6 +227,52 @@ export function RcaReport({ report, hideOldDashboardLinks }: { report: RcaReport
               Multiple causes remained consistent with the evidence — none could be distinguished. Consider a deeper investigation.
             </span>
           </div>
+        )}
+
+        {/* Deep Mode (Step 3) — skeptical re-examination of the loop's conclusion.
+            resurrected-candidate: a dismissed cause came back. confirmation-shaken:
+            the confirmed cause no longer holds. holds: nothing flipped (trust). */}
+        {report.deepMode && report.deepMode.outcome !== "nothing-to-examine" && (
+          <Section label="Deep Mode" count={report.deepMode.reexamined.length}>
+            {report.deepMode.outcome === "resurrected-candidate" ? (
+              <div className="px-3 py-2 mb-2 rounded-md bg-warning/10 border border-warning/20">
+                <span className="text-[11px] font-body text-warning/90">
+                  Deeper evidence brought back {report.deepMode.resurrected.length} ruled-out{" "}
+                  {report.deepMode.resurrected.length === 1 ? "cause" : "causes"} — the original conclusion may be incomplete.
+                </span>
+              </div>
+            ) : report.deepMode.outcome === "confirmation-shaken" ? (
+              <div className="px-3 py-2 mb-2 rounded-md bg-warning/10 border border-warning/20">
+                <span className="text-[11px] font-body text-warning/90">
+                  Deeper evidence doesn't back up the most likely cause — it's probably not the real reason. Treat the conclusion with caution and look elsewhere.
+                </span>
+              </div>
+            ) : (
+              <div className="px-3 py-2 mb-2 rounded-md bg-success/8 border border-success/15">
+                <span className="text-[11px] font-body text-success/80">
+                  Deeper evidence held: nothing flipped. The original conclusion stands.
+                </span>
+              </div>
+            )}
+            <ul className="space-y-1.5 ml-1">
+              {report.deepMode.reexamined.map((r, i) => {
+                const gloss = r.priorStanding === "ruled-out"
+                  ? (r.flipped ? "worth another look — deeper evidence now points to it" : "still unlikely — deeper evidence still doesn't support it")
+                  : (r.flipped ? "probably not the cause — the evidence that would confirm it isn't there" : "still the likely cause — deeper evidence backs it up");
+                return (
+                  <li key={i} className="flex items-start gap-2 text-[13px] font-body leading-relaxed">
+                    <span className={`mt-0.5 shrink-0 font-mono text-[11px] ${r.flipped ? "text-warning/80" : "text-muted-foreground/60"}`}>
+                      {r.priorStanding === "ruled-out" ? (r.flipped ? "↑" : "·") : (r.flipped ? "⚠" : "✓")}
+                    </span>
+                    <span>
+                      <span className={r.flipped ? "text-foreground" : "text-muted-foreground"}>{renderInline(r.hypothesis)}</span>
+                      <span className="text-muted-foreground/80">{" "}— {gloss}</span>
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </Section>
         )}
 
         {/* Recommended Actions — renderInline (not renderMarkdown) so every item

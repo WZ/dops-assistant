@@ -8,16 +8,17 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ArrowLeft, FilePlus, RotateCw, ChevronDown, Download, Link2, FileText, Image as ImageIcon, ClipboardCopy, Check } from "lucide-react";
+import { ArrowLeft, FilePlus, RotateCw, ChevronDown, Download, Link2, FileText, Image as ImageIcon, ClipboardCopy, Check, Telescope } from "lucide-react";
 import { PhaseStepper, type PhaseState } from "./PhaseStepper";
 import { EvidenceTimeline } from "./EvidenceTimeline";
 import { RcaReport } from "./RcaReport";
+import { DeepModeStream } from "./DeepModeStream";
 import { InvestigationFeedback } from "./InvestigationFeedback";
 import { useStackContext } from "../contexts/StackContext";
 import { useUnreadInvestigations } from "../hooks/useUnreadInvestigations";
 import type { TimelineEvent } from "./ActivityTimeline";
 import type { TimeSeriesData } from "./MetricChart";
-import type { ServerMessage } from "../../types/ws-types.js";
+import type { ServerMessage, AgentStreamEvent, AgentStreamStats } from "../../types/ws-types.js";
 import type { RcaReport as RcaReportType } from "../../types/rca-types.js";
 import { formatTokens } from "../lib/formatTokens.js";
 import { buildPhaseActions } from "../lib/grafana-links.js";
@@ -138,6 +139,7 @@ export function InvestigationPane({
   onBack,
   onNavigateSkills,
   onRerun,
+  onDeepMode,
   onWrongStack,
 }: {
   investigationId: string;
@@ -145,6 +147,9 @@ export function InvestigationPane({
   onBack: () => void;
   onNavigateSkills?: () => void;
   onRerun?: (investigationId: string, template?: string) => void;
+  /** Trigger deep mode (Step 3): skeptical re-examination of the loop's
+   *  ruled-out causes. Parent wires it to the deep_mode_investigate WS message. */
+  onDeepMode?: (investigationId: string) => void;
   /** Called when the investigation 404s in the active stack but the locate
    *  endpoint reports it lives in a different stack. The parent should
    *  switchStack + navigate to the correct stack-scoped URL — keeps
@@ -157,6 +162,10 @@ export function InvestigationPane({
   const [phases, setPhases] = useState<PhaseState[]>(DEFAULT_PHASES);
   const [evidence, setEvidence] = useState<Record<string, unknown>>({});
   const [report, setReport] = useState<unknown | null>(null);
+  const [deepModeRunning, setDeepModeRunning] = useState(false);
+  const [deepModeError, setDeepModeError] = useState<string | null>(null);
+  const [deepSteps, setDeepSteps] = useState<AgentStreamEvent[]>([]);
+  const [deepStats, setDeepStats] = useState<AgentStreamStats | undefined>(undefined);
   const [service, setService] = useState("");
   const [query, setQuery] = useState("");
   /** Set when the REST fetch comes back 404. Visiting an investigation URL
@@ -463,6 +472,25 @@ export function InvestigationPane({
           });
         }
       }
+      // Deep mode (Step 3) — re-examination of ruled-out causes.
+      if (msg.type === "deep_mode:started" && msg.investigationId === investigationId) {
+        setDeepModeRunning(true);
+        setDeepModeError(null);
+        setDeepSteps([]);
+        setDeepStats(undefined);
+      }
+      if (msg.type === "deep_mode:step" && msg.investigationId === investigationId) {
+        setDeepSteps((prev) => [...prev, msg.event]);
+      }
+      if (msg.type === "deep_mode:complete" && msg.investigationId === investigationId) {
+        setDeepModeRunning(false);
+        setReport(msg.report);
+        setDeepStats(msg.stats);
+      }
+      if (msg.type === "deep_mode:error" && msg.investigationId === investigationId) {
+        setDeepModeRunning(false);
+        if (typeof msg.message === "string") setDeepModeError(msg.message);
+      }
     }
   }, [wsMessages, investigationId]);
 
@@ -605,8 +633,38 @@ export function InvestigationPane({
               </DropdownMenuContent>
             </DropdownMenu>
           )}
+          {/* Deep mode (Step 3): hidden from users until the Autonomous
+              Orchestrator ships. Today's bounded deep mode only re-judges the
+              existing RCA's hypotheses (resurrect a dismissed cause / weaken the
+              confirmed one) — it doesn't investigate freely for the real cause.
+              Gated behind config.agent.deepModeEnabled (server injects
+              window.__DEEP_MODE_ENABLED__); off by default. */}
+          {isComplete && onDeepMode && (() => {
+            const rpt = report as RcaReportType | null;
+            // Master gate: deep mode is not exposed to users yet.
+            if (typeof window !== "undefined" && !window.__DEEP_MODE_ENABLED__) return null;
+            // Needs a loop conclusion to dig into. Single-pass reports (no
+            // loopOutcome) have nothing to re-examine → hidden.
+            if (!rpt?.loopOutcome) return null;
+            const alreadyDeep = !!rpt.deepMode;
+            return (
+              <Button
+                variant="outline"
+                disabled={isRunning || deepModeRunning}
+                onClick={() => { setDeepModeError(null); onDeepMode(investigationId); }}
+                title="Re-examine the ruled-out causes with deeper read-only queries"
+                className="h-9 px-4 text-[12px] font-mono border-primary/30 text-primary/70 hover:bg-primary/8 hover:text-primary rounded-lg gap-1.5"
+              >
+                <Telescope size={12} className="!size-auto" />
+                {deepModeRunning ? "Deep investigating…" : alreadyDeep ? "Re-run deep mode" : "Deep investigate"}
+              </Button>
+            );
+          })()}
         </div>
       </div>
+      {deepModeError && (
+        <div className="px-1 pb-2 text-[11px] font-mono text-destructive/80">{deepModeError}</div>
+      )}
 
       {/* Progress bar — visible while running */}
       {isRunning && (
@@ -654,6 +712,27 @@ export function InvestigationPane({
                   {(report as any)?.severity && (
                     <MetaRow label="severity" value={String((report as any).severity).toUpperCase()} />
                   )}
+                  {/* Hypothesis loop (Step 2): present only when the synthesis loop
+                      ran (N>1). Its presence is the per-investigation proof that
+                      this wasn't a single-pass synthesis. */}
+                  {(report as any)?.loopOutcome && (
+                    <MetaRow
+                      label="loop"
+                      value={`${String((report as any).loopOutcome).toUpperCase()}${(report as any).hypotheses?.length ? ` · ${(report as any).hypotheses.length} ranked` : ""}`}
+                    />
+                  )}
+                  {/* Deep mode (Step 3): present only when re-examination ran. */}
+                  {(report as any)?.deepMode?.outcome && (report as any).deepMode.outcome !== "nothing-to-examine" && (
+                    <MetaRow
+                      label="deep mode"
+                      value={(() => {
+                        const dm = (report as any).deepMode;
+                        if (dm.outcome === "resurrected-candidate") return `RESURRECTED · ${dm.resurrected?.length ?? 0}`;
+                        if (dm.outcome === "confirmation-shaken") return `SHAKEN · ${dm.shaken?.length ?? 0}`;
+                        return "HOLDS";
+                      })()}
+                    />
+                  )}
                   {totalUsage && (
                     <>
                       <MetaRow label="duration" value={`${(totalUsage.durationMs / 1000).toFixed(1)}s`} />
@@ -678,6 +757,9 @@ export function InvestigationPane({
                 <PhaseStepper phases={phases} events={timelineEvents} evidence={evidence} isComplete={isComplete} phaseTokens={phaseTokens} />
               </section>
             )}
+
+            {/* Deep mode (Step 3) — dedicated structured agent stream (live + final). */}
+            <DeepModeStream events={deepSteps} stats={deepStats} running={deepModeRunning} />
 
             {investigationStatus === "failed" && !report ? (
               <section className="rounded-lg border border-destructive/30 bg-destructive/5 px-5 py-4 animate-fade-up">

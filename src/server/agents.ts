@@ -17,7 +17,10 @@
 
 import { randomUUID } from "node:crypto";
 import type { ServiceConfig, DiscoveryConfig } from "../config/schema.js";
-import type { RcaReport } from "../types/rca-types.js";
+import type { RcaReport, DeepModeReport } from "../types/rca-types.js";
+import type { AgentStreamEvent } from "../types/ws-types.js";
+import { runDeepMode, buildReexamineTargets, widenTimeRange } from "../workflows/steps/deep-mode.js";
+import { createGatherEvidence } from "../workflows/steps/hypothesis-requery.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("mastra-chat");
@@ -602,6 +605,96 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
 
   const investigationAgent = new MastraInvestigationAdapter(workflowConfig);
 
+  /**
+   * Deep mode (Step 3): re-examine a completed investigation's ruled-out
+   * hypotheses with deeper read-only re-queries, resurrecting any the loop
+   * dismissed on thin evidence. Reuses the investigation providers + model
+   * wired above (no duplication). Returns a serializable DeepModeReport the
+   * caller persists onto the stored RcaReport. Read-only throughout.
+   */
+  async function deepModeReexamine(
+    report: RcaReport,
+    opts?: { onStep?: (ev: Omit<AgentStreamEvent, "seq">) => void; maxReexamine?: number },
+  ): Promise<DeepModeReport> {
+    const step = opts?.onStep ?? (() => {});
+    const examinedAt = new Date().toISOString();
+    const maxReexamine = opts?.maxReexamine ?? 3;
+    // Resurrect ruled-out causes, or — when none were ruled out — skeptically
+    // re-test the loop's standing conclusion (refute the confirmed cause).
+    const targets = buildReexamineTargets(report.hypotheses ?? [], report.ruledOut ?? [], report.loopOutcome, maxReexamine);
+    if (targets.length === 0) {
+      return { reexamined: [], resurrected: [], shaken: [], outcome: "nothing-to-examine", examinedAt };
+    }
+    const mode = targets[0].priorStanding === "ruled-out" ? "resurrect" : "refute";
+    // Translate raw MCP tool names into plain English for the stream.
+    const friendlyTool = (t: string): string => {
+      const k = t.toLowerCase();
+      if (k.includes("event")) return "cluster events";
+      if (k.includes("prometheus") || k.includes("metric")) return "metrics";
+      if (k.includes("loki") || k.includes("log")) return "logs";
+      if (k.includes("pod")) return "pods";
+      if (k.includes("deployment")) return "deployments";
+      if (k.includes("datasource")) return "data sources";
+      return t.replace(/_/g, " ");
+    };
+    step(mode === "resurrect"
+      ? { verb: "reopening", target: `${targets.length} dismissed ${targets.length === 1 ? "cause" : "causes"}`, status: "running" }
+      : { verb: "double-checking", target: "the most likely cause", detail: "(nothing was ruled out, so re-testing what we confirmed)", status: "running" });
+    const timeRange = report.timeRange;
+    // Dig deeper than the loop did: re-query a BROADER window so precursors the
+    // narrow incident window missed can surface. The change-in-window predicate
+    // still anchors to the ORIGINAL incident onset (ctx.incidentTime), so a
+    // wider query window doesn't move what counts as "before the incident".
+    const deeperRange = widenTimeRange(timeRange);
+    const ctx = { incidentTime: timeRange?.from };
+    const gather = createGatherEvidence({
+      providers,
+      model: investigationModel,
+      timeRange: deeperRange,
+      useQuirkHandling: true,
+      onToolCall: (tool, _args, _result, _dur, error) =>
+        step({ verb: "looked at", target: friendlyTool(tool), targetKind: "query", status: error ? "rejected" : "done", indent: 1 }),
+      llmRetry: config.llm.retry,
+      ctx,
+    });
+    const result = await runDeepMode({
+      targets,
+      priorObservations: [],
+      maxReexamine,
+      gatherDeepEvidence: (h) => {
+        step({ verb: mode === "resurrect" ? "checking" : "re-checking", target: h.hypothesis, status: "running" });
+        return gather(h, 1);
+      },
+      ctx,
+    });
+    // Per-hypothesis verdicts are known only after the loop finishes.
+    for (const r of result.reexamined) {
+      if (r.priorStanding === "ruled-out") {
+        step(r.flipped
+          ? { verb: "Worth another look:", target: r.hypothesis, detail: "— deeper evidence now points to it", status: "strong" }
+          : { verb: "Still unlikely:", target: r.hypothesis, detail: "— deeper evidence still doesn't support it", status: "done" });
+      } else {
+        step(r.flipped
+          ? { verb: "Probably not the cause:", target: r.hypothesis, detail: "— the evidence that would confirm it isn't there", status: "rejected" }
+          : { verb: "Still the likely cause:", target: r.hypothesis, detail: "— deeper evidence backs it up", status: "strong" });
+      }
+    }
+    const toRef = (h: { hypothesis: string; prediction: unknown }) => ({ hypothesis: h.hypothesis, prediction: h.prediction as Record<string, unknown> });
+    return {
+      reexamined: result.reexamined.map((r) => ({
+        hypothesis: r.hypothesis,
+        priorStanding: r.priorStanding,
+        priorVerdict: r.priorVerdict,
+        deepVerdict: r.deepVerdict,
+        flipped: r.flipped,
+      })),
+      resurrected: result.resurrected.map(toRef),
+      shaken: result.shaken.map(toRef),
+      outcome: result.outcome,
+      examinedAt,
+    };
+  }
+
   const discoverAgent = deps.registryStore
     ? new MastraDiscoverAdapter({
         model: discoveryModel,
@@ -613,5 +706,5 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       })
     : undefined;
 
-  return { chatAgent, investigationAgent, discoverAgent };
+  return { chatAgent, investigationAgent, discoverAgent, deepModeReexamine };
 }

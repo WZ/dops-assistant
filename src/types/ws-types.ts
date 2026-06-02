@@ -10,6 +10,10 @@ export type ClientMessage =
   // runner off at once. Typed free-text chat omits it and keeps both safeguards.
   | { type: "chat"; message: string; serviceContext?: string; immediate?: boolean }
   | { type: "deep_investigate"; investigationId: string; message: string }
+  // Deep mode (Step 3): re-examine a COMPLETED investigation's ruled-out
+  // hypotheses with deeper read-only re-queries. Distinct from `deep_investigate`
+  // above, which is free-text follow-up chat about an investigation.
+  | { type: "deep_mode_investigate"; investigationId: string }
   | { type: "rerun"; investigationId: string; template?: "quick" | "standard" | "full" }
   | { type: "new_session" }
   | { type: "discover" }
@@ -42,6 +46,34 @@ export type ChartSeries = {
   avg?: number;
 };
 
+/** One step in a structured agent/progress stream (deep mode). Rendered with
+ *  a status icon, a colored verb, an optional target (queries shown distinctly),
+ *  trailing detail, and optional indentation for grouped sub-steps. */
+export type AgentStreamEvent = {
+  seq: number;
+  /** Leading action word, colored by the renderer (queried, testing, resurrected…). */
+  verb: string;
+  /** The object of the action (a query name, a hypothesis, an anomaly). */
+  target?: string;
+  /** Render the target as a query (distinct color) vs plain text. */
+  targetKind?: "query" | "plain";
+  /** Trailing muted detail (e.g. "→ climbs sawtooth", "(contradicted)"). */
+  detail?: string;
+  /** Drives the icon + verb color: running ◉ · done ✓ · rejected ✗ · strong ✓(green). */
+  status: "running" | "done" | "rejected" | "strong";
+  /** Nesting level for grouped sub-steps (0 = top level). */
+  indent?: number;
+};
+
+/** Footer stats for a completed agent stream. */
+export type AgentStreamStats = {
+  examined: number;
+  toolCalls: number;
+  resurrected: number;
+  shaken: number;
+  durationMs: number;
+};
+
 export type ServerMessage =
   | { type: "chat"; role: "user" | "assistant" | "system"; content: string; investigationId?: string; report?: unknown; chartData?: ChartSeries[] }
   | { type: "chat:tool_call"; tool: string; status: "calling" | "complete" }
@@ -61,6 +93,12 @@ export type ServerMessage =
   | { type: "investigation:complete"; id: string; report: unknown }
   | { type: "investigation:failed"; id: string; error: string }
   | { type: "deep_investigate:tool_call"; investigationId: string; tool: string; args: Record<string, unknown>; status: "calling" | "success" | "error" }
+  // Deep mode (Step 3) lifecycle + a dedicated, structured progress stream
+  // (rendered as a colored/grouped agent stream, not the chat thinking block).
+  | { type: "deep_mode:started"; investigationId: string }
+  | { type: "deep_mode:step"; investigationId: string; event: AgentStreamEvent }
+  | { type: "deep_mode:complete"; investigationId: string; report: unknown; stats?: AgentStreamStats }
+  | { type: "deep_mode:error"; investigationId: string; message: string }
   | { type: "session_cleared" }
   | { type: "context_switch"; previousService: string; newService: string }
   | { type: "services:health"; data: unknown[] }

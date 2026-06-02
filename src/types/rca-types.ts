@@ -82,6 +82,32 @@ export type RuledOutHypothesis = {
   reason: string;
 };
 
+/** One hypothesis re-examined by deep mode (Step 3). Mirrors
+ *  ReexaminedHypothesis in src/workflows/steps/deep-mode.ts. */
+export type DeepModeReexamination = {
+  hypothesis: string;
+  /** How the loop left it: confirmed (re-tested to refute) or ruled-out (to resurrect). */
+  priorStanding: "confirmed" | "ruled-out";
+  /** The loop's verdict for it. */
+  priorVerdict: "satisfied" | "contradicted" | "absent";
+  /** Verdict after deep mode gathered deeper evidence. */
+  deepVerdict: "satisfied" | "contradicted" | "absent";
+  /** Standing changed: ruled-out→satisfied (resurrected) or confirmed→not-satisfied (shaken). */
+  flipped: boolean;
+};
+
+/** Deep-mode output (Step 3): the skeptical re-examination of the loop's
+ *  conclusion. Unset unless deep mode was triggered. */
+export type DeepModeReport = {
+  reexamined: DeepModeReexamination[];
+  /** Ruled-out hypotheses deeper evidence brought back as live candidates. */
+  resurrected: RankedHypothesis[];
+  /** Confirmed hypotheses deeper evidence no longer supports. */
+  shaken: RankedHypothesis[];
+  outcome: "resurrected-candidate" | "confirmation-shaken" | "holds" | "nothing-to-examine";
+  examinedAt: string;
+};
+
 export type RcaReport = {
   service: string;
   severity: "low" | "medium" | "high" | "critical";
@@ -115,6 +141,8 @@ export type RcaReport = {
   hypotheses?: RankedHypothesis[];
   ruledOut?: RuledOutHypothesis[];
   loopOutcome?: "confirmed" | "undetermined" | "exhausted";
+  /** Deep-mode re-examination (Step 3). Set only when deep mode was triggered. */
+  deepMode?: DeepModeReport;
 };
 
 export type InvestigationIntent =

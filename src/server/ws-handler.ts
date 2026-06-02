@@ -18,7 +18,8 @@ import type { StackManager, StackContext } from "./stack-manager.js";
 import type { InvestigationDedup } from "./investigation-dedup.js";
 import { createMastraAdapters } from "./agents.js";
 import { getToolsByRole } from "../mcp/provider.js";
-import { ChatMessageSchema, DeepInvestigateMessageSchema } from "./sanitize.js";
+import { ChatMessageSchema, DeepInvestigateMessageSchema, DeepModeInvestigateMessageSchema } from "./sanitize.js";
+import type { RcaReport } from "../types/rca-types.js";
 import { wrapUntrusted } from "../agents/shared/prompt-helpers.js";
 import { WsRateLimiter, classifyWsMessage } from "./rate-limit.js";
 import { isDemoMode } from "./demo-mode.js";
@@ -117,7 +118,10 @@ export interface WsDeps {
 }
 
 /** Lazily-created agents cache per stack */
-const agentsCache = new Map<string, { chatAgent: IChatAgent; investigationAgent: IInvestigationAgent; discoverAgent?: IDiscoverAgent }>();
+/** Full adapter bundle from createMastraAdapters (incl. deepModeReexamine).
+ *  Derived so the cache + getOrCreateAgents stay in sync as it grows. */
+type StackAgents = Awaited<ReturnType<typeof createMastraAdapters>>;
+const agentsCache = new Map<string, StackAgents>();
 
 /** Metrics tool names cache per stack */
 const metricsToolNamesCache = new Map<string, Set<string>>();
@@ -133,7 +137,7 @@ async function getOrCreateAgents(
   ctx: StackContext,
   config: Config,
   db: Database,
-): Promise<{ chatAgent: IChatAgent; investigationAgent: IInvestigationAgent; discoverAgent?: IDiscoverAgent }> {
+): Promise<StackAgents> {
   const cached = agentsCache.get(stackId);
   if (cached) return cached;
 
@@ -336,6 +340,7 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
           const blockedTypes = new Set([
             "chat",
             "deep_investigate",
+            "deep_mode_investigate",
             "rerun",
             "discover",
             "discover:accept",
@@ -365,6 +370,14 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
           msg = result.data as ClientMessage;
         } else if (parsed?.type === "deep_investigate") {
           const result = DeepInvestigateMessageSchema.safeParse(parsed);
+          if (!result.success) {
+            const errors = result.error.issues.map((i: { path: (string | number)[]; message: string }) => `${i.path.join(".")}: ${i.message}`);
+            send({ type: "error", message: `Invalid message: ${errors.join("; ")}` });
+            return;
+          }
+          msg = result.data as ClientMessage;
+        } else if (parsed?.type === "deep_mode_investigate") {
+          const result = DeepModeInvestigateMessageSchema.safeParse(parsed);
           if (!result.success) {
             const errors = result.error.issues.map((i: { path: (string | number)[]; message: string }) => `${i.path.join(".")}: ${i.message}`);
             send({ type: "error", message: `Invalid message: ${errors.join("; ")}` });
@@ -415,6 +428,97 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
       logger.info({ threadId, stackId }, "WebSocket client disconnected");
     });
   });
+}
+
+async function handleDeepModeInvestigate(
+  msg: { type: "deep_mode_investigate"; investigationId: string },
+  send: (m: ServerMessage) => void,
+  deps: WsDeps,
+  stackId: string,
+  ctx: StackContext,
+): Promise<void> {
+  const { db } = deps;
+  // Master gate: deep mode is hidden from users until the Autonomous
+  // Orchestrator ships. The button is suppressed client-side; this rejects any
+  // direct deep_mode_investigate (e.g. a stale client) when disabled.
+  if (!deps.config.agent?.deepModeEnabled) {
+    send({ type: "deep_mode:error", investigationId: msg.investigationId, message: "Deep mode is not enabled." });
+    return;
+  }
+  const investigation = db.getInvestigation(stackId, msg.investigationId);
+  if (!investigation) {
+    send({ type: "deep_mode:error", investigationId: msg.investigationId, message: "Investigation not found." });
+    return;
+  }
+  if (investigation.status !== "complete" || !investigation.report) {
+    send({ type: "deep_mode:error", investigationId: msg.investigationId, message: "Deep mode needs a completed investigation with a report." });
+    return;
+  }
+  let report: RcaReport;
+  try {
+    report = JSON.parse(investigation.report) as RcaReport;
+  } catch {
+    send({ type: "deep_mode:error", investigationId: msg.investigationId, message: "Could not parse the investigation report." });
+    return;
+  }
+  // Deep mode warm-starts from the loop's output. If the investigation never
+  // ran the loop (single-pass / N=1), there's nothing to start from. Otherwise
+  // deep mode handles it: resurrect ruled-out causes, or — when none were
+  // ruled out — skeptically re-test the confirmed conclusion.
+  if (!report.hypotheses?.length) {
+    send({ type: "deep_mode:error", investigationId: msg.investigationId, message: "This investigation ran single-pass (no hypothesis loop) — nothing for deep mode to re-examine. Run it with synthesisLoopRounds > 1 first." });
+    return;
+  }
+
+  const agents = await getOrCreateAgents(stackId, ctx, deps.config, deps.db);
+  await runDeepModeStreamed(msg.investigationId, report, agents.deepModeReexamine, db, send);
+}
+
+/**
+ * Run deep mode for an already-loaded report, streaming progress to the Console
+ * and persisting the result. Shared by the on-demand trigger (above) and the
+ * deep-from-start chain (after an interactive investigation completes). The
+ * caller is responsible for the pre-flight guards (report has loop output).
+ */
+async function runDeepModeStreamed(
+  investigationId: string,
+  report: RcaReport,
+  deepModeReexamine: StackAgents["deepModeReexamine"],
+  db: Database,
+  send: (m: ServerMessage) => void,
+): Promise<void> {
+  send({ type: "deep_mode:started", investigationId });
+  // Stream the re-examination as a dedicated, structured agent stream (colored,
+  // grouped, expanded) rendered in the investigation view — NOT the chat
+  // thinking block (which is collapsed + plain).
+  const startMs = Date.now();
+  let seq = 0;
+  let toolCalls = 0;
+  try {
+    const deepMode = await deepModeReexamine(report, {
+      onStep: (ev) => {
+        if (ev.targetKind === "query") toolCalls++;
+        send({ type: "deep_mode:step", investigationId, event: { ...ev, seq: seq++ } });
+      },
+    });
+    const updated: RcaReport = { ...report, deepMode };
+    db.updateInvestigation(investigationId, { report: JSON.stringify(updated) });
+    send({
+      type: "deep_mode:complete",
+      investigationId,
+      report: updated,
+      stats: {
+        examined: deepMode.reexamined.length,
+        toolCalls,
+        resurrected: deepMode.resurrected.length,
+        shaken: deepMode.shaken.length,
+        durationMs: Date.now() - startMs,
+      },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    send({ type: "deep_mode:error", investigationId, message: `Deep mode failed: ${message}` });
+  }
 }
 
 async function handleDeepInvestigate(
@@ -716,6 +820,11 @@ export async function handleClientMessage(
 
   if (msg.type === "deep_investigate") {
     await handleDeepInvestigate(msg, send, deps, threadId, stackId, ctx);
+    return;
+  }
+
+  if (msg.type === "deep_mode_investigate") {
+    await handleDeepModeInvestigate(msg, send, deps, stackId, ctx);
     return;
   }
 
@@ -1109,7 +1218,15 @@ export async function handleClientMessage(
 
     const runner = new InvestigationRunner({ db, investigationAgent, skillStore: deps.skillStore, globalOnComplete: deps.globalOnComplete });
     try {
-      await runner.run({ service, message: routedMessage, investigationId: invId, stackId, disabledSkillIds: deps.db.getDisabledSkills(stackId), callbacks: wsCallbacks, source: "manual" });
+      const report = await runner.run({ service, message: routedMessage, investigationId: invId, stackId, disabledSkillIds: deps.db.getDisabledSkills(stackId), callbacks: wsCallbacks, source: "manual" });
+      // Deep-from-start: when the deployment opts in (agent.deepModeOnComplete)
+      // and the loop ran, chain the deep re-examination right after — resurrect
+      // ruled-out causes or refute the confirmed one. One pass, no second click.
+      // Gated by deepModeEnabled (deep mode is hidden from users until the
+      // Autonomous Orchestrator ships).
+      if (deps.config.agent?.deepModeEnabled && deps.config.agent?.deepModeOnComplete && report?.loopOutcome) {
+        await runDeepModeStreamed(invId, report, agents.deepModeReexamine, db, send);
+      }
     } catch {
       // Error already handled by runner's onFailed callback
     }

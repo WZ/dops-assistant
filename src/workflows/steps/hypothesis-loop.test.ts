@@ -34,6 +34,26 @@ describe("runHypothesisLoop", () => {
     expect(gather).toHaveBeenCalledTimes(1);
   });
 
+  it("emits live progress events (ranking → testing → verdict) via onRound", async () => {
+    const initial: NormalizedObservation[] = [
+      { phase: "logs", subject: "request ok", text: "200" },          // leak weakened
+      { phase: "metrics", subject: "payments p99 latency", value: 8 }, // backpressure confirmed
+    ];
+    const events: Array<{ phase: string; round: number; hypothesis?: string; outcome?: string }> = [];
+    await runHypothesisLoop({
+      hypotheses: [leak, backpressure],
+      maxRounds: 3,
+      initialObservations: initial,
+      gatherEvidence: vi.fn().mockResolvedValue([]),
+      onRound: (ev) => events.push({ phase: ev.phase, round: ev.round, hypothesis: ev.hypothesis, outcome: ev.outcome }),
+    });
+    // ranking once, then testing+verdict for leak (ruled out) and backpressure (confirmed).
+    expect(events[0]).toMatchObject({ phase: "ranking", round: 0 });
+    expect(events.filter((e) => e.phase === "testing").map((e) => e.hypothesis)).toEqual(["memory leak", "payments backpressure"]);
+    const verdicts = events.filter((e) => e.phase === "verdict");
+    expect(verdicts.map((e) => e.outcome)).toEqual(["weakened", "confirmed"]);
+  });
+
   it("rules out a weak leader, then confirms the next hypothesis", async () => {
     // Leader = leak (no leak logs → weakened); runner-up = backpressure (confirmed).
     const initial: NormalizedObservation[] = [
