@@ -26,7 +26,7 @@ import {
 } from "./orchestrator.js";
 import { HypothesisPredictionSchema } from "../workflows/schemas.js";
 import { createGatherEvidence } from "../workflows/steps/hypothesis-requery.js";
-import { evaluatePrediction, type CorroborationContext, type HypothesisPrediction } from "../workflows/steps/corroboration.js";
+import { evaluatePrediction, type CorroborationContext, type HypothesisPrediction, type NormalizedObservation } from "../workflows/steps/corroboration.js";
 import { withLlmRetry, type LlmRetryConfig } from "./shared/llm-retry.js";
 import { LlmUnavailableError } from "./shared/llm-errors.js";
 import type { MastraProvider } from "../mcp/provider.js";
@@ -127,11 +127,17 @@ Moves — emit EXACTLY ONE as a single JSON object (no prose, no code fence):
 - {"move":"test","target":<hypothesis index>}     score that hypothesis against gathered evidence.
 - {"move":"conclude","leading":<index>,"confidence":<0..1>,"rationale":"<why>"}
     propose the leading hypothesis as the root cause.
+- {"move":"spawn-subagent","service":"<service>","question":"<focused question>"}
+    run a scoped sub-investigation on a RELATED service (e.g. a dependency) and
+    fold its findings into the evidence. Use this when causes local to the
+    incident service keep failing and you suspect the fault is in a connected
+    service — investigate there instead of guessing.
 - {"move":"done"}   nothing left to try.
 
 Rules:
 - A "conclude" ONLY ends the investigation if that hypothesis was already TESTED and its evidence came back satisfied. Confidence alone never ends it. So: hypothesize → query → test BEFORE you conclude.
 - If a test fails (contradicted/absent), hypothesize a different cause; don't keep retesting the same one.
+- If several local hypotheses have failed in a row, spawn a subagent on a likely-related service rather than continuing to guess locally.
 - Be decisive — your budget is limited. Prefer the most likely cause first.
 Output ONLY the JSON object for your chosen move.`;
 
@@ -255,6 +261,9 @@ export interface RunAutonomousOrchestratorOptions {
   llmRetry?: LlmRetryConfig;
   llmCallMs?: number;
   onStep?: (entry: TraceEntry) => void;
+  /** Depth-1 subagent dispatch (scoped sub-investigation → observations). Wired
+   *  by the orchestrate adapter; absent → spawn-subagent gracefully skips. */
+  spawnSubagent?: (args: { service: string; question: string }) => Promise<NormalizedObservation[]>;
 }
 
 /**
@@ -297,6 +306,7 @@ export async function runAutonomousOrchestrator(
     // it is a real HypothesisPrediction at runtime. Coerce at this boundary.
     gatherEvidence: (h) => gather({ hypothesis: h.hypothesis, prediction: h.prediction as HypothesisPrediction }, 1),
     evaluate: (prediction: HypothesisPrediction, evidence) => evaluatePrediction(prediction, evidence, opts.ctx ?? {}),
+    spawnSubagent: opts.spawnSubagent,
     guards: opts.guards,
     onStep: opts.onStep,
     // Drain tokens accrued (decide + query) since the previous move.

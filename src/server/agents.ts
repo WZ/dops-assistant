@@ -49,7 +49,7 @@ import { LlmUnavailableError } from "../agents/shared/llm-errors.js";
 import { runAutonomousOrchestrator } from "../agents/orchestrator-llm.js";
 import { traceEntryToStreamEvent } from "../agents/orchestrator-stream.js";
 import type { OrchestratorGuards, OrchestratorResult } from "../agents/orchestrator.js";
-import type { CorroborationContext } from "../workflows/steps/corroboration.js";
+import type { CorroborationContext, NormalizedObservation } from "../workflows/steps/corroboration.js";
 
 /** Conservative default safety harness for the autonomous orchestrator. The
  *  budget guard is the cost backstop; defaults stay low because an autonomous
@@ -739,6 +739,31 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
   ): Promise<OrchestratorResult> {
     const guards: OrchestratorGuards = { ...DEFAULT_ORCHESTRATOR_GUARDS, ...opts?.guards };
     const onStep = opts?.onStep;
+    // Depth-1 subagent: a scoped, read-only sub-investigation on a related
+    // service. Its conclusion folds back as one observation the orchestrator can
+    // test against. Read-only (readOnlyTools=true); failures degrade to no
+    // findings so a bad subagent never aborts the parent run. Subagent token
+    // usage is bounded by maxSubagents + wall-clock (not the token budget) in v1.
+    const spawnSubagent = async (
+      args: { service: string; question: string },
+    ): Promise<NormalizedObservation[]> => {
+      const svc: ServiceConfig =
+        config.services.find((s) => s.name === args.service) ?? { name: args.service, metrics: [], logLabels: {}, probeRules: [] };
+      try {
+        const report = await investigationAgent.investigate(
+          svc, null, undefined, undefined, args.question,
+          undefined, undefined, undefined, undefined, "standard", true,
+        );
+        const rc =
+          report.rootCause && !/^under investigation$|^unable to determine/i.test(report.rootCause.trim())
+            ? report.rootCause
+            : "";
+        const text = [rc, report.summary].filter(Boolean).join(" — ").slice(0, 300);
+        return text ? [{ phase: "infra", subject: args.service, text: `subagent: ${text}` }] : [];
+      } catch {
+        return [];
+      }
+    };
     return runAutonomousOrchestrator({
       focus,
       model: investigationModel,
@@ -749,6 +774,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       llmRetry: config.llm.retry,
       llmCallMs: config.timeouts?.llmCallMs,
       onStep: onStep ? (entry) => onStep(traceEntryToStreamEvent(entry)) : undefined,
+      spawnSubagent,
     });
   }
 
