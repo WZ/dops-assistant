@@ -541,6 +541,7 @@ async function runOrchestratorStreamed(
       stats: {
         moves: result.stats.moves,
         toolCalls: result.stats.toolCalls,
+        subagents: result.stats.subagents,
         tokensSpent: result.stats.tokensSpent,
         strikes: result.stats.strikes,
         depth: result.stats.depth,

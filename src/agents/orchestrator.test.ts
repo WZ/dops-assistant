@@ -14,6 +14,7 @@ const obs: NormalizedObservation = { phase: "metrics", subject: "mem", value: 99
 const generousGuards = {
   maxTokens: 1e9,
   maxDepth: 3,
+  maxSubagents: 3,
   maxStrikes: 3,
   maxToolCalls: 100,
   wallClockMs: 1e9,
@@ -212,19 +213,62 @@ describe("runOrchestrator — robustness", () => {
     expect(result.stats.moves).toBeLessThan(50); // stalled out well before the hard backstop
   });
 
-  it("deferred moves (spawn-subagent / follow-cause) no-op with a trace entry in v1", async () => {
+  it("spawn-subagent folds findings into evidence and counts the subagent", async () => {
+    const finding: NormalizedObservation = { phase: "metrics", subject: "payments_p99", value: 8 };
     const result = await runOrchestrator(
       makeDeps({
+        spawnSubagent: async () => [finding],
         decideMove: scripted([
           { type: "spawn-subagent", service: "payments", question: "why slow?" },
-          { type: "follow-cause", service: "payments" },
           null,
         ]),
       }),
     );
     expect(result.outcome).toBe("exhausted");
-    expect(result.trace.map((t) => t.move)).toEqual(["spawn-subagent", "follow-cause"]);
-    expect(result.trace.every((t) => t.detail.includes("deferred"))).toBe(true);
+    expect(result.stats.subagents).toBe(1);
+    expect(result.evidence).toContainEqual(finding);
+    expect(result.trace[0].detail).toContain("+1 findings");
+  });
+
+  it("spawn-subagent skips gracefully when no subagent dep is wired", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        decideMove: scripted([{ type: "spawn-subagent", service: "x", question: "q" }, null]),
+      }),
+    );
+    expect(result.stats.subagents).toBe(0);
+    expect(result.trace[0].detail).toContain("unavailable");
+  });
+
+  it("enforces the maxSubagents limit", async () => {
+    let spawns = 0;
+    const result = await runOrchestrator(
+      makeDeps({
+        guards: { ...generousGuards, maxSubagents: 2 },
+        spawnSubagent: async () => {
+          spawns++;
+          return [{ phase: "infra", subject: "x", text: "y" }];
+        },
+        decideMove: scripted([
+          { type: "spawn-subagent", service: "a", question: "q" },
+          { type: "spawn-subagent", service: "b", question: "q" },
+          { type: "spawn-subagent", service: "c", question: "q" },
+          null,
+        ]),
+      }),
+    );
+    expect(spawns).toBe(2); // third refused
+    expect(result.stats.subagents).toBe(2);
+    expect(result.trace[2].detail).toContain("limit");
+  });
+
+  it("follow-cause still no-ops with a trace entry in v1", async () => {
+    const result = await runOrchestrator(
+      makeDeps({ decideMove: scripted([{ type: "follow-cause", service: "payments" }, null]) }),
+    );
+    expect(result.outcome).toBe("exhausted");
+    expect(result.trace[0].move).toBe("follow-cause");
+    expect(result.trace[0].detail).toContain("deferred");
   });
 
   it("onStep receives every recorded trace entry", async () => {

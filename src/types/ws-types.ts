@@ -82,6 +82,7 @@ export type AgentStreamStats = {
 export type OrchestratorStreamStats = {
   moves: number;
   toolCalls: number;
+  subagents: number;
   tokensSpent: number;
   strikes: number;
   depth: number;

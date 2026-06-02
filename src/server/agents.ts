@@ -57,6 +57,7 @@ import type { CorroborationContext } from "../workflows/steps/corroboration.js";
 export const DEFAULT_ORCHESTRATOR_GUARDS: OrchestratorGuards = {
   maxTokens: 150_000,
   maxDepth: 3,
+  maxSubagents: 3,
   maxStrikes: 3,
   maxToolCalls: 40,
   wallClockMs: 10 * 60_000,

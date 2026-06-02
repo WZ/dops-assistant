@@ -7,6 +7,7 @@ import { LlmUnavailableError } from "./shared/llm-errors.js";
 const guards: OrchestratorGuards = {
   maxTokens: 150_000,
   maxDepth: 3,
+  maxSubagents: 3,
   maxStrikes: 3,
   maxToolCalls: 40,
   wallClockMs: 600_000,
@@ -16,6 +17,7 @@ const emptyState: OrchestratorState = {
   hypotheses: [],
   evidence: [],
   depth: 0,
+  subagents: 0,
   strikes: 0,
   tokensSpent: 0,
   toolCalls: 0,

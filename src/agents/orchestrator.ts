@@ -66,6 +66,8 @@ export interface OrchestratorState {
   readonly hypotheses: ReadonlyArray<TrackedHypothesis>;
   readonly evidence: ReadonlyArray<NormalizedObservation>;
   readonly depth: number;
+  /** Subagents (scoped sub-investigations) spawned so far. */
+  readonly subagents: number;
   /** Consecutive ruled-out tests since the last confirmation. */
   readonly strikes: number;
   readonly tokensSpent: number;
@@ -86,8 +88,10 @@ export type OrchestratorOutcome =
 export interface OrchestratorGuards {
   /** Output-token budget. */
   maxTokens: number;
-  /** Subagent / follow-cause nesting depth. */
+  /** Subagent / follow-cause nesting depth (for future recursion; v1 subagents are depth-1). */
   maxDepth: number;
+  /** Max scoped sub-investigations (depth-1) the orchestrator may spawn. */
+  maxSubagents: number;
   /** Consecutive rule-outs before pausing for an operator. */
   maxStrikes: number;
   /** Total read-only queries. */
@@ -107,6 +111,12 @@ export interface OrchestratorDeps {
   gatherEvidence: (hypothesis: RankedHypothesis) => Promise<NormalizedObservation[]>;
   /** Deterministic keystone (evaluatePrediction in prod). */
   evaluate: (prediction: HypothesisPrediction, evidence: NormalizedObservation[]) => Verdict;
+  /**
+   * Run a scoped sub-investigation (depth-1) on a service and fold its findings
+   * back as observations. In prod this dispatches runInvestigation; absent in
+   * tests / when subagents aren't wired (then spawn-subagent gracefully skips).
+   */
+  spawnSubagent?: (args: { service: string; question: string }) => Promise<NormalizedObservation[]>;
   guards: OrchestratorGuards;
   /** Injected clock so wall-clock is testable. Defaults to Date.now. */
   now?: () => number;
@@ -129,6 +139,7 @@ export interface OrchestratorResult {
     tokensSpent: number;
     strikes: number;
     depth: number;
+    subagents: number;
     elapsedMs: number;
   };
 }
@@ -153,6 +164,7 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
   const evidence: NormalizedObservation[] = [];
   const trace: TraceEntry[] = [];
   let depth = 0;
+  let subagents = 0;
   let strikes = 0;
   let tokensSpent = 0;
   let toolCalls = 0;
@@ -172,7 +184,7 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
     hypotheses,
     evidence,
     trace,
-    stats: { moves, toolCalls, tokensSpent, strikes, depth, elapsedMs: elapsed() },
+    stats: { moves, toolCalls, tokensSpent, strikes, depth, subagents, elapsedMs: elapsed() },
   });
 
   while (moves < MAX_MOVES) {
@@ -191,6 +203,7 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
       hypotheses,
       evidence,
       depth,
+      subagents,
       strikes,
       tokensSpent,
       toolCalls,
@@ -261,8 +274,24 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
         break;
       }
       case "spawn-subagent": {
-        record({ move: "spawn-subagent", detail: `${move.service}: ${move.question} — deferred (v1)` });
-        stall++;
+        if (!deps.spawnSubagent) {
+          record({ move: "spawn-subagent", detail: `${move.service}: ${move.question} — subagents unavailable` });
+          stall++;
+          break;
+        }
+        if (subagents >= deps.guards.maxSubagents) {
+          record({ move: "spawn-subagent", detail: `${move.service}: subagent limit (${deps.guards.maxSubagents}) reached — skipped` });
+          stall++;
+          break;
+        }
+        subagents++;
+        const before = evidence.length;
+        // Depth-1 scoped sub-investigation; its findings fold back as evidence
+        // the orchestrator's subsequent test moves can score against.
+        const findings = await deps.spawnSubagent({ service: move.service, question: move.question });
+        evidence.push(...findings);
+        record({ move: "spawn-subagent", detail: `${move.service}: ${move.question} → +${findings.length} findings` });
+        stall = evidence.length > before ? 0 : stall + 1;
         break;
       }
       case "follow-cause": {

@@ -14,6 +14,12 @@ export type AgentStreamFooterItem = {
   tone?: "default" | "warn" | "good";
 };
 
+/** Terminal outcome callout shown once the run finishes (above the footer). */
+export type AgentStreamBanner = {
+  text: string;
+  tone: "good" | "warn" | "muted";
+};
+
 const STATUS_ICON: Record<AgentStreamEvent["status"], string> = {
   running: "◉",
   done: "✓",
@@ -45,15 +51,23 @@ function toneClass(tone: AgentStreamFooterItem["tone"]): string {
   }
 }
 
+const BANNER_CLASS: Record<AgentStreamBanner["tone"], string> = {
+  good: "bg-success/8 border-success/20 text-success/90",
+  warn: "bg-warning/8 border-warning/25 text-warning/90",
+  muted: "bg-muted/40 border-border/60 text-muted-foreground",
+};
+
 export function AgentStream({
   label,
   events,
   footer,
+  banner,
   running,
 }: {
   label: string;
   events: AgentStreamEvent[];
   footer?: AgentStreamFooterItem[];
+  banner?: AgentStreamBanner;
   running: boolean;
 }) {
   if (events.length === 0 && !running) return null;
@@ -85,6 +99,12 @@ export function AgentStream({
           </div>
         ))}
       </div>
+
+      {banner && !running && (
+        <div className={`mx-4 mb-1 px-3 py-2 rounded-md border font-body text-[12px] ${BANNER_CLASS[banner.tone]}`}>
+          {banner.text}
+        </div>
+      )}
 
       {footer && footer.length > 0 && (
         <div className="px-4 py-2 border-t border-border/60 font-mono text-[10px] text-muted-foreground/70 flex gap-4 flex-wrap">
