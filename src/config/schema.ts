@@ -147,6 +147,17 @@ const AgentSchema = z.object({
    * for internal testing (e.g. dev/config.yaml).
    */
   deepModeEnabled: z.boolean().default(false),
+  /**
+   * Autonomous orchestrator (Approach D). When true, exposes the unbounded,
+   * read-only move-loop that investigates for the real cause (not just
+   * re-judges the existing one like deep mode). Hard-guarded by the safety
+   * harness (budget / depth / strikes→operator-pause / tool-cap / wall-clock)
+   * and a hybrid stop (deterministic keystone confirmation, never the LLM's
+   * self-confidence). Default OFF — it's the heaviest, opt-in mode and is built
+   * incrementally; do not expose to users until validated. See
+   * src/agents/orchestrator.ts.
+   */
+  orchestratorEnabled: z.boolean().default(false),
   // @deprecated: use top-level `memory` config instead; will be removed in a future version
   conversationMemory: ConversationMemorySchema.optional().default({}),
   investigationTriggerPhrases: z.array(z.string()).optional().default([

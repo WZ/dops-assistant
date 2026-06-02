@@ -57,6 +57,19 @@ describe("ConfigSchema – defaults", () => {
     }
   });
 
+  it("defaults the autonomous orchestrator to OFF", () => {
+    const result = ConfigSchema.safeParse({
+      llm: { apiKey: "sk-test", model: "gpt-4" },
+      providers: [grafanaProvider],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // The orchestrator is the heaviest mode (3-10x a normal run) and is built
+      // incrementally — it must never ship on by default.
+      expect(result.data.agent.orchestratorEnabled).toBe(false);
+    }
+  });
+
   it("accepts serviceAliases config", () => {
     const result = ConfigSchema.safeParse({
       llm,
