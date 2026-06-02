@@ -735,6 +735,8 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       ctx?: CorroborationContext;
       onStep?: (ev: Omit<AgentStreamEvent, "seq">) => void;
       guards?: Partial<OrchestratorGuards>;
+      /** Incident service's dependency neighbors (resolved by the caller). */
+      dependencies?: string[];
     },
   ): Promise<OrchestratorResult> {
     const guards: OrchestratorGuards = { ...DEFAULT_ORCHESTRATOR_GUARDS, ...opts?.guards };
@@ -775,6 +777,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       llmCallMs: config.timeouts?.llmCallMs,
       onStep: onStep ? (entry) => onStep(traceEntryToStreamEvent(entry)) : undefined,
       spawnSubagent,
+      dependencies: opts?.dependencies,
     });
   }
 

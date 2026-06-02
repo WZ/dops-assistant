@@ -16,6 +16,7 @@ const guards: OrchestratorGuards = {
 const emptyState: OrchestratorState = {
   hypotheses: [],
   evidence: [],
+  dependencies: [],
   depth: 0,
   subagents: 0,
   strikes: 0,
@@ -102,6 +103,13 @@ describe("buildStatePrompt", () => {
     const prompt = buildStatePrompt("incident", emptyState, guards);
     expect(prompt).toContain("(none — start by hypothesizing");
     expect(prompt).toContain("(none yet)");
+  });
+
+  it("lists follow-cause dependencies when present (and omits the line when empty)", () => {
+    const withDeps = buildStatePrompt("incident", { ...emptyState, dependencies: ["payments", "db"] }, guards);
+    expect(withDeps).toContain("follow-cause into: payments, db");
+    const noDeps = buildStatePrompt("incident", emptyState, guards);
+    expect(noDeps).not.toContain("follow-cause into:");
   });
 });
 

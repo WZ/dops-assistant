@@ -41,9 +41,9 @@ export function traceEntryToStreamEvent(e: TraceEntry): Omit<AgentStreamEvent, "
     }
 
     case "spawn-subagent":
-      return { verb: "spun up a subagent", target: e.detail, status: "running", indent: 1 };
+      return { verb: "spun up a subagent", target: e.detail, status: "done", indent: 1 };
 
     case "follow-cause":
-      return { verb: "followed the trail", target: e.detail, status: "running" };
+      return { verb: "followed the trail to", target: e.detail, status: "done" };
   }
 }

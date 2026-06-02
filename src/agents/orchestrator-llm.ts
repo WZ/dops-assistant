@@ -128,16 +128,17 @@ Moves — emit EXACTLY ONE as a single JSON object (no prose, no code fence):
 - {"move":"conclude","leading":<index>,"confidence":<0..1>,"rationale":"<why>"}
     propose the leading hypothesis as the root cause.
 - {"move":"spawn-subagent","service":"<service>","question":"<focused question>"}
-    run a scoped sub-investigation on a RELATED service (e.g. a dependency) and
-    fold its findings into the evidence. Use this when causes local to the
-    incident service keep failing and you suspect the fault is in a connected
-    service — investigate there instead of guessing.
+    run a scoped sub-investigation on a RELATED service and fold its findings
+    into the evidence.
+- {"move":"follow-cause","service":"<dependency>"}
+    follow the incident into one of the listed dependency services (a scoped
+    sub-investigation there). Only valid for services in the dependencies list.
 - {"move":"done"}   nothing left to try.
 
 Rules:
 - A "conclude" ONLY ends the investigation if that hypothesis was already TESTED and its evidence came back satisfied. Confidence alone never ends it. So: hypothesize → query → test BEFORE you conclude.
 - If a test fails (contradicted/absent), hypothesize a different cause; don't keep retesting the same one.
-- If several local hypotheses have failed in a row, spawn a subagent on a likely-related service rather than continuing to guess locally.
+- IMPORTANT: after just ONE or TWO local hypotheses fail AND a dependencies list is shown, follow-cause into a dependency instead of trying more local guesses — the fault is often in a connected service. Don't burn all your strikes locally.
 - Be decisive — your budget is limited. Prefer the most likely cause first.
 Output ONLY the JSON object for your chosen move.`;
 
@@ -152,6 +153,11 @@ export function buildStatePrompt(focus: string, state: OrchestratorState, guards
     `Budget: ~${tokensLeft} output tokens, ${queriesLeft} queries left; strikes ${state.strikes}/${guards.maxStrikes} (consecutive failed tests).`,
   );
   lines.push("");
+
+  if (state.dependencies.length > 0) {
+    lines.push(`Dependencies you can follow-cause into: ${state.dependencies.join(", ")}`);
+    lines.push("");
+  }
 
   if (state.hypotheses.length === 0) {
     lines.push("Hypotheses so far: (none — start by hypothesizing the most likely cause)");
@@ -264,6 +270,9 @@ export interface RunAutonomousOrchestratorOptions {
   /** Depth-1 subagent dispatch (scoped sub-investigation → observations). Wired
    *  by the orchestrate adapter; absent → spawn-subagent gracefully skips. */
   spawnSubagent?: (args: { service: string; question: string }) => Promise<NormalizedObservation[]>;
+  /** Dependency-graph neighbors of the incident service the agent may
+   *  follow-cause into. Empty → follow-cause disabled. */
+  dependencies?: string[];
 }
 
 /**
@@ -307,6 +316,7 @@ export async function runAutonomousOrchestrator(
     gatherEvidence: (h) => gather({ hypothesis: h.hypothesis, prediction: h.prediction as HypothesisPrediction }, 1),
     evaluate: (prediction: HypothesisPrediction, evidence) => evaluatePrediction(prediction, evidence, opts.ctx ?? {}),
     spawnSubagent: opts.spawnSubagent,
+    dependencies: opts.dependencies,
     guards: opts.guards,
     onStep: opts.onStep,
     // Drain tokens accrued (decide + query) since the previous move.

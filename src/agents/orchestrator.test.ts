@@ -262,13 +262,42 @@ describe("runOrchestrator — robustness", () => {
     expect(result.trace[2].detail).toContain("limit");
   });
 
-  it("follow-cause still no-ops with a trace entry in v1", async () => {
+  it("follow-cause investigates a known dependency and folds findings in", async () => {
+    const finding: NormalizedObservation = { phase: "infra", subject: "payments", text: "pg pool saturated" };
     const result = await runOrchestrator(
-      makeDeps({ decideMove: scripted([{ type: "follow-cause", service: "payments" }, null]) }),
+      makeDeps({
+        dependencies: ["payments", "db"],
+        spawnSubagent: async () => [finding],
+        decideMove: scripted([{ type: "follow-cause", service: "payments" }, null]),
+      }),
     );
-    expect(result.outcome).toBe("exhausted");
-    expect(result.trace[0].move).toBe("follow-cause");
-    expect(result.trace[0].detail).toContain("deferred");
+    expect(result.stats.subagents).toBe(1);
+    expect(result.evidence).toContainEqual(finding);
+    expect(result.trace[0].detail).toContain("payments → +1 findings");
+  });
+
+  it("follow-cause rejects a service that is not a known dependency", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        dependencies: ["payments"],
+        spawnSubagent: async () => [{ phase: "infra", subject: "x", text: "y" }],
+        decideMove: scripted([{ type: "follow-cause", service: "unrelated" }, null]),
+      }),
+    );
+    expect(result.stats.subagents).toBe(0);
+    expect(result.trace[0].detail).toContain("not a known dependency");
+  });
+
+  it("follow-cause is disabled when there is no dependency graph", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        dependencies: [],
+        spawnSubagent: async () => [{ phase: "infra", subject: "x", text: "y" }],
+        decideMove: scripted([{ type: "follow-cause", service: "payments" }, null]),
+      }),
+    );
+    expect(result.stats.subagents).toBe(0);
+    expect(result.trace[0].detail).toContain("no dependency graph");
   });
 
   it("onStep receives every recorded trace entry", async () => {

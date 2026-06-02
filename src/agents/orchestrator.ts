@@ -65,6 +65,9 @@ export interface TraceEntry {
 export interface OrchestratorState {
   readonly hypotheses: ReadonlyArray<TrackedHypothesis>;
   readonly evidence: ReadonlyArray<NormalizedObservation>;
+  /** The incident service's dependency-graph neighbors — the only services the
+   *  agent may follow-cause into. Empty when no dependency data is available. */
+  readonly dependencies: ReadonlyArray<string>;
   readonly depth: number;
   /** Subagents (scoped sub-investigations) spawned so far. */
   readonly subagents: number;
@@ -117,6 +120,9 @@ export interface OrchestratorDeps {
    * tests / when subagents aren't wired (then spawn-subagent gracefully skips).
    */
   spawnSubagent?: (args: { service: string; question: string }) => Promise<NormalizedObservation[]>;
+  /** The incident service's dependency neighbors the agent may follow-cause into
+   *  (resolved from the dependency graph). Empty → follow-cause is disabled. */
+  dependencies?: string[];
   guards: OrchestratorGuards;
   /** Injected clock so wall-clock is testable. Defaults to Date.now. */
   now?: () => number;
@@ -162,6 +168,7 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
 
   const hypotheses: TrackedHypothesis[] = [];
   const evidence: NormalizedObservation[] = [];
+  const dependencies = deps.dependencies ?? [];
   const trace: TraceEntry[] = [];
   let depth = 0;
   let subagents = 0;
@@ -202,6 +209,7 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
     const state: OrchestratorState = {
       hypotheses,
       evidence,
+      dependencies,
       depth,
       subagents,
       strikes,
@@ -295,8 +303,40 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
         break;
       }
       case "follow-cause": {
-        record({ move: "follow-cause", detail: `${move.service} — deferred (v1)` });
-        stall++;
+        // Follow the incident into a dependency: a scoped sub-investigation on a
+        // neighbor from the dependency graph. Reuses the subagent machinery +
+        // budget, but is grounded — the target MUST be a known dependency, so
+        // the agent can't wander to arbitrary services.
+        if (!deps.spawnSubagent || dependencies.length === 0) {
+          record({
+            move: "follow-cause",
+            detail:
+              dependencies.length === 0
+                ? `${move.service} — no dependency graph available for this incident`
+                : `${move.service} — subagents unavailable`,
+          });
+          stall++;
+          break;
+        }
+        if (!dependencies.includes(move.service)) {
+          record({ move: "follow-cause", detail: `${move.service} is not a known dependency — skipped` });
+          stall++;
+          break;
+        }
+        if (subagents >= deps.guards.maxSubagents) {
+          record({ move: "follow-cause", detail: `${move.service}: subagent limit (${deps.guards.maxSubagents}) reached — skipped` });
+          stall++;
+          break;
+        }
+        subagents++;
+        const followedBefore = evidence.length;
+        const followFindings = await deps.spawnSubagent({
+          service: move.service,
+          question: `Following the dependency from the incident service: is ${move.service} the cause?`,
+        });
+        evidence.push(...followFindings);
+        record({ move: "follow-cause", detail: `${move.service} → +${followFindings.length} findings` });
+        stall = evidence.length > followedBefore ? 0 : stall + 1;
         break;
       }
     }

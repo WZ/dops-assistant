@@ -9,6 +9,7 @@ import { resolveServiceFromHistory } from "../agents/intent.js";
 import type { ServiceConfig, DiscoveryConfig, Config } from "../config/schema.js";
 import type { ClientMessage, ServerMessage, ChartSeries } from "../types/ws-types.js";
 import { DEFAULT_STACK_SLUG } from "../types/stack-types.js";
+import { inferDependencyGraph } from "./dependency-graph.js";
 import type { ValidatedServiceConfig } from "../types/discovery-types.js";
 import type { SkillStore } from "../skills/store.js";
 import { LlmUnavailableError } from "../agents/shared/llm-errors.js";
@@ -508,11 +509,27 @@ async function handleOrchestratorInvestigate(
   const focus = investigation.query?.trim() || report?.summary || `investigate ${investigation.service}`;
   const timeRange = report?.timeRange;
 
+  // Resolve the incident service's dependency-graph neighbors (both directions)
+  // so the agent can follow-cause into them. Empty when there's no usable graph
+  // (follow-cause then disables gracefully). Mirrors GET /api/dependencies/:service.
+  const allServices = ctx.slug === DEFAULT_STACK_SLUG
+    ? [...deps.config.services, ...ctx.serviceRegistry.load().filter((s) => !deps.config.services.some((c) => c.name === s.name))]
+    : ctx.serviceRegistry.load();
+  const neighbors = new Set<string>();
+  try {
+    for (const edge of inferDependencyGraph(allServices).edges) {
+      if (edge.source === investigation.service) neighbors.add(edge.target);
+      if (edge.target === investigation.service) neighbors.add(edge.source);
+    }
+  } catch { /* no graph → empty neighbors → follow-cause disabled */ }
+  neighbors.delete(investigation.service);
+  const dependencies = [...neighbors];
+
   const agents = await getOrCreateAgents(stackId, ctx, deps.config, deps.db);
   await runOrchestratorStreamed(
     msg.investigationId,
     focus,
-    { timeRange, ctx: { incidentTime: timeRange?.from } },
+    { timeRange, ctx: { incidentTime: timeRange?.from }, dependencies },
     agents.orchestrate,
     send,
   );
@@ -521,7 +538,7 @@ async function handleOrchestratorInvestigate(
 async function runOrchestratorStreamed(
   investigationId: string,
   focus: string,
-  opts: { timeRange?: { from: string; to: string }; ctx?: { incidentTime?: string } },
+  opts: { timeRange?: { from: string; to: string }; ctx?: { incidentTime?: string }; dependencies?: string[] },
   orchestrate: StackAgents["orchestrate"],
   send: (m: ServerMessage) => void,
 ): Promise<void> {
@@ -532,6 +549,7 @@ async function runOrchestratorStreamed(
     const result = await orchestrate(focus, {
       timeRange: opts.timeRange,
       ctx: opts.ctx,
+      dependencies: opts.dependencies,
       onStep: (ev) => send({ type: "orchestrator:step", investigationId, event: { ...ev, seq: seq++ } }),
     });
     send({

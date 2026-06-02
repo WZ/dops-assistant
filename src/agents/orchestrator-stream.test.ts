@@ -52,15 +52,15 @@ describe("traceEntryToStreamEvent", () => {
     expect(ev.status).toBe("running");
   });
 
-  it("maps deferred moves to indented/running rows", () => {
-    expect(traceEntryToStreamEvent({ move: "spawn-subagent", detail: "payments: why slow? — deferred (v1)" })).toMatchObject({
+  it("maps subagent + follow-cause completions to done rows", () => {
+    expect(traceEntryToStreamEvent({ move: "spawn-subagent", detail: "payments: why slow? → +2 findings" })).toMatchObject({
       verb: "spun up a subagent",
-      status: "running",
+      status: "done",
       indent: 1,
     });
-    expect(traceEntryToStreamEvent({ move: "follow-cause", detail: "payments — deferred (v1)" })).toMatchObject({
-      verb: "followed the trail",
-      status: "running",
+    expect(traceEntryToStreamEvent({ move: "follow-cause", detail: "payments → +1 findings" })).toMatchObject({
+      verb: "followed the trail to",
+      status: "done",
     });
   });
 });
