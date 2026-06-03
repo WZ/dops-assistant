@@ -61,6 +61,10 @@ export const DEFAULT_ORCHESTRATOR_GUARDS: OrchestratorGuards = {
   maxStrikes: 3,
   maxToolCalls: 40,
   wallClockMs: 10 * 60_000,
+  // Per-op watchdog: a single gather/subagent gets ~2.5 min before it's
+  // abandoned. A quick subagent investigation normally finishes well under
+  // that; the bound just stops one hung MCP/LLM call from stranding the loop.
+  opTimeoutMs: 150_000,
 };
 
 type MastraChatAgent = ReturnType<typeof createChatAgent>;
@@ -737,9 +741,13 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       guards?: Partial<OrchestratorGuards>;
       /** Incident service's dependency neighbors (resolved by the caller). */
       dependencies?: string[];
+      /** The incident service itself (for the cross-service confirm guard). */
+      incidentService?: string;
       /** Interactive operator-pause hook (increment 5). Wired by the WS layer to
        *  the pause card; absent → the strike limit stops directly. */
       onOperatorPause?: (state: OrchestratorState) => Promise<"continue" | "escalate" | "wait">;
+      /** Cooperative abort — the WS layer aborts on operator disconnect. */
+      signal?: AbortSignal;
     },
   ): Promise<OrchestratorResult> {
     const guards: OrchestratorGuards = { ...DEFAULT_ORCHESTRATOR_GUARDS, ...opts?.guards };
@@ -784,7 +792,9 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       onStep: onStep ? (entry) => onStep(traceEntryToStreamEvent(entry)) : undefined,
       spawnSubagent,
       dependencies: opts?.dependencies,
+      incidentService: opts?.incidentService,
       onOperatorPause: opts?.onOperatorPause,
+      signal: opts?.signal,
     });
   }
 

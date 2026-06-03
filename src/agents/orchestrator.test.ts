@@ -389,6 +389,140 @@ describe("runOrchestrator — interactive operator-pause hook", () => {
   });
 });
 
+describe("runOrchestrator — cross-service confirm guard", () => {
+  it("rejects a confirm that blames an un-followed dependency (correlational, not established)", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        dependencies: ["payments"],
+        incidentService: "checkout",
+        evaluate: () => "satisfied",
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("checkout failing due to degraded payments service") },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          { type: "conclude", leading: 0, confidence: 0.9, rationale: "payments slow" },
+          null,
+        ]),
+      }),
+    );
+    expect(result.outcome).toBe("exhausted"); // confirm was blocked → ran to null
+    expect(result.confirmed).toBeUndefined();
+    expect(result.trace.some((t) => t.move === "conclude" && /never followed-cause/.test(t.detail))).toBe(true);
+  });
+
+  it("allows the confirm once the implicated dependency was followed", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        dependencies: ["payments"],
+        incidentService: "checkout",
+        spawnSubagent: async () => [{ phase: "infra", subject: "payments", text: "pool saturated" }],
+        evaluate: () => "satisfied",
+        decideMove: scripted([
+          { type: "follow-cause", service: "payments" },
+          { type: "hypothesize", hypothesis: h("checkout failing due to degraded payments service") },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          { type: "conclude", leading: 0, confidence: 0.9, rationale: "payments pool saturated" },
+        ]),
+      }),
+    );
+    expect(result.outcome).toBe("confirmed");
+    expect(result.confirmed?.hypothesis).toContain("payments");
+  });
+
+  it("does not block a cause about the incident service's own behavior", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        dependencies: ["payments"],
+        incidentService: "checkout",
+        evaluate: () => "satisfied",
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("checkout pod OOMKilled under load") },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          { type: "conclude", leading: 0, confidence: 0.9, rationale: "checkout OOM" },
+        ]),
+      }),
+    );
+    expect(result.outcome).toBe("confirmed");
+  });
+
+  it("is inert when there are no dependencies", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        evaluate: () => "satisfied",
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("anything at all") },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          { type: "conclude", leading: 0, confidence: 0.9, rationale: "" },
+        ]),
+      }),
+    );
+    expect(result.outcome).toBe("confirmed");
+  });
+});
+
+describe("runOrchestrator — abort signal + per-op watchdog", () => {
+  it("returns 'aborted' immediately when the signal is already aborted", async () => {
+    const ac = new AbortController();
+    ac.abort();
+    const result = await runOrchestrator(
+      makeDeps({
+        signal: ac.signal,
+        decideMove: scripted([{ type: "hypothesize", hypothesis: h("x") }]),
+      }),
+    );
+    expect(result.outcome).toBe("aborted");
+    expect(result.stats.moves).toBe(0); // bailed before spending a move
+  });
+
+  it("aborts cooperatively when the signal fires mid-run", async () => {
+    const ac = new AbortController();
+    let n = 0;
+    const result = await runOrchestrator(
+      makeDeps({
+        signal: ac.signal,
+        decideMove: async () => {
+          if (n++ === 1) ac.abort(); // fire after the 2nd decision
+          return { type: "hypothesize", hypothesis: h(`c${n}`) };
+        },
+      }),
+    );
+    expect(result.outcome).toBe("aborted");
+  });
+
+  it("per-op watchdog abandons a hung gather and keeps the loop alive", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        guards: { ...generousGuards, opTimeoutMs: 20 },
+        gatherEvidence: () => new Promise(() => {}), // never resolves
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("x") },
+          { type: "query", target: 0 },
+          null,
+        ]),
+      }),
+    );
+    expect(result.outcome).toBe("exhausted"); // didn't hang — ran to the null
+    expect(result.stats.toolCalls).toBe(1); // the attempt was counted
+    expect(result.trace.find((t) => t.move === "query")?.detail).toContain("timed out");
+  });
+
+  it("per-op watchdog bounds a hung subagent too", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        guards: { ...generousGuards, opTimeoutMs: 20 },
+        spawnSubagent: () => new Promise(() => {}), // never resolves
+        decideMove: scripted([{ type: "spawn-subagent", service: "x", question: "q" }, null]),
+      }),
+    );
+    expect(result.outcome).toBe("exhausted");
+    expect(result.stats.subagents).toBe(1);
+    expect(result.trace[0].detail).toContain("timed out");
+  });
+});
+
 describe("runOrchestrator — integration with the real keystone", () => {
   it("uses evaluatePrediction verdicts to drive the confirm gate", async () => {
     // Wire the REAL keystone so the loop's confirm decision is deterministic

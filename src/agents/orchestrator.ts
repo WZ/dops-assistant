@@ -86,7 +86,8 @@ export type OrchestratorOutcome =
   | "tool-cap"
   | "wall-clock"
   | "exhausted" // decide-fn signalled no further moves
-  | "inconclusive"; // stalled (no progress) or hit the move backstop
+  | "inconclusive" // stalled (no progress) or hit the move backstop
+  | "aborted"; // caller aborted (e.g. the operator disconnected)
 
 export interface OrchestratorGuards {
   /** Output-token budget. */
@@ -101,6 +102,13 @@ export interface OrchestratorGuards {
   maxToolCalls: number;
   /** Wall-clock budget in ms. */
   wallClockMs: number;
+  /**
+   * Per-operation watchdog (ms): a single evidence gather or subagent run that
+   * exceeds this is abandoned (treated as no findings) so one hung MCP/LLM call
+   * can't strand the whole loop between guard checks. Absent / ≤0 → no per-op
+   * bound (the wall-clock guard is the only backstop).
+   */
+  opTimeoutMs?: number;
 }
 
 export interface OrchestratorDeps {
@@ -123,6 +131,10 @@ export interface OrchestratorDeps {
   /** The incident service's dependency neighbors the agent may follow-cause into
    *  (resolved from the dependency graph). Empty → follow-cause is disabled. */
   dependencies?: string[];
+  /** The incident service itself. Used by the cross-service confirm guard so a
+   *  cause about the incident service's own behavior isn't treated as needing a
+   *  follow-cause. Mentions of OTHER (dependency) services do. */
+  incidentService?: string;
   /**
    * Strikes-limit hook: instead of silently stopping at the strike limit, ask a
    * human. "continue" resets the strike counter and resumes the loop (the other
@@ -131,6 +143,12 @@ export interface OrchestratorDeps {
    */
   onOperatorPause?: (state: OrchestratorState) => Promise<"continue" | "escalate" | "wait">;
   guards: OrchestratorGuards;
+  /**
+   * Abort the run cooperatively (checked at the top of each move). The WS layer
+   * wires this to the connection: if the operator disconnects, the loop stops
+   * (`aborted`) instead of running on headless with no one watching.
+   */
+  signal?: AbortSignal;
   /** Injected clock so wall-clock is testable. Defaults to Date.now. */
   now?: () => number;
   /** Output-token estimate per move, for budget accounting. Defaults to 0. */
@@ -157,6 +175,11 @@ export interface OrchestratorResult {
   };
 }
 
+/** Case-insensitive whole-token-ish mention of a service name in free text. */
+function mentionsService(text: string, service: string): boolean {
+  return text.toLowerCase().includes(service.toLowerCase());
+}
+
 /** Absolute backstop on move count — far above any real run; catches a runaway decide-fn. */
 const MAX_MOVES = 1000;
 /** Consecutive non-productive moves (no new evidence / hypotheses, rejected conclude) → inconclusive. */
@@ -169,6 +192,25 @@ const MAX_STALL = 8;
  * other guards still bound each resumed leg, this just bounds the legs.
  */
 export const MAX_OPERATOR_CONTINUES = 3;
+
+/**
+ * Bound an async operation by a watchdog timeout. On timeout, resolves to
+ * `{ timedOut: true, value: fallback }` (the in-flight promise is abandoned, not
+ * cancelled — acceptable for the read-only gather/subagent ops). `ms ≤ 0` /
+ * undefined → no bound (await the promise as-is). Rejections propagate.
+ */
+async function raceOp<T>(op: Promise<T>, ms: number | undefined, fallback: T): Promise<{ timedOut: boolean; value: T }> {
+  if (!ms || ms <= 0) return { timedOut: false, value: await op };
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<{ timedOut: true; value: T }>((resolve) => {
+    timer = setTimeout(() => resolve({ timedOut: true, value: fallback }), ms);
+  });
+  try {
+    return await Promise.race([op.then((value) => ({ timedOut: false as const, value })), timeout]);
+  } finally {
+    clearTimeout(timer!);
+  }
+}
 
 /**
  * Run the orchestrator loop. Pure control flow over injected dependencies:
@@ -184,6 +226,10 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
   const hypotheses: TrackedHypothesis[] = [];
   const evidence: NormalizedObservation[] = [];
   const dependencies = deps.dependencies ?? [];
+  // Services the agent actually ran a sub-investigation into (spawn / follow).
+  // The cross-service confirm guard requires a service to be in here before a
+  // cause implicating it can be confirmed.
+  const followedServices = new Set<string>();
   const trace: TraceEntry[] = [];
   let depth = 0;
   let subagents = 0;
@@ -213,6 +259,7 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
   while (moves < MAX_MOVES) {
     // Guards are checked BEFORE spending the next move so a tripped limit never
     // does "one more" expensive thing.
+    if (deps.signal?.aborted) return finish("aborted");
     if (tokensSpent >= deps.guards.maxTokens) return finish("budget-exhausted");
     if (toolCalls >= deps.guards.maxToolCalls) return finish("tool-cap");
     if (elapsed() >= deps.guards.wallClockMs) return finish("wall-clock");
@@ -273,10 +320,15 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
           break;
         }
         const before = evidence.length;
-        const obs = await deps.gatherEvidence(h.hypothesis);
+        const { timedOut, value: obs } = await raceOp(deps.gatherEvidence(h.hypothesis), deps.guards.opTimeoutMs, []);
         evidence.push(...obs);
         toolCalls++;
-        record({ move: "query", detail: `${h.hypothesis.hypothesis} → +${obs.length} observations` });
+        record({
+          move: "query",
+          detail: timedOut
+            ? `${h.hypothesis.hypothesis} → timed out (no observations)`
+            : `${h.hypothesis.hypothesis} → +${obs.length} observations`,
+        });
         stall = evidence.length > before ? 0 : stall + 1;
         break;
       }
@@ -305,6 +357,25 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
         // HYBRID STOP: stop only on deterministic confirmation. Self-reported
         // confidence is recorded for the trace but is never the gate.
         if (lead && lead.standing === "confirmed" && lead.lastVerdict === "satisfied") {
+          // CROSS-SERVICE GUARD: a cause that blames a dependency the agent
+          // never investigated is correlational, not established — observing
+          // that a neighbor is unhealthy doesn't prove it caused this incident.
+          // Require a follow-cause into that service before naming it the cause.
+          // (Mentions of the incident service's own behavior are fine.)
+          const unfollowedDep = dependencies.find(
+            (dep) =>
+              dep !== deps.incidentService &&
+              !followedServices.has(dep) &&
+              mentionsService(lead.hypothesis.hypothesis, dep),
+          );
+          if (unfollowedDep) {
+            record({
+              move: "conclude",
+              detail: `not confirmed — blames ${unfollowedDep} but never followed-cause into it; investigate it before concluding`,
+            });
+            stall++;
+            break;
+          }
           record({ move: "conclude", detail: `confirmed: ${lead.hypothesis.hypothesis}` });
           return finish("confirmed", lead.hypothesis);
         }
@@ -327,12 +398,23 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
           break;
         }
         subagents++;
+        followedServices.add(move.service);
         const before = evidence.length;
         // Depth-1 scoped sub-investigation; its findings fold back as evidence
-        // the orchestrator's subsequent test moves can score against.
-        const findings = await deps.spawnSubagent({ service: move.service, question: move.question });
+        // the orchestrator's subsequent test moves can score against. Watchdog-
+        // bounded so a hung sub-investigation can't strand the loop.
+        const { timedOut, value: findings } = await raceOp(
+          deps.spawnSubagent({ service: move.service, question: move.question }),
+          deps.guards.opTimeoutMs,
+          [],
+        );
         evidence.push(...findings);
-        record({ move: "spawn-subagent", detail: `${move.service}: ${move.question} → +${findings.length} findings` });
+        record({
+          move: "spawn-subagent",
+          detail: timedOut
+            ? `${move.service}: ${move.question} → timed out (no findings)`
+            : `${move.service}: ${move.question} → +${findings.length} findings`,
+        });
         stall = evidence.length > before ? 0 : stall + 1;
         break;
       }
@@ -363,13 +445,23 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
           break;
         }
         subagents++;
+        followedServices.add(move.service);
         const followedBefore = evidence.length;
-        const followFindings = await deps.spawnSubagent({
-          service: move.service,
-          question: `Following the dependency from the incident service: is ${move.service} the cause?`,
-        });
+        const { timedOut, value: followFindings } = await raceOp(
+          deps.spawnSubagent({
+            service: move.service,
+            question: `Following the dependency from the incident service: is ${move.service} the cause?`,
+          }),
+          deps.guards.opTimeoutMs,
+          [],
+        );
         evidence.push(...followFindings);
-        record({ move: "follow-cause", detail: `${move.service} → +${followFindings.length} findings` });
+        record({
+          move: "follow-cause",
+          detail: timedOut
+            ? `${move.service} → timed out (no findings)`
+            : `${move.service} → +${followFindings.length} findings`,
+        });
         stall = evidence.length > followedBefore ? 0 : stall + 1;
         break;
       }

@@ -292,6 +292,12 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
     // loop (which would otherwise sit blocked until its wall-clock guard trips).
     const pendingPauses: Map<string, PendingPause> = new Map();
 
+    // Per-connection active orchestrator runs, keyed by investigationId. Gives a
+    // concurrency guard (one run per investigation per connection — no pile-on
+    // from a double-click) and an abort handle: WS close aborts every in-flight
+    // run so the loop stops cooperatively instead of running on headless.
+    const activeOrchestrations: Map<string, AbortController> = new Map();
+
     const send = (m: ServerMessage) => {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(m));
@@ -421,6 +427,7 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
           pendingDispatches,
           activeDiscovery,
           pendingPauses,
+          activeOrchestrations,
         );
       } catch (err) {
         if (err instanceof LlmUnavailableError) {
@@ -450,6 +457,12 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
         pause.resolve("escalate");
       }
       pendingPauses.clear();
+      // Abort in-flight orchestrator runs so the loop stops at its next move
+      // instead of running on headless after the operator has gone.
+      for (const controller of activeOrchestrations.values()) {
+        controller.abort();
+      }
+      activeOrchestrations.clear();
       activeDiscovery.current?.abort(new Error("WebSocket disconnected"));
       activeDiscovery.current = null;
       wsRateLimiter.destroy(threadId);
@@ -515,10 +528,18 @@ async function handleOrchestratorInvestigate(
   stackId: string,
   ctx: StackContext,
   pendingPauses: Map<string, PendingPause>,
+  activeOrchestrations: Map<string, AbortController>,
 ): Promise<void> {
   const { db } = deps;
   if (!deps.config.agent?.orchestratorEnabled) {
     send({ type: "orchestrator:error", investigationId: msg.investigationId, message: "Autonomous orchestrator is not enabled." });
+    return;
+  }
+  // Concurrency guard: one orchestrator run per investigation per connection.
+  // A double-clicked trigger shouldn't spawn a second parallel run (each spawns
+  // its own subagents — real LLM/MCP load).
+  if (activeOrchestrations.has(msg.investigationId)) {
+    send({ type: "orchestrator:error", investigationId: msg.investigationId, message: "An autonomous investigation is already running for this report." });
     return;
   }
   const investigation = db.getInvestigation(stackId, msg.investigationId);
@@ -563,20 +584,26 @@ async function handleOrchestratorInvestigate(
   const dependencies = [...neighbors];
 
   const agents = await getOrCreateAgents(stackId, ctx, deps.config, deps.db);
-  await runOrchestratorStreamed(
-    msg.investigationId,
-    focus,
-    { timeRange, ctx: { incidentTime: timeRange?.from }, dependencies, incidentService: investigation.service },
-    agents.orchestrate,
-    send,
-    pendingPauses,
-  );
+  const abort = new AbortController();
+  activeOrchestrations.set(msg.investigationId, abort);
+  try {
+    await runOrchestratorStreamed(
+      msg.investigationId,
+      focus,
+      { timeRange, ctx: { incidentTime: timeRange?.from }, dependencies, incidentService: investigation.service, signal: abort.signal },
+      agents.orchestrate,
+      send,
+      pendingPauses,
+    );
+  } finally {
+    activeOrchestrations.delete(msg.investigationId);
+  }
 }
 
 async function runOrchestratorStreamed(
   investigationId: string,
   focus: string,
-  opts: { timeRange?: { from: string; to: string }; ctx?: { incidentTime?: string }; dependencies?: string[]; incidentService?: string },
+  opts: { timeRange?: { from: string; to: string }; ctx?: { incidentTime?: string }; dependencies?: string[]; incidentService?: string; signal?: AbortSignal },
   orchestrate: StackAgents["orchestrate"],
   send: (m: ServerMessage) => void,
   pendingPauses: Map<string, PendingPause>,
@@ -589,6 +616,8 @@ async function runOrchestratorStreamed(
       timeRange: opts.timeRange,
       ctx: opts.ctx,
       dependencies: opts.dependencies,
+      incidentService: opts.incidentService,
+      signal: opts.signal,
       onStep: (ev) => send({ type: "orchestrator:step", investigationId, event: { ...ev, seq: seq++ } }),
       // Interactive strike-limit pause (increment 5): emit the prompt and block
       // the loop on the operator's reply. Resolved by the `orchestrator_decision`
@@ -967,6 +996,7 @@ export async function handleClientMessage(
   pendingDispatches: Map<string, AbortController> = new Map(),
   activeDiscovery: { current: AbortController | null } = { current: null },
   pendingPauses: Map<string, PendingPause> = new Map(),
+  activeOrchestrations: Map<string, AbortController> = new Map(),
 ): Promise<void> {
   const memory = ctx.conversationMemory;
 
@@ -1000,7 +1030,7 @@ export async function handleClientMessage(
   }
 
   if (msg.type === "orchestrator_investigate") {
-    await handleOrchestratorInvestigate(msg, send, deps, stackId, ctx, pendingPauses);
+    await handleOrchestratorInvestigate(msg, send, deps, stackId, ctx, pendingPauses, activeOrchestrations);
     return;
   }
 

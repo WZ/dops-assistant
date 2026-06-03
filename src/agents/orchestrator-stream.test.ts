@@ -97,6 +97,16 @@ describe("traceEntryToStreamEvent", () => {
     });
   });
 
+  it("dedupes a service followed more than once into a single chain link", () => {
+    const trace: TraceEntry[] = [
+      { move: "follow-cause", detail: "statestore → +1 findings" },
+      { move: "follow-cause", detail: "catalog → +1 findings" },
+      { move: "follow-cause", detail: "statestore → +1 findings" }, // re-followed
+    ];
+    const chain = assembleCausalChain(trace, undefined, "impala");
+    expect(chain.map((l) => l.label)).toEqual(["impala", "statestore", "catalog"]);
+  });
+
   it("causal chain is just the incident when nothing was followed or confirmed", () => {
     const chain = assembleCausalChain([{ move: "test", detail: "x", verdict: "absent" }], undefined, "impala");
     expect(chain).toEqual([{ label: "impala", kind: "incident" }]);

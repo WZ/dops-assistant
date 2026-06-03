@@ -43,6 +43,8 @@ function outcomeBanner(outcome: string | undefined, disposition?: OrchestratorDi
       return { text: "Stopped — the agent ran out of moves without confirming a cause.", tone: "muted" };
     case "inconclusive":
       return { text: "Stopped — no further progress; inconclusive.", tone: "muted" };
+    case "aborted":
+      return { text: "Stopped — the run was cancelled.", tone: "muted" };
     default:
       return undefined;
   }

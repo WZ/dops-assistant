@@ -51,10 +51,15 @@ export function assembleCausalChain(
   evidence: NormalizedObservation[] = [],
 ): CausalChainLink[] {
   const chain: CausalChainLink[] = [];
-  if (incidentService) chain.push({ label: incidentService, kind: "incident" });
+  const seen = new Set<string>();
+  if (incidentService) { chain.push({ label: incidentService, kind: "incident" }); seen.add(incidentService); }
   for (const t of trace) {
     if (t.move === "follow-cause" && / → \+\d+ findings$/.test(t.detail)) {
       const service = t.detail.replace(/ → \+\d+ findings$/, "").trim();
+      // A service followed more than once is one link, not a repeated hop — the
+      // chain is the distinct cause path, not the move log.
+      if (seen.has(service)) continue;
+      seen.add(service);
       // The follow-cause subagent folds its conclusion back as a `subagent:`-
       // prefixed observation keyed by the followed service; prefer it for the
       // attribution, falling back to any other observation on that service.

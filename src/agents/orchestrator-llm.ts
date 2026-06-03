@@ -140,6 +140,7 @@ Rules:
 - If a test fails (contradicted/absent), hypothesize a different cause; don't keep retesting the same one.
 - IMPORTANT: after just ONE or TWO local hypotheses fail AND a dependencies list is shown, follow-cause into a dependency instead of trying more local guesses — the fault is often in a connected service. Don't burn all your strikes locally.
 - After a follow-cause or subagent returns findings, those findings are your BEST lead. Immediately hypothesize the specific cause they point to (with a checkable prediction) and test it — never stop right after following without turning the finding into a tested hypothesis.
+- CROSS-SERVICE CAUSES NEED A FOLLOW-CAUSE: observing that a dependency is unhealthy is only CORRELATIONAL. To conclude that a dependency caused this incident you MUST follow-cause into it first and establish the failure there — you cannot confirm "caused by <other service>" from the incident service's metrics alone.
 - Be decisive — your budget is limited. Prefer the most likely cause first.
 Output ONLY the JSON object for your chosen move.`;
 
@@ -274,9 +275,13 @@ export interface RunAutonomousOrchestratorOptions {
   /** Dependency-graph neighbors of the incident service the agent may
    *  follow-cause into. Empty → follow-cause disabled. */
   dependencies?: string[];
+  /** The incident service itself (for the cross-service confirm guard). */
+  incidentService?: string;
   /** Interactive strike-limit hook (increment 5). Absent → the strike limit
    *  stops directly. Wired by the orchestrate adapter to the WS pause card. */
   onOperatorPause?: (state: OrchestratorState) => Promise<"continue" | "escalate" | "wait">;
+  /** Cooperative abort (e.g. the operator disconnected) → the loop stops. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -321,7 +326,9 @@ export async function runAutonomousOrchestrator(
     evaluate: (prediction: HypothesisPrediction, evidence) => evaluatePrediction(prediction, evidence, opts.ctx ?? {}),
     spawnSubagent: opts.spawnSubagent,
     dependencies: opts.dependencies,
+    incidentService: opts.incidentService,
     onOperatorPause: opts.onOperatorPause,
+    signal: opts.signal,
     guards: opts.guards,
     onStep: opts.onStep,
     // Drain tokens accrued (decide + query) since the previous move.
