@@ -136,17 +136,19 @@ export function OrchestratorStream({
       {!running && causalChain && causalChain.length > 1 && (
         <div className="mt-1 rounded-lg border border-border/60 bg-card px-4 py-3 animate-fade-up">
           <div className="font-mono text-[9px] tracking-[0.14em] uppercase text-accent/70 mb-2">Causal chain</div>
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 font-mono text-[12px]">
+          {/* Vertical cause→effect stack: each link on its own row with a subtle
+              connector, evidence indented beneath. Reads cleanly even when every
+              link carries a (multi-word) attribution line — unlike inline arrows,
+              which go ragged once the evidence sublines wrap. */}
+          <div className="flex flex-col font-mono text-[12px]">
             {causalChain.map((link, i) => (
-              <span key={i} className="flex items-center gap-2">
-                <span className="flex flex-col">
-                  <span className={link.kind === "root-cause" ? "text-success" : "text-foreground/90"}>{link.label}</span>
-                  {link.evidence && (
-                    <span className="text-[10px] text-muted-foreground/70 leading-tight">{link.evidence}</span>
-                  )}
-                </span>
-                {i < causalChain.length - 1 && <span className="text-muted-foreground/50">→</span>}
-              </span>
+              <div key={i} className="flex flex-col">
+                {i > 0 && <span className="text-muted-foreground/40 leading-none my-0.5" aria-hidden>↓</span>}
+                <span className={link.kind === "root-cause" ? "text-success" : "text-foreground/90"}>{link.label}</span>
+                {link.evidence && (
+                  <span className="text-[10px] text-muted-foreground/70 leading-snug pl-3">{link.evidence}</span>
+                )}
+              </div>
             ))}
           </div>
         </div>
