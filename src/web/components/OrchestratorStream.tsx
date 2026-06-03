@@ -37,11 +37,13 @@ export function OrchestratorStream({
   events,
   stats,
   outcome,
+  causalChain,
   running,
 }: {
   events: AgentStreamEvent[];
   stats?: OrchestratorStreamStats;
   outcome?: string;
+  causalChain?: string[];
   running: boolean;
 }) {
   const footer: AgentStreamFooterItem[] | undefined = stats
@@ -56,12 +58,27 @@ export function OrchestratorStream({
       ]
     : undefined;
   return (
-    <AgentStream
-      label="Autonomous Orchestrator"
-      events={events}
-      footer={footer}
-      banner={outcomeBanner(outcome)}
-      running={running}
-    />
+    <>
+      <AgentStream
+        label="Autonomous Orchestrator"
+        events={events}
+        footer={footer}
+        banner={outcomeBanner(outcome)}
+        running={running}
+      />
+      {!running && causalChain && causalChain.length > 1 && (
+        <div className="mt-1 rounded-lg border border-border/60 bg-card px-4 py-3 animate-fade-up">
+          <div className="font-mono text-[9px] tracking-[0.14em] uppercase text-accent/70 mb-2">Causal chain</div>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[12px]">
+            {causalChain.map((link, i) => (
+              <span key={i} className="flex items-center gap-2">
+                <span className={link.startsWith("root cause:") ? "text-success" : "text-foreground/90"}>{link}</span>
+                {i < causalChain.length - 1 && <span className="text-muted-foreground/50">→</span>}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </>
   );
 }

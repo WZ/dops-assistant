@@ -139,6 +139,7 @@ Rules:
 - A "conclude" ONLY ends the investigation if that hypothesis was already TESTED and its evidence came back satisfied. Confidence alone never ends it. So: hypothesize → query → test BEFORE you conclude.
 - If a test fails (contradicted/absent), hypothesize a different cause; don't keep retesting the same one.
 - IMPORTANT: after just ONE or TWO local hypotheses fail AND a dependencies list is shown, follow-cause into a dependency instead of trying more local guesses — the fault is often in a connected service. Don't burn all your strikes locally.
+- After a follow-cause or subagent returns findings, those findings are your BEST lead. Immediately hypothesize the specific cause they point to (with a checkable prediction) and test it — never stop right after following without turning the finding into a tested hypothesis.
 - Be decisive — your budget is limited. Prefer the most likely cause first.
 Output ONLY the JSON object for your chosen move.`;
 

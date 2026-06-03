@@ -8,6 +8,30 @@
  */
 import type { TraceEntry } from "./orchestrator.js";
 import type { AgentStreamEvent } from "../types/ws-types.js";
+import type { RankedHypothesis } from "../types/rca-types.js";
+
+/**
+ * Assemble the causal chain from a finished run: the incident service, each
+ * dependency the agent followed into (in order), and the confirmed root cause.
+ * Ordered cause→effect with source attribution — the orchestrator's headline
+ * output. Returns the links; the caller renders them with arrows. A chain of
+ * length 1 (just the incident) means nothing was followed or confirmed.
+ */
+export function assembleCausalChain(
+  trace: TraceEntry[],
+  confirmed: RankedHypothesis | undefined,
+  incidentService: string,
+): string[] {
+  const chain: string[] = [];
+  if (incidentService) chain.push(incidentService);
+  for (const t of trace) {
+    if (t.move === "follow-cause" && / → \+\d+ findings$/.test(t.detail)) {
+      chain.push(t.detail.replace(/ → \+\d+ findings$/, "").trim());
+    }
+  }
+  if (confirmed) chain.push(`root cause: ${confirmed.hypothesis}`);
+  return chain;
+}
 
 /** Pure, presentation-only mapping. The orchestrator core stays UI-agnostic. */
 export function traceEntryToStreamEvent(e: TraceEntry): Omit<AgentStreamEvent, "seq"> {

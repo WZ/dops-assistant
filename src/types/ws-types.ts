@@ -116,7 +116,7 @@ export type ServerMessage =
   | { type: "deep_mode:error"; investigationId: string; message: string }
   | { type: "orchestrator:started"; investigationId: string }
   | { type: "orchestrator:step"; investigationId: string; event: AgentStreamEvent }
-  | { type: "orchestrator:complete"; investigationId: string; outcome: string; stats?: OrchestratorStreamStats }
+  | { type: "orchestrator:complete"; investigationId: string; outcome: string; stats?: OrchestratorStreamStats; causalChain?: string[] }
   | { type: "orchestrator:error"; investigationId: string; message: string }
   | { type: "session_cleared" }
   | { type: "context_switch"; previousService: string; newService: string }

@@ -177,6 +177,7 @@ export function InvestigationPane({
   const [orchSteps, setOrchSteps] = useState<AgentStreamEvent[]>([]);
   const [orchStats, setOrchStats] = useState<OrchestratorStreamStats | undefined>(undefined);
   const [orchOutcome, setOrchOutcome] = useState<string | undefined>(undefined);
+  const [orchChain, setOrchChain] = useState<string[] | undefined>(undefined);
   const [service, setService] = useState("");
   const [query, setQuery] = useState("");
   /** Set when the REST fetch comes back 404. Visiting an investigation URL
@@ -509,6 +510,7 @@ export function InvestigationPane({
         setOrchSteps([]);
         setOrchStats(undefined);
         setOrchOutcome(undefined);
+        setOrchChain(undefined);
       }
       if (msg.type === "orchestrator:step" && msg.investigationId === investigationId) {
         setOrchSteps((prev) => [...prev, msg.event]);
@@ -517,6 +519,7 @@ export function InvestigationPane({
         setOrchRunning(false);
         setOrchStats(msg.stats);
         setOrchOutcome(msg.outcome);
+        setOrchChain(msg.causalChain);
       }
       if (msg.type === "orchestrator:error" && msg.investigationId === investigationId) {
         setOrchRunning(false);
@@ -813,7 +816,7 @@ export function InvestigationPane({
 
             {/* Deep mode (Step 3) — dedicated structured agent stream (live + final). */}
             <DeepModeStream events={deepSteps} stats={deepStats} running={deepModeRunning} />
-            <OrchestratorStream events={orchSteps} stats={orchStats} outcome={orchOutcome} running={orchRunning} />
+            <OrchestratorStream events={orchSteps} stats={orchStats} outcome={orchOutcome} causalChain={orchChain} running={orchRunning} />
 
             {investigationStatus === "failed" && !report ? (
               <section className="rounded-lg border border-destructive/30 bg-destructive/5 px-5 py-4 animate-fade-up">

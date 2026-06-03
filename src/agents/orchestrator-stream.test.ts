@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { traceEntryToStreamEvent } from "./orchestrator-stream.js";
+import { traceEntryToStreamEvent, assembleCausalChain } from "./orchestrator-stream.js";
+import type { TraceEntry } from "./orchestrator.js";
 
 describe("traceEntryToStreamEvent", () => {
   it("maps hypothesize → a running 'proposed a cause' row", () => {
@@ -50,6 +51,23 @@ describe("traceEntryToStreamEvent", () => {
     });
     expect(ev.verb).toBe("not confirmed yet — kept looking");
     expect(ev.status).toBe("running");
+  });
+
+  it("assembles a causal chain: incident → followed deps → root cause", () => {
+    const trace: TraceEntry[] = [
+      { move: "hypothesize", detail: "local OOM" },
+      { move: "test", detail: "local OOM", verdict: "absent" },
+      { move: "follow-cause", detail: "impala-catalog → +1 findings" },
+      { move: "hypothesize", detail: "catalog pool starvation" },
+      { move: "test", detail: "catalog pool starvation", verdict: "satisfied" },
+    ];
+    const chain = assembleCausalChain(trace, { hypothesis: "catalog pool starvation", prediction: {} }, "impala");
+    expect(chain).toEqual(["impala", "impala-catalog", "root cause: catalog pool starvation"]);
+  });
+
+  it("causal chain is just the incident when nothing was followed or confirmed", () => {
+    const chain = assembleCausalChain([{ move: "test", detail: "x", verdict: "absent" }], undefined, "impala");
+    expect(chain).toEqual(["impala"]);
   });
 
   it("maps subagent + follow-cause completions to done rows", () => {
