@@ -15,6 +15,7 @@ import { safeJsonParse } from "../../agents/shared/processors.js";
 import { createSynthesisAgent } from "../../agents/synthesis.js";
 import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
 import { formatPatterns } from "../../agents/shared/patterns.js";
+import { confidenceFraction } from "../../lib/confidence.js";
 import { withLlmRetry, safeAgentRetryConfig } from "../../agents/shared/llm-retry.js";
 import { LlmUnavailableError } from "../../agents/shared/llm-errors.js";
 import { RankedHypothesisSchema } from "../schemas.js";
@@ -241,7 +242,10 @@ export function buildSynthesisStep(config: WorkflowConfig) {
         dashboardLinks = synthesisParsed.dashboardLinks ?? dashboardLinks;
         recommendedActions = synthesisParsed.recommendedActions ?? recommendedActions;
         confidence = synthesisParsed.confidence ?? confidence;
-        confidenceScore = synthesisParsed.confidenceScore ?? confidenceScore;
+        // Normalize to a 0–1 fraction at the source — the LLM is inconsistent
+        // (some completions emit 0.9, others 90), and every downstream consumer
+        // (display ×100, the low-confidence gate) assumes 0–1.
+        confidenceScore = confidenceFraction(synthesisParsed.confidenceScore ?? confidenceScore);
       }
 
       // Deterministic severity validation

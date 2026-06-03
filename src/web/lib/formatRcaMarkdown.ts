@@ -4,13 +4,14 @@
  */
 
 import type { RcaReport } from "../../types/rca-types.js";
+import { confidencePercent } from "../../lib/confidence.js";
 
 export function formatRcaMarkdown(report: RcaReport): string {
   const lines: string[] = [];
 
   lines.push(`# RCA Report: ${report.service}`);
   lines.push("");
-  lines.push(`**Severity:** ${report.severity} | **Confidence:** ${report.confidence} (${Math.round(report.confidenceScore * 100)}%)`);
+  lines.push(`**Severity:** ${report.severity} | **Confidence:** ${report.confidence} (${confidencePercent(report.confidenceScore)}%)`);
   lines.push(`**Investigated:** ${report.investigatedAt}`);
   if (report.timeRange) {
     lines.push(`**Investigation window:** ${report.timeRange.from} → ${report.timeRange.to}`);

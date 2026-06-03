@@ -23,6 +23,7 @@ import type { RcaReport as RcaReportType } from "../../types/rca-types.js";
 import { formatTokens } from "../lib/formatTokens.js";
 import { buildPhaseActions } from "../lib/grafana-links.js";
 import { downloadMarkdown, downloadPng, copyMarkdown } from "../lib/exportInvestigation.js";
+import { confidencePercent } from "../../lib/confidence.js";
 
 const DEFAULT_PHASES: PhaseState[] = [
   { name: "planning", label: "Planning", status: "pending" },
@@ -706,7 +707,7 @@ export function InvestigationPane({
                   {(report as any)?.confidence && (
                     <MetaRow
                       label="confidence"
-                      value={`${String((report as any).confidence).toUpperCase()}${(report as any).confidenceScore ? ` · ${Math.round((report as any).confidenceScore * 100)}%` : ""}`}
+                      value={`${String((report as any).confidence).toUpperCase()}${(report as any).confidenceScore ? ` · ${confidencePercent((report as any).confidenceScore)}%` : ""}`}
                     />
                   )}
                   {(report as any)?.severity && (

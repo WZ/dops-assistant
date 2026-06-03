@@ -5,6 +5,7 @@
 
 import { createLogger } from "../logger.js";
 import type { RcaReport } from "../types/rca-types.js";
+import { confidencePercent } from "../lib/confidence.js";
 
 const logger = createLogger();
 
@@ -79,7 +80,7 @@ export async function notifySlack(
 
   const severity = report.severity ?? "unknown";
   const confidence = report.confidenceScore != null
-    ? `${Math.round(report.confidenceScore * 100)}%`
+    ? `${confidencePercent(report.confidenceScore)}%`
     : "N/A";
   const rootCause = report.rootCause ?? "Unable to determine";
   const summary = report.summary ?? "";
