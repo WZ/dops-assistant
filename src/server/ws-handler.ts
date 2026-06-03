@@ -526,6 +526,15 @@ async function handleOrchestratorInvestigate(
     send({ type: "orchestrator:error", investigationId: msg.investigationId, message: "Investigation not found." });
     return;
   }
+  // The orchestrator is seeded from a *completed* investigation's context
+  // (focus + report time window). The UI only surfaces the trigger after
+  // completion, but a direct WS message could otherwise launch a costly
+  // autonomous run against a still-running, failed, or report-less row.
+  // Reject those here, mirroring the deep-mode handler.
+  if (investigation.status !== "complete" || !investigation.report) {
+    send({ type: "orchestrator:error", investigationId: msg.investigationId, message: "The orchestrator needs a completed investigation with a report." });
+    return;
+  }
   // Seed the orchestrator from the investigation's context: the original ask
   // as the focus, and the report's time window so re-queries stay in range.
   let report: RcaReport | undefined;

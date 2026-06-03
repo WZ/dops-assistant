@@ -578,6 +578,87 @@ describe("handleClientMessage — deep_investigate", () => {
   });
 });
 
+describe("handleClientMessage — orchestrator_investigate", () => {
+  it("rejects when the orchestrator gate is disabled", async () => {
+    const deps = mockDeps();
+    const ctx = mockCtx();
+    // Default mockDeps config has no agent.orchestratorEnabled flag.
+    const sent: ServerMessage[] = [];
+    const send = (m: ServerMessage) => sent.push(m);
+
+    await callHandler(
+      { type: "orchestrator_investigate", investigationId: "inv_1" },
+      send, deps, ctx,
+    );
+
+    const err = sent.find((m) => m.type === "orchestrator:error");
+    expect(err).toBeDefined();
+    expect((err as any).message).toContain("not enabled");
+    expect(deps.db.getInvestigation).not.toHaveBeenCalled();
+  });
+
+  it("returns error for a non-existent investigation when gated on", async () => {
+    const deps = mockDeps();
+    (deps.config as any).agent.orchestratorEnabled = true;
+    const ctx = mockCtx();
+    (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
+
+    const sent: ServerMessage[] = [];
+    const send = (m: ServerMessage) => sent.push(m);
+
+    await callHandler(
+      { type: "orchestrator_investigate", investigationId: "inv_missing" },
+      send, deps, ctx,
+    );
+
+    const err = sent.find((m) => m.type === "orchestrator:error");
+    expect(err).toBeDefined();
+    expect((err as any).message).toContain("not found");
+  });
+
+  it("rejects a still-running investigation — no autonomous run without a completed report", async () => {
+    const deps = mockDeps();
+    (deps.config as any).agent.orchestratorEnabled = true;
+    const ctx = mockCtx();
+    (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
+      id: "inv_running", service: "payments-api", query: "orig", status: "running", report: null,
+    });
+
+    const sent: ServerMessage[] = [];
+    const send = (m: ServerMessage) => sent.push(m);
+
+    await callHandler(
+      { type: "orchestrator_investigate", investigationId: "inv_running" },
+      send, deps, ctx,
+    );
+
+    const err = sent.find((m) => m.type === "orchestrator:error");
+    expect(err).toBeDefined();
+    expect((err as any).message).toContain("completed investigation");
+  });
+
+  it("rejects a completed-but-report-less investigation", async () => {
+    const deps = mockDeps();
+    (deps.config as any).agent.orchestratorEnabled = true;
+    const ctx = mockCtx();
+    (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
+      id: "inv_noreport", service: "payments-api", query: "orig", status: "complete", report: null,
+    });
+
+    const sent: ServerMessage[] = [];
+    const send = (m: ServerMessage) => sent.push(m);
+
+    await callHandler(
+      { type: "orchestrator_investigate", investigationId: "inv_noreport" },
+      send, deps, ctx,
+    );
+
+    const err = sent.find((m) => m.type === "orchestrator:error");
+    expect(err).toBeDefined();
+    expect((err as any).message).toContain("completed investigation");
+  });
+});
+
 describe("handleClientMessage — rerun", () => {
   it("emits investigation:started with parentInvestigationId so the client can navigate", async () => {
     const deps = mockDeps();

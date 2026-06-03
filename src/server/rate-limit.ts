@@ -142,14 +142,23 @@ export class WsRateLimiter {
 /**
  * Classify a WebSocket message type into a rate limiting category.
  *
- * Investigation-triggering messages:
+ * Investigation-triggering messages (heavy, LLM-spending, autonomous):
  *   - "chat" messages (which may trigger investigations via intent routing)
  *   - "deep_investigate" messages
+ *   - "deep_mode_investigate" messages (re-examines a completed report)
+ *   - "orchestrator_investigate" messages (autonomous read-only move-loop)
  *
+ * All of these route through the stricter `investigation` bucket so a direct
+ * WS client can't bypass the investigation cap via the looser general limit.
  * All other messages are "general".
  */
 export function classifyWsMessage(msgType: string): WsMessageCategory {
-  if (msgType === "chat" || msgType === "deep_investigate") {
+  if (
+    msgType === "chat" ||
+    msgType === "deep_investigate" ||
+    msgType === "deep_mode_investigate" ||
+    msgType === "orchestrator_investigate"
+  ) {
     return "investigation";
   }
   return "general";
