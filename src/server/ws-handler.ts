@@ -10,7 +10,8 @@ import type { ServiceConfig, DiscoveryConfig, Config } from "../config/schema.js
 import type { ClientMessage, ServerMessage, ChartSeries } from "../types/ws-types.js";
 import { DEFAULT_STACK_SLUG } from "../types/stack-types.js";
 import { inferDependencyGraph } from "./dependency-graph.js";
-import { assembleCausalChain } from "../agents/orchestrator-stream.js";
+import { assembleCausalChain, traceSummary } from "../agents/orchestrator-stream.js";
+import type { OrchestratorState } from "../agents/orchestrator.js";
 import type { ValidatedServiceConfig } from "../types/discovery-types.js";
 import type { SkillStore } from "../skills/store.js";
 import { LlmUnavailableError } from "../agents/shared/llm-errors.js";
@@ -31,6 +32,16 @@ import { resolveDiscoverySkills } from "./discovery-skill-selection.js";
 const logger = createLogger();
 
 const MAX_CHART_SERIES = 4;
+
+/** A paused orchestrator run, awaiting an operator decision. Resolving the
+ *  promise (via `orchestrator_decision`, timeout, or WS close) resumes the loop. */
+type OperatorDecision = "continue" | "escalate" | "wait";
+type PendingPause = { resolve: (decision: OperatorDecision) => void; timer: ReturnType<typeof setTimeout> };
+
+/** How long an operator-pause prompt waits for a decision before defaulting to
+ *  `escalate` (stop). A disconnected/idle operator must not strand the loop —
+ *  the wall-clock guard would eventually trip, but this is the explicit cap. */
+const OPERATOR_PAUSE_TIMEOUT_MS = 5 * 60_000;
 
 /** Return true when a series is a flat constant (no variation worth charting) */
 function isFlatSeries(values: [string, number][]): boolean {
@@ -274,6 +285,13 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
     // removed — late cancels are silently ignored.
     const pendingDispatches: Map<string, AbortController> = new Map();
 
+    // Per-connection paused orchestrator runs: a run that hit the strike limit
+    // and is awaiting an operator decision. Keyed by investigationId; the
+    // `orchestrator_decision` handler resolves the matching entry, and WS close
+    // resolves any survivors with `escalate` so a disconnect never strands the
+    // loop (which would otherwise sit blocked until its wall-clock guard trips).
+    const pendingPauses: Map<string, PendingPause> = new Map();
+
     const send = (m: ServerMessage) => {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(m));
@@ -402,6 +420,7 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
           () => { pendingDiscovery = null; },
           pendingDispatches,
           activeDiscovery,
+          pendingPauses,
         );
       } catch (err) {
         if (err instanceof LlmUnavailableError) {
@@ -424,6 +443,13 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
         controller.abort();
       }
       pendingDispatches.clear();
+      // Resolve any paused orchestrator runs so the loop unblocks and stops
+      // cleanly (escalate) instead of sitting until its wall-clock guard trips.
+      for (const pause of pendingPauses.values()) {
+        clearTimeout(pause.timer);
+        pause.resolve("escalate");
+      }
+      pendingPauses.clear();
       activeDiscovery.current?.abort(new Error("WebSocket disconnected"));
       activeDiscovery.current = null;
       wsRateLimiter.destroy(threadId);
@@ -488,6 +514,7 @@ async function handleOrchestratorInvestigate(
   deps: WsDeps,
   stackId: string,
   ctx: StackContext,
+  pendingPauses: Map<string, PendingPause>,
 ): Promise<void> {
   const { db } = deps;
   if (!deps.config.agent?.orchestratorEnabled) {
@@ -533,6 +560,7 @@ async function handleOrchestratorInvestigate(
     { timeRange, ctx: { incidentTime: timeRange?.from }, dependencies, incidentService: investigation.service },
     agents.orchestrate,
     send,
+    pendingPauses,
   );
 }
 
@@ -542,6 +570,7 @@ async function runOrchestratorStreamed(
   opts: { timeRange?: { from: string; to: string }; ctx?: { incidentTime?: string }; dependencies?: string[]; incidentService?: string },
   orchestrate: StackAgents["orchestrate"],
   send: (m: ServerMessage) => void,
+  pendingPauses: Map<string, PendingPause>,
 ): Promise<void> {
   send({ type: "orchestrator:started", investigationId });
   const startMs = Date.now();
@@ -552,12 +581,31 @@ async function runOrchestratorStreamed(
       ctx: opts.ctx,
       dependencies: opts.dependencies,
       onStep: (ev) => send({ type: "orchestrator:step", investigationId, event: { ...ev, seq: seq++ } }),
+      // Interactive strike-limit pause (increment 5): emit the prompt and block
+      // the loop on the operator's reply. Resolved by the `orchestrator_decision`
+      // handler, the timeout below, or WS close (all via `pendingPauses`).
+      onOperatorPause: (state: OrchestratorState) => {
+        send({
+          type: "orchestrator:operator_pause",
+          investigationId,
+          strikes: state.strikes,
+          hypothesesTried: state.hypotheses.map((hyp) => hyp.hypothesis.hypothesis),
+        });
+        return new Promise<OperatorDecision>((resolve) => {
+          const timer = setTimeout(() => {
+            pendingPauses.delete(investigationId);
+            resolve("escalate");
+          }, OPERATOR_PAUSE_TIMEOUT_MS);
+          pendingPauses.set(investigationId, { resolve, timer });
+        });
+      },
     });
     send({
       type: "orchestrator:complete",
       investigationId,
       outcome: result.outcome,
-      causalChain: assembleCausalChain(result.trace, result.confirmed, opts.incidentService ?? ""),
+      causalChain: assembleCausalChain(result.trace, result.confirmed, opts.incidentService ?? "", result.evidence),
+      traceSummary: traceSummary(result.stats, result.outcome),
       stats: {
         moves: result.stats.moves,
         toolCalls: result.stats.toolCalls,
@@ -575,6 +623,15 @@ async function runOrchestratorStreamed(
         : "The orchestrator hit an error.";
     logger.error({ err, investigationId }, "Orchestrator run failed");
     send({ type: "orchestrator:error", investigationId, message });
+  } finally {
+    // Defensive: a finished run must never leave a pause entry behind (e.g. if
+    // a future code path threw mid-pause), or a stale `orchestrator_decision`
+    // could resolve a dead promise.
+    const stale = pendingPauses.get(investigationId);
+    if (stale) {
+      clearTimeout(stale.timer);
+      pendingPauses.delete(investigationId);
+    }
   }
 }
 
@@ -900,6 +957,7 @@ export async function handleClientMessage(
   clearPendingDiscovery: () => void,
   pendingDispatches: Map<string, AbortController> = new Map(),
   activeDiscovery: { current: AbortController | null } = { current: null },
+  pendingPauses: Map<string, PendingPause> = new Map(),
 ): Promise<void> {
   const memory = ctx.conversationMemory;
 
@@ -933,7 +991,20 @@ export async function handleClientMessage(
   }
 
   if (msg.type === "orchestrator_investigate") {
-    await handleOrchestratorInvestigate(msg, send, deps, stackId, ctx);
+    await handleOrchestratorInvestigate(msg, send, deps, stackId, ctx, pendingPauses);
+    return;
+  }
+
+  // Operator's reply to an `orchestrator:operator_pause`. Resolve the matching
+  // paused run; unknown ids are silently ignored (already resumed, timed out,
+  // or never paused — a stale client can't wedge anything).
+  if (msg.type === "orchestrator_decision") {
+    const pause = pendingPauses.get(msg.investigationId);
+    if (pause) {
+      clearTimeout(pause.timer);
+      pendingPauses.delete(msg.investigationId);
+      pause.resolve(msg.decision);
+    }
     return;
   }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { runOrchestrator } from "./orchestrator.js";
+import { runOrchestrator, MAX_OPERATOR_CONTINUES } from "./orchestrator.js";
 import type { OrchestratorMove, OrchestratorDeps, OrchestratorState } from "./orchestrator.js";
 import type { RankedHypothesis } from "../types/rca-types.js";
 import type { NormalizedObservation, Verdict } from "../workflows/steps/corroboration.js";
@@ -314,6 +314,78 @@ describe("runOrchestrator — robustness", () => {
       }),
     );
     expect(seen).toEqual(["hypothesize", "query", "test", "conclude"]);
+  });
+});
+
+describe("runOrchestrator — interactive operator-pause hook", () => {
+  /** A decide-fn that never stops failing: hypothesize, then test the newest
+   *  hypothesis, forever. With `evaluate: absent` every test is a strike, so
+   *  strikes accumulate until a guard (or the operator hook) ends the run. */
+  function endlessFailing(): OrchestratorDeps["decideMove"] {
+    let n = 0;
+    return async (state: OrchestratorState) =>
+      n++ % 2 === 0
+        ? { type: "hypothesize", hypothesis: h(`c${n}`) }
+        : { type: "test", target: state.hypotheses.length - 1 };
+  }
+
+  it("continue resets strikes and resumes; a later escalate/wait stops with operator-pause", async () => {
+    const decisions: Array<"continue" | "escalate" | "wait"> = ["continue", "wait"];
+    let calls = 0;
+    const result = await runOrchestrator(
+      makeDeps({
+        guards: { ...generousGuards, maxStrikes: 2 },
+        evaluate: () => "absent",
+        decideMove: endlessFailing(),
+        onOperatorPause: async () => decisions[calls++] ?? "wait",
+      }),
+    );
+    expect(result.outcome).toBe("operator-pause");
+    // First pause → continue (resumed), second pause → wait (stopped).
+    expect(calls).toBe(2);
+  });
+
+  it("escalate stops immediately at the first strike limit", async () => {
+    let calls = 0;
+    const result = await runOrchestrator(
+      makeDeps({
+        guards: { ...generousGuards, maxStrikes: 2 },
+        evaluate: () => "absent",
+        decideMove: endlessFailing(),
+        onOperatorPause: async () => { calls++; return "escalate"; },
+      }),
+    );
+    expect(result.outcome).toBe("operator-pause");
+    expect(calls).toBe(1); // consulted once, then stopped
+  });
+
+  it("no hook → strike limit stops directly (unchanged behavior)", async () => {
+    let paused = false;
+    const result = await runOrchestrator(
+      makeDeps({
+        guards: { ...generousGuards, maxStrikes: 2 },
+        evaluate: () => "absent",
+        decideMove: endlessFailing(),
+        // onOperatorPause intentionally omitted
+      }),
+    );
+    expect(paused).toBe(false);
+    expect(result.outcome).toBe("operator-pause");
+  });
+
+  it("caps operator continues so a perpetually-continuing operator can't spin forever", async () => {
+    let calls = 0;
+    const result = await runOrchestrator(
+      makeDeps({
+        guards: { ...generousGuards, maxStrikes: 2 },
+        evaluate: () => "absent",
+        decideMove: endlessFailing(),
+        onOperatorPause: async () => { calls++; return "continue"; },
+      }),
+    );
+    expect(result.outcome).toBe("operator-pause");
+    // Consulted exactly MAX_OPERATOR_CONTINUES times, then stops without asking again.
+    expect(calls).toBe(MAX_OPERATOR_CONTINUES);
   });
 });
 

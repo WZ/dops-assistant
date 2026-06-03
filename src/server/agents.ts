@@ -48,7 +48,7 @@ import type { LlmRetryConfig } from "../agents/shared/llm-retry.js";
 import { LlmUnavailableError } from "../agents/shared/llm-errors.js";
 import { runAutonomousOrchestrator } from "../agents/orchestrator-llm.js";
 import { traceEntryToStreamEvent } from "../agents/orchestrator-stream.js";
-import type { OrchestratorGuards, OrchestratorResult } from "../agents/orchestrator.js";
+import type { OrchestratorGuards, OrchestratorResult, OrchestratorState } from "../agents/orchestrator.js";
 import type { CorroborationContext, NormalizedObservation } from "../workflows/steps/corroboration.js";
 
 /** Conservative default safety harness for the autonomous orchestrator. The
@@ -737,6 +737,9 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       guards?: Partial<OrchestratorGuards>;
       /** Incident service's dependency neighbors (resolved by the caller). */
       dependencies?: string[];
+      /** Interactive operator-pause hook (increment 5). Wired by the WS layer to
+       *  the pause card; absent → the strike limit stops directly. */
+      onOperatorPause?: (state: OrchestratorState) => Promise<"continue" | "escalate" | "wait">;
     },
   ): Promise<OrchestratorResult> {
     const guards: OrchestratorGuards = { ...DEFAULT_ORCHESTRATOR_GUARDS, ...opts?.guards };
@@ -781,6 +784,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       onStep: onStep ? (entry) => onStep(traceEntryToStreamEvent(entry)) : undefined,
       spawnSubagent,
       dependencies: opts?.dependencies,
+      onOperatorPause: opts?.onOperatorPause,
     });
   }
 

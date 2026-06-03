@@ -274,6 +274,9 @@ export interface RunAutonomousOrchestratorOptions {
   /** Dependency-graph neighbors of the incident service the agent may
    *  follow-cause into. Empty → follow-cause disabled. */
   dependencies?: string[];
+  /** Interactive strike-limit hook (increment 5). Absent → the strike limit
+   *  stops directly. Wired by the orchestrate adapter to the WS pause card. */
+  onOperatorPause?: (state: OrchestratorState) => Promise<"continue" | "escalate" | "wait">;
 }
 
 /**
@@ -318,6 +321,7 @@ export async function runAutonomousOrchestrator(
     evaluate: (prediction: HypothesisPrediction, evidence) => evaluatePrediction(prediction, evidence, opts.ctx ?? {}),
     spawnSubagent: opts.spawnSubagent,
     dependencies: opts.dependencies,
+    onOperatorPause: opts.onOperatorPause,
     guards: opts.guards,
     onStep: opts.onStep,
     // Drain tokens accrued (decide + query) since the previous move.

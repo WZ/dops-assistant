@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { traceEntryToStreamEvent, assembleCausalChain } from "./orchestrator-stream.js";
+import { traceEntryToStreamEvent, assembleCausalChain, traceSummary } from "./orchestrator-stream.js";
 import type { TraceEntry } from "./orchestrator.js";
+import type { NormalizedObservation } from "../workflows/steps/corroboration.js";
 
 describe("traceEntryToStreamEvent", () => {
   it("maps hypothesize → a running 'proposed a cause' row", () => {
@@ -62,12 +63,50 @@ describe("traceEntryToStreamEvent", () => {
       { move: "test", detail: "catalog pool starvation", verdict: "satisfied" },
     ];
     const chain = assembleCausalChain(trace, { hypothesis: "catalog pool starvation", prediction: {} }, "impala");
-    expect(chain).toEqual(["impala", "impala-catalog", "root cause: catalog pool starvation"]);
+    expect(chain).toEqual([
+      { label: "impala", kind: "incident" },
+      { label: "impala-catalog", kind: "followed", evidence: undefined },
+      { label: "root cause: catalog pool starvation", kind: "root-cause", evidence: undefined },
+    ]);
+  });
+
+  it("attributes each link to its supporting finding/prediction (source attribution)", () => {
+    const trace: TraceEntry[] = [
+      { move: "follow-cause", detail: "impala-catalog → +1 findings" },
+      { move: "hypothesize", detail: "catalog pool starvation" },
+      { move: "test", detail: "catalog pool starvation", verdict: "satisfied" },
+    ];
+    const evidence: NormalizedObservation[] = [
+      { phase: "infra", subject: "impala-catalog", text: "subagent: connection pool saturated — clients blocked" },
+    ];
+    const chain = assembleCausalChain(
+      trace,
+      { hypothesis: "catalog pool starvation", prediction: { kind: "metric-threshold", metric: "pool_used", op: ">", value: 95 } },
+      "impala",
+      evidence,
+    );
+    expect(chain[1]).toEqual({
+      label: "impala-catalog",
+      kind: "followed",
+      evidence: "connection pool saturated — clients blocked",
+    });
+    expect(chain[2]).toEqual({
+      label: "root cause: catalog pool starvation",
+      kind: "root-cause",
+      evidence: "confirmed by pool_used > 95",
+    });
   });
 
   it("causal chain is just the incident when nothing was followed or confirmed", () => {
     const chain = assembleCausalChain([{ move: "test", detail: "x", verdict: "absent" }], undefined, "impala");
-    expect(chain).toEqual(["impala"]);
+    expect(chain).toEqual([{ label: "impala", kind: "incident" }]);
+  });
+
+  it("traceSummary reads as a one-line run trace", () => {
+    expect(traceSummary({ moves: 12, toolCalls: 5, tokensSpent: 0, strikes: 0, depth: 1, subagents: 2, elapsedMs: 0 }, "confirmed"))
+      .toBe("12 moves · 5 queries · 2 subagents · confirmed at depth 1");
+    expect(traceSummary({ moves: 1, toolCalls: 1, tokensSpent: 0, strikes: 0, depth: 0, subagents: 0, elapsedMs: 0 }, "operator-pause"))
+      .toBe("1 move · 1 query · operator-pause at depth 0");
   });
 
   it("maps subagent + follow-cause completions to done rows", () => {

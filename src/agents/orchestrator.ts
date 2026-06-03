@@ -123,6 +123,13 @@ export interface OrchestratorDeps {
   /** The incident service's dependency neighbors the agent may follow-cause into
    *  (resolved from the dependency graph). Empty → follow-cause is disabled. */
   dependencies?: string[];
+  /**
+   * Strikes-limit hook: instead of silently stopping at the strike limit, ask a
+   * human. "continue" resets the strike counter and resumes the loop (the other
+   * guards still bound it); "escalate"/"wait" stop with that disposition. Absent
+   * → the strike limit stops directly (operator-pause), as before.
+   */
+  onOperatorPause?: (state: OrchestratorState) => Promise<"continue" | "escalate" | "wait">;
   guards: OrchestratorGuards;
   /** Injected clock so wall-clock is testable. Defaults to Date.now. */
   now?: () => number;
@@ -154,6 +161,14 @@ export interface OrchestratorResult {
 const MAX_MOVES = 1000;
 /** Consecutive non-productive moves (no new evidence / hypotheses, rejected conclude) → inconclusive. */
 const MAX_STALL = 8;
+/**
+ * Hard cap on operator "continue" decisions. Each continue resets the strike
+ * counter and resumes; without a ceiling, a hung or looping operator prompt
+ * (held open by a generous wall-clock) could resume forever. After this many
+ * continues the loop stops with `operator-pause` without asking again — the
+ * other guards still bound each resumed leg, this just bounds the legs.
+ */
+export const MAX_OPERATOR_CONTINUES = 3;
 
 /**
  * Run the orchestrator loop. Pure control flow over injected dependencies:
@@ -177,6 +192,7 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
   let toolCalls = 0;
   let moves = 0;
   let stall = 0;
+  let operatorContinues = 0;
 
   const record = (entry: TraceEntry): void => {
     trace.push(entry);
@@ -202,8 +218,26 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
     if (elapsed() >= deps.guards.wallClockMs) return finish("wall-clock");
     // strikes → operator pause: the design's headline safety feature. The signal
     // is ambiguous (N hypotheses failed, nothing discriminating emerged); rather
-    // than guess, stop and hand the call to a human.
-    if (strikes >= deps.guards.maxStrikes) return finish("operator-pause");
+    // than guess, hand the call to a human (if wired) — who can resume the run
+    // ("continue", resetting strikes) or stop it. Other guards still bound a
+    // resumed run, so "continue" can't run away.
+    if (strikes >= deps.guards.maxStrikes) {
+      // Only consult the operator while there are continues left in the budget;
+      // once spent, stop without re-prompting so a stuck operator can't keep the
+      // loop alive indefinitely.
+      if (deps.onOperatorPause && operatorContinues < MAX_OPERATOR_CONTINUES) {
+        const pauseState: OrchestratorState = {
+          hypotheses, evidence, dependencies, depth, subagents, strikes, tokensSpent, toolCalls, elapsedMs: elapsed(), trace,
+        };
+        const decision = await deps.onOperatorPause(pauseState);
+        if (decision === "continue") {
+          operatorContinues++;
+          strikes = 0;
+          continue;
+        }
+      }
+      return finish("operator-pause");
+    }
     if (stall >= MAX_STALL) return finish("inconclusive");
 
     const state: OrchestratorState = {
