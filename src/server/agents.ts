@@ -753,8 +753,11 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
         config.services.find((s) => s.name === args.service) ?? { name: args.service, metrics: [], logLabels: {}, probeRules: [] };
       try {
         const report = await investigationAgent.investigate(
+          // "quick" (metrics-only) keeps a subagent ~1 min instead of the 2-3 min
+          // a "standard" run costs — an autonomous run can spawn several, so the
+          // cheaper template matters. Revisit if subagents miss log-based causes.
           svc, null, undefined, undefined, args.question,
-          undefined, undefined, undefined, undefined, "standard", true,
+          undefined, undefined, undefined, undefined, "quick", true,
         );
         const rc =
           report.rootCause && !/^under investigation$|^unable to determine/i.test(report.rootCause.trim())
