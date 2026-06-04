@@ -91,6 +91,74 @@ flowchart TD
     xguard -- no --> oConf([confirmed])
 ```
 
+### The loop in pseudocode
+
+The same loop as `runOrchestrator` (`src/agents/orchestrator.ts`), condensed.
+Note the order: **guards are checked at the top of every iteration, before the
+next move is spent**, and `conclude` only ends the run when the deterministic
+keystone agrees (DECISION 1) — self-reported confidence never does.
+
+```text
+function runOrchestrator(deps):
+    state = { hypotheses: [], evidence: [], dependencies, followedServices: {} }
+    strikes = tokensSpent = toolCalls = moves = stall = operatorContinues = 0
+
+    while moves < MAX_MOVES:                       # absolute backstop (1000)
+
+        # ── 1. Safety harness (DECISION 2) — checked BEFORE spending a move ──
+        if deps.signal.aborted:        return finish("aborted")        # operator disconnected
+        if tokensSpent >= maxTokens:   return finish("budget-exhausted")
+        if toolCalls   >= maxToolCalls:return finish("tool-cap")
+        if elapsed()   >= wallClockMs: return finish("wall-clock")
+        if strikes     >= maxStrikes:                                  # N causes ruled out
+            if onOperatorPause and operatorContinues < MAX_OPERATOR_CONTINUES:
+                decision = await onOperatorPause(state)   # increment 5 — BLOCKS on a human
+                if decision == "continue":
+                    operatorContinues += 1
+                    strikes = 0
+                    continue                              # resume; other guards still bound it
+            return finish("operator-pause")               # escalate / wait / timeout / no hook
+        if stall >= MAX_STALL:         return finish("inconclusive")   # no progress (8)
+
+        # ── 2. The agent's brain picks ONE move ──
+        move = await deps.decideMove(state)        # LLM in prod, scripted in tests
+        if move == null:               return finish("exhausted")
+        moves += 1
+        tokensSpent += estimateTokens(move)
+
+        # ── 3. Act on the move ──
+        switch move.type:
+            case "hypothesize":
+                hypotheses.add(move.hypothesis)                  # + a checkable prediction
+                stall = 0
+
+            case "query":
+                obs = watchdog(gatherEvidence(h), opTimeoutMs)   # read-only; bounded
+                evidence += obs;  toolCalls += 1
+                stall = obs.empty ? stall + 1 : 0
+
+            case "test":                                         # the keystone — deterministic
+                verdict = evaluate(h.prediction, evidence)
+                if verdict == "satisfied":  h.standing = "confirmed";  strikes = 0
+                else:                       h.standing = "ruled-out";  strikes += 1
+
+            case "spawn-subagent" | "follow-cause":              # follow-cause: known dep only
+                followedServices.add(move.service)
+                evidence += watchdog(spawnSubagent(move.service), opTimeoutMs)
+
+            case "conclude":                                     # DECISION 1 — hybrid stop
+                if lead.standing == "confirmed" and lead.lastVerdict == "satisfied":
+                    if lead names a dependency NOT in followedServices:   # inc-7 guard
+                        record("not confirmed — investigate that dep first");  stall += 1
+                    else:
+                        return finish("confirmed", lead)
+                else:
+                    # self-reported confidence is recorded for the trace, never the gate
+                    stall += 1
+
+    return finish("inconclusive")                  # hit the move backstop
+```
+
 ### Moves
 
 | Move | Effect |
