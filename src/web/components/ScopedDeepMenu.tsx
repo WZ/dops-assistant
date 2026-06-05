@@ -43,6 +43,13 @@ export function ScopedDeepMenu({
   // Tick the countdown; at zero, dispatch the Full run.
   useEffect(() => {
     if (countdown === null) return;
+    // A run started elsewhere (e.g. the coexisting legacy button) while we were
+    // counting down — abort the countdown so we don't dispatch a duplicate that
+    // the server rejects and the registry would apply to the live run.
+    if (run?.running) {
+      setCountdown(null);
+      return;
+    }
     if (countdown <= 0) {
       setCountdown(null);
       start(investigationId, "full");
@@ -50,7 +57,7 @@ export function ScopedDeepMenu({
     }
     const t = setTimeout(() => setCountdown((c) => (c === null ? null : c - 1)), 900);
     return () => clearTimeout(t);
-  }, [countdown, investigationId, start]);
+  }, [countdown, investigationId, start, run?.running]);
 
   const deepEnabled = typeof window !== "undefined" && !!window.__DEEP_MODE_ENABLED__ && canChallenge;
   const fullEnabled = typeof window !== "undefined" && !!window.__ORCHESTRATOR_ENABLED__;

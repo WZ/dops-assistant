@@ -92,6 +92,32 @@ describe("ScopedDeepMenu", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it("cancels the Full countdown if a run starts elsewhere — no duplicate dispatch", () => {
+    // Codex review of #234: a coexisting legacy button could start the same run
+    // mid-countdown; the countdown must abort instead of firing a duplicate that
+    // the server rejects (which the registry would apply to the live run).
+    vi.useFakeTimers();
+    const send = vi.fn();
+    const ref = { current: [] as ServerMessage[] };
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <OrchestratorRunProvider wsMessages={ref.current} wsSend={send} connectionStatus="connected">
+        {children}
+      </OrchestratorRunProvider>
+    );
+    const { rerender } = render(<ScopedDeepMenu investigationId={ID} canChallenge />, { wrapper });
+    fireEvent.pointerDown(screen.getByRole("button", { name: /Investigate deeply/i }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Full deep investigation/i }));
+    expect(screen.getByText(/Starting Full Deep Investigation/)).toBeTruthy();
+    // The server reports a run already started (e.g. from the legacy button).
+    act(() => {
+      ref.current = [...ref.current, { type: "orchestrator:started", investigationId: ID }];
+      rerender(<ScopedDeepMenu investigationId={ID} canChallenge />);
+    });
+    expect(screen.queryByText(/Starting Full Deep Investigation/)).toBeNull(); // countdown aborted
+    act(() => { vi.advanceTimersByTime(900 * 4); });
+    expect(send).not.toHaveBeenCalledWith({ type: "orchestrator_investigate", investigationId: ID });
+  });
+
   it("hides the Challenge scope when there is nothing to re-examine", () => {
     renderMenu({ canChallenge: false });
     openMenu();

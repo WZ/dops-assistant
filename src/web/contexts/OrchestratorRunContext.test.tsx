@@ -158,6 +158,35 @@ describe("OrchestratorRunProvider", () => {
     expect(result.current.run?.collapsed).toBe(true);
   });
 
+  it("does not replay a compacted (trimmed) WS buffer onto run state", () => {
+    // useWebSocket compacts at 2000 messages by slicing to the last 1500 — the
+    // array shrinks but keeps already-processed messages (incl. a *:started).
+    // Treating that as a stack-switch reset would replay them: duplicate steps,
+    // or reset the run on the retained started. (Codex review of #234.)
+    const send = vi.fn();
+    const ref = { current: [] as ServerMessage[] };
+    const { result, rerender } = renderHook(() => useOrchestratorRun(ID), { wrapper: makeWrapper(ref, send) });
+    const started: ServerMessage = { type: "orchestrator:started", investigationId: ID };
+    for (const m of [started,
+      { type: "orchestrator:step", investigationId: ID, event: step(0) },
+      { type: "orchestrator:step", investigationId: ID, event: step(1) },
+      { type: "orchestrator:step", investigationId: ID, event: step(2) },
+    ] as ServerMessage[]) {
+      act(() => { ref.current = [...ref.current, m]; });
+      rerender();
+    }
+    expect(result.current?.steps).toHaveLength(3);
+
+    // Simulate compaction: the array shrinks (length 2 < 4 processed) but RETAINS
+    // the original started + a freshly-arrived tail step. Only the tail step is new.
+    act(() => { ref.current = [started, { type: "orchestrator:step", investigationId: ID, event: step(3) } as ServerMessage]; });
+    rerender();
+    // Run is NOT reset by the retained started, and steps are NOT duplicated:
+    // the 3 existing + the 1 new tail step = 4.
+    expect(result.current?.running).toBe(true);
+    expect(result.current?.steps).toHaveLength(4);
+  });
+
   it("exposes connectionStatus for the reconnect guard (D6)", () => {
     const ref = { current: [] as ServerMessage[] };
     const { result } = renderHook(() => useOrchestratorRunActions(), { wrapper: makeWrapper(ref, vi.fn(), "disconnected") });

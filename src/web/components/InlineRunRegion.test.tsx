@@ -62,6 +62,13 @@ describe("InlineRunRegion", () => {
     expect(send).toHaveBeenCalledWith({ type: "orchestrator_stop", investigationId: ID });
   });
 
+  it("running Challenge (deep-mode) run shows NO Stop — it has no abort path", () => {
+    // Codex review of #234: stop() only aborts orchestrator runs server-side,
+    // so a Stop on a deep-mode run would be a dead button.
+    renderRegion([{ type: "deep_mode:started", investigationId: ID }]);
+    expect(screen.queryByRole("button", { name: /stop the deep investigation/i })).toBeNull();
+  });
+
   it("confirmed run: result-first view shows the root cause headline + causal chain + trace", () => {
     renderRegion(confirmed);
     expect(screen.getByText("Current conclusion")).toBeTruthy();

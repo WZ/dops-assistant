@@ -205,7 +205,10 @@ export function InlineRunRegion({
           <button type="button" onClick={() => setView("live")} className={`font-mono text-[9px] px-2 py-1 ${view === "live" ? SEG_ON : SEG_OFF}`}>LIVE LOG</button>
         </span>
 
-        {run.running && (
+        {run.running && run.kind === "orchestrator" && (
+          // Stop only on the abortable Full run — the server only aborts
+          // orchestrator runs (activeOrchestrations). A Challenge (deep-mode)
+          // run has no abort path and is seconds long, so no dead Stop button.
           <button
             type="button"
             onClick={() => stop(id)}

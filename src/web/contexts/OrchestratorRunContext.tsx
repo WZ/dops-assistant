@@ -186,14 +186,27 @@ export function OrchestratorRunProvider({
   runsRef.current = runs;
 
   useEffect(() => {
-    let start = processedRef.current;
-    if (wsMessages.length < start) start = 0; // messages were cleared (stack switch)
-    if (start >= wsMessages.length) {
+    const prevProcessed = processedRef.current;
+    let batch: ServerMessage[];
+    if (wsMessages.length === 0) {
+      // Genuine clear (stack switch — useWebSocket setMessages([])). Reset; there
+      // is nothing to process.
+      processedRef.current = 0;
+      return;
+    } else if (wsMessages.length < prevProcessed) {
+      // useWebSocket COMPACTED the buffer (slice to the last 1500). The retained
+      // messages were already processed — replaying them would duplicate streamed
+      // steps or reset a live run on a retained *:started. Only the just-arrived
+      // tail message (the one that pushed past the cap) is new.
+      batch = wsMessages.slice(-1);
+      processedRef.current = wsMessages.length;
+    } else if (prevProcessed >= wsMessages.length) {
       processedRef.current = wsMessages.length;
       return;
+    } else {
+      batch = wsMessages.slice(prevProcessed);
+      processedRef.current = wsMessages.length;
     }
-    const batch = wsMessages.slice(start);
-    processedRef.current = wsMessages.length;
     setRuns((prev) => {
       let next = prev;
       for (const msg of batch) next = applyMessage(next, msg);
