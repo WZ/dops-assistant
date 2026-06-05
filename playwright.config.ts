@@ -33,11 +33,14 @@ export default defineConfig({
         url: "http://localhost:3000",
         timeout: 120_000,
         reuseExistingServer: false,
+        // Drive the Deep Investigation run deterministically (no LLM/MCP).
+        env: { DEEP_INVESTIGATION_E2E_STUB: "1" },
       }
     : {
         command: "CONFIG_PATH=dev/config.yaml npm run web",
         url: "http://localhost:3000",
         timeout: 120_000,
         reuseExistingServer: true,
+        env: { DEEP_INVESTIGATION_E2E_STUB: "1" },
       },
 });
