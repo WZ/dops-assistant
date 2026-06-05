@@ -11,6 +11,7 @@ import { formatTokens } from "../lib/formatTokens.js";
 import { formatTimestamp } from "../lib/formatTimestamp";
 import { MetricChart, type TimeSeriesData } from "./MetricChart";
 import { useStackContext } from "../contexts/StackContext";
+import { InlineRunRegion } from "./InlineRunRegion";
 import { safeGetItem, safeSetItem } from "../lib/utils";
 import { ConfirmActionDialog } from "./ConfirmActionDialog";
 import type { useWebSocket } from "../hooks/useWebSocket";
@@ -1127,6 +1128,10 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
           <span>{sessionTokens.messageCount} messages</span>
         </div>
       )}
+
+      {/* Deep Investigation run — a pinned projection of the run registry, sitting
+          between the thread and the composer (not a chat message). */}
+      <InlineRunRegion investigationId={activeInvestigationId} service={serviceContext} />
 
       {/* Input */}
       <div className={`p-3 border-t transition-colors ${isDeepMode ? "border-accent/15" : "border-border/30"}`}>

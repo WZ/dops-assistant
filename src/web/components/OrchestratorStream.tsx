@@ -60,7 +60,7 @@ function OperatorPauseCard({ pause, onDecision }: { pause: OrchestratorPause; on
       </div>
       <p className="text-[12.5px] text-foreground/80 leading-relaxed mb-2.5">
         The signal is ambiguous: every candidate cause tested was ruled out, and no discriminating evidence emerged.
-        Rather than guess, the orchestrator stops and asks you.
+        Rather than guess, the deep investigation stops and asks you.
       </p>
       <div className="flex flex-wrap gap-2">
         <button
@@ -126,7 +126,7 @@ export function OrchestratorStream({
   return (
     <>
       <AgentStream
-        label="Autonomous Orchestrator"
+        label="Deep Investigation"
         events={events}
         footer={footer}
         banner={outcomeBanner(outcome, disposition)}

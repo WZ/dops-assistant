@@ -3,13 +3,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup, waitFor, fireEvent, act, within } from "@testing-library/react";
 import { ChatPane } from "./ChatPane";
 import { StackProvider } from "../contexts/StackContext";
+import { OrchestratorRunProvider } from "../contexts/OrchestratorRunContext";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { ReactNode } from "react";
 
 function Wrapper({ children }: { children: ReactNode }) {
   return (
     <StackProvider activeStackId="test-stack">
-      <TooltipProvider>{children}</TooltipProvider>
+      <OrchestratorRunProvider wsMessages={[]} wsSend={vi.fn()} connectionStatus="connected">
+        <TooltipProvider>{children}</TooltipProvider>
+      </OrchestratorRunProvider>
     </StackProvider>
   );
 }
