@@ -22,6 +22,9 @@ export type ClientMessage =
   // "continue" resets strikes and resumes the move-loop; "escalate"/"wait" stop
   // it with that disposition. Matched to the paused run by investigationId.
   | { type: "orchestrator_decision"; investigationId: string; decision: "continue" | "escalate" | "wait" }
+  // Operator hit Stop on an in-flight Deep Investigation. Aborts the run (the
+  // loop stops at its next guard check → "aborted") and unblocks it if paused.
+  | { type: "orchestrator_stop"; investigationId: string }
   | { type: "rerun"; investigationId: string; template?: "quick" | "standard" | "full" }
   | { type: "new_session" }
   | { type: "discover" }

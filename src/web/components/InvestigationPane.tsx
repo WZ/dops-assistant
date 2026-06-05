@@ -13,7 +13,9 @@ import { PhaseStepper, type PhaseState } from "./PhaseStepper";
 import { EvidenceTimeline } from "./EvidenceTimeline";
 import { RcaReport } from "./RcaReport";
 import { DeepModeStream } from "./DeepModeStream";
-import { OrchestratorStream, type OrchestratorPause, type OrchestratorDisposition } from "./OrchestratorStream";
+import { OrchestratorStream } from "./OrchestratorStream";
+import { useOrchestratorRun, useOrchestratorRunActions } from "../contexts/OrchestratorRunContext";
+import { ScopedDeepMenu } from "./ScopedDeepMenu";
 import { InvestigationFeedback } from "./InvestigationFeedback";
 import { useStackContext } from "../contexts/StackContext";
 import { useUnreadInvestigations } from "../hooks/useUnreadInvestigations";
@@ -135,6 +137,10 @@ function ExportMenu({ report, service, reportRef, onSaveAsSkill }: ExportMenuPro
   );
 }
 
+/** Stable empty stream so a run-less render doesn't hand the stream components a
+ *  fresh `[]` each time (avoids needless AgentStream re-renders). */
+const EMPTY_STREAM: AgentStreamEvent[] = [];
+
 export function InvestigationPane({
   investigationId,
   wsMessages,
@@ -143,7 +149,6 @@ export function InvestigationPane({
   onRerun,
   onDeepMode,
   onOrchestrate,
-  onOrchestratorDecision,
   onWrongStack,
 }: {
   investigationId: string;
@@ -173,19 +178,26 @@ export function InvestigationPane({
   const [phases, setPhases] = useState<PhaseState[]>(DEFAULT_PHASES);
   const [evidence, setEvidence] = useState<Record<string, unknown>>({});
   const [report, setReport] = useState<unknown | null>(null);
-  const [deepModeRunning, setDeepModeRunning] = useState(false);
-  const [deepModeError, setDeepModeError] = useState<string | null>(null);
-  const [deepSteps, setDeepSteps] = useState<AgentStreamEvent[]>([]);
-  const [deepStats, setDeepStats] = useState<AgentStreamStats | undefined>(undefined);
-  const [orchRunning, setOrchRunning] = useState(false);
-  const [orchError, setOrchError] = useState<string | null>(null);
-  const [orchSteps, setOrchSteps] = useState<AgentStreamEvent[]>([]);
-  const [orchStats, setOrchStats] = useState<OrchestratorStreamStats | undefined>(undefined);
-  const [orchOutcome, setOrchOutcome] = useState<string | undefined>(undefined);
-  const [orchChain, setOrchChain] = useState<CausalChainLink[] | undefined>(undefined);
-  const [orchTraceSummary, setOrchTraceSummary] = useState<string | undefined>(undefined);
-  const [orchPause, setOrchPause] = useState<OrchestratorPause | null>(null);
-  const [orchDisposition, setOrchDisposition] = useState<OrchestratorDisposition | undefined>(undefined);
+  // Deep-mode + orchestrator run state now lives in the shared run registry
+  // (OrchestratorRunContext) so the Console inline surface and this pane read one
+  // source of truth. Derive the former local vars from the registry's tagged run.
+  const run = useOrchestratorRun(investigationId);
+  const { decide } = useOrchestratorRunActions();
+  const deepRun = run?.kind === "deep-mode" ? run : undefined;
+  const orchRun = run?.kind === "orchestrator" ? run : undefined;
+  const deepModeRunning = !!deepRun?.running;
+  const deepModeError = deepRun?.error ?? null;
+  const deepSteps = deepRun?.steps ?? EMPTY_STREAM;
+  const deepStats = deepRun?.deepStats;
+  const orchRunning = !!orchRun?.running;
+  const orchError = orchRun?.error ?? null;
+  const orchSteps = orchRun?.steps ?? EMPTY_STREAM;
+  const orchStats = orchRun?.orchStats;
+  const orchOutcome = orchRun?.outcome;
+  const orchChain = orchRun?.causalChain;
+  const orchTraceSummary = orchRun?.traceSummary;
+  const orchPause = orchRun?.pause ?? null;
+  const orchDisposition = orchRun?.disposition;
   const [service, setService] = useState("");
   const [query, setQuery] = useState("");
   /** Set when the REST fetch comes back 404. Visiting an investigation URL
@@ -492,57 +504,12 @@ export function InvestigationPane({
           });
         }
       }
-      // Deep mode (Step 3) — re-examination of ruled-out causes.
-      if (msg.type === "deep_mode:started" && msg.investigationId === investigationId) {
-        setDeepModeRunning(true);
-        setDeepModeError(null);
-        setDeepSteps([]);
-        setDeepStats(undefined);
-      }
-      if (msg.type === "deep_mode:step" && msg.investigationId === investigationId) {
-        setDeepSteps((prev) => [...prev, msg.event]);
-      }
+      // Deep-mode + orchestrator live run state is owned by the run registry
+      // (OrchestratorRunContext). This pane only still reacts to deep_mode:complete,
+      // to refresh the rendered report snapshot (report.deepMode is persisted and
+      // rendered here, independent of the live stream).
       if (msg.type === "deep_mode:complete" && msg.investigationId === investigationId) {
-        setDeepModeRunning(false);
         setReport(msg.report);
-        setDeepStats(msg.stats);
-      }
-      if (msg.type === "deep_mode:error" && msg.investigationId === investigationId) {
-        setDeepModeRunning(false);
-        if (typeof msg.message === "string") setDeepModeError(msg.message);
-      }
-      // Autonomous orchestrator (Approach D) — the unbounded move-loop.
-      if (msg.type === "orchestrator:started" && msg.investigationId === investigationId) {
-        setOrchRunning(true);
-        setOrchError(null);
-        setOrchSteps([]);
-        setOrchStats(undefined);
-        setOrchOutcome(undefined);
-        setOrchChain(undefined);
-        setOrchTraceSummary(undefined);
-        setOrchPause(null);
-        setOrchDisposition(undefined);
-      }
-      if (msg.type === "orchestrator:step" && msg.investigationId === investigationId) {
-        setOrchSteps((prev) => [...prev, msg.event]);
-        // A new move means the loop resumed past any pause — clear the card.
-        setOrchPause(null);
-      }
-      if (msg.type === "orchestrator:operator_pause" && msg.investigationId === investigationId) {
-        setOrchPause({ strikes: msg.strikes, hypothesesTried: msg.hypothesesTried });
-      }
-      if (msg.type === "orchestrator:complete" && msg.investigationId === investigationId) {
-        setOrchRunning(false);
-        setOrchPause(null);
-        setOrchStats(msg.stats);
-        setOrchOutcome(msg.outcome);
-        setOrchChain(msg.causalChain);
-        setOrchTraceSummary(msg.traceSummary);
-      }
-      if (msg.type === "orchestrator:error" && msg.investigationId === investigationId) {
-        setOrchRunning(false);
-        setOrchPause(null);
-        if (typeof msg.message === "string") setOrchError(msg.message);
       }
     }
   }, [wsMessages, investigationId]);
@@ -686,6 +653,15 @@ export function InvestigationPane({
               </DropdownMenuContent>
             </DropdownMenu>
           )}
+          {/* The new single "Investigate deeply" entry (scoped: Challenge + Full).
+              Self-gates on the same window flags as the legacy buttons below, which
+              coexist in PR-1 (D9); the IA cleanup that removes them is deferred. */}
+          {isComplete && (
+            <ScopedDeepMenu
+              investigationId={investigationId}
+              canChallenge={!!(report as RcaReportType | null)?.loopOutcome}
+            />
+          )}
           {/* Deep mode (Step 3): hidden from users until the Autonomous
               Orchestrator ships. Today's bounded deep mode only re-judges the
               existing RCA's hypotheses (resurrect a dismissed cause / weaken the
@@ -704,7 +680,7 @@ export function InvestigationPane({
               <Button
                 variant="outline"
                 disabled={isRunning || deepModeRunning}
-                onClick={() => { setDeepModeError(null); onDeepMode(investigationId); }}
+                onClick={() => onDeepMode(investigationId)}
                 title="Re-examine the ruled-out causes with deeper read-only queries"
                 className="h-9 px-4 text-[12px] font-mono border-primary/30 text-primary/70 hover:bg-primary/8 hover:text-primary rounded-lg gap-1.5"
               >
@@ -723,7 +699,7 @@ export function InvestigationPane({
               <Button
                 variant="outline"
                 disabled={isRunning || orchRunning}
-                onClick={() => { setOrchError(null); onOrchestrate(investigationId); }}
+                onClick={() => onOrchestrate(investigationId)}
                 title="Run the autonomous orchestrator — an unbounded read-only investigation for the real cause"
                 className="h-9 px-4 text-[12px] font-mono border-accent/30 text-accent/80 hover:bg-accent/8 hover:text-accent rounded-lg gap-1.5"
               >
@@ -844,11 +820,7 @@ export function InvestigationPane({
               running={orchRunning}
               pause={orchPause}
               disposition={orchDisposition}
-              onDecision={(decision) => {
-                if (decision === "escalate" || decision === "wait") setOrchDisposition(decision);
-                setOrchPause(null);
-                onOrchestratorDecision?.(investigationId, decision);
-              }}
+              onDecision={(decision) => decide(investigationId, decision)}
             />
 
             {investigationStatus === "failed" && !report ? (

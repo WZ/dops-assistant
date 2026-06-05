@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.5.0] - 2026-06-05
+
+### Added
+- **Deep Investigation in the Console (gated off, PR-1 of a sequence).** The autonomous root-cause hunt now streams as a live, interruptible run inside the Console instead of a static card below the report. Pick a depth from a single **Investigate deeply** menu — *Challenge this RCA* (a fast re-judge of ruled-out causes) or *Full deep investigation* (the autonomous hunt) — and watch it stream, pause for your call, and conclude. A heavy Full run routes through a cancellable confirm-dispatch countdown so a stray click can't kick off a multi-minute run.
+- **Operator notifications.** A toast surfaces when a run pauses (needs a decision) or finishes, and clicks back to the run — runs are multi-minute and nobody watches the whole thing.
+- **A first-class Stop control** for an in-flight Deep Investigation (server-side abort), and an explicit "this run ends if you reload" notice while a Full run is ephemeral.
+
+### Changed
+- Deep-investigation run state now lives in one shared run registry, so the Console surface and the investigation view always agree (single source of truth). Renamed the "Autonomous Orchestrator" surface to "Deep Investigation" in the UI.
+
+
 ## [0.4.4.2] - 2026-05-27
 
 ### Fixed

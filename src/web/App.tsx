@@ -26,6 +26,8 @@ import type { PatternsQuery } from "./lib/patterns-query";
 import type { EventsQuery } from "./lib/events-query";
 import { StackSwitcher } from "./components/StackSwitcher";
 import { StackProvider } from "./contexts/StackContext";
+import { OrchestratorRunProvider } from "./contexts/OrchestratorRunContext";
+import { DeepRunToaster } from "./components/DeepRunToaster";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { useStacks } from "./hooks/useStacks";
 import { useSetupStage } from "./hooks/useSetupStage";
@@ -473,6 +475,7 @@ export function App() {
   return (
     <StackProvider activeStackId={activeStackId}>
     <TooltipProvider delayDuration={200}>
+    <OrchestratorRunProvider wsMessages={ws.messages} wsSend={ws.send} connectionStatus={ws.status}>
     <div className="h-screen flex flex-col bg-background text-foreground noise relative overflow-hidden">
     <DemoBanner />
     <div className="flex-1 flex min-h-0">
@@ -736,6 +739,8 @@ export function App() {
       </div>
     </div>
     </div>
+    <DeepRunToaster onView={(id) => setLeftPane({ type: "investigation", id, stackId: activeStackId })} />
+    </OrchestratorRunProvider>
     </TooltipProvider>
     </StackProvider>
   );

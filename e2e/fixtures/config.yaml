@@ -12,6 +12,11 @@ discovery:
 
 agent:
   maxIterations: 5
+  # Surface the Deep Investigation entry for the e2e flow. The run itself is
+  # driven by the deterministic stub (DEEP_INVESTIGATION_E2E_STUB=1), not a real
+  # LLM/MCP engine, so no provider is required.
+  orchestratorEnabled: true
+  deepModeEnabled: true
 
 memory:
   storage: memory
