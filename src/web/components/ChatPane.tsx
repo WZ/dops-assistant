@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Search, SearchCode, MessageSquare, Plus, FileText, ChevronRight, ChevronDown, Send, Trash2, X, ArrowRight, Zap } from "lucide-react";
 import { renderInline } from "../lib/renderInline";
 import { renderMarkdown } from "../lib/renderMarkdown";
+import { confidenceFraction } from "../../lib/confidence.js";
 import { formatTokens } from "../lib/formatTokens.js";
 import { formatTimestamp } from "../lib/formatTimestamp";
 import { MetricChart, type TimeSeriesData } from "./MetricChart";
@@ -729,7 +730,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                         <Badge variant={msg.report.severity === "critical" ? "destructive" : "secondary"} className="text-[8px] uppercase tracking-[0.1em]">
                           {msg.report.severity}
                         </Badge>
-                        <span className="text-[8px] font-mono text-muted-foreground/70">{msg.report.confidence}{msg.report.confidenceScore != null ? ` (${msg.report.confidenceScore.toFixed(2)})` : ""}</span>
+                        <span className="text-[8px] font-mono text-muted-foreground/70">{msg.report.confidence}{msg.report.confidenceScore != null ? ` (${confidenceFraction(msg.report.confidenceScore).toFixed(2)})` : ""}</span>
                       </div>
                     </div>
                     {msg.report.summary && (

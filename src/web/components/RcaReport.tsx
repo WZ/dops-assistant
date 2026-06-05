@@ -2,6 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { type ReactNode } from "react";
 import { FileText } from "lucide-react";
 import { renderInline } from "../lib/renderInline";
+import { confidenceFraction } from "../../lib/confidence.js";
 
 interface RcaReportData {
   rootCause: string;
@@ -98,6 +99,10 @@ function Section({ label, count, children }: { label: string; count?: number; ch
 
 export function RcaReport({ report, hideOldDashboardLinks }: { report: RcaReportData; hideOldDashboardLinks?: boolean }) {
 
+  // Normalize to a 0–1 fraction for display/styling — stored scores may be 0–1
+  // or 0–100 depending on the synthesis completion (see lib/confidence).
+  const confFrac = report.confidenceScore != null ? confidenceFraction(report.confidenceScore) : null;
+
   const severityGlow =
     report.severity === "critical" ? "glow-red border-destructive/30" :
     report.severity === "high" ? "glow-coral border-accent/25" :
@@ -118,7 +123,7 @@ export function RcaReport({ report, hideOldDashboardLinks }: { report: RcaReport
               {report.severity}
             </Badge>
             <span className="text-[9px] font-mono text-muted-foreground">
-              {report.confidence}{report.confidenceScore != null ? ` (${report.confidenceScore.toFixed(2)})` : ""} confidence
+              {report.confidence}{confFrac != null ? ` (${confFrac.toFixed(2)})` : ""} confidence
             </span>
           </div>
         </div>
@@ -142,7 +147,7 @@ export function RcaReport({ report, hideOldDashboardLinks }: { report: RcaReport
         </div>
       )}
       {/* Low confidence banner */}
-      {report.confidenceScore != null && report.confidenceScore > 0 && report.confidenceScore < 0.5 && (
+      {confFrac != null && confFrac > 0 && confFrac < 0.5 && (
         <div className="px-5 py-2.5 bg-warning/8 border-b border-warning/15 flex items-center gap-2">
           <span className="text-warning text-sm">⚠</span>
           <span className="text-[11px] font-body text-warning/80">Low confidence — insufficient data to determine root cause</span>
@@ -155,7 +160,7 @@ export function RcaReport({ report, hideOldDashboardLinks }: { report: RcaReport
         <div className="space-y-4">
           <div>
             <SectionLabel color="text-primary">Root Cause</SectionLabel>
-            <p className={`text-[13px] font-body leading-relaxed ${report.confidenceScore != null && report.confidenceScore < 0.5 ? "text-foreground/50 italic" : "text-foreground/90"}`}>{renderInline(report.rootCause)}</p>
+            <p className={`text-[13px] font-body leading-relaxed ${confFrac != null && confFrac < 0.5 ? "text-foreground/50 italic" : "text-foreground/90"}`}>{renderInline(report.rootCause)}</p>
           </div>
 
           <div>

@@ -14,6 +14,7 @@
 import { ulid } from "ulid";
 import { createLogger } from "../logger.js";
 import type { Database } from "./db.js";
+import { confidencePercent } from "../lib/confidence.js";
 import type { IInvestigationAgent } from "../types/agent-interfaces.js";
 import type { RcaReport } from "../types/rca-types.js";
 import type { ServiceConfig, InvestigationTemplate } from "../config/schema.js";
@@ -321,7 +322,7 @@ export class InvestigationRunner {
         total_output_tokens: totalTokens.outputTokens,
         total_duration_ms: totalDurationMs,
       });
-      const confidencePct = report.confidenceScore != null ? Math.round(report.confidenceScore * 100) : null;
+      const confidencePct = report.confidenceScore != null ? confidencePercent(report.confidenceScore) : null;
       eventLog.append({
         kind: "investigation_completed",
         severity: "success",
