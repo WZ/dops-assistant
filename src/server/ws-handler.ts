@@ -7,7 +7,7 @@ import type { IChatAgent, IInvestigationAgent, IDiscoverAgent, DiscoveryResult }
 import type { IntentRouter } from "../agents/intent.js";
 import { resolveServiceFromHistory } from "../agents/intent.js";
 import type { ServiceConfig, DiscoveryConfig, Config } from "../config/schema.js";
-import type { ClientMessage, ServerMessage, ChartSeries } from "../types/ws-types.js";
+import type { ClientMessage, ServerMessage, ChartSeries, AgentStreamEvent } from "../types/ws-types.js";
 import { DEFAULT_STACK_SLUG } from "../types/stack-types.js";
 import { inferDependencyGraph } from "./dependency-graph.js";
 import { assembleCausalChain, traceSummary } from "../agents/orchestrator-stream.js";
@@ -583,18 +583,25 @@ async function handleOrchestratorInvestigate(
   neighbors.delete(investigation.service);
   const dependencies = [...neighbors];
 
-  const agents = await getOrCreateAgents(stackId, ctx, deps.config, deps.db);
   const abort = new AbortController();
   activeOrchestrations.set(msg.investigationId, abort);
   try {
-    await runOrchestratorStreamed(
-      msg.investigationId,
-      focus,
-      { timeRange, ctx: { incidentTime: timeRange?.from }, dependencies, incidentService: investigation.service, signal: abort.signal },
-      agents.orchestrate,
-      send,
-      pendingPauses,
-    );
+    // E2E stub: drive a deterministic scripted run (started → steps → pause →
+    // decision → complete) without the real LLM/MCP engine, so a browser test can
+    // exercise the full Console flow. Gated by an env flag; off in every real deploy.
+    if (process.env["DEEP_INVESTIGATION_E2E_STUB"] === "1") {
+      await streamStubbedOrchestrator(msg.investigationId, send, pendingPauses, abort.signal);
+    } else {
+      const agents = await getOrCreateAgents(stackId, ctx, deps.config, deps.db);
+      await runOrchestratorStreamed(
+        msg.investigationId,
+        focus,
+        { timeRange, ctx: { incidentTime: timeRange?.from }, dependencies, incidentService: investigation.service, signal: abort.signal },
+        agents.orchestrate,
+        send,
+        pendingPauses,
+      );
+    }
   } finally {
     activeOrchestrations.delete(msg.investigationId);
   }
@@ -671,6 +678,64 @@ async function runOrchestratorStreamed(
       pendingPauses.delete(investigationId);
     }
   }
+}
+
+/**
+ * E2E test stub for the orchestrator: emits a fixed, deterministic move sequence
+ * (started → ruled-out → follow → operator_pause → [await decision] → confirm →
+ * complete) using the SAME WebSocket protocol + pause mechanism as the real run,
+ * but with no LLM/MCP. Exported for unit testing; only reached when
+ * DEEP_INVESTIGATION_E2E_STUB=1. `stepDelayMs` is the pause between streamed steps
+ * (kept short for tests).
+ */
+export async function streamStubbedOrchestrator(
+  investigationId: string,
+  send: (m: ServerMessage) => void,
+  pendingPauses: Map<string, PendingPause>,
+  signal: AbortSignal,
+  stepDelayMs = 300,
+): Promise<void> {
+  const stats = { moves: 4, toolCalls: 1, subagents: 0, tokensSpent: 0, strikes: 3, depth: 1, durationMs: 1200 };
+  const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+  const complete = (outcome: string, extra: Partial<{ causalChain: ReturnType<typeof assembleCausalChain>; traceSummary: string }> = {}): void =>
+    send({ type: "orchestrator:complete", investigationId, outcome, stats, ...extra });
+  let seq = 0;
+  const step = (verb: string, target: string, status: AgentStreamEvent["status"]): void =>
+    send({ type: "orchestrator:step", investigationId, event: { seq: seq++, verb, target, status } });
+
+  send({ type: "orchestrator:started", investigationId });
+  await delay(stepDelayMs);
+  if (signal.aborted) return complete("aborted", { traceSummary: "stubbed · aborted" });
+  step("ruled out", "memory exhaustion", "rejected");
+  await delay(stepDelayMs);
+  step("followed the trail to", "impala-statestore", "done");
+  await delay(stepDelayMs);
+  if (signal.aborted) return complete("aborted", { traceSummary: "stubbed · aborted" });
+
+  // Pause for an operator decision — same registry the real run uses.
+  send({ type: "orchestrator:operator_pause", investigationId, strikes: 3, hypothesesTried: ["memory exhaustion", "scaled to zero", "node pressure"] });
+  const decision = await new Promise<"continue" | "escalate" | "wait">((resolve) => {
+    const timer = setTimeout(() => {
+      pendingPauses.delete(investigationId);
+      resolve("escalate");
+    }, OPERATOR_PAUSE_TIMEOUT_MS);
+    pendingPauses.set(investigationId, { resolve, timer });
+  });
+  if (signal.aborted) return complete("aborted", { traceSummary: "stubbed · aborted" });
+  if (decision !== "continue") {
+    return complete("operator-pause", { traceSummary: "stubbed · 4 moves · paused" });
+  }
+
+  step("evidence backs", "statestore connection pool starvation", "strong");
+  await delay(stepDelayMs);
+  complete("confirmed", {
+    causalChain: [
+      { label: "impala", kind: "incident" },
+      { label: "impala-statestore", kind: "followed", evidence: "gRPC handshake latency climbing" },
+      { label: "root cause: statestore connection pool starvation", kind: "root-cause", evidence: "pool_used = 100% for 6m" },
+    ],
+    traceSummary: "4 moves · 1 query · confirmed at depth 1",
+  });
 }
 
 /**
@@ -1043,6 +1108,20 @@ export async function handleClientMessage(
       clearTimeout(pause.timer);
       pendingPauses.delete(msg.investigationId);
       pause.resolve(msg.decision);
+    }
+    return;
+  }
+
+  // Operator hit Stop. Abort the run; the loop returns "aborted" at its next
+  // guard check. If it's currently paused (blocked awaiting a decision), resolve
+  // the pause with "continue" so it unblocks and immediately hits the abort guard.
+  if (msg.type === "orchestrator_stop") {
+    activeOrchestrations.get(msg.investigationId)?.abort();
+    const pause = pendingPauses.get(msg.investigationId);
+    if (pause) {
+      clearTimeout(pause.timer);
+      pendingPauses.delete(msg.investigationId);
+      pause.resolve("continue");
     }
     return;
   }
