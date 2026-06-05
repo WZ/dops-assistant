@@ -286,6 +286,14 @@ describe("classifyWsMessage", () => {
     expect(classifyWsMessage("deep_investigate")).toBe("investigation");
   });
 
+  it("classifies deep_mode_investigate as investigation", () => {
+    expect(classifyWsMessage("deep_mode_investigate")).toBe("investigation");
+  });
+
+  it("classifies orchestrator_investigate as investigation", () => {
+    expect(classifyWsMessage("orchestrator_investigate")).toBe("investigation");
+  });
+
   it("classifies other message types as general", () => {
     expect(classifyWsMessage("new_session")).toBe("general");
     expect(classifyWsMessage("discover")).toBe("general");

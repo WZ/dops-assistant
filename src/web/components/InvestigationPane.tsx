@@ -8,17 +8,18 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ArrowLeft, FilePlus, RotateCw, ChevronDown, Download, Link2, FileText, Image as ImageIcon, ClipboardCopy, Check, Telescope } from "lucide-react";
+import { ArrowLeft, FilePlus, RotateCw, ChevronDown, Download, Link2, FileText, Image as ImageIcon, ClipboardCopy, Check, Telescope, Compass } from "lucide-react";
 import { PhaseStepper, type PhaseState } from "./PhaseStepper";
 import { EvidenceTimeline } from "./EvidenceTimeline";
 import { RcaReport } from "./RcaReport";
 import { DeepModeStream } from "./DeepModeStream";
+import { OrchestratorStream, type OrchestratorPause, type OrchestratorDisposition } from "./OrchestratorStream";
 import { InvestigationFeedback } from "./InvestigationFeedback";
 import { useStackContext } from "../contexts/StackContext";
 import { useUnreadInvestigations } from "../hooks/useUnreadInvestigations";
 import type { TimelineEvent } from "./ActivityTimeline";
 import type { TimeSeriesData } from "./MetricChart";
-import type { ServerMessage, AgentStreamEvent, AgentStreamStats } from "../../types/ws-types.js";
+import type { ServerMessage, AgentStreamEvent, AgentStreamStats, OrchestratorStreamStats, CausalChainLink } from "../../types/ws-types.js";
 import type { RcaReport as RcaReportType } from "../../types/rca-types.js";
 import { formatTokens } from "../lib/formatTokens.js";
 import { buildPhaseActions } from "../lib/grafana-links.js";
@@ -141,6 +142,8 @@ export function InvestigationPane({
   onNavigateSkills,
   onRerun,
   onDeepMode,
+  onOrchestrate,
+  onOrchestratorDecision,
   onWrongStack,
 }: {
   investigationId: string;
@@ -151,6 +154,13 @@ export function InvestigationPane({
   /** Trigger deep mode (Step 3): skeptical re-examination of the loop's
    *  ruled-out causes. Parent wires it to the deep_mode_investigate WS message. */
   onDeepMode?: (investigationId: string) => void;
+  /** Trigger the autonomous orchestrator (Approach D): the unbounded read-only
+   *  move-loop that investigates for the real cause. Parent wires it to the
+   *  orchestrator_investigate WS message. */
+  onOrchestrate?: (investigationId: string) => void;
+  /** Send the operator's strike-limit decision (increment 5) back over the WS.
+   *  Parent wires it to the orchestrator_decision message. */
+  onOrchestratorDecision?: (investigationId: string, decision: "continue" | "escalate" | "wait") => void;
   /** Called when the investigation 404s in the active stack but the locate
    *  endpoint reports it lives in a different stack. The parent should
    *  switchStack + navigate to the correct stack-scoped URL — keeps
@@ -167,6 +177,15 @@ export function InvestigationPane({
   const [deepModeError, setDeepModeError] = useState<string | null>(null);
   const [deepSteps, setDeepSteps] = useState<AgentStreamEvent[]>([]);
   const [deepStats, setDeepStats] = useState<AgentStreamStats | undefined>(undefined);
+  const [orchRunning, setOrchRunning] = useState(false);
+  const [orchError, setOrchError] = useState<string | null>(null);
+  const [orchSteps, setOrchSteps] = useState<AgentStreamEvent[]>([]);
+  const [orchStats, setOrchStats] = useState<OrchestratorStreamStats | undefined>(undefined);
+  const [orchOutcome, setOrchOutcome] = useState<string | undefined>(undefined);
+  const [orchChain, setOrchChain] = useState<CausalChainLink[] | undefined>(undefined);
+  const [orchTraceSummary, setOrchTraceSummary] = useState<string | undefined>(undefined);
+  const [orchPause, setOrchPause] = useState<OrchestratorPause | null>(null);
+  const [orchDisposition, setOrchDisposition] = useState<OrchestratorDisposition | undefined>(undefined);
   const [service, setService] = useState("");
   const [query, setQuery] = useState("");
   /** Set when the REST fetch comes back 404. Visiting an investigation URL
@@ -492,6 +511,39 @@ export function InvestigationPane({
         setDeepModeRunning(false);
         if (typeof msg.message === "string") setDeepModeError(msg.message);
       }
+      // Autonomous orchestrator (Approach D) — the unbounded move-loop.
+      if (msg.type === "orchestrator:started" && msg.investigationId === investigationId) {
+        setOrchRunning(true);
+        setOrchError(null);
+        setOrchSteps([]);
+        setOrchStats(undefined);
+        setOrchOutcome(undefined);
+        setOrchChain(undefined);
+        setOrchTraceSummary(undefined);
+        setOrchPause(null);
+        setOrchDisposition(undefined);
+      }
+      if (msg.type === "orchestrator:step" && msg.investigationId === investigationId) {
+        setOrchSteps((prev) => [...prev, msg.event]);
+        // A new move means the loop resumed past any pause — clear the card.
+        setOrchPause(null);
+      }
+      if (msg.type === "orchestrator:operator_pause" && msg.investigationId === investigationId) {
+        setOrchPause({ strikes: msg.strikes, hypothesesTried: msg.hypothesesTried });
+      }
+      if (msg.type === "orchestrator:complete" && msg.investigationId === investigationId) {
+        setOrchRunning(false);
+        setOrchPause(null);
+        setOrchStats(msg.stats);
+        setOrchOutcome(msg.outcome);
+        setOrchChain(msg.causalChain);
+        setOrchTraceSummary(msg.traceSummary);
+      }
+      if (msg.type === "orchestrator:error" && msg.investigationId === investigationId) {
+        setOrchRunning(false);
+        setOrchPause(null);
+        if (typeof msg.message === "string") setOrchError(msg.message);
+      }
     }
   }, [wsMessages, investigationId]);
 
@@ -661,10 +713,32 @@ export function InvestigationPane({
               </Button>
             );
           })()}
+          {/* Autonomous orchestrator (Approach D): hidden until validated. Gated
+              behind config.agent.orchestratorEnabled (server injects
+              window.__ORCHESTRATOR_ENABLED__). Unlike deep mode it investigates
+              for the real cause, so it doesn't require a prior loop outcome. */}
+          {isComplete && onOrchestrate && (() => {
+            if (typeof window !== "undefined" && !window.__ORCHESTRATOR_ENABLED__) return null;
+            return (
+              <Button
+                variant="outline"
+                disabled={isRunning || orchRunning}
+                onClick={() => { setOrchError(null); onOrchestrate(investigationId); }}
+                title="Run the autonomous orchestrator — an unbounded read-only investigation for the real cause"
+                className="h-9 px-4 text-[12px] font-mono border-accent/30 text-accent/80 hover:bg-accent/8 hover:text-accent rounded-lg gap-1.5"
+              >
+                <Compass size={12} className="!size-auto" />
+                {orchRunning ? "Investigating…" : "Investigate autonomously"}
+              </Button>
+            );
+          })()}
         </div>
       </div>
       {deepModeError && (
         <div className="px-1 pb-2 text-[11px] font-mono text-destructive/80">{deepModeError}</div>
+      )}
+      {orchError && (
+        <div className="px-1 pb-2 text-[11px] font-mono text-destructive/80">{orchError}</div>
       )}
 
       {/* Progress bar — visible while running */}
@@ -761,6 +835,21 @@ export function InvestigationPane({
 
             {/* Deep mode (Step 3) — dedicated structured agent stream (live + final). */}
             <DeepModeStream events={deepSteps} stats={deepStats} running={deepModeRunning} />
+            <OrchestratorStream
+              events={orchSteps}
+              stats={orchStats}
+              outcome={orchOutcome}
+              causalChain={orchChain}
+              traceSummary={orchTraceSummary}
+              running={orchRunning}
+              pause={orchPause}
+              disposition={orchDisposition}
+              onDecision={(decision) => {
+                if (decision === "escalate" || decision === "wait") setOrchDisposition(decision);
+                setOrchPause(null);
+                onOrchestratorDecision?.(investigationId, decision);
+              }}
+            />
 
             {investigationStatus === "failed" && !report ? (
               <section className="rounded-lg border border-destructive/30 bg-destructive/5 px-5 py-4 animate-fade-up">

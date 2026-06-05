@@ -85,7 +85,7 @@ export const ParallelEvidenceSchema = z.object({
 
 // ── Hypothesis loop (Step 2) — additive, optional. Populated only when the
 //    synthesis loop runs (N>1); the default single-pass path leaves these unset.
-const HypothesisPredictionSchema = z.discriminatedUnion("kind", [
+export const HypothesisPredictionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("metric-threshold"), metric: z.string(), op: z.enum([">", "<", ">=", "<="]), value: z.number() }),
   z.object({ kind: z.literal("log-pattern"), pattern: z.string(), present: z.boolean().optional() }),
   z.object({ kind: z.literal("infra-status"), resource: z.string().optional(), status: z.string() }),

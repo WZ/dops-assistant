@@ -8,6 +8,9 @@ declare global {
      *  Gates the "Deep investigate" button — hidden from users until the
      *  Autonomous Orchestrator ships. */
     __DEEP_MODE_ENABLED__?: boolean;
+    /** Server-injected (index.ts) when config.agent.orchestratorEnabled is true.
+     *  Gates the "Investigate autonomously" trigger — hidden until validated. */
+    __ORCHESTRATOR_ENABLED__?: boolean;
   }
 }
 

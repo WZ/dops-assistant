@@ -46,6 +46,26 @@ import type { ServiceRegistryStore } from "../services/registry.js";
 import type { LanguageModel } from "ai";
 import type { LlmRetryConfig } from "../agents/shared/llm-retry.js";
 import { LlmUnavailableError } from "../agents/shared/llm-errors.js";
+import { runAutonomousOrchestrator } from "../agents/orchestrator-llm.js";
+import { traceEntryToStreamEvent } from "../agents/orchestrator-stream.js";
+import type { OrchestratorGuards, OrchestratorResult, OrchestratorState } from "../agents/orchestrator.js";
+import type { CorroborationContext, NormalizedObservation } from "../workflows/steps/corroboration.js";
+
+/** Conservative default safety harness for the autonomous orchestrator. The
+ *  budget guard is the cost backstop; defaults stay low because an autonomous
+ *  run is 3-10x a normal investigation. Config-tunable knobs come later. */
+export const DEFAULT_ORCHESTRATOR_GUARDS: OrchestratorGuards = {
+  maxTokens: 150_000,
+  maxDepth: 3,
+  maxSubagents: 3,
+  maxStrikes: 3,
+  maxToolCalls: 40,
+  wallClockMs: 10 * 60_000,
+  // Per-op watchdog: a single gather/subagent gets ~2.5 min before it's
+  // abandoned. A quick subagent investigation normally finishes well under
+  // that; the bound just stops one hung MCP/LLM call from stranding the loop.
+  opTimeoutMs: 150_000,
+};
 
 type MastraChatAgent = ReturnType<typeof createChatAgent>;
 type MastraStreamInput = Parameters<MastraChatAgent["stream"]>[0];
@@ -706,5 +726,77 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       })
     : undefined;
 
-  return { chatAgent, investigationAgent, discoverAgent, deepModeReexamine };
+  /**
+   * Autonomous orchestrator (Approach D): run the unbounded read-only move-loop
+   * for `focus`, reusing the investigation providers + model wired above. The
+   * core's TraceEntry stream is mapped to AgentStreamEvent for the UI. Read-only
+   * throughout (gather forces read-only tools); guarded by the safety harness.
+   */
+  async function orchestrate(
+    focus: string,
+    opts?: {
+      timeRange?: { from: string; to: string };
+      ctx?: CorroborationContext;
+      onStep?: (ev: Omit<AgentStreamEvent, "seq">) => void;
+      guards?: Partial<OrchestratorGuards>;
+      /** Incident service's dependency neighbors (resolved by the caller). */
+      dependencies?: string[];
+      /** The incident service itself (for the cross-service confirm guard). */
+      incidentService?: string;
+      /** Interactive operator-pause hook (increment 5). Wired by the WS layer to
+       *  the pause card; absent → the strike limit stops directly. */
+      onOperatorPause?: (state: OrchestratorState) => Promise<"continue" | "escalate" | "wait">;
+      /** Cooperative abort — the WS layer aborts on operator disconnect. */
+      signal?: AbortSignal;
+    },
+  ): Promise<OrchestratorResult> {
+    const guards: OrchestratorGuards = { ...DEFAULT_ORCHESTRATOR_GUARDS, ...opts?.guards };
+    const onStep = opts?.onStep;
+    // Depth-1 subagent: a scoped, read-only sub-investigation on a related
+    // service. Its conclusion folds back as one observation the orchestrator can
+    // test against. Read-only (readOnlyTools=true); failures degrade to no
+    // findings so a bad subagent never aborts the parent run. Subagent token
+    // usage is bounded by maxSubagents + wall-clock (not the token budget) in v1.
+    const spawnSubagent = async (
+      args: { service: string; question: string },
+    ): Promise<NormalizedObservation[]> => {
+      const svc: ServiceConfig =
+        config.services.find((s) => s.name === args.service) ?? { name: args.service, metrics: [], logLabels: {}, probeRules: [] };
+      try {
+        const report = await investigationAgent.investigate(
+          // "quick" (metrics-only) keeps a subagent ~1 min instead of the 2-3 min
+          // a "standard" run costs — an autonomous run can spawn several, so the
+          // cheaper template matters. Revisit if subagents miss log-based causes.
+          svc, null, undefined, undefined, args.question,
+          undefined, undefined, undefined, undefined, "quick", true,
+        );
+        const rc =
+          report.rootCause && !/^under investigation$|^unable to determine/i.test(report.rootCause.trim())
+            ? report.rootCause
+            : "";
+        const text = [rc, report.summary].filter(Boolean).join(" — ").slice(0, 300);
+        return text ? [{ phase: "infra", subject: args.service, text: `subagent: ${text}` }] : [];
+      } catch {
+        return [];
+      }
+    };
+    return runAutonomousOrchestrator({
+      focus,
+      model: investigationModel,
+      providers,
+      guards,
+      timeRange: opts?.timeRange,
+      ctx: opts?.ctx,
+      llmRetry: config.llm.retry,
+      llmCallMs: config.timeouts?.llmCallMs,
+      onStep: onStep ? (entry) => onStep(traceEntryToStreamEvent(entry)) : undefined,
+      spawnSubagent,
+      dependencies: opts?.dependencies,
+      incidentService: opts?.incidentService,
+      onOperatorPause: opts?.onOperatorPause,
+      signal: opts?.signal,
+    });
+  }
+
+  return { chatAgent, investigationAgent, discoverAgent, deepModeReexamine, orchestrate };
 }

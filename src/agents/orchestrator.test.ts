@@ -1,0 +1,545 @@
+import { describe, it, expect } from "vitest";
+import { runOrchestrator, MAX_OPERATOR_CONTINUES } from "./orchestrator.js";
+import type { OrchestratorMove, OrchestratorDeps, OrchestratorState } from "./orchestrator.js";
+import type { RankedHypothesis } from "../types/rca-types.js";
+import type { NormalizedObservation, Verdict } from "../workflows/steps/corroboration.js";
+
+const h = (name: string): RankedHypothesis => ({
+  hypothesis: name,
+  prediction: { kind: "metric-threshold", metric: "mem", op: ">", value: 90 },
+});
+
+const obs: NormalizedObservation = { phase: "metrics", subject: "mem", value: 99 };
+
+const generousGuards = {
+  maxTokens: 1e9,
+  maxDepth: 3,
+  maxSubagents: 3,
+  maxStrikes: 3,
+  maxToolCalls: 100,
+  wallClockMs: 1e9,
+};
+
+/** Scripted decide-fn: replay a fixed move sequence, then signal exhausted. */
+function scripted(moves: Array<OrchestratorMove | null>): OrchestratorDeps["decideMove"] {
+  let i = 0;
+  return async () => (i < moves.length ? moves[i++] : null);
+}
+
+/** Build deps with sensible test defaults; override per case. */
+function makeDeps(over: Partial<OrchestratorDeps> & Pick<OrchestratorDeps, "decideMove">): OrchestratorDeps {
+  return {
+    gatherEvidence: async () => [obs],
+    evaluate: () => "satisfied",
+    guards: generousGuards,
+    ...over,
+  };
+}
+
+describe("runOrchestrator — happy path", () => {
+  it("hypothesize → query → test(satisfied) → conclude → confirmed", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("memory exhaustion") },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          { type: "conclude", leading: 0, confidence: 0.9, rationale: "mem > 90" },
+        ]),
+        evaluate: () => "satisfied",
+      }),
+    );
+    expect(result.outcome).toBe("confirmed");
+    expect(result.confirmed?.hypothesis).toBe("memory exhaustion");
+    expect(result.hypotheses[0].standing).toBe("confirmed");
+    expect(result.stats.toolCalls).toBe(1);
+    expect(result.evidence).toHaveLength(1);
+  });
+});
+
+describe("runOrchestrator — DECISION 1: hybrid stop never trusts self-confidence", () => {
+  it("rejects conclude when the leading hypothesis was never keystone-confirmed", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        // Propose conclude at confidence 0.99 on an UNTESTED hypothesis, then stop.
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("a guess") },
+          { type: "conclude", leading: 0, confidence: 0.99, rationale: "I'm sure" },
+          null,
+        ]),
+      }),
+    );
+    expect(result.outcome).toBe("exhausted");
+    expect(result.confirmed).toBeUndefined();
+    expect(result.trace.some((t) => t.move === "conclude" && t.detail.includes("rejected"))).toBe(true);
+  });
+
+  it("rejects conclude when the keystone verdict is 'contradicted' despite high confidence", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("wrong cause") },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          { type: "conclude", leading: 0, confidence: 0.95, rationale: "looks right" },
+          null,
+        ]),
+        evaluate: () => "contradicted",
+      }),
+    );
+    expect(result.outcome).toBe("exhausted");
+    expect(result.confirmed).toBeUndefined();
+    expect(result.hypotheses[0].standing).toBe("ruled-out");
+  });
+});
+
+describe("runOrchestrator — DECISION 2: safety harness", () => {
+  it("strikes limit → operator-pause (not a silent stop)", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        guards: { ...generousGuards, maxStrikes: 3 },
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("c1") },
+          { type: "test", target: 0 },
+          { type: "hypothesize", hypothesis: h("c2") },
+          { type: "test", target: 1 },
+          { type: "hypothesize", hypothesis: h("c3") },
+          { type: "test", target: 2 },
+        ]),
+        evaluate: () => "absent", // every test fails → strikes accumulate
+      }),
+    );
+    expect(result.outcome).toBe("operator-pause");
+    expect(result.stats.strikes).toBe(3);
+  });
+
+  it("a satisfied test resets the strike counter", async () => {
+    const verdicts: Verdict[] = ["absent", "absent", "satisfied"];
+    let i = 0;
+    const result = await runOrchestrator(
+      makeDeps({
+        guards: { ...generousGuards, maxStrikes: 3 },
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("c1") },
+          { type: "test", target: 0 },
+          { type: "hypothesize", hypothesis: h("c2") },
+          { type: "test", target: 1 },
+          { type: "hypothesize", hypothesis: h("c3") },
+          { type: "test", target: 2 },
+          { type: "conclude", leading: 2, confidence: 0.8, rationale: "" },
+        ]),
+        evaluate: () => verdicts[i++] ?? "absent",
+      }),
+    );
+    // 2 strikes then a satisfied (resets to 0) then confirmed conclude.
+    expect(result.outcome).toBe("confirmed");
+    expect(result.stats.strikes).toBe(0);
+  });
+
+  it("token budget exhaustion → budget-exhausted", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        guards: { ...generousGuards, maxTokens: 10 },
+        estimateTokens: () => 4,
+        decideMove: async () => ({ type: "hypothesize", hypothesis: h("loop") }),
+      }),
+    );
+    expect(result.outcome).toBe("budget-exhausted");
+    expect(result.stats.tokensSpent).toBeGreaterThanOrEqual(10);
+  });
+
+  it("tool-call cap → tool-cap", async () => {
+    let first = true;
+    const result = await runOrchestrator(
+      makeDeps({
+        guards: { ...generousGuards, maxToolCalls: 2 },
+        decideMove: async (): Promise<OrchestratorMove> => {
+          if (first) {
+            first = false;
+            return { type: "hypothesize", hypothesis: h("x") };
+          }
+          return { type: "query", target: 0 };
+        },
+      }),
+    );
+    expect(result.outcome).toBe("tool-cap");
+    expect(result.stats.toolCalls).toBe(2);
+  });
+
+  it("wall-clock budget → wall-clock", async () => {
+    let clock = 0;
+    const result = await runOrchestrator(
+      makeDeps({
+        guards: { ...generousGuards, wallClockMs: 1000 },
+        now: () => clock,
+        decideMove: async () => {
+          clock += 500; // each move advances the injected clock
+          return { type: "hypothesize", hypothesis: h("tick") };
+        },
+      }),
+    );
+    expect(result.outcome).toBe("wall-clock");
+  });
+});
+
+describe("runOrchestrator — robustness", () => {
+  it("decideMove returning null immediately → exhausted", async () => {
+    const result = await runOrchestrator(makeDeps({ decideMove: async () => null }));
+    expect(result.outcome).toBe("exhausted");
+    expect(result.hypotheses).toHaveLength(0);
+  });
+
+  it("out-of-range move target is traced and skipped, never throws", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        decideMove: scripted([
+          { type: "query", target: 5 },
+          { type: "test", target: 9 },
+          null,
+        ]),
+      }),
+    );
+    expect(result.outcome).toBe("exhausted");
+    expect(result.trace.filter((t) => t.detail.includes("no hypothesis"))).toHaveLength(2);
+  });
+
+  it("a decide-fn that only spins on rejected conclude bails to inconclusive (no infinite loop)", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        decideMove: async () => ({ type: "conclude", leading: 0, confidence: 1, rationale: "spin" }),
+      }),
+    );
+    expect(result.outcome).toBe("inconclusive");
+    expect(result.stats.moves).toBeLessThan(50); // stalled out well before the hard backstop
+  });
+
+  it("spawn-subagent folds findings into evidence and counts the subagent", async () => {
+    const finding: NormalizedObservation = { phase: "metrics", subject: "payments_p99", value: 8 };
+    const result = await runOrchestrator(
+      makeDeps({
+        spawnSubagent: async () => [finding],
+        decideMove: scripted([
+          { type: "spawn-subagent", service: "payments", question: "why slow?" },
+          null,
+        ]),
+      }),
+    );
+    expect(result.outcome).toBe("exhausted");
+    expect(result.stats.subagents).toBe(1);
+    expect(result.evidence).toContainEqual(finding);
+    expect(result.trace[0].detail).toContain("+1 findings");
+  });
+
+  it("spawn-subagent skips gracefully when no subagent dep is wired", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        decideMove: scripted([{ type: "spawn-subagent", service: "x", question: "q" }, null]),
+      }),
+    );
+    expect(result.stats.subagents).toBe(0);
+    expect(result.trace[0].detail).toContain("unavailable");
+  });
+
+  it("enforces the maxSubagents limit", async () => {
+    let spawns = 0;
+    const result = await runOrchestrator(
+      makeDeps({
+        guards: { ...generousGuards, maxSubagents: 2 },
+        spawnSubagent: async () => {
+          spawns++;
+          return [{ phase: "infra", subject: "x", text: "y" }];
+        },
+        decideMove: scripted([
+          { type: "spawn-subagent", service: "a", question: "q" },
+          { type: "spawn-subagent", service: "b", question: "q" },
+          { type: "spawn-subagent", service: "c", question: "q" },
+          null,
+        ]),
+      }),
+    );
+    expect(spawns).toBe(2); // third refused
+    expect(result.stats.subagents).toBe(2);
+    expect(result.trace[2].detail).toContain("limit");
+  });
+
+  it("follow-cause investigates a known dependency and folds findings in", async () => {
+    const finding: NormalizedObservation = { phase: "infra", subject: "payments", text: "pg pool saturated" };
+    const result = await runOrchestrator(
+      makeDeps({
+        dependencies: ["payments", "db"],
+        spawnSubagent: async () => [finding],
+        decideMove: scripted([{ type: "follow-cause", service: "payments" }, null]),
+      }),
+    );
+    expect(result.stats.subagents).toBe(1);
+    expect(result.evidence).toContainEqual(finding);
+    expect(result.trace[0].detail).toContain("payments → +1 findings");
+  });
+
+  it("follow-cause rejects a service that is not a known dependency", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        dependencies: ["payments"],
+        spawnSubagent: async () => [{ phase: "infra", subject: "x", text: "y" }],
+        decideMove: scripted([{ type: "follow-cause", service: "unrelated" }, null]),
+      }),
+    );
+    expect(result.stats.subagents).toBe(0);
+    expect(result.trace[0].detail).toContain("not a known dependency");
+  });
+
+  it("follow-cause is disabled when there is no dependency graph", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        dependencies: [],
+        spawnSubagent: async () => [{ phase: "infra", subject: "x", text: "y" }],
+        decideMove: scripted([{ type: "follow-cause", service: "payments" }, null]),
+      }),
+    );
+    expect(result.stats.subagents).toBe(0);
+    expect(result.trace[0].detail).toContain("no dependency graph");
+  });
+
+  it("onStep receives every recorded trace entry", async () => {
+    const seen: string[] = [];
+    await runOrchestrator(
+      makeDeps({
+        onStep: (e) => seen.push(e.move),
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("x") },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          { type: "conclude", leading: 0, confidence: 0.7, rationale: "" },
+        ]),
+      }),
+    );
+    expect(seen).toEqual(["hypothesize", "query", "test", "conclude"]);
+  });
+});
+
+describe("runOrchestrator — interactive operator-pause hook", () => {
+  /** A decide-fn that never stops failing: hypothesize, then test the newest
+   *  hypothesis, forever. With `evaluate: absent` every test is a strike, so
+   *  strikes accumulate until a guard (or the operator hook) ends the run. */
+  function endlessFailing(): OrchestratorDeps["decideMove"] {
+    let n = 0;
+    return async (state: OrchestratorState) =>
+      n++ % 2 === 0
+        ? { type: "hypothesize", hypothesis: h(`c${n}`) }
+        : { type: "test", target: state.hypotheses.length - 1 };
+  }
+
+  it("continue resets strikes and resumes; a later escalate/wait stops with operator-pause", async () => {
+    const decisions: Array<"continue" | "escalate" | "wait"> = ["continue", "wait"];
+    let calls = 0;
+    const result = await runOrchestrator(
+      makeDeps({
+        guards: { ...generousGuards, maxStrikes: 2 },
+        evaluate: () => "absent",
+        decideMove: endlessFailing(),
+        onOperatorPause: async () => decisions[calls++] ?? "wait",
+      }),
+    );
+    expect(result.outcome).toBe("operator-pause");
+    // First pause → continue (resumed), second pause → wait (stopped).
+    expect(calls).toBe(2);
+  });
+
+  it("escalate stops immediately at the first strike limit", async () => {
+    let calls = 0;
+    const result = await runOrchestrator(
+      makeDeps({
+        guards: { ...generousGuards, maxStrikes: 2 },
+        evaluate: () => "absent",
+        decideMove: endlessFailing(),
+        onOperatorPause: async () => { calls++; return "escalate"; },
+      }),
+    );
+    expect(result.outcome).toBe("operator-pause");
+    expect(calls).toBe(1); // consulted once, then stopped
+  });
+
+  it("no hook → strike limit stops directly (unchanged behavior)", async () => {
+    let paused = false;
+    const result = await runOrchestrator(
+      makeDeps({
+        guards: { ...generousGuards, maxStrikes: 2 },
+        evaluate: () => "absent",
+        decideMove: endlessFailing(),
+        // onOperatorPause intentionally omitted
+      }),
+    );
+    expect(paused).toBe(false);
+    expect(result.outcome).toBe("operator-pause");
+  });
+
+  it("caps operator continues so a perpetually-continuing operator can't spin forever", async () => {
+    let calls = 0;
+    const result = await runOrchestrator(
+      makeDeps({
+        guards: { ...generousGuards, maxStrikes: 2 },
+        evaluate: () => "absent",
+        decideMove: endlessFailing(),
+        onOperatorPause: async () => { calls++; return "continue"; },
+      }),
+    );
+    expect(result.outcome).toBe("operator-pause");
+    // Consulted exactly MAX_OPERATOR_CONTINUES times, then stops without asking again.
+    expect(calls).toBe(MAX_OPERATOR_CONTINUES);
+  });
+});
+
+describe("runOrchestrator — cross-service confirm guard", () => {
+  it("rejects a confirm that blames an un-followed dependency (correlational, not established)", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        dependencies: ["payments"],
+        incidentService: "checkout",
+        evaluate: () => "satisfied",
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("checkout failing due to degraded payments service") },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          { type: "conclude", leading: 0, confidence: 0.9, rationale: "payments slow" },
+          null,
+        ]),
+      }),
+    );
+    expect(result.outcome).toBe("exhausted"); // confirm was blocked → ran to null
+    expect(result.confirmed).toBeUndefined();
+    expect(result.trace.some((t) => t.move === "conclude" && /never followed-cause/.test(t.detail))).toBe(true);
+  });
+
+  it("allows the confirm once the implicated dependency was followed", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        dependencies: ["payments"],
+        incidentService: "checkout",
+        spawnSubagent: async () => [{ phase: "infra", subject: "payments", text: "pool saturated" }],
+        evaluate: () => "satisfied",
+        decideMove: scripted([
+          { type: "follow-cause", service: "payments" },
+          { type: "hypothesize", hypothesis: h("checkout failing due to degraded payments service") },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          { type: "conclude", leading: 0, confidence: 0.9, rationale: "payments pool saturated" },
+        ]),
+      }),
+    );
+    expect(result.outcome).toBe("confirmed");
+    expect(result.confirmed?.hypothesis).toContain("payments");
+  });
+
+  it("does not block a cause about the incident service's own behavior", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        dependencies: ["payments"],
+        incidentService: "checkout",
+        evaluate: () => "satisfied",
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("checkout pod OOMKilled under load") },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          { type: "conclude", leading: 0, confidence: 0.9, rationale: "checkout OOM" },
+        ]),
+      }),
+    );
+    expect(result.outcome).toBe("confirmed");
+  });
+
+  it("is inert when there are no dependencies", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        evaluate: () => "satisfied",
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("anything at all") },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          { type: "conclude", leading: 0, confidence: 0.9, rationale: "" },
+        ]),
+      }),
+    );
+    expect(result.outcome).toBe("confirmed");
+  });
+});
+
+describe("runOrchestrator — abort signal + per-op watchdog", () => {
+  it("returns 'aborted' immediately when the signal is already aborted", async () => {
+    const ac = new AbortController();
+    ac.abort();
+    const result = await runOrchestrator(
+      makeDeps({
+        signal: ac.signal,
+        decideMove: scripted([{ type: "hypothesize", hypothesis: h("x") }]),
+      }),
+    );
+    expect(result.outcome).toBe("aborted");
+    expect(result.stats.moves).toBe(0); // bailed before spending a move
+  });
+
+  it("aborts cooperatively when the signal fires mid-run", async () => {
+    const ac = new AbortController();
+    let n = 0;
+    const result = await runOrchestrator(
+      makeDeps({
+        signal: ac.signal,
+        decideMove: async () => {
+          if (n++ === 1) ac.abort(); // fire after the 2nd decision
+          return { type: "hypothesize", hypothesis: h(`c${n}`) };
+        },
+      }),
+    );
+    expect(result.outcome).toBe("aborted");
+  });
+
+  it("per-op watchdog abandons a hung gather and keeps the loop alive", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        guards: { ...generousGuards, opTimeoutMs: 20 },
+        gatherEvidence: () => new Promise(() => {}), // never resolves
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("x") },
+          { type: "query", target: 0 },
+          null,
+        ]),
+      }),
+    );
+    expect(result.outcome).toBe("exhausted"); // didn't hang — ran to the null
+    expect(result.stats.toolCalls).toBe(1); // the attempt was counted
+    expect(result.trace.find((t) => t.move === "query")?.detail).toContain("timed out");
+  });
+
+  it("per-op watchdog bounds a hung subagent too", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        guards: { ...generousGuards, opTimeoutMs: 20 },
+        spawnSubagent: () => new Promise(() => {}), // never resolves
+        decideMove: scripted([{ type: "spawn-subagent", service: "x", question: "q" }, null]),
+      }),
+    );
+    expect(result.outcome).toBe("exhausted");
+    expect(result.stats.subagents).toBe(1);
+    expect(result.trace[0].detail).toContain("timed out");
+  });
+});
+
+describe("runOrchestrator — integration with the real keystone", () => {
+  it("uses evaluatePrediction verdicts to drive the confirm gate", async () => {
+    // Wire the REAL keystone so the loop's confirm decision is deterministic
+    // against actual observations, not a fake verdict.
+    const { evaluatePrediction } = await import("../workflows/steps/corroboration.js");
+    const result = await runOrchestrator(
+      makeDeps({
+        evaluate: (prediction, evidence) => evaluatePrediction(prediction, evidence),
+        gatherEvidence: async () => [{ phase: "metrics", subject: "mem", value: 99 }],
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("memory exhaustion") },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          { type: "conclude", leading: 0, confidence: 0.6, rationale: "mem 99 > 90" },
+        ]),
+      }),
+    );
+    expect(result.outcome).toBe("confirmed");
+  });
+});

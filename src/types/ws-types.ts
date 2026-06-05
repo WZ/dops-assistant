@@ -14,6 +14,14 @@ export type ClientMessage =
   // hypotheses with deeper read-only re-queries. Distinct from `deep_investigate`
   // above, which is free-text follow-up chat about an investigation.
   | { type: "deep_mode_investigate"; investigationId: string }
+  // Autonomous orchestrator (Approach D): run the unbounded read-only move-loop
+  // seeded from a completed investigation's context. Heavier opt-in than deep
+  // mode; gated behind config.agent.orchestratorEnabled.
+  | { type: "orchestrator_investigate"; investigationId: string }
+  // Operator's reply to an `orchestrator:operator_pause` prompt (increment 5):
+  // "continue" resets strikes and resumes the move-loop; "escalate"/"wait" stop
+  // it with that disposition. Matched to the paused run by investigationId.
+  | { type: "orchestrator_decision"; investigationId: string; decision: "continue" | "escalate" | "wait" }
   | { type: "rerun"; investigationId: string; template?: "quick" | "standard" | "full" }
   | { type: "new_session" }
   | { type: "discover" }
@@ -74,6 +82,29 @@ export type AgentStreamStats = {
   durationMs: number;
 };
 
+/** Footer stats for a completed autonomous-orchestrator run. */
+export type OrchestratorStreamStats = {
+  moves: number;
+  toolCalls: number;
+  subagents: number;
+  tokensSpent: number;
+  strikes: number;
+  depth: number;
+  durationMs: number;
+};
+
+/** One link in a completed run's causal chain (increment 6, source attribution).
+ *  Ordered cause→effect: the incident service, each dependency the agent followed
+ *  into, then the confirmed root cause. `evidence` is the observation/finding that
+ *  supports this link (absent for the incident anchor). */
+export type CausalChainLink = {
+  /** Display label: a service name, or "root cause: <hypothesis>". */
+  label: string;
+  kind: "incident" | "followed" | "root-cause";
+  /** Short attribution — the finding/observation this link rests on. */
+  evidence?: string;
+};
+
 export type ServerMessage =
   | { type: "chat"; role: "user" | "assistant" | "system"; content: string; investigationId?: string; report?: unknown; chartData?: ChartSeries[] }
   | { type: "chat:tool_call"; tool: string; status: "calling" | "complete" }
@@ -99,6 +130,14 @@ export type ServerMessage =
   | { type: "deep_mode:step"; investigationId: string; event: AgentStreamEvent }
   | { type: "deep_mode:complete"; investigationId: string; report: unknown; stats?: AgentStreamStats }
   | { type: "deep_mode:error"; investigationId: string; message: string }
+  | { type: "orchestrator:started"; investigationId: string }
+  | { type: "orchestrator:step"; investigationId: string; event: AgentStreamEvent }
+  | { type: "orchestrator:complete"; investigationId: string; outcome: string; stats?: OrchestratorStreamStats; causalChain?: CausalChainLink[]; traceSummary?: string }
+  // Strike limit reached (increment 5): the loop is awaiting an operator
+  // decision (continue / escalate / instrument-&-wait). The client renders the
+  // pause card and replies with `orchestrator_decision`.
+  | { type: "orchestrator:operator_pause"; investigationId: string; strikes: number; hypothesesTried?: string[] }
+  | { type: "orchestrator:error"; investigationId: string; message: string }
   | { type: "session_cleared" }
   | { type: "context_switch"; previousService: string; newService: string }
   | { type: "services:health"; data: unknown[] }

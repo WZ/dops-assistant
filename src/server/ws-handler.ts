@@ -9,6 +9,9 @@ import { resolveServiceFromHistory } from "../agents/intent.js";
 import type { ServiceConfig, DiscoveryConfig, Config } from "../config/schema.js";
 import type { ClientMessage, ServerMessage, ChartSeries } from "../types/ws-types.js";
 import { DEFAULT_STACK_SLUG } from "../types/stack-types.js";
+import { inferDependencyGraph } from "./dependency-graph.js";
+import { assembleCausalChain, traceSummary } from "../agents/orchestrator-stream.js";
+import type { OrchestratorState } from "../agents/orchestrator.js";
 import type { ValidatedServiceConfig } from "../types/discovery-types.js";
 import type { SkillStore } from "../skills/store.js";
 import { LlmUnavailableError } from "../agents/shared/llm-errors.js";
@@ -29,6 +32,16 @@ import { resolveDiscoverySkills } from "./discovery-skill-selection.js";
 const logger = createLogger();
 
 const MAX_CHART_SERIES = 4;
+
+/** A paused orchestrator run, awaiting an operator decision. Resolving the
+ *  promise (via `orchestrator_decision`, timeout, or WS close) resumes the loop. */
+type OperatorDecision = "continue" | "escalate" | "wait";
+type PendingPause = { resolve: (decision: OperatorDecision) => void; timer: ReturnType<typeof setTimeout> };
+
+/** How long an operator-pause prompt waits for a decision before defaulting to
+ *  `escalate` (stop). A disconnected/idle operator must not strand the loop —
+ *  the wall-clock guard would eventually trip, but this is the explicit cap. */
+const OPERATOR_PAUSE_TIMEOUT_MS = 5 * 60_000;
 
 /** Return true when a series is a flat constant (no variation worth charting) */
 function isFlatSeries(values: [string, number][]): boolean {
@@ -272,6 +285,19 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
     // removed — late cancels are silently ignored.
     const pendingDispatches: Map<string, AbortController> = new Map();
 
+    // Per-connection paused orchestrator runs: a run that hit the strike limit
+    // and is awaiting an operator decision. Keyed by investigationId; the
+    // `orchestrator_decision` handler resolves the matching entry, and WS close
+    // resolves any survivors with `escalate` so a disconnect never strands the
+    // loop (which would otherwise sit blocked until its wall-clock guard trips).
+    const pendingPauses: Map<string, PendingPause> = new Map();
+
+    // Per-connection active orchestrator runs, keyed by investigationId. Gives a
+    // concurrency guard (one run per investigation per connection — no pile-on
+    // from a double-click) and an abort handle: WS close aborts every in-flight
+    // run so the loop stops cooperatively instead of running on headless.
+    const activeOrchestrations: Map<string, AbortController> = new Map();
+
     const send = (m: ServerMessage) => {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(m));
@@ -400,6 +426,8 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
           () => { pendingDiscovery = null; },
           pendingDispatches,
           activeDiscovery,
+          pendingPauses,
+          activeOrchestrations,
         );
       } catch (err) {
         if (err instanceof LlmUnavailableError) {
@@ -422,6 +450,19 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
         controller.abort();
       }
       pendingDispatches.clear();
+      // Resolve any paused orchestrator runs so the loop unblocks and stops
+      // cleanly (escalate) instead of sitting until its wall-clock guard trips.
+      for (const pause of pendingPauses.values()) {
+        clearTimeout(pause.timer);
+        pause.resolve("escalate");
+      }
+      pendingPauses.clear();
+      // Abort in-flight orchestrator runs so the loop stops at its next move
+      // instead of running on headless after the operator has gone.
+      for (const controller of activeOrchestrations.values()) {
+        controller.abort();
+      }
+      activeOrchestrations.clear();
       activeDiscovery.current?.abort(new Error("WebSocket disconnected"));
       activeDiscovery.current = null;
       wsRateLimiter.destroy(threadId);
@@ -472,6 +513,164 @@ async function handleDeepModeInvestigate(
 
   const agents = await getOrCreateAgents(stackId, ctx, deps.config, deps.db);
   await runDeepModeStreamed(msg.investigationId, report, agents.deepModeReexamine, db, send);
+}
+
+/**
+ * Autonomous orchestrator (Approach D): run the unbounded read-only move-loop
+ * seeded from a completed investigation's context, streaming each move to the
+ * agent-stream UI. Gated behind config.agent.orchestratorEnabled — the trigger
+ * is hidden client-side; this rejects any direct message when disabled.
+ */
+async function handleOrchestratorInvestigate(
+  msg: { type: "orchestrator_investigate"; investigationId: string },
+  send: (m: ServerMessage) => void,
+  deps: WsDeps,
+  stackId: string,
+  ctx: StackContext,
+  pendingPauses: Map<string, PendingPause>,
+  activeOrchestrations: Map<string, AbortController>,
+): Promise<void> {
+  const { db } = deps;
+  if (!deps.config.agent?.orchestratorEnabled) {
+    send({ type: "orchestrator:error", investigationId: msg.investigationId, message: "Autonomous orchestrator is not enabled." });
+    return;
+  }
+  // Concurrency guard: one orchestrator run per investigation per connection.
+  // A double-clicked trigger shouldn't spawn a second parallel run (each spawns
+  // its own subagents — real LLM/MCP load).
+  if (activeOrchestrations.has(msg.investigationId)) {
+    send({ type: "orchestrator:error", investigationId: msg.investigationId, message: "An autonomous investigation is already running for this report." });
+    return;
+  }
+  const investigation = db.getInvestigation(stackId, msg.investigationId);
+  if (!investigation) {
+    send({ type: "orchestrator:error", investigationId: msg.investigationId, message: "Investigation not found." });
+    return;
+  }
+  // The orchestrator is seeded from a *completed* investigation's context
+  // (focus + report time window). The UI only surfaces the trigger after
+  // completion, but a direct WS message could otherwise launch a costly
+  // autonomous run against a still-running, failed, or report-less row.
+  // Reject those here, mirroring the deep-mode handler.
+  if (investigation.status !== "complete" || !investigation.report) {
+    send({ type: "orchestrator:error", investigationId: msg.investigationId, message: "The orchestrator needs a completed investigation with a report." });
+    return;
+  }
+  // Seed the orchestrator from the investigation's context: the original ask
+  // as the focus, and the report's time window so re-queries stay in range.
+  let report: RcaReport | undefined;
+  try {
+    report = investigation.report ? (JSON.parse(investigation.report) as RcaReport) : undefined;
+  } catch {
+    report = undefined;
+  }
+  const focus = investigation.query?.trim() || report?.summary || `investigate ${investigation.service}`;
+  const timeRange = report?.timeRange;
+
+  // Resolve the incident service's dependency-graph neighbors (both directions)
+  // so the agent can follow-cause into them. Empty when there's no usable graph
+  // (follow-cause then disables gracefully). Mirrors GET /api/dependencies/:service.
+  const allServices = ctx.slug === DEFAULT_STACK_SLUG
+    ? [...deps.config.services, ...ctx.serviceRegistry.load().filter((s) => !deps.config.services.some((c) => c.name === s.name))]
+    : ctx.serviceRegistry.load();
+  const neighbors = new Set<string>();
+  try {
+    for (const edge of inferDependencyGraph(allServices).edges) {
+      if (edge.source === investigation.service) neighbors.add(edge.target);
+      if (edge.target === investigation.service) neighbors.add(edge.source);
+    }
+  } catch { /* no graph → empty neighbors → follow-cause disabled */ }
+  neighbors.delete(investigation.service);
+  const dependencies = [...neighbors];
+
+  const agents = await getOrCreateAgents(stackId, ctx, deps.config, deps.db);
+  const abort = new AbortController();
+  activeOrchestrations.set(msg.investigationId, abort);
+  try {
+    await runOrchestratorStreamed(
+      msg.investigationId,
+      focus,
+      { timeRange, ctx: { incidentTime: timeRange?.from }, dependencies, incidentService: investigation.service, signal: abort.signal },
+      agents.orchestrate,
+      send,
+      pendingPauses,
+    );
+  } finally {
+    activeOrchestrations.delete(msg.investigationId);
+  }
+}
+
+async function runOrchestratorStreamed(
+  investigationId: string,
+  focus: string,
+  opts: { timeRange?: { from: string; to: string }; ctx?: { incidentTime?: string }; dependencies?: string[]; incidentService?: string; signal?: AbortSignal },
+  orchestrate: StackAgents["orchestrate"],
+  send: (m: ServerMessage) => void,
+  pendingPauses: Map<string, PendingPause>,
+): Promise<void> {
+  send({ type: "orchestrator:started", investigationId });
+  const startMs = Date.now();
+  let seq = 0;
+  try {
+    const result = await orchestrate(focus, {
+      timeRange: opts.timeRange,
+      ctx: opts.ctx,
+      dependencies: opts.dependencies,
+      incidentService: opts.incidentService,
+      signal: opts.signal,
+      onStep: (ev) => send({ type: "orchestrator:step", investigationId, event: { ...ev, seq: seq++ } }),
+      // Interactive strike-limit pause (increment 5): emit the prompt and block
+      // the loop on the operator's reply. Resolved by the `orchestrator_decision`
+      // handler, the timeout below, or WS close (all via `pendingPauses`).
+      onOperatorPause: (state: OrchestratorState) => {
+        send({
+          type: "orchestrator:operator_pause",
+          investigationId,
+          strikes: state.strikes,
+          hypothesesTried: state.hypotheses.map((hyp) => hyp.hypothesis.hypothesis),
+        });
+        return new Promise<OperatorDecision>((resolve) => {
+          const timer = setTimeout(() => {
+            pendingPauses.delete(investigationId);
+            resolve("escalate");
+          }, OPERATOR_PAUSE_TIMEOUT_MS);
+          pendingPauses.set(investigationId, { resolve, timer });
+        });
+      },
+    });
+    send({
+      type: "orchestrator:complete",
+      investigationId,
+      outcome: result.outcome,
+      causalChain: assembleCausalChain(result.trace, result.confirmed, opts.incidentService ?? "", result.evidence),
+      traceSummary: traceSummary(result.stats, result.outcome),
+      stats: {
+        moves: result.stats.moves,
+        toolCalls: result.stats.toolCalls,
+        subagents: result.stats.subagents,
+        tokensSpent: result.stats.tokensSpent,
+        strikes: result.stats.strikes,
+        depth: result.stats.depth,
+        durationMs: Date.now() - startMs,
+      },
+    });
+  } catch (err) {
+    const message =
+      err instanceof LlmUnavailableError
+        ? "The model is unavailable right now — try again shortly."
+        : "The orchestrator hit an error.";
+    logger.error({ err, investigationId }, "Orchestrator run failed");
+    send({ type: "orchestrator:error", investigationId, message });
+  } finally {
+    // Defensive: a finished run must never leave a pause entry behind (e.g. if
+    // a future code path threw mid-pause), or a stale `orchestrator_decision`
+    // could resolve a dead promise.
+    const stale = pendingPauses.get(investigationId);
+    if (stale) {
+      clearTimeout(stale.timer);
+      pendingPauses.delete(investigationId);
+    }
+  }
 }
 
 /**
@@ -796,6 +995,8 @@ export async function handleClientMessage(
   clearPendingDiscovery: () => void,
   pendingDispatches: Map<string, AbortController> = new Map(),
   activeDiscovery: { current: AbortController | null } = { current: null },
+  pendingPauses: Map<string, PendingPause> = new Map(),
+  activeOrchestrations: Map<string, AbortController> = new Map(),
 ): Promise<void> {
   const memory = ctx.conversationMemory;
 
@@ -825,6 +1026,24 @@ export async function handleClientMessage(
 
   if (msg.type === "deep_mode_investigate") {
     await handleDeepModeInvestigate(msg, send, deps, stackId, ctx);
+    return;
+  }
+
+  if (msg.type === "orchestrator_investigate") {
+    await handleOrchestratorInvestigate(msg, send, deps, stackId, ctx, pendingPauses, activeOrchestrations);
+    return;
+  }
+
+  // Operator's reply to an `orchestrator:operator_pause`. Resolve the matching
+  // paused run; unknown ids are silently ignored (already resumed, timed out,
+  // or never paused — a stale client can't wedge anything).
+  if (msg.type === "orchestrator_decision") {
+    const pause = pendingPauses.get(msg.investigationId);
+    if (pause) {
+      clearTimeout(pause.timer);
+      pendingPauses.delete(msg.investigationId);
+      pause.resolve(msg.decision);
+    }
     return;
   }
 

@@ -454,3 +454,53 @@ describe("synthesis step degradation and defaults", () => {
     expect(retryResult.confidenceScore).toBe(0.95);
   });
 });
+
+// ── Quick-template wiring regression ──────────────────────────────────────────
+// The synthesis step's input schema requires a `metrics-evidence` KEY (the shape
+// `.parallel([...])` produces, keyed by step id). The quick template used to chain
+// `.then(metricsStep).then(synthesisStep)`, which hands synthesis the metrics
+// step's RAW output (no `metrics-evidence` key) → "Step input validation failed:
+// metrics-evidence: Required" → every quick run degraded to an empty report.
+// This run-to-success test fails on the old wiring and passes once quick feeds
+// synthesis the keyed shape (caught the bug that silently degraded every
+// orchestrator subagent, which uses the quick template).
+describe("quick template wiring (regression)", () => {
+  it("quick workflow runs to success — synthesis receives the metrics-evidence key", async () => {
+    const { createSynthesisAgent } = await import("../agents/synthesis.js");
+    vi.mocked(createSynthesisAgent).mockReturnValue({
+      generate: vi.fn().mockResolvedValue({
+        text: JSON.stringify({
+          severity: "high",
+          summary: "quick synthesis ran",
+          rootCause: "quick-template-root-cause",
+          trigger: "t",
+          confidence: "high",
+          confidenceScore: 0.8,
+        }),
+      }),
+    } as any);
+
+    // Throwing model + no providers → prefetch/anomaly/planning/metrics all
+    // degrade gracefully (covered above); synthesis uses the mocked agent. So the
+    // ONLY thing that can fail the run is the metrics→synthesis input wiring.
+    const throwingModel = {
+      doGenerate: vi.fn().mockRejectedValue(new Error("LLM unavailable")),
+      doStream: vi.fn().mockRejectedValue(new Error("LLM unavailable")),
+      specificationVersion: "v1" as const,
+      provider: "test",
+      modelId: "test-model",
+    } as unknown as LanguageModel;
+
+    const workflow = createInvestigationWorkflow(
+      { model: throwingModel, providers: [], services: [noopService] },
+      "quick",
+    );
+    const run = await workflow.createRun();
+    const runResult = await run.start({
+      inputData: { userMessage: "investigate test-svc", serviceName: "test-svc" },
+    });
+
+    expect(runResult.status).toBe("success");
+    expect((runResult.result as any)?.rootCause).toBe("quick-template-root-cause");
+  });
+});

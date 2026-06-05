@@ -105,7 +105,13 @@ export function createInvestigationWorkflow(workflowConfig: WorkflowConfig, temp
       .then(prefetchStep)
       .then(anomalyStep)
       .then(planningStep)
-      .then(metricsStep) as any)
+      // `.parallel([metricsStep])` (not `.then`) so synthesis receives the
+      // step-id-keyed `{ "metrics-evidence": … }` shape its input schema
+      // requires — same contract standard/full produce via their parallel
+      // evidence block. A plain `.then(metricsStep)` hands synthesis the raw
+      // EvidenceOutput (no `metrics-evidence` key) → input validation fails and
+      // every quick run degrades to an empty report.
+      .parallel([metricsStep]) as any)
       .then(synthesisStep)
       .then(postSynthesisStep)
       .commit();
