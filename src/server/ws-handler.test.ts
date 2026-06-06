@@ -1,9 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import { createServer } from "node:http";
 import WebSocket from "ws";
-import { clearStackCaches, handleClientMessage, setupWebSocket } from "./ws-handler.js";
+import { clearStackCaches, DEEP_INVESTIGATION_DISCONNECT_ABORT, handleClientMessage, makeOrchestratorPersistingSend, setupWebSocket } from "./ws-handler.js";
 import type { WsDeps } from "./ws-handler.js";
+import type { Database } from "./db.js";
 import type { ServerMessage } from "../types/ws-types.js";
+import { DEEP_INVESTIGATION_EVENT_SCHEMA } from "../types/ws-types.js";
 import type { StackContext } from "./stack-manager.js";
 import { createMastraAdapters } from "./agents.js";
 import { getToolsByRole } from "../mcp/provider.js";
@@ -933,4 +935,104 @@ describe("handleClientMessage — discovery skill injection", () => {
     expect(String(capturedSignal?.reason)).toMatch(/disconnected/i);
   });
 
+});
+
+// ── PR-2 (T6): persisting-send wrapper ───────────────────────────────────────
+describe("makeOrchestratorPersistingSend", () => {
+  const ID = "inv_persist_1";
+  function mockDb(createEvent = vi.fn()): { db: Database; createEvent: ReturnType<typeof vi.fn> } {
+    return { db: { createEvent } as unknown as Database, createEvent };
+  }
+
+  it("persists an orchestrator:* event (versioned envelope) AND forwards it", () => {
+    const { db, createEvent } = mockDb();
+    const send = vi.fn();
+    const wrapped = makeOrchestratorPersistingSend(db, ID, send);
+
+    const msg: ServerMessage = { type: "orchestrator:started", investigationId: ID };
+    wrapped(msg);
+
+    // forwarded to the live stream unchanged
+    expect(send).toHaveBeenCalledWith(msg);
+    // persisted once, with the versioned envelope around the raw message
+    expect(createEvent).toHaveBeenCalledTimes(1);
+    const arg = createEvent.mock.calls[0]![0] as { id: string; investigationId: string; eventType: string; payload: string };
+    expect(arg.investigationId).toBe(ID);
+    expect(arg.eventType).toBe("orchestrator:started");
+    expect(arg.id).toMatch(/^evt_/);
+    expect(JSON.parse(arg.payload)).toEqual({ schemaVersion: DEEP_INVESTIGATION_EVENT_SCHEMA, message: msg });
+  });
+
+  it("does NOT persist non-orchestrator messages, but still forwards them", () => {
+    const { db, createEvent } = mockDb();
+    const send = vi.fn();
+    const wrapped = makeOrchestratorPersistingSend(db, ID, send);
+
+    wrapped({ type: "deep_mode:started", investigationId: ID } as ServerMessage);
+    wrapped({ type: "error", message: "x" } as ServerMessage);
+
+    expect(createEvent).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("does NOT persist an orchestrator event for a different investigationId", () => {
+    const { db, createEvent } = mockDb();
+    const send = vi.fn();
+    const wrapped = makeOrchestratorPersistingSend(db, ID, send);
+
+    wrapped({ type: "orchestrator:started", investigationId: "other_inv" } as ServerMessage);
+
+    expect(createEvent).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledTimes(1); // still forwarded
+  });
+
+  it("is throw-safe: a persist failure NEVER breaks the live stream", () => {
+    const createEvent = vi.fn(() => { throw new Error("disk full"); });
+    const { db } = mockDb(createEvent);
+    const send = vi.fn();
+    const wrapped = makeOrchestratorPersistingSend(db, ID, send);
+
+    const msg: ServerMessage = { type: "orchestrator:step", investigationId: ID, event: { seq: 0, verb: "x", status: "running" } };
+    expect(() => wrapped(msg)).not.toThrow();
+    expect(send).toHaveBeenCalledWith(msg); // forwarded despite the persist throw
+  });
+
+  // P1 (codex review): a reload aborts the run, but the loop still emits a
+  // terminal "aborted" while unwinding. Persisting it would clobber the
+  // INTERRUPTED replay. Once the signal is aborted *by a disconnect*, stop
+  // persisting — but keep forwarding (send is a no-op on a closed socket anyway).
+  it("stops persisting once the run is aborted by a client disconnect (keeps INTERRUPTED replay)", () => {
+    const { db, createEvent } = mockDb();
+    const send = vi.fn();
+    const ac = new AbortController();
+    const wrapped = makeOrchestratorPersistingSend(db, ID, send, ac.signal);
+
+    // a step streamed while connected → persisted
+    wrapped({ type: "orchestrator:step", investigationId: ID, event: { seq: 0, verb: "x", status: "running" } } as ServerMessage);
+    expect(createEvent).toHaveBeenCalledTimes(1);
+
+    // client reloads → run aborted with the disconnect reason → unwinding terminal
+    ac.abort(DEEP_INVESTIGATION_DISCONNECT_ABORT);
+    wrapped({ type: "orchestrator:complete", investigationId: ID, outcome: "aborted", stats: { moves: 1, toolCalls: 0, subagents: 0, tokensSpent: 0, strikes: 0, depth: 1, durationMs: 5 } } as ServerMessage);
+
+    // the post-disconnect terminal is NOT persisted (replay stays running → INTERRUPTED)
+    expect(createEvent).toHaveBeenCalledTimes(1);
+    // but it's still forwarded (harmless — send no-ops on a closed socket)
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("STILL persists a terminal when aborted WITHOUT the disconnect reason (deliberate operator Stop)", () => {
+    const { db, createEvent } = mockDb();
+    const send = vi.fn();
+    const ac = new AbortController();
+    const wrapped = makeOrchestratorPersistingSend(db, ID, send, ac.signal);
+
+    // user clicks Stop → bare abort (no reason), socket still open
+    ac.abort();
+    wrapped({ type: "orchestrator:complete", investigationId: ID, outcome: "aborted", stats: { moves: 1, toolCalls: 0, subagents: 0, tokensSpent: 0, strikes: 0, depth: 1, durationMs: 5 } } as ServerMessage);
+
+    // the Stop terminal IS persisted → cold-load replay correctly shows "Stopped"
+    expect(createEvent).toHaveBeenCalledTimes(1);
+    expect(createEvent.mock.calls[0]![0]).toMatchObject({ eventType: "orchestrator:complete" });
+  });
 });

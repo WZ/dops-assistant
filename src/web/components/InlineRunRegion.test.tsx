@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, cleanup, within } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import type { ServerMessage, ClientMessage, AgentStreamEvent } from "../../types/ws-types.js";
-import { OrchestratorRunProvider } from "../contexts/OrchestratorRunContext";
+import { OrchestratorRunProvider, useOrchestratorRunActions } from "../contexts/OrchestratorRunContext";
 import { InlineRunRegion } from "./InlineRunRegion";
 
 const ID = "inv_region";
@@ -116,5 +116,84 @@ describe("InlineRunRegion", () => {
     const live = container.querySelector('[aria-live="assertive"]');
     expect(live).toBeTruthy();
     expect(live!.textContent).toMatch(/your decision is needed/i);
+  });
+});
+
+// ── PR-2 (T7): hydrated runs reconstructed from persisted events render right ──
+//
+// Mirrors what InvestigationPane does on a cold GET /api/investigations/:id:
+// it hands the persisted `events` to the registry's hydrate(). Here a harness
+// hydrates on mount (standing in for the GET-success callback), then we assert
+// the inline surface renders the reconstructed run correctly.
+type Row = { event_type: string; payload: string };
+const env = (message: unknown) => JSON.stringify({ schemaVersion: 1, message });
+
+const MIDFLIGHT_ROWS: Row[] = [
+  { event_type: "orchestrator:started", payload: env({ type: "orchestrator:started", investigationId: ID }) },
+  { event_type: "orchestrator:step", payload: env({ type: "orchestrator:step", investigationId: ID, event: step(0, "impala-statestore") }) },
+];
+
+const COMPLETED_ROWS: Row[] = [
+  ...MIDFLIGHT_ROWS,
+  { event_type: "orchestrator:complete", payload: env({
+      type: "orchestrator:complete", investigationId: ID, outcome: "confirmed",
+      stats: { moves: 2, toolCalls: 4, subagents: 0, tokensSpent: 900, strikes: 0, depth: 2, durationMs: 4321 },
+      causalChain: [{ label: "impala", kind: "incident" }, { label: "root cause: statestore pool starvation", kind: "root-cause" }],
+      traceSummary: "2 moves · confirmed at depth 2",
+    }) },
+];
+
+const PAUSED_MIDFLIGHT_ROWS: Row[] = [
+  ...MIDFLIGHT_ROWS,
+  { event_type: "orchestrator:operator_pause", payload: env({ type: "orchestrator:operator_pause", investigationId: ID, strikes: 3, hypothesesTried: ["a"] }) },
+];
+
+/** Hydrate-on-mount harness, standing in for InvestigationPane's GET-success. */
+function HydrateThenRender({ rows }: { rows: Row[] }) {
+  const { hydrate } = useOrchestratorRunActions();
+  useEffect(() => { hydrate(ID, rows); }, [hydrate, rows]);
+  return <InlineRunRegion investigationId={ID} service="impala" />;
+}
+
+function renderHydrated(rows: Row[]) {
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <OrchestratorRunProvider wsMessages={[]} wsSend={vi.fn()} connectionStatus="connected">
+      {children}
+    </OrchestratorRunProvider>
+  );
+  return render(<HydrateThenRender rows={rows} />, { wrapper });
+}
+
+describe("InlineRunRegion — hydrated/interrupted (PR-2 T7)", () => {
+  it("a mid-flight hydrated run renders INTERRUPTED: notice shown, no Stop, no ephemerality warning", () => {
+    renderHydrated(MIDFLIGHT_ROWS);
+    expect(screen.getByText("Interrupted")).toBeTruthy(); // the kicker (exact)
+    expect(screen.getByText(/interrupted while investigating: impala-statestore/i)).toBeTruthy();
+    expect(screen.getByText(/steps above are what completed/i)).toBeTruthy(); // the visible notice
+    // no live affordances — the server lost this run on reload
+    expect(screen.queryByRole("button", { name: /stop the deep investigation/i })).toBeNull();
+    expect(screen.queryByText(/this run stops if you reload/i)).toBeNull();
+  });
+
+  it("announces the interruption on the scoped live region (DZ4)", () => {
+    const { container } = renderHydrated(MIDFLIGHT_ROWS);
+    const live = container.querySelector('[aria-live="assertive"]');
+    expect(live!.textContent).toMatch(/interrupted when the page reloaded/i);
+  });
+
+  it("a COMPLETED hydrated run renders as a normal finished result (NOT interrupted)", () => {
+    renderHydrated(COMPLETED_ROWS);
+    expect(screen.getByText("statestore pool starvation")).toBeTruthy();
+    expect(screen.getByText(/confirmed at depth 2/)).toBeTruthy();
+    expect(screen.queryByText(/interrupted when the page reloaded/i)).toBeNull();
+    expect(screen.queryByText(/^Interrupted$/)).toBeNull();
+  });
+
+  it("an interrupted run that was paused does NOT show actionable decision buttons", () => {
+    renderHydrated(PAUSED_MIDFLIGHT_ROWS);
+    expect(screen.getByText(/steps above are what completed/i)).toBeTruthy();
+    // the docked pause bar (and its continue/escalate/wait buttons) is suppressed
+    expect(screen.queryByRole("group", { name: /operator decision required/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /continue/i })).toBeNull();
   });
 });
