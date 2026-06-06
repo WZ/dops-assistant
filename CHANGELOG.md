@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.6.0] - 2026-06-06
+
+### Added
+- **Deep Investigation runs survive a page reload (gated off, PR-2 of a sequence).** An autonomous run's progress is now persisted as it streams, so reopening or reloading the investigation rebuilds the run from its saved history instead of losing it. A run that was still mid-flight when the tab closed comes back clearly marked **Interrupted** — its completed steps are shown and you can re-run to continue — rather than silently vanishing or pretending to be live.
+
+### Changed
+- A deliberate **Stop** on a run is recorded and replays as "Stopped" after a reload, while a run cut off by a disconnect replays as "Interrupted" — the two are no longer conflated. Persisting a run's events never interferes with the live stream: if a save fails, the run keeps going.
+
 ## [0.4.5.0] - 2026-06-05
 
 ### Added
