@@ -182,7 +182,7 @@ export function InvestigationPane({
   // (OrchestratorRunContext) so the Console inline surface and this pane read one
   // source of truth. Derive the former local vars from the registry's tagged run.
   const run = useOrchestratorRun(investigationId);
-  const { decide } = useOrchestratorRunActions();
+  const { decide, hydrate } = useOrchestratorRunActions();
   const deepRun = run?.kind === "deep-mode" ? run : undefined;
   const orchRun = run?.kind === "orchestrator" ? run : undefined;
   const deepModeRunning = !!deepRun?.running;
@@ -383,6 +383,14 @@ export function InvestigationPane({
           try { setReport(JSON.parse(data.investigation.report)); } catch { /* ignore */ }
         }
 
+        // Reconstruct any persisted Deep Investigation (orchestrator) run from
+        // its events (PR-2). hydrate is hydrate-if-absent and filters to
+        // orchestrator:* internally, so passing the full events array is safe —
+        // a live run (active pane) is never reached here (isActive guard above).
+        if (data.events && data.events.length > 0) {
+          hydrate(investigationId, data.events);
+        }
+
         // Restore persisted timeline events
         if (data.events && data.events.length > 0) {
           const restored: TimelineEvent[] = [];
@@ -410,7 +418,7 @@ export function InvestigationPane({
     // user to the investigation's real stack). Without them, the effect
     // would still hold the previous stack's fetcher in closure and never
     // re-fetch against the corrected stack.
-  }, [investigationId, isActive, stackFetch, activeStackId, onWrongStack]);
+  }, [investigationId, isActive, stackFetch, activeStackId, onWrongStack, hydrate]);
 
   // Process live WebSocket messages
   useEffect(() => {

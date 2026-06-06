@@ -29,7 +29,10 @@ import type {
   AgentStreamStats,
   OrchestratorStreamStats,
   CausalChainLink,
+  DeepInvestigationEventEnvelope,
+  PersistedInvestigationEvent,
 } from "../../types/ws-types.js";
+import { DEEP_INVESTIGATION_EVENT_SCHEMA } from "../../types/ws-types.js";
 import type { OrchestratorPause, OrchestratorDisposition } from "../components/OrchestratorStream";
 
 /** Which engine produced this run. Both render through the one inline surface. */
@@ -57,6 +60,11 @@ export interface DeepRunState {
   readonly error: string | null;
   /** UI: whether the inline region is collapsed to its one-line summary (DZ2). */
   readonly collapsed: boolean;
+  /** True when this run was reconstructed from persisted events on a cold load
+   *  rather than observed live (PR-2). A hydrated run that is still `running`
+   *  was mid-flight when the page last closed → the inline surface renders it as
+   *  INTERRUPTED, since no live stream is feeding it. */
+  readonly hydrated?: boolean;
 
   // ── orchestrator-only ──────────────────────────────────────────────
   readonly outcome?: string;
@@ -89,6 +97,9 @@ interface OrchestratorRunContextValue {
   stop: (investigationId: string) => void;
   /** Toggle the inline region's collapsed state (DZ2). */
   setCollapsed: (investigationId: string, collapsed: boolean) => void;
+  /** Reconstruct a run from persisted events on cold load (PR-2). Hydrate-if-
+   *  absent: no-ops if a run for this id already exists (live always wins). */
+  hydrate: (investigationId: string, events: readonly PersistedInvestigationEvent[]) => void;
   /** WS connection status — drives the "disable Full while reconnecting" guard (D6). */
   connectionStatus: ConnectionStatus;
 }
@@ -267,11 +278,41 @@ export function OrchestratorRunProvider({
     });
   }, []);
 
+  const hydrate = useCallback((investigationId: string, events: readonly PersistedInvestigationEvent[]) => {
+    setRuns((prev) => {
+      // Hydrate-if-absent (D): a live run already in the registry is authoritative
+      // — never clobber it (or an earlier hydration) with replayed history.
+      if (prev.has(investigationId)) return prev;
+      // Replay the persisted orchestrator events through the SAME reducer that
+      // processes them live, so a reconstructed run is byte-identical to one we
+      // observed. Build it up in an isolated map, then graft just this id in.
+      let replayed: ReadonlyMap<string, DeepRunState> = new Map();
+      for (const ev of events) {
+        if (!ev.event_type.startsWith("orchestrator:")) continue;
+        let envelope: DeepInvestigationEventEnvelope;
+        try {
+          envelope = JSON.parse(ev.payload) as DeepInvestigationEventEnvelope;
+        } catch {
+          continue; // a corrupt row can't sink the whole replay
+        }
+        // Forward-compat: skip rows written by a schema this client can't read,
+        // rather than mis-reconstructing a run from a changed event shape.
+        if (envelope.schemaVersion !== DEEP_INVESTIGATION_EVENT_SCHEMA || !envelope.message) continue;
+        replayed = applyMessage(replayed, envelope.message);
+      }
+      const run = replayed.get(investigationId);
+      if (!run) return prev;
+      const m = new Map(prev);
+      m.set(investigationId, { ...run, hydrated: true });
+      return m;
+    });
+  }, []);
+
   const getRun = useCallback((investigationId: string) => runs.get(investigationId), [runs]);
 
   const value = useMemo<OrchestratorRunContextValue>(
-    () => ({ runs, getRun, start, decide, stop, setCollapsed, connectionStatus }),
-    [runs, getRun, start, decide, stop, setCollapsed, connectionStatus],
+    () => ({ runs, getRun, start, decide, stop, setCollapsed, hydrate, connectionStatus }),
+    [runs, getRun, start, decide, stop, setCollapsed, hydrate, connectionStatus],
   );
 
   return <OrchestratorRunContext.Provider value={value}>{children}</OrchestratorRunContext.Provider>;
@@ -297,8 +338,8 @@ export function useOrchestratorRuns(): ReadonlyMap<string, DeepRunState> {
 /** The command helpers + connection status (no per-run subscription). */
 export function useOrchestratorRunActions(): Pick<
   OrchestratorRunContextValue,
-  "start" | "decide" | "stop" | "setCollapsed" | "connectionStatus"
+  "start" | "decide" | "stop" | "setCollapsed" | "hydrate" | "connectionStatus"
 > {
-  const { start, decide, stop, setCollapsed, connectionStatus } = useOrchestratorRunContext();
-  return { start, decide, stop, setCollapsed, connectionStatus };
+  const { start, decide, stop, setCollapsed, hydrate, connectionStatus } = useOrchestratorRunContext();
+  return { start, decide, stop, setCollapsed, hydrate, connectionStatus };
 }

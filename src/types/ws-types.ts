@@ -172,3 +172,25 @@ export type ServerMessage =
   | { type: "scan:complete"; runId: string; stackId: string; status: "complete"; durationMs: number; hitsDispatched: number }
   | { type: "scan:failed"; runId: string; stackId: string; error: string }
   | { type: "scan:skipped"; runId: string; stackId: string; reason: string };
+
+// ── Deep Investigation run-state persistence (PR-2) ───────────────────────
+//
+// The server persists every `orchestrator:*` ServerMessage to the
+// `investigation_events` table so a cold page load can replay a run through the
+// SAME registry reducer that processes it live. The stored payload is a
+// versioned envelope: `{ schemaVersion, message }`. The version exists so a
+// replayer can reject rows it doesn't understand (forward-compat) rather than
+// silently mis-reconstructing a run from a changed event shape.
+export const DEEP_INVESTIGATION_EVENT_SCHEMA = 1;
+
+/** The persisted envelope written to `investigation_events.payload` (JSON). */
+export interface DeepInvestigationEventEnvelope {
+  readonly schemaVersion: number;
+  readonly message: ServerMessage;
+}
+
+/** One row as returned by `GET /api/investigations/:id` (snake_case columns). */
+export interface PersistedInvestigationEvent {
+  readonly event_type: string;
+  readonly payload: string;
+}
