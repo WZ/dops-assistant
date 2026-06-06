@@ -42,7 +42,15 @@ function outcomeHeadline(outcome: string | undefined): string {
   }
 }
 
+/** A run reconstructed from persisted events that was still `running` when the
+ *  page last closed: no live stream feeds it on the new connection, so it's
+ *  shown as INTERRUPTED rather than a live (but frozen) run (PR-2, D). */
+function isInterrupted(run: DeepRunState): boolean {
+  return !!run.hydrated && run.running;
+}
+
 function kicker(run: DeepRunState): string {
+  if (isInterrupted(run)) return "Interrupted";
   if (run.kind === "deep-mode") return "Deep re-examination";
   if (run.running) return "Working theory";
   return run.outcome === "confirmed" ? "Current conclusion" : "Result";
@@ -50,6 +58,12 @@ function kicker(run: DeepRunState): string {
 
 /** The one-line conclusion shown result-first, derived from the real run state. */
 function conclusionHeadline(run: DeepRunState): string {
+  if (isInterrupted(run)) {
+    const last = run.steps[run.steps.length - 1];
+    return last?.target
+      ? `Interrupted while investigating: ${last.target}`
+      : "Interrupted before reaching a conclusion";
+  }
   if (run.kind === "deep-mode") {
     if (run.running) return "Re-judging the ruled-out causes…";
     const s = run.deepStats;
@@ -71,6 +85,7 @@ function conclusionHeadline(run: DeepRunState): string {
 /** Announce only state changes + the pause prompt (DZ4) — empty while a run
  *  streams mid-flight, so the move log never reaches the live region. */
 function liveAnnouncement(run: DeepRunState): string {
+  if (isInterrupted(run)) return "This deep investigation was interrupted when the page reloaded. Re-run to continue.";
   if (run.pause && !run.decisionSubmitted) return `Paused after ${run.pause.strikes} strikes — your decision is needed.`;
   if (!run.running && run.error) return `Deep investigation stopped: ${run.error}`;
   if (!run.running && run.outcome) return `Deep investigation finished: ${outcomeHeadline(run.outcome)}.`;
@@ -110,10 +125,12 @@ function ResultView({ run }: { run: DeepRunState }) {
   );
 }
 
-/** The raw move stream — reuses the same renderers as the legacy surfaces. */
-function LiveView({ run }: { run: DeepRunState }) {
+/** The raw move stream — reuses the same renderers as the legacy surfaces. A
+ *  hydrated-interrupted run is not live, so its stream is rendered settled
+ *  (no trailing spinner) via the explicit `live` flag. */
+function LiveView({ run, live }: { run: DeepRunState; live: boolean }) {
   if (run.kind === "deep-mode") {
-    return <DeepModeStream events={run.steps} stats={run.deepStats} running={run.running} />;
+    return <DeepModeStream events={run.steps} stats={run.deepStats} running={live} />;
   }
   const s = run.orchStats;
   const footer: AgentStreamFooterItem[] | undefined = s
@@ -125,7 +142,7 @@ function LiveView({ run }: { run: DeepRunState }) {
         { label: "tokens", value: s.tokensSpent },
       ]
     : undefined;
-  return <AgentStream label="Deep Investigation" events={run.steps} footer={footer} running={run.running} />;
+  return <AgentStream label="Deep Investigation" events={run.steps} footer={footer} running={live} />;
 }
 
 const SEG_ON = "bg-primary/12 text-primary";
@@ -143,15 +160,18 @@ export function InlineRunRegion({
   const [view, setView] = useState<"result" | "live">("result");
 
   // Live elapsed ticker while running (the run state only carries a final
-  // durationMs on completion). Resets when a new run starts.
+  // durationMs on completion). Resets when a new run starts. An interrupted
+  // (hydrated-running) run is NOT live, so the ticker stays off for it.
   const [elapsed, setElapsed] = useState(0);
   const running = !!run?.running;
+  const interrupted = !!run?.hydrated && running;
+  const liveRunning = running && !interrupted;
   useEffect(() => {
-    if (!running) return;
+    if (!liveRunning) return;
     setElapsed(0);
     const t = setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => clearInterval(t);
-  }, [running, run?.kind, investigationId]);
+  }, [liveRunning, run?.kind, investigationId]);
 
   // DZ2: on completion, auto-fall back to the Result view (the move log
   // auto-collapses; the result stays promoted).
@@ -173,9 +193,10 @@ export function InlineRunRegion({
     run.kind === "orchestrator" && run.orchStats ? run.orchStats.durationMs / 1000
     : run.kind === "deep-mode" && run.deepStats ? run.deepStats.durationMs / 1000
     : undefined;
-  const elapsedLabel = run.running ? fmtSeconds(elapsed) : finalSeconds != null ? fmtSeconds(finalSeconds) : "";
+  const elapsedLabel = liveRunning ? fmtSeconds(elapsed) : finalSeconds != null ? fmtSeconds(finalSeconds) : "";
 
-  const pulse = run.running ? "bg-primary animate-[status-pulse_1.8s_ease-in-out_infinite]"
+  const pulse = interrupted ? "bg-muted-foreground/40"
+    : run.running ? "bg-primary animate-[status-pulse_1.8s_ease-in-out_infinite]"
     : run.error ? "bg-destructive"
     : paused ? "bg-warning"
     : "bg-success";
@@ -191,7 +212,7 @@ export function InlineRunRegion({
           type="button"
           onClick={() => setCollapsed(id, !collapsed)}
           aria-expanded={!collapsed}
-          aria-label={`${title} — ${run.running ? "running" : "finished"}. Click to ${collapsed ? "expand" : "collapse"}.`}
+          aria-label={`${title} — ${interrupted ? "interrupted" : run.running ? "running" : "finished"}. Click to ${collapsed ? "expand" : "collapse"}.`}
           className="flex items-center gap-2 min-w-0 flex-1 text-left"
         >
           <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${pulse}`} />
@@ -205,10 +226,11 @@ export function InlineRunRegion({
           <button type="button" onClick={() => setView("live")} className={`font-mono text-[9px] px-2 py-1 ${view === "live" ? SEG_ON : SEG_OFF}`}>LIVE LOG</button>
         </span>
 
-        {run.running && run.kind === "orchestrator" && (
+        {liveRunning && run.kind === "orchestrator" && (
           // Stop only on the abortable Full run — the server only aborts
           // orchestrator runs (activeOrchestrations). A Challenge (deep-mode)
           // run has no abort path and is seconds long, so no dead Stop button.
+          // Never on an interrupted run — the server already lost it on reload.
           <button
             type="button"
             onClick={() => stop(id)}
@@ -223,13 +245,25 @@ export function InlineRunRegion({
       {/* Body */}
       {!collapsed && (
         <div className="px-3 py-3 max-h-[320px] overflow-auto">
-          {view === "result" ? <ResultView run={run} /> : <LiveView run={run} />}
+          {view === "result" ? <ResultView run={run} /> : <LiveView run={run} live={liveRunning} />}
         </div>
       )}
 
-      {/* Ephemerality notice — a Full (orchestrator) run dies on reload in PR-1 (D6).
-          T6 adds disabling the launch during reconnect. */}
-      {!collapsed && run.kind === "orchestrator" && run.running && (
+      {/* Interrupted notice — a run reconstructed from persisted events that was
+          mid-flight when the tab closed. The steps shown are what completed
+          before it stopped; the live stream is gone, so re-run to continue (D). */}
+      {!collapsed && interrupted && (
+        <div className="mx-3 mb-2 flex gap-2 items-start rounded-md border border-border/60 bg-muted/20 px-2.5 py-1.5">
+          <span className="text-muted-foreground text-[11px] leading-none mt-0.5" aria-hidden>⏸</span>
+          <span className="text-[10.5px] text-foreground/80 leading-snug">
+            This run was interrupted when the page reloaded. The steps above are what completed before it stopped — re-run to continue.
+          </span>
+        </div>
+      )}
+
+      {/* Ephemerality notice — a live Full (orchestrator) run dies on reload (D6).
+          Hidden once interrupted (the interrupted notice replaces it). */}
+      {!collapsed && run.kind === "orchestrator" && liveRunning && (
         <div className="mx-3 mb-2 flex gap-2 items-start rounded-md border border-warning/30 bg-warning/8 px-2.5 py-1.5">
           <span className="text-warning text-[11px] leading-none mt-0.5" aria-hidden>⚠</span>
           <span className="text-[10.5px] text-foreground/80 leading-snug">
@@ -239,8 +273,10 @@ export function InlineRunRegion({
       )}
 
       {/* Docked pause bar — pinned, shown even when collapsed so a pause is never
-          hidden (DZ2/DZ8). Decision routes through the registry (D7 locking). */}
-      {paused && (
+          hidden (DZ2/DZ8). Decision routes through the registry (D7 locking).
+          Suppressed when interrupted: the server lost the paused loop on reload,
+          so a decision would reach nothing — the interrupted notice stands in. */}
+      {paused && !interrupted && (
         <div className="border-t border-warning/30 bg-warning/8 px-3 py-2.5" role="group" aria-label="Paused — operator decision required">
           <div className="font-semibold text-[12px] text-warning mb-0.5">⚠ Paused — needs your call</div>
           <p className="text-[11px] text-foreground/80 mb-2 leading-snug">

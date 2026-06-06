@@ -193,3 +193,119 @@ describe("OrchestratorRunProvider", () => {
     expect(result.current.connectionStatus).toBe("disconnected");
   });
 });
+
+// ── PR-2 (T5/T7): persisted-event replay + hydrate ───────────────────────────
+//
+// FROZEN fixtures. These are hand-written persisted rows as the server's
+// persisting-send wrote them (schemaVersion 1), NOT generated from the current
+// types. If the orchestrator message shape changes in a way the v1 replay can't
+// read, these tests break — which is the point: the persisted log is a durable
+// contract, and silent breakage of old investigations must be caught here.
+type Row = { event_type: string; payload: string };
+const envelope = (message: unknown) => JSON.stringify({ schemaVersion: 1, message });
+
+// A run that ran to completion (started → 2 steps → complete).
+const COMPLETED_RUN: Row[] = [
+  { event_type: "orchestrator:started", payload: envelope({ type: "orchestrator:started", investigationId: ID }) },
+  { event_type: "orchestrator:step", payload: envelope({ type: "orchestrator:step", investigationId: ID, event: { seq: 0, verb: "querying", status: "running" } }) },
+  { event_type: "orchestrator:step", payload: envelope({ type: "orchestrator:step", investigationId: ID, event: { seq: 1, verb: "correlating", status: "running" } }) },
+  { event_type: "orchestrator:complete", payload: envelope({
+      type: "orchestrator:complete", investigationId: ID, outcome: "confirmed",
+      stats: { moves: 2, toolCalls: 4, subagents: 0, tokensSpent: 900, strikes: 0, depth: 2, durationMs: 4321 },
+      causalChain: [{ label: "incident: payments-api", kind: "incident" }, { label: "root cause: pool exhausted", kind: "root-cause" }],
+      traceSummary: "2 moves · confirmed at depth 2",
+    }) },
+];
+
+// A run that was mid-flight when the tab closed (started → step, no terminal).
+const MIDFLIGHT_RUN: Row[] = [
+  { event_type: "orchestrator:started", payload: envelope({ type: "orchestrator:started", investigationId: ID }) },
+  { event_type: "orchestrator:step", payload: envelope({ type: "orchestrator:step", investigationId: ID, event: { seq: 0, verb: "querying", status: "running" } }) },
+];
+
+describe("hydrate — persisted-event replay (PR-2 schema v1)", () => {
+  function mountWithActions() {
+    const ref = { current: [] as ServerMessage[] };
+    return renderHook(
+      () => ({ run: useOrchestratorRun(ID), actions: useOrchestratorRunActions() }),
+      { wrapper: makeWrapper(ref, vi.fn()) },
+    );
+  }
+
+  it("reconstructs a COMPLETED run from frozen rows (steps, outcome, chain) and tags it hydrated", () => {
+    const { result } = mountWithActions();
+    act(() => result.current.actions.hydrate(ID, COMPLETED_RUN));
+    const run = result.current.run!;
+    expect(run.kind).toBe("orchestrator");
+    expect(run.running).toBe(false);
+    expect(run.outcome).toBe("confirmed");
+    expect(run.steps).toHaveLength(2);
+    expect(run.causalChain).toHaveLength(2);
+    expect(run.traceSummary).toBe("2 moves · confirmed at depth 2");
+    expect(run.hydrated).toBe(true);
+  });
+
+  it("replays steps in seq order regardless (rows already created_at-ordered by the GET)", () => {
+    const { result } = mountWithActions();
+    act(() => result.current.actions.hydrate(ID, COMPLETED_RUN));
+    expect(result.current.run!.steps.map((s) => s.seq)).toEqual([0, 1]);
+  });
+
+  it("a MID-FLIGHT run reconstructs as still-running + hydrated (→ rendered INTERRUPTED)", () => {
+    const { result } = mountWithActions();
+    act(() => result.current.actions.hydrate(ID, MIDFLIGHT_RUN));
+    const run = result.current.run!;
+    expect(run.running).toBe(true);
+    expect(run.hydrated).toBe(true);
+    expect(run.steps).toHaveLength(1);
+  });
+
+  it("hydrate-if-absent: a live run already in the registry is NOT clobbered", () => {
+    const ref = { current: [] as ServerMessage[] };
+    const { result, rerender } = renderHook(
+      () => ({ run: useOrchestratorRun(ID), actions: useOrchestratorRunActions() }),
+      { wrapper: makeWrapper(ref, vi.fn()) },
+    );
+    // a live run arrives over WS first
+    act(() => { ref.current = [...ref.current, { type: "orchestrator:started", investigationId: ID }]; });
+    rerender();
+    expect(result.current.run?.running).toBe(true);
+    expect(result.current.run?.hydrated).toBeUndefined();
+    // a late GET tries to hydrate the SAME id → no-op (live wins)
+    act(() => result.current.actions.hydrate(ID, COMPLETED_RUN));
+    expect(result.current.run?.hydrated).toBeUndefined();
+    expect(result.current.run?.running).toBe(true);
+  });
+
+  it("rejects rows written by an unknown schemaVersion (forward-compat) → no run", () => {
+    const { result } = mountWithActions();
+    const future: Row[] = [
+      { event_type: "orchestrator:started", payload: JSON.stringify({ schemaVersion: 999, message: { type: "orchestrator:started", investigationId: ID } }) },
+    ];
+    act(() => result.current.actions.hydrate(ID, future));
+    expect(result.current.run).toBeUndefined();
+  });
+
+  it("ignores non-orchestrator and corrupt rows without crashing", () => {
+    const { result } = mountWithActions();
+    const mixed: Row[] = [
+      { event_type: "investigation:phase", payload: envelope({ type: "investigation:phase" }) }, // not ours
+      { event_type: "orchestrator:started", payload: "{not json" }, // corrupt
+      ...COMPLETED_RUN,
+    ];
+    act(() => result.current.actions.hydrate(ID, mixed));
+    // the corrupt orchestrator:started row is skipped, but the well-formed
+    // started later in COMPLETED_RUN still reconstructs the run.
+    expect(result.current.run?.running).toBe(false);
+    expect(result.current.run?.steps).toHaveLength(2);
+  });
+
+  it("JSON round-trip of the envelope is stable (write → read identity)", () => {
+    const message = { type: "orchestrator:started", investigationId: ID };
+    const written = envelope(message);
+    const read = JSON.parse(written) as { schemaVersion: number; message: unknown };
+    expect(read.schemaVersion).toBe(1);
+    expect(read.message).toEqual(message);
+    expect(JSON.stringify(read.message)).toBe(JSON.stringify(message));
+  });
+});

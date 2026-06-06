@@ -8,6 +8,7 @@ import type { IntentRouter } from "../agents/intent.js";
 import { resolveServiceFromHistory } from "../agents/intent.js";
 import type { ServiceConfig, DiscoveryConfig, Config } from "../config/schema.js";
 import type { ClientMessage, ServerMessage, ChartSeries, AgentStreamEvent } from "../types/ws-types.js";
+import { DEEP_INVESTIGATION_EVENT_SCHEMA } from "../types/ws-types.js";
 import { DEFAULT_STACK_SLUG } from "../types/stack-types.js";
 import { inferDependencyGraph } from "./dependency-graph.js";
 import { assembleCausalChain, traceSummary } from "../agents/orchestrator-stream.js";
@@ -458,9 +459,11 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
       }
       pendingPauses.clear();
       // Abort in-flight orchestrator runs so the loop stops at its next move
-      // instead of running on headless after the operator has gone.
+      // instead of running on headless after the operator has gone. Abort with
+      // the disconnect reason so the persist wrapper keeps the run replayable as
+      // INTERRUPTED (a deliberate Stop aborts with no reason → records "Stopped").
       for (const controller of activeOrchestrations.values()) {
-        controller.abort();
+        controller.abort(DEEP_INVESTIGATION_DISCONNECT_ABORT);
       }
       activeOrchestrations.clear();
       activeDiscovery.current?.abort(new Error("WebSocket disconnected"));
@@ -585,12 +588,18 @@ async function handleOrchestratorInvestigate(
 
   const abort = new AbortController();
   activeOrchestrations.set(msg.investigationId, abort);
+  // Persist every orchestrator:* event so a reload can replay the run (PR-2).
+  // The stub uses the same wrapped send, so the e2e reload test persists too.
+  // Passing abort.signal lets the wrapper stop persisting once the client
+  // disconnects — so a reload-triggered "aborted" terminal doesn't overwrite
+  // the INTERRUPTED replay (a deliberate Stop aborts with no reason → persists).
+  const persistingSend = makeOrchestratorPersistingSend(deps.db, msg.investigationId, send, abort.signal);
   try {
     // E2E stub: drive a deterministic scripted run (started → steps → pause →
     // decision → complete) without the real LLM/MCP engine, so a browser test can
     // exercise the full Console flow. Gated by an env flag; off in every real deploy.
     if (process.env["DEEP_INVESTIGATION_E2E_STUB"] === "1") {
-      await streamStubbedOrchestrator(msg.investigationId, send, pendingPauses, abort.signal);
+      await streamStubbedOrchestrator(msg.investigationId, persistingSend, pendingPauses, abort.signal);
     } else {
       const agents = await getOrCreateAgents(stackId, ctx, deps.config, deps.db);
       await runOrchestratorStreamed(
@@ -598,13 +607,73 @@ async function handleOrchestratorInvestigate(
         focus,
         { timeRange, ctx: { incidentTime: timeRange?.from }, dependencies, incidentService: investigation.service, signal: abort.signal },
         agents.orchestrate,
-        send,
+        persistingSend,
         pendingPauses,
       );
     }
   } finally {
     activeOrchestrations.delete(msg.investigationId);
   }
+}
+
+/**
+ * The schema version stamped on every persisted Deep Investigation event lives
+ * in ws-types.ts (DEEP_INVESTIGATION_EVENT_SCHEMA) so the server writer and the
+ * client replayer share one source of truth — re-exported here for callers that
+ * import it from the handler.
+ */
+export { DEEP_INVESTIGATION_EVENT_SCHEMA };
+
+/**
+ * Abort reason used ONLY when a run is torn down because the client's socket
+ * closed (reload / tab-close). It distinguishes a disconnect from a deliberate
+ * operator Stop: both abort the same controller, but on a disconnect the loop's
+ * unwinding terminal (`orchestrator:complete` outcome "aborted", or
+ * `orchestrator:error`) is emitted to a dead socket and must NOT be persisted —
+ * otherwise a cold-load replay would reconstruct a finished/aborted run instead
+ * of the hydrated-running state that renders as INTERRUPTED. A user Stop aborts
+ * with no reason, so its terminal still persists (and correctly replays as
+ * "Stopped"). See makeOrchestratorPersistingSend.
+ */
+export const DEEP_INVESTIGATION_DISCONNECT_ABORT = "deep-investigation:client-disconnected";
+
+/**
+ * Wrap a `send` so every `orchestrator:*` message for this investigation is also
+ * persisted to `investigation_events` (PR-2: reload-survival). Persist-then-send;
+ * a persist failure is logged but NEVER breaks the live stream — the run keeps
+ * streaming, that one event just won't replay after a reload. Only orchestrator
+ * events are persisted (deep-mode keeps its own report.deepMode snapshot).
+ *
+ * `signal` is the run's abort signal. Once it's aborted *by a client disconnect*
+ * (reason === DEEP_INVESTIGATION_DISCONNECT_ABORT) we stop persisting: any event
+ * the loop emits while unwinding went to a closed socket and persisting it (a
+ * terminal "aborted"/"error") would clobber the INTERRUPTED replay. Delivery and
+ * persistence stay in lockstep — we persist only what a live client could see.
+ */
+export function makeOrchestratorPersistingSend(
+  db: Database,
+  investigationId: string,
+  send: (m: ServerMessage) => void,
+  signal?: AbortSignal,
+): (m: ServerMessage) => void {
+  return (m: ServerMessage) => {
+    const type = (m as { type?: unknown }).type;
+    const mId = (m as { investigationId?: unknown }).investigationId;
+    const disconnected = signal?.aborted === true && signal.reason === DEEP_INVESTIGATION_DISCONNECT_ABORT;
+    if (!disconnected && typeof type === "string" && type.startsWith("orchestrator:") && mId === investigationId) {
+      try {
+        db.createEvent({
+          id: `evt_${ulid()}`,
+          investigationId,
+          eventType: type,
+          payload: JSON.stringify({ schemaVersion: DEEP_INVESTIGATION_EVENT_SCHEMA, message: m }),
+        });
+      } catch (err) {
+        logger.warn({ err, investigationId, type }, "Failed to persist orchestrator event (live stream unaffected)");
+      }
+    }
+    send(m);
+  };
 }
 
 async function runOrchestratorStreamed(
