@@ -427,10 +427,12 @@ export function App() {
   const handleWrongStack = useCallback(
     (correctStackId: string) => {
       const pane = leftPaneRef.current;
-      if (pane.type !== "investigation") return;
+      // Both the detail page and the wide Deep panel (PR-2d) can land on a
+      // known-but-wrong stack; preserve whichever surface the user is on.
+      if (pane.type !== "investigation" && pane.type !== "investigation-deep") return;
       switchStack(correctStackId);
       setLeftPane(
-        { type: "investigation", id: pane.id, stackId: correctStackId },
+        { type: pane.type, id: pane.id, stackId: correctStackId },
         { replace: true },
       );
     },
@@ -453,7 +455,7 @@ export function App() {
       // link the user just opened. Only reset when the new active stack
       // genuinely doesn't match the pane's intent.
       const investigationOwnsThisStack =
-        pane.type === "investigation" && pane.stackId === activeStackId;
+        (pane.type === "investigation" || pane.type === "investigation-deep") && pane.stackId === activeStackId;
       if (shouldResetOnStackSwitch(pane) && !investigationOwnsThisStack) {
         setLeftPane({ type: "dashboard" });
       }
