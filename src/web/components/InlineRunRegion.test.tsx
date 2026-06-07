@@ -6,6 +6,11 @@ import type { ServerMessage, ClientMessage, AgentStreamEvent } from "../../types
 import { OrchestratorRunProvider, useOrchestratorRunActions } from "../contexts/OrchestratorRunContext";
 import { InlineRunRegion } from "./InlineRunRegion";
 
+// PR-3: InlineRunRegion reads Grafana providers via useGrafanaProviders. Stub it
+// (no providers → deep-link path inert) so these tests stay free of StackContext
+// + the async /api/providers fetch; the hook itself is covered in its own test.
+vi.mock("../hooks/useGrafanaProviders", () => ({ useGrafanaProviders: () => [] }));
+
 const ID = "inv_region";
 const step = (seq: number, target?: string): AgentStreamEvent => ({ seq, verb: "testing", target, status: "running" });
 

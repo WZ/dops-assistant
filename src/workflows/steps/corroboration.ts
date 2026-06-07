@@ -21,6 +21,8 @@
  * (current single-pass behavior) and this module is exercised only in tests.
  */
 
+import type { EvidenceProvenance } from "../../types/ws-types.js";
+
 // ── Normalized observation (subset of the per-phase evidence shapes) ──────────
 
 export interface NormalizedObservation {
@@ -33,6 +35,11 @@ export interface NormalizedObservation {
   text?: string;
   /** ISO timestamp when the observation carries one (infra event, change/deploy) */
   timestamp?: string;
+  /** PR-3 deep-link provenance: the raw tool call that produced this observation,
+   *  stamped by the hypothesis re-query so a confirmed root-cause link can deep-link
+   *  to the exact Grafana panel. Absent for observations not sourced from a tool
+   *  call (e.g. subagent fold-backs). */
+  provenance?: EvidenceProvenance;
 }
 
 // ── Structured, checkable predictions ────────────────────────────────────────

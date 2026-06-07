@@ -813,7 +813,19 @@ export async function streamStubbedOrchestrator(
     causalChain: [
       { label: "impala", kind: "incident" },
       { label: "impala-statestore", kind: "followed", evidence: "gRPC handshake latency climbing" },
-      { label: "root cause: statestore connection pool starvation", kind: "root-cause", evidence: "pool_used = 100% for 6m" },
+      {
+        label: "root cause: statestore connection pool starvation",
+        kind: "root-cause",
+        evidence: "pool_used = 100% for 6m",
+        // PR-3: deep-link provenance so the stubbed e2e exercises the "Grafana ↗"
+        // render path (degrades to text-only when no provider webUrl is configured).
+        provenance: {
+          tool: "query_prometheus",
+          args: JSON.stringify({ expr: 'pool_used{service="impala-statestore"}', datasource: "Prometheus" }),
+          from: "2026-01-01T00:00:00Z",
+          to: "2026-01-01T01:00:00Z",
+        },
+      },
     ],
     traceSummary: "4 moves · 1 query · confirmed at depth 1",
   });

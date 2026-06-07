@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.9.0] - 2026-06-07
+
+### Added
+- **Deep Investigation links its conclusion to the evidence (gated off, PR-3 of a sequence).** When a deep investigation confirms a root cause, that conclusion now carries a "Grafana ↗" deep-link straight to the exact panel — the query and time window that confirmed it — so you can verify the agent's call in one click instead of taking it on faith. The link opens the same Grafana Explore view the standard investigation report already uses.
+
+### Changed
+- The provider lookup that powers Grafana deep links is now shared between the standard investigation report and the deep-investigation views, so both build links the same way and stay correct after a stack switch.
+
 ## [0.4.8.0] - 2026-06-07
 
 ### Added

@@ -42,6 +42,7 @@ import type {
   NormalizedObservation,
   CorroborationContext,
 } from "./corroboration.js";
+import type { EvidenceProvenance } from "../../types/ws-types.js";
 
 // ── Prediction → query plan (pure, unit-testable) ────────────────────────────
 
@@ -122,6 +123,62 @@ export function planPredictionQuery(
   }
 }
 
+// ── Deep-link provenance (PR-3, pure) ────────────────────────────────────────
+
+/** A tool call captured during a re-query, before serialization to provenance.
+ *  `ok` is false when the tool call errored — failed attempts are skipped so the
+ *  deep-link doesn't point at a query that didn't run. */
+export interface CapturedToolCall {
+  tool: string;
+  args: Record<string, unknown>;
+  ok?: boolean;
+}
+
+/** The args keys a Grafana query lives under. Intentionally a minimal mirror of
+ *  `extractQueryFromToolCall`'s detection so the SERVER can pick the query call
+ *  WITHOUT importing the web-only `grafana-links` lib (locked decision D2). The
+ *  client still does the real extraction + URL build at render. */
+const QUERY_ARG_KEYS = ["expr", "expression", "logql", "query"] as const;
+
+function carriesQuery(args: Record<string, unknown>): boolean {
+  return QUERY_ARG_KEYS.some((k) => typeof args[k] === "string" && (args[k] as string).length > 0);
+}
+
+/**
+ * Pick the tool call that best represents this re-query, for deep-link provenance.
+ * The role agents run focused, phase-specific queries (query_prometheus / query_loki
+ * etc.) whose args carry the expr/logql/query. We take the LAST successful call that
+ * actually carries a query — skipping zero-arg discovery calls (list_datasources),
+ * non-query helper calls (list_loki_label_names), and failed attempts, all of which
+ * would deep-link to nothing or to a query that never ran. Last-wins because the
+ * agent often probes (helpers / a failed attempt) before its real query. Falls back
+ * to the last query-bearing call regardless of `ok` (the error flag may be absent),
+ * then to undefined → the link renders text-only.
+ *
+ * Pure, and deliberately free of any `grafana-links` dependency (D2) — the SERVER
+ * only stashes the raw tool call; the CLIENT extracts the query string and builds
+ * the Grafana Explore URL at render (mirrors `EvidenceTimeline`). `from`/`to` stamp
+ * the incident window so the client can build a range query even though the tool
+ * args may not echo it.
+ */
+export function firstQueryProvenance(
+  calls: CapturedToolCall[],
+  timeRange?: { from: string; to: string },
+): EvidenceProvenance | undefined {
+  const queries = calls.filter((c) => c.args && carriesQuery(c.args));
+  if (queries.length === 0) return undefined;
+  // Prefer the last successful query; fall back to the last query-bearing call.
+  const call =
+    [...queries].reverse().find((c) => c.ok !== false) ?? queries[queries.length - 1];
+  let args: string;
+  try {
+    args = JSON.stringify(call!.args);
+  } catch {
+    return undefined;
+  }
+  return { tool: call!.tool, args, from: timeRange?.from, to: timeRange?.to };
+}
+
 // ── Tool-enabled gatherEvidence ──────────────────────────────────────────────
 
 export interface GatherEvidenceOptions {
@@ -181,7 +238,18 @@ async function defaultRunRoleQuery(
     return [];
   }
 
-  const tools = wrapToolsWithCallbacks(rawTools, opts.onToolCall, `hyp:${plan.phase}`);
+  // Capture the tool call(s) for deep-link provenance (PR-3) while preserving any
+  // caller-supplied onToolCall. The first call carrying args becomes the link's
+  // provenance so the confirmed root cause can deep-link to its exact Grafana panel.
+  const captured: CapturedToolCall[] = [];
+  const capturingOnToolCall: GatherEvidenceOptions["onToolCall"] = (name, args, result, duration, error, phase) => {
+    try {
+      captured.push({ tool: name, args: args ?? {}, ok: !error });
+    } catch { /* never let provenance capture break the query */ }
+    opts.onToolCall?.(name, args, result, duration, error, phase);
+  };
+
+  const tools = wrapToolsWithCallbacks(rawTools, capturingOnToolCall, `hyp:${plan.phase}`);
   const agent = PHASE_META[plan.phase].createAgent({
     model: opts.model,
     tools,
@@ -239,6 +307,10 @@ async function defaultRunRoleQuery(
   const observations = Array.isArray(parsed?.observations) ? parsed.observations : [];
   if (observations.length === 0) return [];
 
-  // 4. Normalize into the flat shape the corroboration keystone consumes.
-  return normalizeObservations({ [plan.phase]: { observations } });
+  // 4. Normalize into the flat shape the corroboration keystone consumes, stamping
+  //    the captured query as deep-link provenance (PR-3) onto each observation this
+  //    re-query produced — they were all earned by that one query.
+  const normalized = normalizeObservations({ [plan.phase]: { observations } });
+  const provenance = firstQueryProvenance(captured, opts.timeRange);
+  return provenance ? normalized.map((o) => ({ ...o, provenance })) : normalized;
 }

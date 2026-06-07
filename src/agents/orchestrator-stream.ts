@@ -7,7 +7,7 @@
  * operator should be able to read the move log without decoding jargon.
  */
 import type { TraceEntry, OrchestratorResult } from "./orchestrator.js";
-import type { AgentStreamEvent, CausalChainLink } from "../types/ws-types.js";
+import type { AgentStreamEvent, CausalChainLink, EvidenceProvenance } from "../types/ws-types.js";
 import type { RankedHypothesis } from "../types/rca-types.js";
 import type { NormalizedObservation } from "../workflows/steps/corroboration.js";
 
@@ -34,6 +34,47 @@ function predictionSummary(prediction: Record<string, unknown> | undefined): str
     default:
       return undefined;
   }
+}
+
+/** Map a prediction kind to the evidence phase its discriminating re-query ran in
+ *  (PR-3). Used to find the confirming query's provenance for a deep-link. */
+function predictionPhase(kind: unknown): NormalizedObservation["phase"] | undefined {
+  switch (kind) {
+    case "metric-threshold": return "metrics";
+    case "log-pattern": return "logs";
+    case "infra-status": return "infra";
+    case "change-in-window": return "changes";
+    default: return undefined;
+  }
+}
+
+/**
+ * Find the deep-link provenance for a confirmed root cause (PR-3, locked decision D3):
+ * subject-first, phase-fallback, LATEST-wins. The confirming re-query stamped its
+ * tool call onto every observation it produced; we first try the observation whose
+ * subject matches the prediction's target (metric / pattern / resource), then fall
+ * back to the prediction's phase. In both cases we take the LATEST matching
+ * observation: evidence accumulates in move order, so the confirming hypothesis's
+ * re-query is appended after any earlier ruled-out hypothesis's — taking the first
+ * would risk linking to a stale, ruled-out query in a multi-hypothesis run. The
+ * fallback also lands the right query when the LLM's reported name isn't
+ * byte-identical to the structured prediction. Returns undefined → text-only link.
+ */
+function provenanceForPrediction(
+  prediction: Record<string, unknown> | undefined,
+  evidence: NormalizedObservation[],
+): EvidenceProvenance | undefined {
+  if (!prediction) return undefined;
+  const phase = predictionPhase(prediction.kind);
+  if (!phase) return undefined;
+  // Latest-match: scan newest → oldest so the confirming re-query wins.
+  const latest = [...evidence].reverse();
+  const target = (prediction.metric ?? prediction.pattern ?? prediction.resource) as string | undefined;
+  if (target) {
+    const exact = latest.find((o) => o.subject === target && o.provenance);
+    if (exact?.provenance) return exact.provenance;
+  }
+  return latest.find((o) => o.phase === phase && o.provenance)?.provenance;
 }
 
 /**
@@ -70,6 +111,10 @@ export function assembleCausalChain(
         label: service,
         kind: "followed",
         evidence: finding?.text ? attributionFromText(finding.text) : undefined,
+        // D4: copy provenance uniformly from the matched observation. Inert for
+        // followed links today (subagent fold-backs carry none) — lights up for
+        // free if they ever do, with no special-casing.
+        provenance: finding?.provenance,
       });
     }
   }
@@ -78,6 +123,8 @@ export function assembleCausalChain(
       label: `root cause: ${confirmed.hypothesis}`,
       kind: "root-cause",
       evidence: predictionSummary(confirmed.prediction),
+      // D3: deep-link the confirmed root cause to the query that confirmed it.
+      provenance: provenanceForPrediction(confirmed.prediction, evidence),
     });
   }
   return chain;

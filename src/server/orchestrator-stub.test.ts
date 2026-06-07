@@ -43,7 +43,12 @@ describe("streamStubbedOrchestrator (E2E engine stub)", () => {
     ]);
     const done = sent.at(-1) as Extract<ServerMessage, { type: "orchestrator:complete" }>;
     expect(done.outcome).toBe("confirmed");
-    expect(done.causalChain?.some((l) => l.kind === "root-cause")).toBe(true);
+    const root = done.causalChain?.find((l) => l.kind === "root-cause");
+    expect(root).toBeTruthy();
+    // PR-3: the confirmed root cause carries deep-link provenance (the query that
+    // confirmed it) so the deep-run surfaces can render a "Grafana ↗" link.
+    expect(root?.provenance?.tool).toBe("query_prometheus");
+    expect(root?.provenance?.args).toContain("expr");
   });
 
   it("escalate → stops with an operator-pause outcome (no further steps)", async () => {

@@ -11,7 +11,10 @@
  */
 import { AgentStream, type AgentStreamFooterItem } from "./AgentStream";
 import { DeepModeStream } from "./DeepModeStream";
+import { buildExploreUrl, extractQueryFromToolCall } from "../lib/grafana-links";
+import type { GrafanaProvider } from "../hooks/useGrafanaProviders";
 import type { DeepRunState } from "../contexts/OrchestratorRunContext";
+import type { EvidenceProvenance } from "../../types/ws-types";
 
 /** Compact mm:ss / ss formatting for elapsed/duration. */
 export function fmtSeconds(s: number): string {
@@ -95,28 +98,69 @@ export function liveAnnouncement(run: DeepRunState): string {
   return "";
 }
 
-export function CausalChain({ chain }: { chain: NonNullable<DeepRunState["causalChain"]> }) {
+/**
+ * Build a Grafana Explore URL for a causal-chain link's provenance (PR-3), the
+ * same client-side path `EvidenceTimeline` uses: extract the query from the raw
+ * tool call, resolve the provider by kind (metrics/logs), build the deep-link over
+ * the incident window. Returns "" when the query isn't extractable, no provider is
+ * configured for that role, or the time window is missing — caller renders no link.
+ */
+function provenanceUrl(p: EvidenceProvenance, providers: GrafanaProvider[]): string {
+  const extracted = extractQueryFromToolCall(p.tool, p.args);
+  if (!extracted) return "";
+  const role = extracted.kind === "logs" ? "logs" : "metrics";
+  const provider = providers.find((pr) => pr.role === role);
+  if (!provider?.webUrl) return "";
+  return buildExploreUrl({
+    webUrl: provider.webUrl,
+    datasource: extracted.datasource ?? provider.datasource,
+    query: extracted.query,
+    from: p.from ?? "",
+    to: p.to ?? "",
+  });
+}
+
+export function CausalChain({
+  chain,
+  providers = [],
+}: {
+  chain: NonNullable<DeepRunState["causalChain"]>;
+  providers?: GrafanaProvider[];
+}) {
   return (
     <div className="mt-2.5 flex flex-col font-mono text-[11px]">
-      {chain.map((link, i) => (
-        <div key={i} className="flex flex-col">
-          {i > 0 && <span className="text-muted-foreground/40 leading-none my-0.5" aria-hidden>↓</span>}
-          <span className={link.kind === "root-cause" ? "text-success" : "text-foreground/90"}>{link.label}</span>
-          {link.evidence && <span className="text-[10px] text-muted-foreground/70 leading-snug pl-3">{link.evidence}</span>}
-        </div>
-      ))}
+      {chain.map((link, i) => {
+        const url = link.provenance ? provenanceUrl(link.provenance, providers) : "";
+        return (
+          <div key={i} className="flex flex-col">
+            {i > 0 && <span className="text-muted-foreground/40 leading-none my-0.5" aria-hidden>↓</span>}
+            <span className={link.kind === "root-cause" ? "text-success" : "text-foreground/90"}>{link.label}</span>
+            {link.evidence && <span className="text-[10px] text-muted-foreground/70 leading-snug pl-3">{link.evidence}</span>}
+            {url && (
+              <a
+                href={url}
+                target="_blank"
+                rel="noreferrer"
+                className="text-[10px] text-accent/80 hover:text-accent hover:underline leading-snug pl-3 w-fit"
+              >
+                Grafana ↗
+              </a>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
 
 /** Result-first view (default): conclusion → causal chain → trace summary. The
  *  move log is hidden here (switch to Live log for it) — DZ1/DZ2. */
-export function ResultView({ run }: { run: DeepRunState }) {
+export function ResultView({ run, providers = [] }: { run: DeepRunState; providers?: GrafanaProvider[] }) {
   return (
     <div>
       <div className="font-mono text-[9px] tracking-[0.13em] uppercase text-accent/70">{kicker(run)}</div>
       <div className="font-semibold text-[14px] leading-snug mt-1 text-foreground">{conclusionHeadline(run)}</div>
-      {run.causalChain && run.causalChain.length > 1 && <CausalChain chain={run.causalChain} />}
+      {run.causalChain && run.causalChain.length > 1 && <CausalChain chain={run.causalChain} providers={providers} />}
       {run.traceSummary && <div className="font-mono text-[10px] text-muted-foreground/60 mt-2">{run.traceSummary}</div>}
       {run.steps.length > 0 && (
         <div className="mt-2 font-mono text-[10px] text-muted-foreground/45">
