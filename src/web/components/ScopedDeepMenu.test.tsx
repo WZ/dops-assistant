@@ -81,6 +81,22 @@ describe("ScopedDeepMenu", () => {
     expect(send).toHaveBeenCalledWith({ type: "orchestrator_investigate", investigationId: ID });
   });
 
+  it("calls onFullStart after the Full run dispatches (auto-nav to the /deep panel, PR-2d)", async () => {
+    vi.useFakeTimers();
+    const onFullStart = vi.fn();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <OrchestratorRunProvider wsMessages={[]} wsSend={vi.fn()} connectionStatus="connected">{children}</OrchestratorRunProvider>
+    );
+    render(<ScopedDeepMenu investigationId={ID} canChallenge onFullStart={onFullStart} />, { wrapper });
+    openMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: /Full deep investigation/i }));
+    expect(onFullStart).not.toHaveBeenCalled(); // not until the countdown dispatches
+    for (let i = 0; i < 4; i++) {
+      await act(async () => { await vi.advanceTimersByTimeAsync(900); });
+    }
+    expect(onFullStart).toHaveBeenCalledWith(ID);
+  });
+
   it("Full countdown can be cancelled before dispatch", () => {
     vi.useFakeTimers();
     const send = vi.fn();

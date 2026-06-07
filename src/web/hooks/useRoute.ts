@@ -99,6 +99,18 @@ export function parseUrl(pathname: string, search: string = ""): LeftPaneView {
     return { type: "activity", tab: "investigations", query: parseInvestigationsQuery(search) };
   }
 
+  // /stacks/:stackId/investigations/:id/deep — the wide Deep Investigation panel
+  // (PR-2d). MUST be matched before the non-deep stack-scoped route below, or the
+  // `(.+)` id capture would swallow the `/deep` suffix.
+  const stackDeepMatch = p.match(/^\/stacks\/([^/]+)\/investigations\/(.+)\/deep$/);
+  if (stackDeepMatch) {
+    return {
+      type: "investigation-deep",
+      stackId: safeDecode(stackDeepMatch[1]!),
+      id: safeDecode(stackDeepMatch[2]!),
+    };
+  }
+
   // /stacks/:stackId/investigations/:id — canonical, stack-scoped detail page.
   // The stack is part of the URL because investigation lookups on the server
   // are scoped to a stack (db.getInvestigation takes both stackId and id).
@@ -113,6 +125,13 @@ export function parseUrl(pathname: string, search: string = ""): LeftPaneView {
       id: safeDecode(stackInvMatch[2]!),
     };
   }
+
+  // Legacy /investigations/:id/deep — the deep panel via a stackless link.
+  // Before the bare /investigations/:id branch (same swallow concern as above).
+  // stackId="" sentinel → the panel resolves the stack via /locate, mirroring
+  // the detail page.
+  const deepMatch = p.match(/^\/investigations\/(.+)\/deep$/);
+  if (deepMatch) return { type: "investigation-deep", id: safeDecode(deepMatch[1]!), stackId: "" };
 
   // Legacy /investigations/:id — kept so existing bookmarks, Slack links,
   // and event-log hrefs from before the stack-scoped URL change still
@@ -175,6 +194,11 @@ export function viewToUrl(view: LeftPaneView): string {
       return view.stackId
         ? `${base}/stacks/${encodeURIComponent(view.stackId)}/investigations/${encodeURIComponent(view.id)}`
         : `${base}/investigations/${encodeURIComponent(view.id)}`;
+    case "investigation-deep":
+      // Same stack-scoped/legacy split as `investigation`, with the /deep suffix.
+      return view.stackId
+        ? `${base}/stacks/${encodeURIComponent(view.stackId)}/investigations/${encodeURIComponent(view.id)}/deep`
+        : `${base}/investigations/${encodeURIComponent(view.id)}/deep`;
     case "pattern":
       return `${base}/patterns/${view.id}`;
     case "activity": {
