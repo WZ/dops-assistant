@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.7.0] - 2026-06-07
+
+### Added
+- **Deep Investigation runs survive a disconnect (gated off, PR-2c of a sequence).** An autonomous run now keeps going on the server even if you reload, close the tab, or briefly lose connection — reopening reattaches to the *live* run and resumes streaming where it left off, instead of showing it as interrupted. Open the same investigation in a second tab and both follow the run together. A pause decision made in one tab immediately locks the controls in the others.
+- **Auto-park for unwatched runs.** If no one is watching a run for a couple of minutes, it parks itself to stop spending tokens, then resumes automatically the moment you reopen it. A run shown as "Parked" is recovering; only a run the server has genuinely lost (e.g. after a server restart) is shown as "Interrupted."
+
+### Changed
+- A live run is no longer ephemeral: the "this run stops if you reload" warning is gone, because runs are now durable across a reload. A deliberate **Stop** still ends the run and replays as "Stopped."
+
 ## [0.4.6.0] - 2026-06-06
 
 ### Added
