@@ -25,6 +25,15 @@ export type ClientMessage =
   // Operator hit Stop on an in-flight Deep Investigation. Aborts the run (the
   // loop stops at its next guard check → "aborted") and unblocks it if paused.
   | { type: "orchestrator_stop"; investigationId: string }
+  // Attach this connection to a server-lifetime orchestrator run (PR-2c): a
+  // reconnecting/extra tab subscribes to reattach to the live stream. The server
+  // replays the run's persisted history (orchestrator:replay) then streams live;
+  // if the run isn't live it answers orchestrator:not_live so the client uses the
+  // cold GET/hydrate path instead.
+  | { type: "orchestrator_subscribe"; investigationId: string }
+  // Detach this connection from a run (e.g. navigating to another investigation
+  // on the same socket). A WS close detaches implicitly.
+  | { type: "orchestrator_unsubscribe"; investigationId: string }
   | { type: "rerun"; investigationId: string; template?: "quick" | "standard" | "full" }
   | { type: "new_session" }
   | { type: "discover" }
@@ -141,6 +150,19 @@ export type ServerMessage =
   // pause card and replies with `orchestrator_decision`.
   | { type: "orchestrator:operator_pause"; investigationId: string; strikes: number; hypothesesTried?: string[] }
   | { type: "orchestrator:error"; investigationId: string; message: string }
+  // PR-2c reattach: a one-shot catch-up sent to a (re)subscribing client. Carries
+  // the run's full persisted history; the client reconstructs from it (live, not
+  // INTERRUPTED) then applies subsequent live events, deduping the overlap by seq.
+  | { type: "orchestrator:replay"; investigationId: string; events: PersistedInvestigationEvent[]; live: boolean }
+  // Answered to orchestrator_subscribe when no live run exists for this id — the
+  // client falls back to the cold GET/hydrate render (completed or INTERRUPTED).
+  | { type: "orchestrator:not_live"; investigationId: string }
+  // A viewerless run parked at the auto-park idle threshold (PR-2c, T5). Resumes
+  // when a client reattaches. Persisted so a cold load renders "Parked".
+  | { type: "orchestrator:parked"; investigationId: string }
+  // The first operator decision at a pause was accepted (PR-2c, D7 cross-tab):
+  // every attached tab locks its decision controls, not just the one that clicked.
+  | { type: "orchestrator:decision_locked"; investigationId: string }
   | { type: "session_cleared" }
   | { type: "context_switch"; previousService: string; newService: string }
   | { type: "services:health"; data: unknown[] }

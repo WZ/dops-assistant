@@ -9,6 +9,7 @@ import { resolveServiceFromHistory } from "../agents/intent.js";
 import type { ServiceConfig, DiscoveryConfig, Config } from "../config/schema.js";
 import type { ClientMessage, ServerMessage, ChartSeries, AgentStreamEvent } from "../types/ws-types.js";
 import { DEEP_INVESTIGATION_EVENT_SCHEMA } from "../types/ws-types.js";
+import { OrchestratorRunRegistry, type OperatorDecision } from "./orchestrator-run-registry.js";
 import { DEFAULT_STACK_SLUG } from "../types/stack-types.js";
 import { inferDependencyGraph } from "./dependency-graph.js";
 import { assembleCausalChain, traceSummary } from "../agents/orchestrator-stream.js";
@@ -34,10 +35,8 @@ const logger = createLogger();
 
 const MAX_CHART_SERIES = 4;
 
-/** A paused orchestrator run, awaiting an operator decision. Resolving the
- *  promise (via `orchestrator_decision`, timeout, or WS close) resumes the loop. */
-type OperatorDecision = "continue" | "escalate" | "wait";
-type PendingPause = { resolve: (decision: OperatorDecision) => void; timer: ReturnType<typeof setTimeout> };
+// OperatorDecision + pause state live in the run registry (PR-2c), which owns
+// run lifecycle so a decision from any connection resolves the one run.
 
 /** How long an operator-pause prompt waits for a decision before defaulting to
  *  `escalate` (stop). A disconnected/idle operator must not strand the loop —
@@ -123,6 +122,9 @@ export interface WsDeps {
   globalOnComplete?: RunnerDeps["globalOnComplete"];
   validateLlmServiceMatch: (llmService: string | undefined, userMessage: string, services: ServiceConfig[]) => ServiceConfig | undefined;
   matchServiceFromText: (text: string, services: ServiceConfig[]) => ServiceConfig | undefined;
+  /** Server-lifetime registry of in-flight Deep Investigation runs (PR-2c).
+   *  Optional: setupWebSocket constructs one if the caller doesn't supply it. */
+  runRegistry?: OrchestratorRunRegistry;
   /**
    * Length of the cancellable confirm-dispatch window for chat-originated
    * investigations. Default 5000ms. Tests override to a small value (or 0)
@@ -240,6 +242,20 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
   const wss = new WebSocketServer({ server, path: "/ws" });
   const wsRateLimiter = new WsRateLimiter();
 
+  // Server-lifetime registry of in-flight orchestrator runs (PR-2c). Shared across
+  // every connection so a run outlives the socket that launched it: a reload
+  // detaches that connection's sink but the run keeps streaming for a reattach.
+  const runRegistry = deps.runRegistry ?? new OrchestratorRunRegistry();
+
+  // Park watchdog (PR-2c): periodically flag viewerless runs to park at their next
+  // move boundary (bounding headless token burn) and GC terminal runs past grace.
+  // unref'd so it never keeps the process (or a test) alive on its own.
+  const PARK_WATCHDOG_TICK_MS = 30_000;
+  const parkWatchdog = setInterval(() => {
+    try { runRegistry.sweep(); } catch (err) { logger.warn({ err }, "park watchdog sweep failed"); }
+  }, PARK_WATCHDOG_TICK_MS);
+  parkWatchdog.unref?.();
+
   const HEARTBEAT_INTERVAL_MS = 30_000;
 
   wss.on("connection", async (ws: WebSocket, req) => {
@@ -286,18 +302,10 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
     // removed — late cancels are silently ignored.
     const pendingDispatches: Map<string, AbortController> = new Map();
 
-    // Per-connection paused orchestrator runs: a run that hit the strike limit
-    // and is awaiting an operator decision. Keyed by investigationId; the
-    // `orchestrator_decision` handler resolves the matching entry, and WS close
-    // resolves any survivors with `escalate` so a disconnect never strands the
-    // loop (which would otherwise sit blocked until its wall-clock guard trips).
-    const pendingPauses: Map<string, PendingPause> = new Map();
-
-    // Per-connection active orchestrator runs, keyed by investigationId. Gives a
-    // concurrency guard (one run per investigation per connection — no pile-on
-    // from a double-click) and an abort handle: WS close aborts every in-flight
-    // run so the loop stops cooperatively instead of running on headless.
-    const activeOrchestrations: Map<string, AbortController> = new Map();
+    // Run state (pauses, abort handles, sinks) lives in the server-lifetime
+    // `runRegistry` (PR-2c). This connection only tracks WHICH run ids it
+    // launched/attached, so on close it can detach its sink from each.
+    const myRuns: Set<string> = new Set();
 
     const send = (m: ServerMessage) => {
       if (ws.readyState === WebSocket.OPEN) {
@@ -427,8 +435,8 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
           () => { pendingDiscovery = null; },
           pendingDispatches,
           activeDiscovery,
-          pendingPauses,
-          activeOrchestrations,
+          runRegistry,
+          myRuns,
         );
       } catch (err) {
         if (err instanceof LlmUnavailableError) {
@@ -451,21 +459,15 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
         controller.abort();
       }
       pendingDispatches.clear();
-      // Resolve any paused orchestrator runs so the loop unblocks and stops
-      // cleanly (escalate) instead of sitting until its wall-clock guard trips.
-      for (const pause of pendingPauses.values()) {
-        clearTimeout(pause.timer);
-        pause.resolve("escalate");
+      // Detach this connection's sink from each run it was viewing (PR-2c). The
+      // run lives in the server-lifetime registry and KEEPS RUNNING — a reload or
+      // tab-close no longer aborts it. A reconnecting client reattaches to the
+      // live stream (orchestrator_subscribe); if no one reattaches, the watchdog
+      // parks the run (T5). Deliberate Stop is the only operator-driven abort.
+      for (const id of myRuns) {
+        runRegistry.detachSink(id, send);
       }
-      pendingPauses.clear();
-      // Abort in-flight orchestrator runs so the loop stops at its next move
-      // instead of running on headless after the operator has gone. Abort with
-      // the disconnect reason so the persist wrapper keeps the run replayable as
-      // INTERRUPTED (a deliberate Stop aborts with no reason → records "Stopped").
-      for (const controller of activeOrchestrations.values()) {
-        controller.abort(DEEP_INVESTIGATION_DISCONNECT_ABORT);
-      }
-      activeOrchestrations.clear();
+      myRuns.clear();
       activeDiscovery.current?.abort(new Error("WebSocket disconnected"));
       activeDiscovery.current = null;
       wsRateLimiter.destroy(threadId);
@@ -530,18 +532,19 @@ async function handleOrchestratorInvestigate(
   deps: WsDeps,
   stackId: string,
   ctx: StackContext,
-  pendingPauses: Map<string, PendingPause>,
-  activeOrchestrations: Map<string, AbortController>,
+  registry: OrchestratorRunRegistry,
+  /** Run ids launched/attached on THIS connection, so close can detach them. */
+  myRuns: Set<string>,
 ): Promise<void> {
   const { db } = deps;
   if (!deps.config.agent?.orchestratorEnabled) {
     send({ type: "orchestrator:error", investigationId: msg.investigationId, message: "Autonomous orchestrator is not enabled." });
     return;
   }
-  // Concurrency guard: one orchestrator run per investigation per connection.
-  // A double-clicked trigger shouldn't spawn a second parallel run (each spawns
-  // its own subagents — real LLM/MCP load).
-  if (activeOrchestrations.has(msg.investigationId)) {
+  // Concurrency guard: one orchestrator run per investigation. The registry is
+  // server-lifetime (PR-2c), so this now rejects a second launch from ANY
+  // connection, not just this one — each run spawns its own subagents.
+  if (registry.isLive(msg.investigationId)) {
     send({ type: "orchestrator:error", investigationId: msg.investigationId, message: "An autonomous investigation is already running for this report." });
     return;
   }
@@ -587,19 +590,26 @@ async function handleOrchestratorInvestigate(
   const dependencies = [...neighbors];
 
   const abort = new AbortController();
-  activeOrchestrations.set(msg.investigationId, abort);
-  // Persist every orchestrator:* event so a reload can replay the run (PR-2).
-  // The stub uses the same wrapped send, so the e2e reload test persists too.
-  // Passing abort.signal lets the wrapper stop persisting once the client
-  // disconnects — so a reload-triggered "aborted" terminal doesn't overwrite
-  // the INTERRUPTED replay (a deliberate Stop aborts with no reason → persists).
-  const persistingSend = makeOrchestratorPersistingSend(deps.db, msg.investigationId, send, abort.signal);
+  // Register the run in the server-lifetime registry and attach THIS connection
+  // as its first sink (PR-2c). The run now streams via registry.broadcast, so a
+  // reattaching connection (T3) can pick up the live stream.
+  registry.create(msg.investigationId, abort);
+  registry.attachSink(msg.investigationId, send);
+  myRuns.add(msg.investigationId);
+  // Persist every orchestrator:* event so a reload can replay the run, then fan
+  // it out to every attached sink (PR-2c). A disconnect detaches sinks but the
+  // run keeps running, so persistence simply mirrors the full run.
+  const persistingSend = makeOrchestratorPersistingSend(
+    deps.db,
+    msg.investigationId,
+    (m) => registry.broadcast(msg.investigationId, m),
+  );
   try {
     // E2E stub: drive a deterministic scripted run (started → steps → pause →
     // decision → complete) without the real LLM/MCP engine, so a browser test can
     // exercise the full Console flow. Gated by an env flag; off in every real deploy.
     if (process.env["DEEP_INVESTIGATION_E2E_STUB"] === "1") {
-      await streamStubbedOrchestrator(msg.investigationId, persistingSend, pendingPauses, abort.signal);
+      await streamStubbedOrchestrator(msg.investigationId, persistingSend, registry, abort.signal);
     } else {
       const agents = await getOrCreateAgents(stackId, ctx, deps.config, deps.db);
       await runOrchestratorStreamed(
@@ -608,11 +618,11 @@ async function handleOrchestratorInvestigate(
         { timeRange, ctx: { incidentTime: timeRange?.from }, dependencies, incidentService: investigation.service, signal: abort.signal },
         agents.orchestrate,
         persistingSend,
-        pendingPauses,
+        registry,
       );
     }
   } finally {
-    activeOrchestrations.delete(msg.investigationId);
+    registry.markTerminal(msg.investigationId);
   }
 }
 
@@ -625,42 +635,28 @@ async function handleOrchestratorInvestigate(
 export { DEEP_INVESTIGATION_EVENT_SCHEMA };
 
 /**
- * Abort reason used ONLY when a run is torn down because the client's socket
- * closed (reload / tab-close). It distinguishes a disconnect from a deliberate
- * operator Stop: both abort the same controller, but on a disconnect the loop's
- * unwinding terminal (`orchestrator:complete` outcome "aborted", or
- * `orchestrator:error`) is emitted to a dead socket and must NOT be persisted —
- * otherwise a cold-load replay would reconstruct a finished/aborted run instead
- * of the hydrated-running state that renders as INTERRUPTED. A user Stop aborts
- * with no reason, so its terminal still persists (and correctly replays as
- * "Stopped"). See makeOrchestratorPersistingSend.
- */
-export const DEEP_INVESTIGATION_DISCONNECT_ABORT = "deep-investigation:client-disconnected";
-
-/**
  * Wrap a `send` so every `orchestrator:*` message for this investigation is also
- * persisted to `investigation_events` (PR-2: reload-survival). Persist-then-send;
- * a persist failure is logged but NEVER breaks the live stream — the run keeps
+ * persisted to `investigation_events` (reload-survival). Persist-then-send; a
+ * persist failure is logged but NEVER breaks the live stream — the run keeps
  * streaming, that one event just won't replay after a reload. Only orchestrator
  * events are persisted (deep-mode keeps its own report.deepMode snapshot).
  *
- * `signal` is the run's abort signal. Once it's aborted *by a client disconnect*
- * (reason === DEEP_INVESTIGATION_DISCONNECT_ABORT) we stop persisting: any event
- * the loop emits while unwinding went to a closed socket and persisting it (a
- * terminal "aborted"/"error") would clobber the INTERRUPTED replay. Delivery and
- * persistence stay in lockstep — we persist only what a live client could see.
+ * PR-2c note: a socket close no longer aborts the run, so there is no
+ * disconnect-triggered terminal to suppress — every emitted event is genuinely
+ * part of the run and is persisted. A deliberate operator Stop's terminal
+ * persists too, so a reload after a Stop correctly replays as "Stopped". (The
+ * PR-2 disconnect-abort gating this used to carry was removed once runs survived
+ * disconnect — see the close handler.)
  */
 export function makeOrchestratorPersistingSend(
   db: Database,
   investigationId: string,
   send: (m: ServerMessage) => void,
-  signal?: AbortSignal,
 ): (m: ServerMessage) => void {
   return (m: ServerMessage) => {
     const type = (m as { type?: unknown }).type;
     const mId = (m as { investigationId?: unknown }).investigationId;
-    const disconnected = signal?.aborted === true && signal.reason === DEEP_INVESTIGATION_DISCONNECT_ABORT;
-    if (!disconnected && typeof type === "string" && type.startsWith("orchestrator:") && mId === investigationId) {
+    if (typeof type === "string" && type.startsWith("orchestrator:") && mId === investigationId) {
       try {
         db.createEvent({
           id: `evt_${ulid()}`,
@@ -682,7 +678,7 @@ async function runOrchestratorStreamed(
   opts: { timeRange?: { from: string; to: string }; ctx?: { incidentTime?: string }; dependencies?: string[]; incidentService?: string; signal?: AbortSignal },
   orchestrate: StackAgents["orchestrate"],
   send: (m: ServerMessage) => void,
-  pendingPauses: Map<string, PendingPause>,
+  registry: OrchestratorRunRegistry,
 ): Promise<void> {
   send({ type: "orchestrator:started", investigationId });
   const startMs = Date.now();
@@ -695,9 +691,22 @@ async function runOrchestratorStreamed(
       incidentService: opts.incidentService,
       signal: opts.signal,
       onStep: (ev) => send({ type: "orchestrator:step", investigationId, event: { ...ev, seq: seq++ } }),
+      // Auto-park (PR-2c): if the watchdog flagged this run as viewerless, block
+      // here until a client reattaches (or aborts). Emits a persisted
+      // `orchestrator:parked` so a cold load renders "Parked"; the reattach
+      // (orchestrator_subscribe) resolves the park pause and the loop resumes.
+      onMoveBoundary: async () => {
+        if (!registry.consumeParkRequest(investigationId)) return;
+        send({ type: "orchestrator:parked", investigationId });
+        registry.markParked(investigationId);
+        await new Promise<void>((resolve) => {
+          registry.setPause(investigationId, { resolve: () => resolve(), timer: null, kind: "park" });
+        });
+        registry.markRunning(investigationId);
+      },
       // Interactive strike-limit pause (increment 5): emit the prompt and block
       // the loop on the operator's reply. Resolved by the `orchestrator_decision`
-      // handler, the timeout below, or WS close (all via `pendingPauses`).
+      // handler, the timeout below, or WS close (all via the registry's pause).
       onOperatorPause: (state: OrchestratorState) => {
         send({
           type: "orchestrator:operator_pause",
@@ -707,10 +716,10 @@ async function runOrchestratorStreamed(
         });
         return new Promise<OperatorDecision>((resolve) => {
           const timer = setTimeout(() => {
-            pendingPauses.delete(investigationId);
+            registry.clearPause(investigationId);
             resolve("escalate");
           }, OPERATOR_PAUSE_TIMEOUT_MS);
-          pendingPauses.set(investigationId, { resolve, timer });
+          registry.setPause(investigationId, { resolve, timer, kind: "operator" });
         });
       },
     });
@@ -741,11 +750,7 @@ async function runOrchestratorStreamed(
     // Defensive: a finished run must never leave a pause entry behind (e.g. if
     // a future code path threw mid-pause), or a stale `orchestrator_decision`
     // could resolve a dead promise.
-    const stale = pendingPauses.get(investigationId);
-    if (stale) {
-      clearTimeout(stale.timer);
-      pendingPauses.delete(investigationId);
-    }
+    registry.clearPause(investigationId);
   }
 }
 
@@ -760,7 +765,7 @@ async function runOrchestratorStreamed(
 export async function streamStubbedOrchestrator(
   investigationId: string,
   send: (m: ServerMessage) => void,
-  pendingPauses: Map<string, PendingPause>,
+  registry: OrchestratorRunRegistry,
   signal: AbortSignal,
   stepDelayMs = 300,
 ): Promise<void> {
@@ -785,10 +790,10 @@ export async function streamStubbedOrchestrator(
   send({ type: "orchestrator:operator_pause", investigationId, strikes: 3, hypothesesTried: ["memory exhaustion", "scaled to zero", "node pressure"] });
   const decision = await new Promise<"continue" | "escalate" | "wait">((resolve) => {
     const timer = setTimeout(() => {
-      pendingPauses.delete(investigationId);
+      registry.clearPause(investigationId);
       resolve("escalate");
     }, OPERATOR_PAUSE_TIMEOUT_MS);
-    pendingPauses.set(investigationId, { resolve, timer });
+    registry.setPause(investigationId, { resolve, timer, kind: "operator" });
   });
   if (signal.aborted) return complete("aborted", { traceSummary: "stubbed · aborted" });
   if (decision !== "continue") {
@@ -1129,8 +1134,8 @@ export async function handleClientMessage(
   clearPendingDiscovery: () => void,
   pendingDispatches: Map<string, AbortController> = new Map(),
   activeDiscovery: { current: AbortController | null } = { current: null },
-  pendingPauses: Map<string, PendingPause> = new Map(),
-  activeOrchestrations: Map<string, AbortController> = new Map(),
+  runRegistry: OrchestratorRunRegistry = new OrchestratorRunRegistry(),
+  myRuns: Set<string> = new Set(),
 ): Promise<void> {
   const memory = ctx.conversationMemory;
 
@@ -1164,34 +1169,64 @@ export async function handleClientMessage(
   }
 
   if (msg.type === "orchestrator_investigate") {
-    await handleOrchestratorInvestigate(msg, send, deps, stackId, ctx, pendingPauses, activeOrchestrations);
+    await handleOrchestratorInvestigate(msg, send, deps, stackId, ctx, runRegistry, myRuns);
     return;
   }
 
-  // Operator's reply to an `orchestrator:operator_pause`. Resolve the matching
-  // paused run; unknown ids are silently ignored (already resumed, timed out,
-  // or never paused — a stale client can't wedge anything).
+  // Operator's reply to an `orchestrator:operator_pause`. The first decision wins
+  // (D7, now cross-tab via the registry lock): broadcast a lock so every attached
+  // tab disables its controls, then resolve the pause. A second decision from
+  // another tab fails the lock and is ignored. Unknown/already-resolved ids are
+  // silently ignored (a stale client can't wedge anything).
   if (msg.type === "orchestrator_decision") {
-    const pause = pendingPauses.get(msg.investigationId);
-    if (pause) {
-      clearTimeout(pause.timer);
-      pendingPauses.delete(msg.investigationId);
-      pause.resolve(msg.decision);
+    if (runRegistry.tryLockDecision(msg.investigationId)) {
+      runRegistry.broadcast(msg.investigationId, { type: "orchestrator:decision_locked", investigationId: msg.investigationId });
+      runRegistry.resolvePause(msg.investigationId, msg.decision);
     }
     return;
   }
 
-  // Operator hit Stop. Abort the run; the loop returns "aborted" at its next
-  // guard check. If it's currently paused (blocked awaiting a decision), resolve
-  // the pause with "continue" so it unblocks and immediately hits the abort guard.
+  // Operator hit Stop. Abort the run (registry.abort resolves any pending pause
+  // with "continue" so a blocked loop unblocks and immediately hits the abort
+  // guard, returning "aborted"). No reason → the persist wrapper records "Stopped".
   if (msg.type === "orchestrator_stop") {
-    activeOrchestrations.get(msg.investigationId)?.abort();
-    const pause = pendingPauses.get(msg.investigationId);
-    if (pause) {
-      clearTimeout(pause.timer);
-      pendingPauses.delete(msg.investigationId);
-      pause.resolve("continue");
+    runRegistry.abort(msg.investigationId);
+    return;
+  }
+
+  // Reattach a (re)connecting client to a live server-lifetime run (PR-2c). If
+  // the run is live: attach this connection's sink, wake it if it was parked, and
+  // replay the persisted history one-shot so the client has the full stream (it
+  // dedups the overlap by seq). If it's not live, tell the client to use the cold
+  // GET/hydrate render instead.
+  if (msg.type === "orchestrator_subscribe") {
+    const id = msg.investigationId;
+    if (!runRegistry.isLive(id)) {
+      send({ type: "orchestrator:not_live", investigationId: id });
+      return;
     }
+    runRegistry.attachSink(id, send);
+    myRuns.add(id);
+    // A reattach wakes a parked run: resume the loop and flip status back.
+    if (runRegistry.status(id) === "parked") {
+      runRegistry.markRunning(id);
+      runRegistry.resolvePause(id, "continue");
+    }
+    // One-shot catch-up: persisted history to THIS sink only (not a broadcast).
+    let events: { event_type: string; payload: string }[] = [];
+    try {
+      events = deps.db.getEvents(id).map((e) => ({ event_type: e.event_type, payload: e.payload }));
+    } catch (err) {
+      logger.warn({ err, investigationId: id }, "Failed to read events for orchestrator replay");
+    }
+    send({ type: "orchestrator:replay", investigationId: id, events, live: true });
+    return;
+  }
+
+  // Detach this connection from a run (navigating away on the same socket).
+  if (msg.type === "orchestrator_unsubscribe") {
+    runRegistry.detachSink(msg.investigationId, send);
+    myRuns.delete(msg.investigationId);
     return;
   }
 

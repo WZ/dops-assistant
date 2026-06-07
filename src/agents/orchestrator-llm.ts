@@ -280,8 +280,10 @@ export interface RunAutonomousOrchestratorOptions {
   /** Interactive strike-limit hook (increment 5). Absent → the strike limit
    *  stops directly. Wired by the orchestrate adapter to the WS pause card. */
   onOperatorPause?: (state: OrchestratorState) => Promise<"continue" | "escalate" | "wait">;
-  /** Cooperative abort (e.g. the operator disconnected) → the loop stops. */
+  /** Cooperative abort (e.g. the operator hit Stop) → the loop stops. */
   signal?: AbortSignal;
+  /** Move-boundary hook (PR-2c) — the WS layer parks a viewerless run here. */
+  onMoveBoundary?: () => Promise<void> | void;
 }
 
 /**
@@ -329,6 +331,7 @@ export async function runAutonomousOrchestrator(
     incidentService: opts.incidentService,
     onOperatorPause: opts.onOperatorPause,
     signal: opts.signal,
+    onMoveBoundary: opts.onMoveBoundary,
     guards: opts.guards,
     onStep: opts.onStep,
     // Drain tokens accrued (decide + query) since the previous move.

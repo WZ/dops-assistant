@@ -543,3 +543,51 @@ describe("runOrchestrator — integration with the real keystone", () => {
     expect(result.outcome).toBe("confirmed");
   });
 });
+
+describe("runOrchestrator — onMoveBoundary park hook (PR-2c)", () => {
+  const confirmRun = (): OrchestratorMove[] => [
+    { type: "hypothesize", hypothesis: h("x") },
+    { type: "query", target: 0 },
+    { type: "test", target: 0 },
+    { type: "conclude", leading: 0, confidence: 0.7, rationale: "ok" },
+  ];
+
+  it("is awaited at every move boundary", async () => {
+    let calls = 0;
+    await runOrchestrator(makeDeps({
+      onMoveBoundary: () => { calls++; },
+      decideMove: scripted(confirmRun()),
+    }));
+    // one boundary per loop iteration (≥ the number of moves taken)
+    expect(calls).toBeGreaterThanOrEqual(4);
+  });
+
+  it("a blocking boundary defers the run until it resolves (park → reattach)", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let done = false;
+    const p = runOrchestrator(makeDeps({
+      onMoveBoundary: () => gate, // block at the first boundary
+      decideMove: scripted(confirmRun()),
+    })).then((r) => { done = true; return r; });
+
+    // Give the loop a few ticks to reach the boundary; it must NOT have finished.
+    await new Promise((r) => setTimeout(r, 5));
+    expect(done).toBe(false);
+
+    release(); // a reattach resolves the park
+    const result = await p;
+    expect(done).toBe(true);
+    expect(result.outcome).toBe("confirmed");
+  });
+
+  it("an abort during the boundary stops the run as aborted", async () => {
+    const ac = new AbortController();
+    const result = await runOrchestrator(makeDeps({
+      signal: ac.signal,
+      onMoveBoundary: () => { ac.abort(); }, // Stop while parked
+      decideMove: scripted(confirmRun()),
+    }));
+    expect(result.outcome).toBe("aborted");
+  });
+});

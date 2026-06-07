@@ -63,8 +63,15 @@ export interface DeepRunState {
   /** True when this run was reconstructed from persisted events on a cold load
    *  rather than observed live (PR-2). A hydrated run that is still `running`
    *  was mid-flight when the page last closed → the inline surface renders it as
-   *  INTERRUPTED, since no live stream is feeding it. */
+   *  INTERRUPTED, since no live stream is feeding it. Cleared when a live stream
+   *  reattaches (PR-2c `orchestrator:replay` / a live step). */
   readonly hydrated?: boolean;
+  /** True while the server has parked this run (no viewer for the idle window,
+   *  PR-2c). Resumes automatically when this client reattaches; a step clears it. */
+  readonly parked?: boolean;
+  /** Highest orchestrator step `seq` applied — used to dedup the overlap between
+   *  a reattach replay and the live tail (PR-2c). */
+  readonly lastSeq?: number;
 
   // ── orchestrator-only ──────────────────────────────────────────────
   readonly outcome?: string;
@@ -100,6 +107,11 @@ interface OrchestratorRunContextValue {
   /** Reconstruct a run from persisted events on cold load (PR-2). Hydrate-if-
    *  absent: no-ops if a run for this id already exists (live always wins). */
   hydrate: (investigationId: string, events: readonly PersistedInvestigationEvent[]) => void;
+  /** Reattach to a live server-side run (PR-2c): the server replays history then
+   *  streams live (orchestrator:replay), or answers not_live to keep the cold render. */
+  subscribe: (investigationId: string) => void;
+  /** Detach from a run's live stream (navigating away). */
+  unsubscribe: (investigationId: string) => void;
   /** WS connection status — drives the "disable Full while reconnecting" guard (D6). */
   connectionStatus: ConnectionStatus;
 }
@@ -109,6 +121,34 @@ const OrchestratorRunContext = createContext<OrchestratorRunContextValue | null>
 /** A fresh run record for a `*:started` message of the given kind. */
 function freshRun(kind: DeepRunKind): DeepRunState {
   return { kind, running: true, steps: [], error: null, collapsed: false };
+}
+
+/** Reconstruct one run by replaying its persisted event envelopes through the
+ *  SAME reducer that processes them live, so a rebuilt run is byte-identical to
+ *  one observed live. Shared by `hydrate` (cold load) and the `orchestrator:replay`
+ *  reattach (PR-2c). Corrupt rows and unknown schema versions are skipped. */
+function reconstructFromEvents(events: readonly PersistedInvestigationEvent[]): DeepRunState | undefined {
+  let replayed: ReadonlyMap<string, DeepRunState> = new Map();
+  let id: string | undefined;
+  for (const ev of events) {
+    if (!ev.event_type.startsWith("orchestrator:")) continue;
+    let envelope: DeepInvestigationEventEnvelope;
+    try {
+      envelope = JSON.parse(ev.payload) as DeepInvestigationEventEnvelope;
+    } catch {
+      continue;
+    }
+    if (envelope.schemaVersion !== DEEP_INVESTIGATION_EVENT_SCHEMA || !envelope.message) continue;
+    const m = envelope.message;
+    if ("investigationId" in m && typeof m.investigationId === "string") id = m.investigationId;
+    replayed = applyMessage(replayed, m);
+  }
+  return id ? replayed.get(id) : undefined;
+}
+
+/** Highest step `seq` in a run (−1 if none) — the dedup high-water mark. */
+function maxSeq(run: DeepRunState): number {
+  return run.steps.reduce((mx, s) => (typeof s.seq === "number" && s.seq > mx ? s.seq : mx), -1);
 }
 
 /**
@@ -147,14 +187,53 @@ export function applyMessage(
     // ── orchestrator (the "Full deep investigation" scope) ────────────
     case "orchestrator:started":
       return set(freshRun("orchestrator"));
-    case "orchestrator:step":
+    case "orchestrator:step": {
       if (!prev) return runs;
-      // A new move means the loop resumed past any pause — clear the pause card
-      // and the submit-lock so the next pause is actionable again.
-      return set({ ...prev, steps: [...prev.steps, msg.event], pause: null, decisionSubmitted: false });
+      // Dedup the reattach overlap (PR-2c): a step whose seq we already applied
+      // (from a replay or hydrate) is a re-delivery — drop it.
+      const seq = msg.event.seq;
+      if (typeof seq === "number" && prev.lastSeq !== undefined && seq <= prev.lastSeq) return runs;
+      // A new move means the loop resumed past any pause/park — clear the pause
+      // card, the submit-lock, and the parked flag so the surface shows live again.
+      return set({
+        ...prev,
+        steps: [...prev.steps, msg.event],
+        pause: null,
+        decisionSubmitted: false,
+        parked: false,
+        lastSeq: typeof seq === "number" ? seq : prev.lastSeq,
+      });
+    }
     case "orchestrator:operator_pause":
       if (!prev) return runs;
       return set({ ...prev, pause: { strikes: msg.strikes, hypothesesTried: msg.hypothesesTried }, decisionSubmitted: false });
+    // PR-2c reattach: a one-shot catch-up. Reconstruct the run from the replayed
+    // history and mark it LIVE (not hydrated/interrupted, not parked); subsequent
+    // live steps dedup against lastSeq. Race-safe: if we already hold a live run
+    // that is at or ahead of the replay (a live step landed between subscribe and
+    // replay), don't roll it back — just clear the hydrated/parked flags.
+    case "orchestrator:replay": {
+      const rebuilt = reconstructFromEvents(msg.events);
+      if (!rebuilt) return runs;
+      const rebuiltSeq = maxSeq(rebuilt);
+      const prevSeq = prev ? (prev.lastSeq ?? maxSeq(prev)) : -1;
+      if (prev && prevSeq >= rebuiltSeq && prev.steps.length >= rebuilt.steps.length) {
+        if (!prev.hydrated && !prev.parked) return runs; // already live & ahead — nothing to change
+        return set({ ...prev, hydrated: false, parked: false });
+      }
+      return set({ ...rebuilt, hydrated: false, parked: false, lastSeq: rebuiltSeq });
+    }
+    // No live run server-side — keep whatever the cold GET/hydrate produced.
+    case "orchestrator:not_live":
+      return runs;
+    // The server parked a viewerless run (PR-2c). Show "Parked"; a reattach + step resumes.
+    case "orchestrator:parked":
+      if (!prev) return runs;
+      return set({ ...prev, parked: true });
+    // The first pause decision (from any tab) was accepted — lock controls here too (D7).
+    case "orchestrator:decision_locked":
+      if (!prev) return runs;
+      return set({ ...prev, decisionSubmitted: true });
     case "orchestrator:complete":
       if (!prev) return runs;
       return set({
@@ -283,36 +362,29 @@ export function OrchestratorRunProvider({
       // Hydrate-if-absent (D): a live run already in the registry is authoritative
       // — never clobber it (or an earlier hydration) with replayed history.
       if (prev.has(investigationId)) return prev;
-      // Replay the persisted orchestrator events through the SAME reducer that
-      // processes them live, so a reconstructed run is byte-identical to one we
-      // observed. Build it up in an isolated map, then graft just this id in.
-      let replayed: ReadonlyMap<string, DeepRunState> = new Map();
-      for (const ev of events) {
-        if (!ev.event_type.startsWith("orchestrator:")) continue;
-        let envelope: DeepInvestigationEventEnvelope;
-        try {
-          envelope = JSON.parse(ev.payload) as DeepInvestigationEventEnvelope;
-        } catch {
-          continue; // a corrupt row can't sink the whole replay
-        }
-        // Forward-compat: skip rows written by a schema this client can't read,
-        // rather than mis-reconstructing a run from a changed event shape.
-        if (envelope.schemaVersion !== DEEP_INVESTIGATION_EVENT_SCHEMA || !envelope.message) continue;
-        replayed = applyMessage(replayed, envelope.message);
-      }
-      const run = replayed.get(investigationId);
+      const run = reconstructFromEvents(events);
       if (!run) return prev;
       const m = new Map(prev);
-      m.set(investigationId, { ...run, hydrated: true });
+      // hydrated:true → renders INTERRUPTED if still running, until a live reattach
+      // (orchestrator:replay / a live step) clears it. lastSeq seeds the reattach dedup.
+      m.set(investigationId, { ...run, hydrated: true, lastSeq: maxSeq(run) });
       return m;
     });
   }, []);
 
+  const subscribe = useCallback((investigationId: string) => {
+    wsSend({ type: "orchestrator_subscribe", investigationId });
+  }, [wsSend]);
+
+  const unsubscribe = useCallback((investigationId: string) => {
+    wsSend({ type: "orchestrator_unsubscribe", investigationId });
+  }, [wsSend]);
+
   const getRun = useCallback((investigationId: string) => runs.get(investigationId), [runs]);
 
   const value = useMemo<OrchestratorRunContextValue>(
-    () => ({ runs, getRun, start, decide, stop, setCollapsed, hydrate, connectionStatus }),
-    [runs, getRun, start, decide, stop, setCollapsed, hydrate, connectionStatus],
+    () => ({ runs, getRun, start, decide, stop, setCollapsed, hydrate, subscribe, unsubscribe, connectionStatus }),
+    [runs, getRun, start, decide, stop, setCollapsed, hydrate, subscribe, unsubscribe, connectionStatus],
   );
 
   return <OrchestratorRunContext.Provider value={value}>{children}</OrchestratorRunContext.Provider>;
@@ -338,8 +410,8 @@ export function useOrchestratorRuns(): ReadonlyMap<string, DeepRunState> {
 /** The command helpers + connection status (no per-run subscription). */
 export function useOrchestratorRunActions(): Pick<
   OrchestratorRunContextValue,
-  "start" | "decide" | "stop" | "setCollapsed" | "hydrate" | "connectionStatus"
+  "start" | "decide" | "stop" | "setCollapsed" | "hydrate" | "subscribe" | "unsubscribe" | "connectionStatus"
 > {
-  const { start, decide, stop, setCollapsed, hydrate, connectionStatus } = useOrchestratorRunContext();
-  return { start, decide, stop, setCollapsed, hydrate, connectionStatus };
+  const { start, decide, stop, setCollapsed, hydrate, subscribe, unsubscribe, connectionStatus } = useOrchestratorRunContext();
+  return { start, decide, stop, setCollapsed, hydrate, subscribe, unsubscribe, connectionStatus };
 }
