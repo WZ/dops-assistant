@@ -155,6 +155,14 @@ export interface OrchestratorDeps {
   estimateTokens?: (move: OrchestratorMove) => number;
   /** Live progress sink (the agent-stream UX wires this). */
   onStep?: (entry: TraceEntry) => void;
+  /**
+   * Move-boundary hook (PR-2c), awaited at the top of each move after the abort
+   * guard. The WS layer uses it to *park* a viewerless run — block here until a
+   * client reattaches — bounding headless token burn without aborting the run.
+   * Absent → the loop never parks. A parked run is unblocked by a reattach (or by
+   * an abort, which resolves the park and trips the abort guard next iteration).
+   */
+  onMoveBoundary?: () => Promise<void> | void;
 }
 
 export interface OrchestratorResult {
@@ -260,6 +268,13 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
     // Guards are checked BEFORE spending the next move so a tripped limit never
     // does "one more" expensive thing.
     if (deps.signal?.aborted) return finish("aborted");
+    // Park boundary (PR-2c): a viewerless run blocks here until a client
+    // reattaches, instead of burning the next move headless. Re-check the abort
+    // guard after, since a Stop during park resolves the block then aborts.
+    if (deps.onMoveBoundary) {
+      await deps.onMoveBoundary();
+      if (deps.signal?.aborted) return finish("aborted");
+    }
     if (tokensSpent >= deps.guards.maxTokens) return finish("budget-exhausted");
     if (toolCalls >= deps.guards.maxToolCalls) return finish("tool-cap");
     if (elapsed() >= deps.guards.wallClockMs) return finish("wall-clock");

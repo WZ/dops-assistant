@@ -51,12 +51,13 @@ describe("InlineRunRegion", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it("running orchestrator: shows the title, ephemerality notice, and a Stop control", () => {
+  it("running orchestrator: shows the title and a Stop control (PR-2c: no ephemerality notice — runs now survive reload)", () => {
     const send = vi.fn();
     renderRegion(startedRunning, send);
     expect(screen.getByText(/Deep Investigation · impala/)).toBeTruthy();
     expect(screen.getByText(/Working theory/i)).toBeTruthy();
-    expect(screen.getByText(/this run stops if you reload/i)).toBeTruthy();
+    // The "this run stops if you reload" warning is gone — PR-2c makes runs durable.
+    expect(screen.queryByText(/this run stops if you reload/i)).toBeNull();
     // Stop → orchestrator_stop
     fireEvent.click(screen.getByRole("button", { name: /stop the deep investigation/i }));
     expect(send).toHaveBeenCalledWith({ type: "orchestrator_stop", investigationId: ID });
@@ -195,5 +196,28 @@ describe("InlineRunRegion — hydrated/interrupted (PR-2 T7)", () => {
     // the docked pause bar (and its continue/escalate/wait buttons) is suppressed
     expect(screen.queryByRole("group", { name: /operator decision required/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /continue/i })).toBeNull();
+  });
+});
+
+describe("InlineRunRegion — parked (PR-2c)", () => {
+  const parked: ServerMessage[] = [
+    { type: "orchestrator:started", investigationId: ID },
+    { type: "orchestrator:step", investigationId: ID, event: step(0, "impala-statestore") },
+    { type: "orchestrator:parked", investigationId: ID },
+  ];
+
+  it("a parked run renders the Parked state: kicker + resume notice, no Stop control", () => {
+    renderRegion(parked);
+    expect(screen.getByText("Parked")).toBeTruthy(); // kicker (exact)
+    expect(screen.getByText(/parked itself while no one was watching/i)).toBeTruthy();
+    // not a live affordance and not "interrupted"
+    expect(screen.queryByRole("button", { name: /stop the deep investigation/i })).toBeNull();
+    expect(screen.queryByText(/can't be resumed here/i)).toBeNull();
+  });
+
+  it("a live step after parking clears the Parked state (resumed)", () => {
+    renderRegion([...parked, { type: "orchestrator:step", investigationId: ID, event: step(1, "checking pool") }]);
+    expect(screen.queryByText("Parked")).toBeNull();
+    expect(screen.getByText(/Working theory/i)).toBeTruthy();
   });
 });

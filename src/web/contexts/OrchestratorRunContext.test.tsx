@@ -309,3 +309,108 @@ describe("hydrate — persisted-event replay (PR-2 schema v1)", () => {
     expect(JSON.stringify(read.message)).toBe(JSON.stringify(message));
   });
 });
+
+// ── PR-2c (T7): reattach reducer — replay, seq-dedup, parked, decision_locked ──
+const env2c = (message: unknown) => JSON.stringify({ schemaVersion: 1, message });
+const row = (event_type: string, message: unknown) => ({ event_type, payload: env2c(message) });
+
+describe("applyMessage — PR-2c reattach transitions", () => {
+  it("orchestrator:step dedups a re-delivered seq (reattach overlap)", () => {
+    let m = applyMessage(empty(), { type: "orchestrator:started", investigationId: ID });
+    m = applyMessage(m, { type: "orchestrator:step", investigationId: ID, event: step(0) });
+    m = applyMessage(m, { type: "orchestrator:step", investigationId: ID, event: step(1) });
+    expect(m.get(ID)!.steps).toHaveLength(2);
+    expect(m.get(ID)!.lastSeq).toBe(1);
+    // a re-delivery of seq 1 (and 0) is dropped; seq 2 appends
+    m = applyMessage(m, { type: "orchestrator:step", investigationId: ID, event: step(1) });
+    m = applyMessage(m, { type: "orchestrator:step", investigationId: ID, event: step(0) });
+    expect(m.get(ID)!.steps).toHaveLength(2);
+    m = applyMessage(m, { type: "orchestrator:step", investigationId: ID, event: step(2) });
+    expect(m.get(ID)!.steps).toHaveLength(3);
+    expect(m.get(ID)!.lastSeq).toBe(2);
+  });
+
+  it("orchestrator:parked sets parked; a live step clears it", () => {
+    let m = applyMessage(empty(), { type: "orchestrator:started", investigationId: ID });
+    m = applyMessage(m, { type: "orchestrator:parked", investigationId: ID });
+    expect(m.get(ID)!.parked).toBe(true);
+    m = applyMessage(m, { type: "orchestrator:step", investigationId: ID, event: step(0) });
+    expect(m.get(ID)!.parked).toBe(false);
+  });
+
+  it("orchestrator:decision_locked locks the decision on this tab too (D7 cross-tab)", () => {
+    let m = applyMessage(empty(), { type: "orchestrator:started", investigationId: ID });
+    m = applyMessage(m, { type: "orchestrator:operator_pause", investigationId: ID, strikes: 3 });
+    expect(m.get(ID)!.decisionSubmitted).toBe(false);
+    m = applyMessage(m, { type: "orchestrator:decision_locked", investigationId: ID });
+    expect(m.get(ID)!.decisionSubmitted).toBe(true);
+  });
+
+  it("orchestrator:replay reconstructs a LIVE run (clears hydrated/parked, seeds lastSeq)", () => {
+    const events = [
+      row("orchestrator:started", { type: "orchestrator:started", investigationId: ID }),
+      row("orchestrator:step", { type: "orchestrator:step", investigationId: ID, event: step(0) }),
+      row("orchestrator:step", { type: "orchestrator:step", investigationId: ID, event: step(1) }),
+    ];
+    const m = applyMessage(empty(), { type: "orchestrator:replay", investigationId: ID, events, live: true });
+    const run = m.get(ID)!;
+    expect(run.running).toBe(true);
+    expect(run.hydrated).toBeFalsy();
+    expect(run.parked).toBeFalsy();
+    expect(run.steps).toHaveLength(2);
+    expect(run.lastSeq).toBe(1);
+  });
+
+  it("orchestrator:replay clears INTERRUPTED on a previously-hydrated run", () => {
+    // hydrated/interrupted run already present
+    let m: ReadonlyMap<string, DeepRunState> = new Map([[ID, { kind: "orchestrator", running: true, steps: [step(0)], error: null, collapsed: false, hydrated: true, lastSeq: 0 }]]);
+    const events = [
+      row("orchestrator:started", { type: "orchestrator:started", investigationId: ID }),
+      row("orchestrator:step", { type: "orchestrator:step", investigationId: ID, event: step(0) }),
+      row("orchestrator:step", { type: "orchestrator:step", investigationId: ID, event: step(1) }),
+    ];
+    m = applyMessage(m, { type: "orchestrator:replay", investigationId: ID, events, live: true });
+    expect(m.get(ID)!.hydrated).toBeFalsy(); // no longer interrupted
+    expect(m.get(ID)!.steps).toHaveLength(2);
+  });
+
+  it("orchestrator:replay is race-safe — it never rolls back live steps already ahead", () => {
+    // live run already at seq 3
+    let m: ReadonlyMap<string, DeepRunState> = new Map([[ID, { kind: "orchestrator", running: true, steps: [step(0), step(1), step(2), step(3)], error: null, collapsed: false, lastSeq: 3 }]]);
+    // a late replay carrying only up to seq 1 must NOT shrink the run
+    const events = [
+      row("orchestrator:started", { type: "orchestrator:started", investigationId: ID }),
+      row("orchestrator:step", { type: "orchestrator:step", investigationId: ID, event: step(0) }),
+      row("orchestrator:step", { type: "orchestrator:step", investigationId: ID, event: step(1) }),
+    ];
+    m = applyMessage(m, { type: "orchestrator:replay", investigationId: ID, events, live: true });
+    expect(m.get(ID)!.steps).toHaveLength(4);
+    expect(m.get(ID)!.lastSeq).toBe(3);
+  });
+
+  it("orchestrator:not_live leaves a hydrated (non-parked) run untouched", () => {
+    const m0: ReadonlyMap<string, DeepRunState> = new Map([[ID, { kind: "orchestrator", running: true, steps: [step(0)], error: null, collapsed: false, hydrated: true }]]);
+    const m = applyMessage(m0, { type: "orchestrator:not_live", investigationId: ID });
+    expect(m).toBe(m0); // same identity — no change
+  });
+
+  it("orchestrator:not_live clears parked on a hydrated run → renders INTERRUPTED (server gone)", () => {
+    // cold-load hydrated a persisted `parked` run, but the server no longer has it
+    const m0: ReadonlyMap<string, DeepRunState> = new Map([[ID, { kind: "orchestrator", running: true, steps: [step(0)], error: null, collapsed: false, hydrated: true, parked: true }]]);
+    const m = applyMessage(m0, { type: "orchestrator:not_live", investigationId: ID });
+    expect(m.get(ID)!.parked).toBe(false);
+    expect(m.get(ID)!.hydrated).toBe(true); // hydrated+running+!parked → interrupted, not "resuming…" forever
+  });
+});
+
+describe("OrchestratorRunProvider — subscribe/unsubscribe actions", () => {
+  it("subscribe() and unsubscribe() send the matching client messages", () => {
+    const send = vi.fn();
+    const ref = { current: [] as ServerMessage[] };
+    const { result } = renderHook(() => useOrchestratorRunActions(), { wrapper: makeWrapper(ref, send) });
+    act(() => result.current.subscribe(ID));
+    expect(send).toHaveBeenCalledWith({ type: "orchestrator_subscribe", investigationId: ID });
+    act(() => result.current.unsubscribe(ID));
+    expect(send).toHaveBeenCalledWith({ type: "orchestrator_unsubscribe", investigationId: ID });
+  });
+});

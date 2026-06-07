@@ -746,8 +746,10 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       /** Interactive operator-pause hook (increment 5). Wired by the WS layer to
        *  the pause card; absent → the strike limit stops directly. */
       onOperatorPause?: (state: OrchestratorState) => Promise<"continue" | "escalate" | "wait">;
-      /** Cooperative abort — the WS layer aborts on operator disconnect. */
+      /** Cooperative abort — the WS layer aborts on a deliberate operator Stop. */
       signal?: AbortSignal;
+      /** Move-boundary hook (PR-2c) — the WS layer parks a viewerless run. */
+      onMoveBoundary?: () => Promise<void> | void;
     },
   ): Promise<OrchestratorResult> {
     const guards: OrchestratorGuards = { ...DEFAULT_ORCHESTRATOR_GUARDS, ...opts?.guards };
@@ -795,6 +797,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       incidentService: opts?.incidentService,
       onOperatorPause: opts?.onOperatorPause,
       signal: opts?.signal,
+      onMoveBoundary: opts?.onMoveBoundary,
     });
   }
 

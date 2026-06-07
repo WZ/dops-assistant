@@ -182,7 +182,7 @@ export function InvestigationPane({
   // (OrchestratorRunContext) so the Console inline surface and this pane read one
   // source of truth. Derive the former local vars from the registry's tagged run.
   const run = useOrchestratorRun(investigationId);
-  const { decide, hydrate } = useOrchestratorRunActions();
+  const { decide, hydrate, subscribe, unsubscribe, connectionStatus } = useOrchestratorRunActions();
   const deepRun = run?.kind === "deep-mode" ? run : undefined;
   const orchRun = run?.kind === "orchestrator" ? run : undefined;
   const deepModeRunning = !!deepRun?.running;
@@ -419,6 +419,18 @@ export function InvestigationPane({
     // would still hold the previous stack's fetcher in closure and never
     // re-fetch against the corrected stack.
   }, [investigationId, isActive, stackFetch, activeStackId, onWrongStack, hydrate]);
+
+  // Reattach to a live server-side Deep Investigation run (PR-2c). On (re)connect
+  // while viewing an investigation, subscribe: the server replays the run's
+  // history then streams it live (orchestrator:replay), or answers not_live and
+  // the cold GET/hydrate render stands. Re-runs on reconnect (connectionStatus
+  // flips), so a dropped socket reattaches automatically. The replay reducer is
+  // race-safe, so a redundant subscribe (e.g. for an in-session run) is harmless.
+  useEffect(() => {
+    if (!investigationId || connectionStatus !== "connected") return;
+    subscribe(investigationId);
+    return () => unsubscribe(investigationId);
+  }, [investigationId, connectionStatus, subscribe, unsubscribe]);
 
   // Process live WebSocket messages
   useEffect(() => {

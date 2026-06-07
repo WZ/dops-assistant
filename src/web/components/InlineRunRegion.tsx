@@ -42,14 +42,23 @@ function outcomeHeadline(outcome: string | undefined): string {
   }
 }
 
+/** A viewerless run the server parked (PR-2c). Resumes automatically once this
+ *  client reattaches; shown distinctly from INTERRUPTED (which is unrecoverable
+ *  here — the server no longer has the run). Park takes precedence. */
+function isParked(run: DeepRunState): boolean {
+  return !!run.parked && run.running;
+}
+
 /** A run reconstructed from persisted events that was still `running` when the
- *  page last closed: no live stream feeds it on the new connection, so it's
- *  shown as INTERRUPTED rather than a live (but frozen) run (PR-2, D). */
+ *  page last closed AND has no live server-side run to reattach to: shown as
+ *  INTERRUPTED rather than a live (but frozen) run (PR-2, D). A parked run is
+ *  recoverable, so it is not "interrupted". */
 function isInterrupted(run: DeepRunState): boolean {
-  return !!run.hydrated && run.running;
+  return !!run.hydrated && run.running && !run.parked;
 }
 
 function kicker(run: DeepRunState): string {
+  if (isParked(run)) return "Parked";
   if (isInterrupted(run)) return "Interrupted";
   if (run.kind === "deep-mode") return "Deep re-examination";
   if (run.running) return "Working theory";
@@ -58,6 +67,7 @@ function kicker(run: DeepRunState): string {
 
 /** The one-line conclusion shown result-first, derived from the real run state. */
 function conclusionHeadline(run: DeepRunState): string {
+  if (isParked(run)) return "Parked while no one was watching — resuming…";
   if (isInterrupted(run)) {
     const last = run.steps[run.steps.length - 1];
     return last?.target
@@ -85,6 +95,7 @@ function conclusionHeadline(run: DeepRunState): string {
 /** Announce only state changes + the pause prompt (DZ4) — empty while a run
  *  streams mid-flight, so the move log never reaches the live region. */
 function liveAnnouncement(run: DeepRunState): string {
+  if (isParked(run)) return "This deep investigation parked while no one was watching. Reattaching to resume it.";
   if (isInterrupted(run)) return "This deep investigation was interrupted when the page reloaded. Re-run to continue.";
   if (run.pause && !run.decisionSubmitted) return `Paused after ${run.pause.strikes} strikes — your decision is needed.`;
   if (!run.running && run.error) return `Deep investigation stopped: ${run.error}`;
@@ -164,8 +175,9 @@ export function InlineRunRegion({
   // (hydrated-running) run is NOT live, so the ticker stays off for it.
   const [elapsed, setElapsed] = useState(0);
   const running = !!run?.running;
-  const interrupted = !!run?.hydrated && running;
-  const liveRunning = running && !interrupted;
+  const parked = !!run?.parked && running;
+  const interrupted = !!run?.hydrated && running && !parked;
+  const liveRunning = running && !interrupted && !parked;
   useEffect(() => {
     if (!liveRunning) return;
     setElapsed(0);
@@ -195,7 +207,8 @@ export function InlineRunRegion({
     : undefined;
   const elapsedLabel = liveRunning ? fmtSeconds(elapsed) : finalSeconds != null ? fmtSeconds(finalSeconds) : "";
 
-  const pulse = interrupted ? "bg-muted-foreground/40"
+  const pulse = parked ? "bg-warning"
+    : interrupted ? "bg-muted-foreground/40"
     : run.running ? "bg-primary animate-[status-pulse_1.8s_ease-in-out_infinite]"
     : run.error ? "bg-destructive"
     : paused ? "bg-warning"
@@ -212,7 +225,7 @@ export function InlineRunRegion({
           type="button"
           onClick={() => setCollapsed(id, !collapsed)}
           aria-expanded={!collapsed}
-          aria-label={`${title} — ${interrupted ? "interrupted" : run.running ? "running" : "finished"}. Click to ${collapsed ? "expand" : "collapse"}.`}
+          aria-label={`${title} — ${parked ? "parked" : interrupted ? "interrupted" : run.running ? "running" : "finished"}. Click to ${collapsed ? "expand" : "collapse"}.`}
           className="flex items-center gap-2 min-w-0 flex-1 text-left"
         >
           <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${pulse}`} />
@@ -249,25 +262,25 @@ export function InlineRunRegion({
         </div>
       )}
 
-      {/* Interrupted notice — a run reconstructed from persisted events that was
-          mid-flight when the tab closed. The steps shown are what completed
-          before it stopped; the live stream is gone, so re-run to continue (D). */}
+      {/* Interrupted notice — a hydrated run with no live server-side run to
+          reattach to (e.g. after a server restart). The steps shown are what
+          completed before it stopped; re-run to continue. */}
       {!collapsed && interrupted && (
         <div className="mx-3 mb-2 flex gap-2 items-start rounded-md border border-border/60 bg-muted/20 px-2.5 py-1.5">
           <span className="text-muted-foreground text-[11px] leading-none mt-0.5" aria-hidden>⏸</span>
           <span className="text-[10.5px] text-foreground/80 leading-snug">
-            This run was interrupted when the page reloaded. The steps above are what completed before it stopped — re-run to continue.
+            This run was interrupted and can't be resumed here. The steps above are what completed before it stopped — re-run to continue.
           </span>
         </div>
       )}
 
-      {/* Ephemerality notice — a live Full (orchestrator) run dies on reload (D6).
-          Hidden once interrupted (the interrupted notice replaces it). */}
-      {!collapsed && run.kind === "orchestrator" && liveRunning && (
+      {/* Parked notice — the server parked a viewerless run to save tokens (PR-2c).
+          It resumes automatically now that this tab is attached. */}
+      {!collapsed && parked && (
         <div className="mx-3 mb-2 flex gap-2 items-start rounded-md border border-warning/30 bg-warning/8 px-2.5 py-1.5">
-          <span className="text-warning text-[11px] leading-none mt-0.5" aria-hidden>⚠</span>
+          <span className="text-warning text-[11px] leading-none mt-0.5" aria-hidden>⏸</span>
           <span className="text-[10.5px] text-foreground/80 leading-snug">
-            This run stops if you reload or close the tab. Durable, reload-safe runs ship in a later update.
+            This run parked itself while no one was watching, to save tokens. It resumes automatically now that you're back.
           </span>
         </div>
       )}
@@ -276,7 +289,7 @@ export function InlineRunRegion({
           hidden (DZ2/DZ8). Decision routes through the registry (D7 locking).
           Suppressed when interrupted: the server lost the paused loop on reload,
           so a decision would reach nothing — the interrupted notice stands in. */}
-      {paused && !interrupted && (
+      {paused && !interrupted && !parked && (
         <div className="border-t border-warning/30 bg-warning/8 px-3 py-2.5" role="group" aria-label="Paused — operator decision required">
           <div className="font-semibold text-[12px] text-warning mb-0.5">⚠ Paused — needs your call</div>
           <p className="text-[11px] text-foreground/80 mb-2 leading-snug">

@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { createServer } from "node:http";
 import WebSocket from "ws";
-import { clearStackCaches, DEEP_INVESTIGATION_DISCONNECT_ABORT, handleClientMessage, makeOrchestratorPersistingSend, setupWebSocket } from "./ws-handler.js";
+import { clearStackCaches, handleClientMessage, makeOrchestratorPersistingSend, setupWebSocket } from "./ws-handler.js";
+import { OrchestratorRunRegistry } from "./orchestrator-run-registry.js";
 import type { WsDeps } from "./ws-handler.js";
 import type { Database } from "./db.js";
 import type { ServerMessage } from "../types/ws-types.js";
@@ -997,42 +998,134 @@ describe("makeOrchestratorPersistingSend", () => {
     expect(send).toHaveBeenCalledWith(msg); // forwarded despite the persist throw
   });
 
-  // P1 (codex review): a reload aborts the run, but the loop still emits a
-  // terminal "aborted" while unwinding. Persisting it would clobber the
-  // INTERRUPTED replay. Once the signal is aborted *by a disconnect*, stop
-  // persisting — but keep forwarding (send is a no-op on a closed socket anyway).
-  it("stops persisting once the run is aborted by a client disconnect (keeps INTERRUPTED replay)", () => {
+  // PR-2c: a socket close no longer aborts the run (it detaches), so there is no
+  // disconnect-triggered terminal to suppress — every emitted orchestrator event
+  // is persisted, including a deliberate Stop's terminal (→ replays as "Stopped").
+  it("persists a terminal (e.g. a deliberate Stop's aborted complete) so a reload replays it", () => {
     const { db, createEvent } = mockDb();
     const send = vi.fn();
-    const ac = new AbortController();
-    const wrapped = makeOrchestratorPersistingSend(db, ID, send, ac.signal);
+    const wrapped = makeOrchestratorPersistingSend(db, ID, send);
 
-    // a step streamed while connected → persisted
     wrapped({ type: "orchestrator:step", investigationId: ID, event: { seq: 0, verb: "x", status: "running" } } as ServerMessage);
-    expect(createEvent).toHaveBeenCalledTimes(1);
-
-    // client reloads → run aborted with the disconnect reason → unwinding terminal
-    ac.abort(DEEP_INVESTIGATION_DISCONNECT_ABORT);
     wrapped({ type: "orchestrator:complete", investigationId: ID, outcome: "aborted", stats: { moves: 1, toolCalls: 0, subagents: 0, tokensSpent: 0, strikes: 0, depth: 1, durationMs: 5 } } as ServerMessage);
 
-    // the post-disconnect terminal is NOT persisted (replay stays running → INTERRUPTED)
-    expect(createEvent).toHaveBeenCalledTimes(1);
-    // but it's still forwarded (harmless — send no-ops on a closed socket)
+    expect(createEvent).toHaveBeenCalledTimes(2);
+    expect(createEvent.mock.calls[1]![0]).toMatchObject({ eventType: "orchestrator:complete" });
     expect(send).toHaveBeenCalledTimes(2);
   });
+});
 
-  it("STILL persists a terminal when aborted WITHOUT the disconnect reason (deliberate operator Stop)", () => {
-    const { db, createEvent } = mockDb();
+// ── PR-2c (T3): orchestrator_subscribe / _unsubscribe reattach ───────────────
+describe("orchestrator_subscribe / _unsubscribe", () => {
+  const ID = "inv_sub_1";
+  const ROWS = [
+    { id: "e1", investigation_id: ID, event_type: "orchestrator:started", payload: JSON.stringify({ schemaVersion: 1, message: { type: "orchestrator:started", investigationId: ID } }), created_at: "2026-06-07T00:00:00Z" },
+    { id: "e2", investigation_id: ID, event_type: "orchestrator:step", payload: JSON.stringify({ schemaVersion: 1, message: { type: "orchestrator:step", investigationId: ID, event: { seq: 0, verb: "x", status: "running" } } }), created_at: "2026-06-07T00:00:01Z" },
+  ];
+
+  function depsWithEvents(getEvents = vi.fn(() => ROWS)): WsDeps {
+    const base = mockDeps();
+    (base.db as unknown as { getEvents: unknown }).getEvents = getEvents;
+    return base;
+  }
+
+  function callSubscribe(msg: unknown, send: (m: ServerMessage) => void, deps: WsDeps, registry: OrchestratorRunRegistry, myRuns: Set<string>) {
+    return handleClientMessage(
+      msg as never, send, deps, `stack_${S}_web_test`, S, mockCtx(),
+      () => null, () => {}, () => {},
+      new Map(), { current: null }, registry, myRuns,
+    );
+  }
+
+  it("subscribe to a LIVE run attaches the sink and replays persisted history one-shot", async () => {
+    const reg = new OrchestratorRunRegistry();
+    reg.create(ID, new AbortController());
+    const myRuns = new Set<string>();
+    const sent: ServerMessage[] = [];
+    await callSubscribe({ type: "orchestrator_subscribe", investigationId: ID }, (m) => sent.push(m), depsWithEvents(), reg, myRuns);
+
+    expect(reg.sinkCount(ID)).toBe(1);          // attached as a live sink
+    expect(myRuns.has(ID)).toBe(true);
+    const replay = sent.find((m) => m.type === "orchestrator:replay") as Extract<ServerMessage, { type: "orchestrator:replay" }>;
+    expect(replay).toBeTruthy();
+    expect(replay.live).toBe(true);
+    expect(replay.events).toHaveLength(2);       // the persisted rows
+    expect(replay.events[0]!.event_type).toBe("orchestrator:started");
+    // subsequent live broadcasts now reach the subscribed sink
+    reg.broadcast(ID, { type: "orchestrator:step", investigationId: ID, event: { seq: 1, verb: "y", status: "running" } });
+    expect(sent.some((m) => m.type === "orchestrator:step")).toBe(true);
+  });
+
+  it("subscribe to a NON-LIVE run answers orchestrator:not_live (client uses cold render)", async () => {
+    const reg = new OrchestratorRunRegistry();
+    const sent: ServerMessage[] = [];
+    await callSubscribe({ type: "orchestrator_subscribe", investigationId: "inv_absent" }, (m) => sent.push(m), depsWithEvents(), reg, new Set());
+    expect(sent).toEqual([{ type: "orchestrator:not_live", investigationId: "inv_absent" }]);
+  });
+
+  it("subscribe to a PARKED run wakes it (status running, park pause resolved)", async () => {
+    const reg = new OrchestratorRunRegistry();
+    reg.create(ID, new AbortController());
+    reg.markParked(ID);
+    const parkResolve = vi.fn();
+    reg.setPause(ID, { resolve: parkResolve, timer: null, kind: "park" });
+    await callSubscribe({ type: "orchestrator_subscribe", investigationId: ID }, vi.fn(), depsWithEvents(), reg, new Set());
+    expect(reg.status(ID)).toBe("running");
+    expect(parkResolve).toHaveBeenCalledWith("continue");
+  });
+
+  it("unsubscribe detaches this connection's sink", async () => {
+    const reg = new OrchestratorRunRegistry();
+    reg.create(ID, new AbortController());
     const send = vi.fn();
-    const ac = new AbortController();
-    const wrapped = makeOrchestratorPersistingSend(db, ID, send, ac.signal);
+    const myRuns = new Set<string>();
+    await callSubscribe({ type: "orchestrator_subscribe", investigationId: ID }, send, depsWithEvents(), reg, myRuns);
+    expect(reg.sinkCount(ID)).toBe(1);
+    await callSubscribe({ type: "orchestrator_unsubscribe", investigationId: ID }, send, depsWithEvents(), reg, myRuns);
+    expect(reg.sinkCount(ID)).toBe(0);
+    expect(myRuns.has(ID)).toBe(false);
+  });
 
-    // user clicks Stop → bare abort (no reason), socket still open
-    ac.abort();
-    wrapped({ type: "orchestrator:complete", investigationId: ID, outcome: "aborted", stats: { moves: 1, toolCalls: 0, subagents: 0, tokensSpent: 0, strikes: 0, depth: 1, durationMs: 5 } } as ServerMessage);
+  it("replay is resilient to a getEvents failure (sends empty history, still attaches)", async () => {
+    const reg = new OrchestratorRunRegistry();
+    reg.create(ID, new AbortController());
+    const sent: ServerMessage[] = [];
+    const throwing = vi.fn(() => { throw new Error("db down"); });
+    await callSubscribe({ type: "orchestrator_subscribe", investigationId: ID }, (m) => sent.push(m), depsWithEvents(throwing), reg, new Set());
+    const replay = sent.find((m) => m.type === "orchestrator:replay") as Extract<ServerMessage, { type: "orchestrator:replay" }>;
+    expect(replay.events).toEqual([]);
+    expect(reg.sinkCount(ID)).toBe(1);
+  });
 
-    // the Stop terminal IS persisted → cold-load replay correctly shows "Stopped"
-    expect(createEvent).toHaveBeenCalledTimes(1);
-    expect(createEvent.mock.calls[0]![0]).toMatchObject({ eventType: "orchestrator:complete" });
+  // T6: the first decision at a pause wins and locks every attached tab; a second
+  // decision from another tab is ignored (cross-tab D7 via the registry lock).
+  it("first decision resolves + broadcasts decision_locked to all tabs; a second is ignored", async () => {
+    const reg = new OrchestratorRunRegistry();
+    reg.create(ID, new AbortController());
+    const resolve = vi.fn();
+    reg.setPause(ID, { resolve, timer: null, kind: "operator" });
+    const tabA: ServerMessage[] = []; const tabB: ServerMessage[] = [];
+    reg.attachSink(ID, (m) => tabA.push(m));
+    reg.attachSink(ID, (m) => tabB.push(m));
+
+    await callSubscribe({ type: "orchestrator_decision", investigationId: ID, decision: "escalate" }, vi.fn(), depsWithEvents(), reg, new Set());
+    expect(resolve).toHaveBeenCalledWith("escalate");
+    expect(tabA.some((m) => m.type === "orchestrator:decision_locked")).toBe(true);
+    expect(tabB.some((m) => m.type === "orchestrator:decision_locked")).toBe(true);
+
+    // a second tab's decision finds the lock closed + no pause → no-op
+    resolve.mockClear();
+    await callSubscribe({ type: "orchestrator_decision", investigationId: ID, decision: "continue" }, vi.fn(), depsWithEvents(), reg, new Set());
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it("a decision PERSISTS decision_locked so a tab reattaching before the next step replays the lock", async () => {
+    const reg = new OrchestratorRunRegistry();
+    reg.create(ID, new AbortController());
+    reg.setPause(ID, { resolve: vi.fn(), timer: null, kind: "operator" });
+    const deps = depsWithEvents();
+    await callSubscribe({ type: "orchestrator_decision", investigationId: ID, decision: "escalate" }, vi.fn(), deps, reg, new Set());
+    const createEvent = deps.db.createEvent as ReturnType<typeof vi.fn>;
+    expect(createEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: "orchestrator:decision_locked" }));
   });
 });
