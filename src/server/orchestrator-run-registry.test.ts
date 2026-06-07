@@ -35,6 +35,23 @@ describe("OrchestratorRunRegistry — lifecycle", () => {
     expect(reg.hasPause(ID)).toBe(false);
   });
 
+  it("create REPLACES a terminal entry (relaunch during GC grace) but never a live one", () => {
+    const reg = new OrchestratorRunRegistry();
+    const ac1 = freshRun(reg);
+    reg.markTerminal(ID, 1000);
+    // relaunch while the terminal entry is still in its grace window → fresh live
+    // entry tracking the NEW abort (so Stop/subscribe/park act on the new run)
+    const ac2 = new AbortController();
+    reg.create(ID, ac2);
+    expect(reg.status(ID)).toBe("running");
+    expect(reg.abortControllerFor(ID)).toBe(ac2);
+    expect(reg.sinkCount(ID)).toBe(0); // fresh
+    // a LIVE entry is still never clobbered by a duplicate create
+    reg.create(ID, new AbortController());
+    expect(reg.abortControllerFor(ID)).toBe(ac2);
+    void ac1;
+  });
+
   it("markTerminal flips status and clears pause; delete removes the entry", () => {
     const reg = new OrchestratorRunRegistry();
     freshRun(reg);

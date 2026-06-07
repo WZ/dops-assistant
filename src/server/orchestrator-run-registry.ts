@@ -70,10 +70,14 @@ export class OrchestratorRunRegistry {
   private readonly runs = new Map<string, RunEntry>();
 
   // ── lifecycle ──────────────────────────────────────────────────────────
-  /** Register a freshly-launched run. No-op-safe: a duplicate id keeps the
-   *  existing entry (the caller guards against concurrent launches elsewhere). */
+  /** Register a freshly-launched run. A LIVE-or-parked entry is preserved (the
+   *  concurrency guard rejects a real double-launch). But a TERMINAL entry still
+   *  in its GC grace window is replaced — otherwise a relaunch during that window
+   *  would leave the new run's abort/sinks untracked (Stop/subscribe/park would
+   *  operate on the dead run while the new loop ran unabortable). */
   create(investigationId: string, abort: AbortController): void {
-    if (this.runs.has(investigationId)) return;
+    const existing = this.runs.get(investigationId);
+    if (existing && existing.status !== "terminal") return;
     this.runs.set(investigationId, {
       abort,
       sinks: new Set(),

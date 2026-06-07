@@ -1118,4 +1118,14 @@ describe("orchestrator_subscribe / _unsubscribe", () => {
     await callSubscribe({ type: "orchestrator_decision", investigationId: ID, decision: "continue" }, vi.fn(), depsWithEvents(), reg, new Set());
     expect(resolve).not.toHaveBeenCalled();
   });
+
+  it("a decision PERSISTS decision_locked so a tab reattaching before the next step replays the lock", async () => {
+    const reg = new OrchestratorRunRegistry();
+    reg.create(ID, new AbortController());
+    reg.setPause(ID, { resolve: vi.fn(), timer: null, kind: "operator" });
+    const deps = depsWithEvents();
+    await callSubscribe({ type: "orchestrator_decision", investigationId: ID, decision: "escalate" }, vi.fn(), deps, reg, new Set());
+    const createEvent = deps.db.createEvent as ReturnType<typeof vi.fn>;
+    expect(createEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: "orchestrator:decision_locked" }));
+  });
 });

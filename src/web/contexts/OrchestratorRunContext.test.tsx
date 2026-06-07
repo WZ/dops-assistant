@@ -388,10 +388,18 @@ describe("applyMessage — PR-2c reattach transitions", () => {
     expect(m.get(ID)!.lastSeq).toBe(3);
   });
 
-  it("orchestrator:not_live leaves the cold-hydrated run untouched", () => {
+  it("orchestrator:not_live leaves a hydrated (non-parked) run untouched", () => {
     const m0: ReadonlyMap<string, DeepRunState> = new Map([[ID, { kind: "orchestrator", running: true, steps: [step(0)], error: null, collapsed: false, hydrated: true }]]);
     const m = applyMessage(m0, { type: "orchestrator:not_live", investigationId: ID });
     expect(m).toBe(m0); // same identity — no change
+  });
+
+  it("orchestrator:not_live clears parked on a hydrated run → renders INTERRUPTED (server gone)", () => {
+    // cold-load hydrated a persisted `parked` run, but the server no longer has it
+    const m0: ReadonlyMap<string, DeepRunState> = new Map([[ID, { kind: "orchestrator", running: true, steps: [step(0)], error: null, collapsed: false, hydrated: true, parked: true }]]);
+    const m = applyMessage(m0, { type: "orchestrator:not_live", investigationId: ID });
+    expect(m.get(ID)!.parked).toBe(false);
+    expect(m.get(ID)!.hydrated).toBe(true); // hydrated+running+!parked → interrupted, not "resuming…" forever
   });
 });
 

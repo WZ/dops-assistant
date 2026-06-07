@@ -635,18 +635,37 @@ async function handleOrchestratorInvestigate(
 export { DEEP_INVESTIGATION_EVENT_SCHEMA };
 
 /**
+ * Persist one `orchestrator:*` message to `investigation_events` as a versioned
+ * envelope. Failure is logged but never thrown — a missed persist just means that
+ * one event won't replay after a reload; the live run is unaffected. Shared by the
+ * streaming wrapper and the decision handler (which persists the lock signal so a
+ * reattach replay reflects it).
+ */
+export function persistOrchestratorEvent(db: Database, investigationId: string, m: ServerMessage): void {
+  const type = (m as { type?: unknown }).type;
+  if (typeof type !== "string" || !type.startsWith("orchestrator:")) return;
+  try {
+    db.createEvent({
+      id: `evt_${ulid()}`,
+      investigationId,
+      eventType: type,
+      payload: JSON.stringify({ schemaVersion: DEEP_INVESTIGATION_EVENT_SCHEMA, message: m }),
+    });
+  } catch (err) {
+    logger.warn({ err, investigationId, type }, "Failed to persist orchestrator event (live stream unaffected)");
+  }
+}
+
+/**
  * Wrap a `send` so every `orchestrator:*` message for this investigation is also
- * persisted to `investigation_events` (reload-survival). Persist-then-send; a
- * persist failure is logged but NEVER breaks the live stream — the run keeps
- * streaming, that one event just won't replay after a reload. Only orchestrator
- * events are persisted (deep-mode keeps its own report.deepMode snapshot).
+ * persisted (reload-survival). Persist-then-send; a persist failure never breaks
+ * the live stream. Only orchestrator events are persisted (deep-mode keeps its own
+ * report.deepMode snapshot).
  *
  * PR-2c note: a socket close no longer aborts the run, so there is no
  * disconnect-triggered terminal to suppress — every emitted event is genuinely
- * part of the run and is persisted. A deliberate operator Stop's terminal
- * persists too, so a reload after a Stop correctly replays as "Stopped". (The
- * PR-2 disconnect-abort gating this used to carry was removed once runs survived
- * disconnect — see the close handler.)
+ * part of the run and is persisted. A deliberate operator Stop's terminal persists
+ * too, so a reload after a Stop correctly replays as "Stopped".
  */
 export function makeOrchestratorPersistingSend(
   db: Database,
@@ -654,20 +673,8 @@ export function makeOrchestratorPersistingSend(
   send: (m: ServerMessage) => void,
 ): (m: ServerMessage) => void {
   return (m: ServerMessage) => {
-    const type = (m as { type?: unknown }).type;
     const mId = (m as { investigationId?: unknown }).investigationId;
-    if (typeof type === "string" && type.startsWith("orchestrator:") && mId === investigationId) {
-      try {
-        db.createEvent({
-          id: `evt_${ulid()}`,
-          investigationId,
-          eventType: type,
-          payload: JSON.stringify({ schemaVersion: DEEP_INVESTIGATION_EVENT_SCHEMA, message: m }),
-        });
-      } catch (err) {
-        logger.warn({ err, investigationId, type }, "Failed to persist orchestrator event (live stream unaffected)");
-      }
-    }
+    if (mId === investigationId) persistOrchestratorEvent(db, investigationId, m);
     send(m);
   };
 }
@@ -1180,7 +1187,11 @@ export async function handleClientMessage(
   // silently ignored (a stale client can't wedge anything).
   if (msg.type === "orchestrator_decision") {
     if (runRegistry.tryLockDecision(msg.investigationId)) {
-      runRegistry.broadcast(msg.investigationId, { type: "orchestrator:decision_locked", investigationId: msg.investigationId });
+      const locked: ServerMessage = { type: "orchestrator:decision_locked", investigationId: msg.investigationId };
+      // Persist the lock so a tab that reattaches before the next step replays it
+      // and disables its (now-dead) pause controls — not just the live tabs.
+      persistOrchestratorEvent(deps.db, msg.investigationId, locked);
+      runRegistry.broadcast(msg.investigationId, locked);
       runRegistry.resolvePause(msg.investigationId, msg.decision);
     }
     return;

@@ -223,8 +223,11 @@ export function applyMessage(
       }
       return set({ ...rebuilt, hydrated: false, parked: false, lastSeq: rebuiltSeq });
     }
-    // No live run server-side — keep whatever the cold GET/hydrate produced.
+    // No live run server-side (server restart / GC). Clear an optimistic `parked`
+    // flag so a hydrated run falls back to INTERRUPTED rendering instead of
+    // claiming "resuming…" forever; otherwise keep the cold GET/hydrate render.
     case "orchestrator:not_live":
+      if (prev?.parked) return set({ ...prev, parked: false });
       return runs;
     // The server parked a viewerless run (PR-2c). Show "Parked"; a reattach + step resumes.
     case "orchestrator:parked":
