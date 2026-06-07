@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.8.0] - 2026-06-07
+
+### Added
+- **Deep Investigation gets its own full-screen panel (gated off, PR-2d of a sequence).** A deep investigation now opens in a wide, dedicated view at its own URL (`/stacks/…/investigations/:id/deep`) — result-first conclusion, the causal chain, evidence, and the live move log, with the pause controls docked at the bottom. Launching a Full deep investigation takes you straight there; it's deep-linkable and bookmarkable, and reattaches to the live (or parked, or interrupted) run on open. Opening the panel for an investigation with no run yet offers a one-click start.
+
+### Changed
+- The inline Console strip and the new panel render from one shared projection, so they always agree. A wrong or stale stack-scoped deep link resolves to the right stack instead of dead-ending.
+
 ## [0.4.7.0] - 2026-06-07
 
 ### Added
