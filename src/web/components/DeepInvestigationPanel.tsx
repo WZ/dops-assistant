@@ -22,6 +22,7 @@ import { useOrchestratorRun, useOrchestratorRunActions } from "../contexts/Orche
 import { useInvestigationRunHydration } from "../hooks/useInvestigationRunHydration";
 import { ScopedDeepMenu } from "./ScopedDeepMenu";
 import { ResultView, LiveView, fmtSeconds, isParked, isInterrupted, liveAnnouncement } from "./deep-run-view";
+import { useGrafanaProviders } from "../hooks/useGrafanaProviders";
 
 /** Best-effort: does the report carry a loop outcome / ruled-out causes that the
  *  "Challenge this RCA" (deep-mode) scope can re-judge? Drives the empty-state menu. */
@@ -54,6 +55,7 @@ export function DeepInvestigationPanel({
   const { data, notFound } = useInvestigationRunHydration(investigationId, { active: false, onWrongStack });
   const run = useOrchestratorRun(investigationId);
   const { decide, stop } = useOrchestratorRunActions();
+  const providers = useGrafanaProviders();
 
   const service = serviceProp || data?.investigation.service || "";
   const canChallenge = reportCanChallenge(data?.investigation.report);
@@ -136,7 +138,7 @@ export function DeepInvestigationPanel({
         ) : (
           <div className="max-w-3xl flex flex-col gap-5">
             {/* Result-first dossier */}
-            <section><ResultView run={run} /></section>
+            <section><ResultView run={run} providers={providers} /></section>
 
             {/* Move log */}
             <section className="border-t border-border/60 pt-4">

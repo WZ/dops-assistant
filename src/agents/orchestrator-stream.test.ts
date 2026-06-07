@@ -112,6 +112,92 @@ describe("traceEntryToStreamEvent", () => {
     expect(chain).toEqual([{ label: "impala", kind: "incident" }]);
   });
 
+  it("attaches root-cause provenance via exact subject match (PR-3, D3)", () => {
+    const trace: TraceEntry[] = [
+      { move: "hypothesize", detail: "pool starvation" },
+      { move: "test", detail: "pool starvation", verdict: "satisfied" },
+    ];
+    const prov = { tool: "query_prometheus", args: JSON.stringify({ expr: "pool_used" }), from: "T1", to: "T2" };
+    const evidence: NormalizedObservation[] = [
+      { phase: "metrics", subject: "pool_used", value: 100, provenance: prov },
+    ];
+    const chain = assembleCausalChain(
+      trace,
+      { hypothesis: "pool starvation", prediction: { kind: "metric-threshold", metric: "pool_used", op: ">", value: 95 } },
+      "impala",
+      evidence,
+    );
+    expect(chain.find((l) => l.kind === "root-cause")?.provenance).toEqual(prov);
+  });
+
+  it("falls back to phase match when the LLM metric name differs from the prediction (PR-3, D3)", () => {
+    const trace: TraceEntry[] = [{ move: "test", detail: "pool starvation", verdict: "satisfied" }];
+    const prov = { tool: "query_prometheus", args: JSON.stringify({ expr: "impala_pool_used_ratio" }), from: "T1", to: "T2" };
+    const evidence: NormalizedObservation[] = [
+      // subject is the LLM's reported name, NOT the structured prediction's "pool_used"
+      { phase: "metrics", subject: "impala_pool_used_ratio", value: 1, provenance: prov },
+    ];
+    const chain = assembleCausalChain(
+      trace,
+      { hypothesis: "pool starvation", prediction: { kind: "metric-threshold", metric: "pool_used", op: ">", value: 95 } },
+      "impala",
+      evidence,
+    );
+    expect(chain.find((l) => l.kind === "root-cause")?.provenance).toEqual(prov);
+  });
+
+  it("phase fallback takes the LATEST same-phase query, not an earlier ruled-out one (PR-3, D3)", () => {
+    const trace: TraceEntry[] = [{ move: "test", detail: "pool starvation", verdict: "satisfied" }];
+    const ruledOut = { tool: "query_prometheus", args: JSON.stringify({ expr: "cpu_throttle" }), from: "T1", to: "T2" };
+    const confirming = { tool: "query_prometheus", args: JSON.stringify({ expr: "impala_pool_used_ratio" }), from: "T1", to: "T2" };
+    const evidence: NormalizedObservation[] = [
+      { phase: "metrics", subject: "cpu_throttle", value: 0, provenance: ruledOut }, // earlier hypothesis
+      { phase: "metrics", subject: "impala_pool_used_ratio", value: 1, provenance: confirming }, // confirming re-query (later)
+    ];
+    const chain = assembleCausalChain(
+      trace,
+      { hypothesis: "pool starvation", prediction: { kind: "metric-threshold", metric: "pool_used", op: ">", value: 95 } },
+      "impala",
+      evidence,
+    );
+    // name mismatch → phase fallback → must land the LATEST (confirming) query
+    expect(chain.find((l) => l.kind === "root-cause")?.provenance).toEqual(confirming);
+  });
+
+  it("leaves root-cause provenance absent when no observation in the phase carries it (PR-3)", () => {
+    const trace: TraceEntry[] = [{ move: "test", detail: "pool starvation", verdict: "satisfied" }];
+    const evidence: NormalizedObservation[] = [
+      { phase: "logs", subject: "some log", text: "x", provenance: { tool: "query_loki_logs", args: "{}" } }, // wrong phase
+    ];
+    const chain = assembleCausalChain(
+      trace,
+      { hypothesis: "pool starvation", prediction: { kind: "metric-threshold", metric: "pool_used", op: ">", value: 95 } },
+      "impala",
+      evidence,
+    );
+    expect(chain.find((l) => l.kind === "root-cause")?.provenance).toBeUndefined();
+  });
+
+  it("maps each prediction kind to its phase for provenance lookup (PR-3, D3)", () => {
+    const cases = [
+      { kind: "metric-threshold", phase: "metrics" as const },
+      { kind: "log-pattern", phase: "logs" as const },
+      { kind: "infra-status", phase: "infra" as const },
+      { kind: "change-in-window", phase: "changes" as const },
+    ];
+    for (const c of cases) {
+      const prov = { tool: "t", args: JSON.stringify({ q: 1 }) };
+      const evidence: NormalizedObservation[] = [{ phase: c.phase, subject: "zzz-no-match", provenance: prov }];
+      const chain = assembleCausalChain(
+        [{ move: "test", detail: "h", verdict: "satisfied" }],
+        { hypothesis: "h", prediction: { kind: c.kind } as any },
+        "svc",
+        evidence,
+      );
+      expect(chain.find((l) => l.kind === "root-cause")?.provenance).toEqual(prov);
+    }
+  });
+
   it("traceSummary reads as a one-line run trace", () => {
     expect(traceSummary({ moves: 12, toolCalls: 5, tokensSpent: 0, strikes: 0, depth: 1, subagents: 2, elapsedMs: 0 }, "confirmed"))
       .toBe("12 moves · 5 queries · 2 subagents · confirmed at depth 1");

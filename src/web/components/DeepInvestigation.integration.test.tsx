@@ -14,6 +14,10 @@ import { ScopedDeepMenu } from "./ScopedDeepMenu";
 import { InlineRunRegion } from "./InlineRunRegion";
 import { DeepRunToaster } from "./DeepRunToaster";
 
+// PR-3: stub the Grafana providers hook so InlineRunRegion needs no StackContext
+// or async /api/providers fetch in this timer-driven integration harness.
+vi.mock("../hooks/useGrafanaProviders", () => ({ useGrafanaProviders: () => [] }));
+
 const ID = "inv_e2e";
 const step = (seq: number, target?: string): AgentStreamEvent => ({ seq, verb: "testing", target, status: "running" });
 

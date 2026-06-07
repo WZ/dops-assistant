@@ -19,6 +19,7 @@ import { useInvestigationRunHydration } from "../hooks/useInvestigationRunHydrat
 import { ScopedDeepMenu } from "./ScopedDeepMenu";
 import { InvestigationFeedback } from "./InvestigationFeedback";
 import { useStackContext } from "../contexts/StackContext";
+import { useGrafanaProviders } from "../hooks/useGrafanaProviders";
 import { useUnreadInvestigations } from "../hooks/useUnreadInvestigations";
 import type { TimelineEvent } from "./ActivityTimeline";
 import type { TimeSeriesData } from "./MetricChart";
@@ -211,7 +212,7 @@ export function InvestigationPane({
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
   const [phaseTokens, setPhaseTokens] = useState<Record<string, { inputTokens: number; outputTokens: number }>>({});
   const [totalUsage, setTotalUsage] = useState<{ inputTokens: number; outputTokens: number; durationMs: number } | null>(null);
-  const [providers, setProviders] = useState<Array<{ role: string; webUrl: string; datasource?: string }>>([]);
+  const providers = useGrafanaProviders();
   const [phaseSwoop, setPhaseSwoop] = useState(false);
   const [investigationStatus, setInvestigationStatus] = useState<"running" | "complete" | "failed" | null>(null);
   const [failureMessage, setFailureMessage] = useState<string | null>(null);
@@ -219,24 +220,7 @@ export function InvestigationPane({
   const processedCount = useRef(0);
   const reportRef = useRef<HTMLDivElement>(null);
 
-  // Fetch providers for deep links
-  useEffect(() => {
-    stackFetch("/api/providers")
-      .then(r => r.ok ? r.json() : [])
-      .then((provs: Array<{ roles?: string[]; webUrl?: string; prometheusDatasourceUid?: string }>) => {
-        const mapped = provs
-          .filter(p => p.webUrl && p.roles?.length)
-          .flatMap(p => (p.roles ?? []).map(role => ({
-            role,
-            webUrl: p.webUrl!,
-            // Metric deep links need the resolved Prometheus datasource UID so
-            // Explore opens with Prometheus (not Grafana's default, often Loki).
-            datasource: role === "metrics" ? p.prometheusDatasourceUid : undefined,
-          })));
-        setProviders(mapped);
-      })
-      .catch(() => {});
-  }, [stackFetch]);
+  // Providers for Grafana deep links — shared hook (PR-3), stack-aware.
 
   // Scroll RCA report into center view when it appears
   useEffect(() => {

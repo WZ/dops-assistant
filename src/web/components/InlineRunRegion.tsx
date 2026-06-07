@@ -22,6 +22,7 @@ import {
 // Shared run-view projection (PR-2d, T2) — the inline strip and the wide panel
 // both render these, so the conclusion/causal-chain/move-log logic lives once.
 import { fmtSeconds, liveAnnouncement, ResultView, LiveView } from "./deep-run-view";
+import { useGrafanaProviders } from "../hooks/useGrafanaProviders";
 
 const SEG_ON = "bg-primary/12 text-primary";
 const SEG_OFF = "text-muted-foreground/60 hover:text-foreground/80";
@@ -35,6 +36,7 @@ export function InlineRunRegion({
 }) {
   const run = useOrchestratorRun(investigationId);
   const { decide, stop, setCollapsed } = useOrchestratorRunActions();
+  const providers = useGrafanaProviders();
   const [view, setView] = useState<"result" | "live">("result");
 
   // Live elapsed ticker while running (the run state only carries a final
@@ -125,7 +127,7 @@ export function InlineRunRegion({
       {/* Body */}
       {!collapsed && (
         <div className="px-3 py-3 max-h-[320px] overflow-auto">
-          {view === "result" ? <ResultView run={run} /> : <LiveView run={run} live={liveRunning} />}
+          {view === "result" ? <ResultView run={run} providers={providers} /> : <LiveView run={run} live={liveRunning} />}
         </div>
       )}
 

@@ -105,6 +105,23 @@ export type OrchestratorStreamStats = {
   durationMs: number;
 };
 
+/** Deep-link provenance (PR-3): the raw tool call + incident window that produced
+ *  the observation a causal-chain link rests on. Same shape `evidenceToolCalls`
+ *  already persists for the standard report — the client turns it into a Grafana
+ *  Explore deep-link at render via `extractQueryFromToolCall` + `buildExploreUrl`,
+ *  exactly like `EvidenceTimeline`. Optional everywhere: absent → link renders
+ *  text-only, unchanged. */
+export type EvidenceProvenance = {
+  /** Tool name (e.g. "query_prometheus", "query_loki_logs"). */
+  tool: string;
+  /** JSON-stringified tool args — carries the expr/logql query + datasource. */
+  args: string;
+  /** Incident window start (ISO timestamp or epoch ms), when known. */
+  from?: string;
+  /** Incident window end. */
+  to?: string;
+};
+
 /** One link in a completed run's causal chain (increment 6, source attribution).
  *  Ordered cause→effect: the incident service, each dependency the agent followed
  *  into, then the confirmed root cause. `evidence` is the observation/finding that
@@ -115,6 +132,10 @@ export type CausalChainLink = {
   kind: "incident" | "followed" | "root-cause";
   /** Short attribution — the finding/observation this link rests on. */
   evidence?: string;
+  /** PR-3: the query that produced this link's evidence, for a Grafana deep-link.
+   *  Present on confirmed root-cause links (and any link whose matched observation
+   *  carries it); absent for the incident anchor and unmatched links. */
+  provenance?: EvidenceProvenance;
 };
 
 export type ServerMessage =
