@@ -21,7 +21,7 @@ import {
 } from "../contexts/OrchestratorRunContext";
 // Shared run-view projection (PR-2d, T2) — the inline strip and the wide panel
 // both render these, so the conclusion/causal-chain/move-log logic lives once.
-import { fmtSeconds, liveAnnouncement, ResultView, LiveView } from "./deep-run-view";
+import { fmtSeconds, liveAnnouncement, ResultView, LiveView, OperatorPauseBar } from "./deep-run-view";
 import { useGrafanaProviders } from "../hooks/useGrafanaProviders";
 
 const SEG_ON = "bg-primary/12 text-primary";
@@ -159,21 +159,13 @@ export function InlineRunRegion({
           Suppressed when interrupted: the server lost the paused loop on reload,
           so a decision would reach nothing — the interrupted notice stands in. */}
       {paused && !interrupted && !parked && (
-        <div className="border-t border-warning/30 bg-warning/8 px-3 py-2.5" role="group" aria-label="Paused — operator decision required">
-          <div className="font-semibold text-[12px] text-warning mb-0.5">⚠ Paused — needs your call</div>
-          <p className="text-[11px] text-foreground/80 mb-2 leading-snug">
-            Ruled out {run.pause?.strikes} hypothes{(run.pause?.strikes ?? 0) === 1 ? "is" : "es"}, nothing discriminating. Continue, hand off, or wait.
-          </p>
-          <div className="flex gap-1.5 flex-wrap">
-            <button type="button" disabled={locked} onClick={() => decide(id, "continue")}
-              className="font-mono text-[10px] h-7 px-2.5 rounded-md border border-primary/40 text-primary disabled:opacity-40 disabled:cursor-not-allowed">▸ continue</button>
-            <button type="button" disabled={locked} onClick={() => decide(id, "escalate")}
-              className="font-mono text-[10px] h-7 px-2.5 rounded-md border border-destructive/40 text-destructive disabled:opacity-40 disabled:cursor-not-allowed">▸ escalate</button>
-            <button type="button" disabled={locked} onClick={() => decide(id, "wait")}
-              className="font-mono text-[10px] h-7 px-2.5 rounded-md border border-border/60 text-muted-foreground disabled:opacity-40 disabled:cursor-not-allowed">▸ instrument &amp; wait</button>
-          </div>
-          {locked && <div className="text-[10px] text-success mt-1.5">✓ decision sent — controls locked</div>}
-        </div>
+        <OperatorPauseBar
+          size="compact"
+          strikes={run.pause?.strikes}
+          locked={locked}
+          operatorContext={run.operatorContext}
+          onDecide={(decision, context) => decide(id, decision, context)}
+        />
       )}
     </div>
   );

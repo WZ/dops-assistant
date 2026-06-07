@@ -721,12 +721,19 @@ async function runOrchestratorStreamed(
           strikes: state.strikes,
           hypothesesTried: state.hypotheses.map((hyp) => hyp.hypothesis.hypothesis),
         });
-        return new Promise<OperatorDecision>((resolve) => {
+        // PR-4: resolve with the operator's optional lead alongside the decision.
+        // The registry's resolver delivers (decision, context); adapt it to the
+        // core's `{ decision, context? }` shape.
+        return new Promise<{ decision: OperatorDecision; context?: string }>((resolve) => {
           const timer = setTimeout(() => {
             registry.clearPause(investigationId);
-            resolve("escalate");
+            resolve({ decision: "escalate" });
           }, OPERATOR_PAUSE_TIMEOUT_MS);
-          registry.setPause(investigationId, { resolve, timer, kind: "operator" });
+          registry.setPause(investigationId, {
+            resolve: (decision, context) => resolve({ decision, context }),
+            timer,
+            kind: "operator",
+          });
         });
       },
     });
@@ -1198,13 +1205,22 @@ export async function handleClientMessage(
   // another tab fails the lock and is ignored. Unknown/already-resolved ids are
   // silently ignored (a stale client can't wedge anything).
   if (msg.type === "orchestrator_decision") {
+    // PR-4: a non-empty lead is only meaningful with "continue" (escalate/wait stop
+    // the run). Compute it BEFORE taking the lock and guard the type — a stale/direct
+    // WS client can send a non-string `context` (e.g. {}), and `.trim()` on that
+    // after tryLockDecision would throw and wedge the pause until the timeout.
+    const lead =
+      msg.decision === "continue" && typeof msg.context === "string" ? msg.context.trim() || undefined : undefined;
     if (runRegistry.tryLockDecision(msg.investigationId)) {
-      const locked: ServerMessage = { type: "orchestrator:decision_locked", investigationId: msg.investigationId };
+      // Carry the lead on the persisted/broadcast lock so reattaching tabs and cold
+      // replays can show what the human steered with, and into resolvePause so the
+      // loop injects it as guidance on the next move.
+      const locked: ServerMessage = { type: "orchestrator:decision_locked", investigationId: msg.investigationId, context: lead };
       // Persist the lock so a tab that reattaches before the next step replays it
       // and disables its (now-dead) pause controls — not just the live tabs.
       persistOrchestratorEvent(deps.db, msg.investigationId, locked);
       runRegistry.broadcast(msg.investigationId, locked);
-      runRegistry.resolvePause(msg.investigationId, msg.decision);
+      runRegistry.resolvePause(msg.investigationId, msg.decision, lead);
     }
     return;
   }

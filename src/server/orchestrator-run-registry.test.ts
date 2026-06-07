@@ -31,7 +31,7 @@ describe("OrchestratorRunRegistry — lifecycle", () => {
     reg.setPause(ID, { resolve, timer: null, kind: "operator" });
     reg.abort(ID, "stopped");
     expect(ac.signal.aborted).toBe(true);
-    expect(resolve).toHaveBeenCalledWith("continue"); // unblock then hit the abort guard
+    expect(resolve).toHaveBeenCalledWith("continue", undefined); // unblock then hit the abort guard
     expect(reg.hasPause(ID)).toBe(false);
   });
 
@@ -132,7 +132,17 @@ describe("OrchestratorRunRegistry — pause / decision-lock (cross-tab)", () => 
     const timer = setTimeout(() => {}, 10_000);
     reg.setPause(ID, { resolve, timer, kind: "operator" });
     reg.resolvePause(ID, "escalate");
-    expect(resolve).toHaveBeenCalledWith("escalate");
+    expect(resolve).toHaveBeenCalledWith("escalate", undefined);
+    expect(reg.hasPause(ID)).toBe(false);
+  });
+
+  it("resolvePause forwards the operator's lead to the resolver (PR-4)", () => {
+    const reg = new OrchestratorRunRegistry();
+    freshRun(reg);
+    const resolve = vi.fn();
+    reg.setPause(ID, { resolve, timer: null, kind: "operator" });
+    reg.resolvePause(ID, "continue", "check the DB pool");
+    expect(resolve).toHaveBeenCalledWith("continue", "check the DB pool");
     expect(reg.hasPause(ID)).toBe(false);
   });
 

@@ -86,6 +86,10 @@ export interface DeepRunState {
    *  surface so two panes can't submit conflicting decisions. Cleared when the
    *  loop resumes (next step) or the run completes. */
   readonly decisionSubmitted?: boolean;
+  /** PR-4: the operator's free-text lead from a continue-with-context decision,
+   *  set locally on submit and from the persisted/replayed decision_locked event.
+   *  Shown read-only on the pause bar ("steered with: …"). */
+  readonly operatorContext?: string;
 
   // ── deep-mode-only ─────────────────────────────────────────────────
   readonly report?: unknown;
@@ -99,7 +103,7 @@ interface OrchestratorRunContextValue {
   /** Kick a run: "challenge" → deep_mode_investigate, "full" → orchestrator_investigate. */
   start: (investigationId: string, scope: DeepRunScope) => void;
   /** Send a strike-limit pause decision. No-ops if one was already submitted (D7). */
-  decide: (investigationId: string, decision: OperatorDecision) => void;
+  decide: (investigationId: string, decision: OperatorDecision, context?: string) => void;
   /** Stop an in-flight run (server aborts it → outcome "aborted"). */
   stop: (investigationId: string) => void;
   /** Toggle the inline region's collapsed state (DZ2). */
@@ -236,7 +240,10 @@ export function applyMessage(
     // The first pause decision (from any tab) was accepted — lock controls here too (D7).
     case "orchestrator:decision_locked":
       if (!prev) return runs;
-      return set({ ...prev, decisionSubmitted: true });
+      // PR-4: capture the operator's lead (if any) so a reattaching tab / cold
+      // replay shows what the human steered with. Keep any locally-echoed lead if
+      // the persisted event carries none.
+      return set({ ...prev, decisionSubmitted: true, operatorContext: msg.context ?? prev.operatorContext });
     case "orchestrator:complete":
       if (!prev) return runs;
       return set({
@@ -319,13 +326,15 @@ export function OrchestratorRunProvider({
   );
 
   const decide = useCallback(
-    (investigationId: string, decision: OperatorDecision) => {
+    (investigationId: string, decision: OperatorDecision, context?: string) => {
       // D7: optimistic submit-lock. If a decision was already submitted for this
       // run, ignore the second click (from either surface) entirely. Check the
       // current state synchronously via the ref — a setRuns updater runs later,
       // so its side effects can't gate the send.
       const run = runsRef.current.get(investigationId);
       if (!run || run.decisionSubmitted) return;
+      // PR-4: a lead is only meaningful with "continue"; trim and drop if empty.
+      const lead = decision === "continue" ? context?.trim() || undefined : undefined;
       setRuns((prev) => {
         const cur = prev.get(investigationId);
         if (!cur || cur.decisionSubmitted) return prev;
@@ -335,10 +344,13 @@ export function OrchestratorRunProvider({
           decisionSubmitted: true,
           // continue resumes (disposition stays); escalate/wait record intent.
           disposition: decision === "continue" ? cur.disposition : decision,
+          // Echo the lead locally so the pause bar shows it immediately, before the
+          // server's decision_locked round-trips back.
+          operatorContext: lead ?? cur.operatorContext,
         });
         return m;
       });
-      wsSend({ type: "orchestrator_decision", investigationId, decision });
+      wsSend({ type: "orchestrator_decision", investigationId, decision, context: lead });
     },
     [wsSend],
   );

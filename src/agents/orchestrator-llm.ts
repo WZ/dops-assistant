@@ -149,6 +149,14 @@ export function buildStatePrompt(focus: string, state: OrchestratorState, guards
   const lines: string[] = [];
   lines.push(`Incident under investigation: ${focus}`);
   lines.push("");
+  // PR-4: operator guidance from a continue-with-context resume. Placed high so the
+  // model weighs the human's domain knowledge first. It is a HINT in the user prompt,
+  // not a SYSTEM rule — it informs the next move but never overrides the loop's
+  // discipline (hypothesize→query→test, follow-cause, etc.).
+  if (state.operatorContext) {
+    lines.push(`Operator guidance (human steer — weigh this strongly): ${state.operatorContext}`);
+    lines.push("");
+  }
   const tokensLeft = Math.max(0, guards.maxTokens - state.tokensSpent);
   const queriesLeft = Math.max(0, guards.maxToolCalls - state.toolCalls);
   lines.push(
@@ -279,7 +287,9 @@ export interface RunAutonomousOrchestratorOptions {
   incidentService?: string;
   /** Interactive strike-limit hook (increment 5). Absent → the strike limit
    *  stops directly. Wired by the orchestrate adapter to the WS pause card. */
-  onOperatorPause?: (state: OrchestratorState) => Promise<"continue" | "escalate" | "wait">;
+  onOperatorPause?: (
+    state: OrchestratorState,
+  ) => Promise<{ decision: "continue" | "escalate" | "wait"; context?: string }>;
   /** Cooperative abort (e.g. the operator hit Stop) → the loop stops. */
   signal?: AbortSignal;
   /** Move-boundary hook (PR-2c) — the WS layer parks a viewerless run here. */

@@ -111,6 +111,17 @@ describe("buildStatePrompt", () => {
     const noDeps = buildStatePrompt("incident", emptyState, guards);
     expect(noDeps).not.toContain("follow-cause into:");
   });
+
+  it("renders the operator guidance line when operatorContext is set (PR-4)", () => {
+    const steered = buildStatePrompt("incident", { ...emptyState, operatorContext: "check the DB connection pool" }, guards);
+    expect(steered).toContain("Operator guidance (human steer");
+    expect(steered).toContain("check the DB connection pool");
+  });
+
+  it("omits the operator guidance line when operatorContext is absent (PR-4 regression)", () => {
+    const plain = buildStatePrompt("incident", emptyState, guards);
+    expect(plain).not.toContain("Operator guidance");
+  });
 });
 
 describe("createLlmDecideMove", () => {

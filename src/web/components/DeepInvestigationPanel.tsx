@@ -21,7 +21,7 @@ import { useEffect, useRef, useState } from "react";
 import { useOrchestratorRun, useOrchestratorRunActions } from "../contexts/OrchestratorRunContext";
 import { useInvestigationRunHydration } from "../hooks/useInvestigationRunHydration";
 import { ScopedDeepMenu } from "./ScopedDeepMenu";
-import { ResultView, LiveView, fmtSeconds, isParked, isInterrupted, liveAnnouncement } from "./deep-run-view";
+import { ResultView, LiveView, fmtSeconds, isParked, isInterrupted, liveAnnouncement, OperatorPauseBar } from "./deep-run-view";
 import { useGrafanaProviders } from "../hooks/useGrafanaProviders";
 
 /** Best-effort: does the report carry a loop outcome / ruled-out causes that the
@@ -169,21 +169,13 @@ export function DeepInvestigationPanel({
       {/* Docked pause bar (decision routes through the registry — D7 cross-tab lock).
           Suppressed when parked/interrupted (no live loop to answer). */}
       {paused && !interrupted && !parked && (
-        <div className="border-t border-warning/30 bg-warning/8 px-5 py-3 shrink-0" role="group" aria-label="Paused — operator decision required">
-          <div className="font-semibold text-[13px] text-warning mb-0.5">⚠ Paused — needs your call</div>
-          <p className="text-[12px] text-foreground/80 mb-2 leading-snug">
-            Ruled out {run?.pause?.strikes} hypothes{(run?.pause?.strikes ?? 0) === 1 ? "is" : "es"}, nothing discriminating. Continue, hand off, or wait.
-          </p>
-          <div className="flex gap-2 flex-wrap">
-            <button type="button" disabled={locked} onClick={() => decide(investigationId, "continue")}
-              className="font-mono text-[11px] h-8 px-3 rounded-md border border-primary/40 text-primary disabled:opacity-40 disabled:cursor-not-allowed">▸ continue</button>
-            <button type="button" disabled={locked} onClick={() => decide(investigationId, "escalate")}
-              className="font-mono text-[11px] h-8 px-3 rounded-md border border-destructive/40 text-destructive disabled:opacity-40 disabled:cursor-not-allowed">▸ escalate</button>
-            <button type="button" disabled={locked} onClick={() => decide(investigationId, "wait")}
-              className="font-mono text-[11px] h-8 px-3 rounded-md border border-border/60 text-muted-foreground disabled:opacity-40 disabled:cursor-not-allowed">▸ instrument &amp; wait</button>
-          </div>
-          {locked && <div className="text-[11px] text-success mt-1.5">✓ decision sent — controls locked</div>}
-        </div>
+        <OperatorPauseBar
+          size="wide"
+          strikes={run?.pause?.strikes}
+          locked={locked}
+          operatorContext={run?.operatorContext}
+          onDecide={(decision, context) => decide(investigationId, decision, context)}
+        />
       )}
     </div>
   );

@@ -182,6 +182,61 @@ describe("runOrchestrator — DECISION 2: safety harness", () => {
   });
 });
 
+describe("runOrchestrator — PR-4 continue-with-context", () => {
+  type Resolution = { decision: "continue" | "escalate" | "wait"; context?: string };
+  // Generative deps: emit hypothesize/test alternately; every test fails so strikes
+  // accumulate to maxStrikes (3) → pause. Each decideMove records the operatorContext
+  // visible on its state. onOperatorPause replays a scripted list of resolutions
+  // (default escalate once the list is exhausted, ending the run).
+  function genDeps(resolutions: Resolution[], seen: (string | undefined)[]) {
+    let toggle = 0;
+    let hi = 0;
+    let p = 0;
+    return makeDeps({
+      guards: { ...generousGuards, maxStrikes: 3 },
+      decideMove: async (state) => {
+        seen.push(state.operatorContext);
+        if (toggle++ % 2 === 0) return { type: "hypothesize", hypothesis: h(`c${hi}`) };
+        return { type: "test", target: hi++ };
+      },
+      evaluate: () => "absent",
+      onOperatorPause: async () => resolutions[p++] ?? { decision: "escalate" },
+    });
+  }
+
+  it("a continue-with-context sets operatorContext on the resumed decide-move state", async () => {
+    const seen: (string | undefined)[] = [];
+    const res = await runOrchestrator(genDeps([{ decision: "continue", context: "check the DB pool" }], seen));
+    expect(res.outcome).toBe("operator-pause"); // 2nd pause → default escalate
+    // 6 moves (3 hypothesize + 3 failed tests) run before the first pause, all blind…
+    expect(seen.slice(0, 6).every((c) => c === undefined)).toBe(true);
+    // …and every move after the continue carries the operator's lead.
+    expect(seen.slice(6).length).toBeGreaterThan(0);
+    expect(seen.slice(6).every((c) => c === "check the DB pool")).toBe(true);
+  });
+
+  it("a continue WITHOUT a new lead keeps the prior one (standing-until-replaced)", async () => {
+    const seen: (string | undefined)[] = [];
+    await runOrchestrator(genDeps([{ decision: "continue", context: "lead A" }, { decision: "continue" }], seen));
+    expect(seen[seen.length - 1]).toBe("lead A");
+  });
+
+  it("a later lead replaces the earlier one", async () => {
+    const seen: (string | undefined)[] = [];
+    await runOrchestrator(genDeps([{ decision: "continue", context: "lead A" }, { decision: "continue", context: "lead B" }], seen));
+    expect(seen).toContain("lead A");
+    expect(seen[seen.length - 1]).toBe("lead B");
+    expect(seen.indexOf("lead B")).toBeGreaterThan(seen.lastIndexOf("lead A"));
+  });
+
+  it("REGRESSION: plain continue (no lead ever) leaves operatorContext undefined", async () => {
+    const seen: (string | undefined)[] = [];
+    const res = await runOrchestrator(genDeps([{ decision: "continue" }], seen));
+    expect(res.outcome).toBe("operator-pause");
+    expect(seen.every((c) => c === undefined)).toBe(true);
+  });
+});
+
 describe("runOrchestrator — robustness", () => {
   it("decideMove returning null immediately → exhausted", async () => {
     const result = await runOrchestrator(makeDeps({ decideMove: async () => null }));
@@ -337,7 +392,7 @@ describe("runOrchestrator — interactive operator-pause hook", () => {
         guards: { ...generousGuards, maxStrikes: 2 },
         evaluate: () => "absent",
         decideMove: endlessFailing(),
-        onOperatorPause: async () => decisions[calls++] ?? "wait",
+        onOperatorPause: async () => ({ decision: decisions[calls++] ?? "wait" }),
       }),
     );
     expect(result.outcome).toBe("operator-pause");
@@ -352,7 +407,7 @@ describe("runOrchestrator — interactive operator-pause hook", () => {
         guards: { ...generousGuards, maxStrikes: 2 },
         evaluate: () => "absent",
         decideMove: endlessFailing(),
-        onOperatorPause: async () => { calls++; return "escalate"; },
+        onOperatorPause: async () => { calls++; return { decision: "escalate" }; },
       }),
     );
     expect(result.outcome).toBe("operator-pause");
@@ -380,7 +435,7 @@ describe("runOrchestrator — interactive operator-pause hook", () => {
         guards: { ...generousGuards, maxStrikes: 2 },
         evaluate: () => "absent",
         decideMove: endlessFailing(),
-        onOperatorPause: async () => { calls++; return "continue"; },
+        onOperatorPause: async () => { calls++; return { decision: "continue" }; },
       }),
     );
     expect(result.outcome).toBe("operator-pause");

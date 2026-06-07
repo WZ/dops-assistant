@@ -5,10 +5,12 @@
  * divergent copy of the conclusion/causal-chain/move-log logic).
  *
  * Everything here is pure given a `DeepRunState` (+ an explicit `live` flag for
- * the stream) — no run-registry subscription, no local state. The two surfaces
- * own their own chrome (status strip vs panel header, collapse, pause bar) and
- * compose these pieces inside it.
+ * the stream) — no run-registry subscription. The two surfaces own their outer
+ * chrome (status strip vs panel header, collapse) and compose these pieces. The
+ * one stateful piece is `OperatorPauseBar` (PR-4), which owns its lead textarea
+ * locally — extracted here so the inline strip and the wide panel share one bar.
  */
+import { useState } from "react";
 import { AgentStream, type AgentStreamFooterItem } from "./AgentStream";
 import { DeepModeStream } from "./DeepModeStream";
 import { buildExploreUrl, extractQueryFromToolCall } from "../lib/grafana-links";
@@ -189,4 +191,68 @@ export function LiveView({ run, live }: { run: DeepRunState; live: boolean }) {
       ]
     : undefined;
   return <AgentStream label="Deep Investigation" events={run.steps} footer={footer} running={live} />;
+}
+
+/**
+ * The docked strike-limit pause bar (PR-4), shared by the inline Console strip and
+ * the wide panel so the decision controls + the continue-with-context lead input
+ * live in one place (was duplicated markup in both surfaces). The operator can type
+ * an optional free-text lead that rides a "continue" decision into the orchestrator's
+ * next move; escalate/wait ignore it. `locked` (D7) disables the controls once any
+ * tab has decided; once locked, the textarea is replaced by the read-only lead the
+ * run was steered with. `size` preserves the two surfaces' slightly different scale.
+ */
+export function OperatorPauseBar({
+  strikes,
+  locked,
+  operatorContext,
+  size = "wide",
+  onDecide,
+}: {
+  strikes: number | undefined;
+  locked: boolean;
+  operatorContext?: string;
+  size?: "compact" | "wide";
+  onDecide: (decision: "continue" | "escalate" | "wait", context?: string) => void;
+}) {
+  const [lead, setLead] = useState("");
+  const compact = size === "compact";
+  const pad = compact ? "px-3 py-2.5" : "px-5 py-3 shrink-0";
+  const headSize = compact ? "text-[12px]" : "text-[13px]";
+  const bodySize = compact ? "text-[11px]" : "text-[12px]";
+  const noteSize = compact ? "text-[10px]" : "text-[11px]";
+  const btn = compact ? "text-[10px] h-7 px-2.5" : "text-[11px] h-8 px-3";
+  const n = strikes ?? 0;
+  return (
+    <div className={`border-t border-warning/30 bg-warning/8 ${pad}`} role="group" aria-label="Paused — operator decision required">
+      <div className={`font-semibold ${headSize} text-warning mb-0.5`}>⚠ Paused — needs your call</div>
+      <p className={`${bodySize} text-foreground/80 mb-2 leading-snug`}>
+        Ruled out {strikes} hypothes{n === 1 ? "is" : "es"}, nothing discriminating. Add an optional lead to steer the next step, then continue, hand off, or wait.
+      </p>
+      {!locked && (
+        <textarea
+          value={lead}
+          onChange={(e) => setLead(e.target.value)}
+          rows={2}
+          aria-label="Optional lead to steer the deep investigation"
+          placeholder="Optional lead — e.g. check the DB connection pool, or: started right after the 14:00 deploy"
+          className={`w-full mb-2 rounded-md border border-border/60 bg-background/60 px-2 py-1.5 ${bodySize} resize-y focus:outline-none focus:border-primary/50`}
+        />
+      )}
+      <div className={`flex ${compact ? "gap-1.5" : "gap-2"} flex-wrap`}>
+        <button type="button" disabled={locked} onClick={() => onDecide("continue", lead)}
+          className={`font-mono ${btn} rounded-md border border-primary/40 text-primary disabled:opacity-40 disabled:cursor-not-allowed`}>▸ continue</button>
+        <button type="button" disabled={locked} onClick={() => onDecide("escalate")}
+          className={`font-mono ${btn} rounded-md border border-destructive/40 text-destructive disabled:opacity-40 disabled:cursor-not-allowed`}>▸ escalate</button>
+        <button type="button" disabled={locked} onClick={() => onDecide("wait")}
+          className={`font-mono ${btn} rounded-md border border-border/60 text-muted-foreground disabled:opacity-40 disabled:cursor-not-allowed`}>▸ instrument &amp; wait</button>
+      </div>
+      {locked && <div className={`${noteSize} text-success mt-1.5`}>✓ decision sent — controls locked</div>}
+      {operatorContext && (
+        <div className={`${noteSize} text-muted-foreground/80 mt-1 leading-snug`}>
+          steered with: <span className="text-foreground/80">{operatorContext}</span>
+        </div>
+      )}
+    </div>
+  );
 }

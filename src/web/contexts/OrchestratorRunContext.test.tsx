@@ -146,6 +146,24 @@ describe("OrchestratorRunProvider", () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
+  it("decide() forwards a trimmed lead with continue and echoes it locally (PR-4)", () => {
+    const send = vi.fn();
+    const ref = {
+      current: [
+        { type: "orchestrator:started", investigationId: ID },
+        { type: "orchestrator:operator_pause", investigationId: ID, strikes: 3 },
+      ] as ServerMessage[],
+    };
+    const { result } = renderHook(
+      () => ({ run: useOrchestratorRun(ID), actions: useOrchestratorRunActions() }),
+      { wrapper: makeWrapper(ref, send) },
+    );
+    act(() => result.current.actions.decide(ID, "continue", "  check the DB pool  "));
+    expect(send).toHaveBeenCalledWith({ type: "orchestrator_decision", investigationId: ID, decision: "continue", context: "check the DB pool" });
+    // echoed locally so the pause bar shows it before the server round-trips
+    expect(result.current.run?.operatorContext).toBe("check the DB pool");
+  });
+
   it("setCollapsed() toggles the inline region flag", () => {
     const send = vi.fn();
     const ref = { current: [{ type: "orchestrator:started", investigationId: ID }] as ServerMessage[] };
@@ -344,6 +362,13 @@ describe("applyMessage — PR-2c reattach transitions", () => {
     expect(m.get(ID)!.decisionSubmitted).toBe(false);
     m = applyMessage(m, { type: "orchestrator:decision_locked", investigationId: ID });
     expect(m.get(ID)!.decisionSubmitted).toBe(true);
+  });
+
+  it("orchestrator:decision_locked carries the operator's lead into the run state (PR-4)", () => {
+    let m = applyMessage(empty(), { type: "orchestrator:started", investigationId: ID });
+    m = applyMessage(m, { type: "orchestrator:operator_pause", investigationId: ID, strikes: 3 });
+    m = applyMessage(m, { type: "orchestrator:decision_locked", investigationId: ID, context: "check the DB pool" });
+    expect(m.get(ID)!.operatorContext).toBe("check the DB pool");
   });
 
   it("orchestrator:replay reconstructs a LIVE run (clears hydrated/parked, seeds lastSeq)", () => {
