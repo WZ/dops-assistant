@@ -9,6 +9,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ChatPane } from "./components/ChatPane";
 import { Dashboard } from "./components/Dashboard";
 import { InvestigationPane } from "./components/InvestigationPane";
+import { DeepInvestigationPanel } from "./components/DeepInvestigationPanel";
 import { PatternDetail } from "./components/PatternDetail";
 import { ScanRunDetail } from "./components/ScanRunDetail";
 import { ActivityPage } from "./components/ActivityPage";
@@ -57,6 +58,11 @@ export type LeftPaneView =
   // InvestigationPane handles that case by hitting /api/investigations/:id/locate
   // and replaceState'ing the URL to the canonical /stacks/:stackId/investigations/:id form.
   | { type: "investigation"; id: string; stackId: string }
+  // The wide, dedicated Deep Investigation panel (PR-2d) at
+  // /stacks/:stackId/investigations/:id/deep. Same stackId semantics as
+  // `investigation` (empty string = legacy /investigations/:id/deep sentinel,
+  // resolved via /locate). Distinct pane so it has its own URL + back-nav.
+  | { type: "investigation-deep"; id: string; stackId: string }
   | { type: "pattern"; id: string }
   | ActivityView
   | { type: "services"; initialService?: string }
@@ -226,6 +232,7 @@ export function App() {
     : leftPane.type === "settings" ? "settings"
     : leftPane.type === "activity" ? "activity"
     : leftPane.type === "investigation" ? "activity"
+    : leftPane.type === "investigation-deep" ? "activity"
     : "dashboard";
 
   const stackFetchForBranding = useMemo(() => createStackFetch(activeStackId), [activeStackId]);
@@ -352,8 +359,11 @@ export function App() {
   // so it has a real stack list to validate against — otherwise it could
   // race with the bootstrap and switch to a stack that's about to be
   // overwritten by the localStorage default-pick.
-  const investigationStackId = leftPane.type === "investigation" ? leftPane.stackId : null;
-  const investigationId = leftPane.type === "investigation" ? leftPane.id : null;
+  // Both the detail page and the wide Deep panel (PR-2d) need stack resolution.
+  const invPane = leftPane.type === "investigation" || leftPane.type === "investigation-deep" ? leftPane : null;
+  const investigationStackId = invPane ? invPane.stackId : null;
+  const investigationId = invPane ? invPane.id : null;
+  const investigationPaneType = invPane ? invPane.type : null;
   // True when the URL names a stack we know about. Used both to decide
   // whether to skip the locate fetch and as a stable effect dep — comparing
   // a boolean avoids re-firing on every `stacks` array reference change.
@@ -390,7 +400,8 @@ export function App() {
           if (data?.stackId) {
             switchStack(data.stackId);
             setLeftPane(
-              { type: "investigation", id: investigationId, stackId: data.stackId },
+              // Preserve which surface the user was on (detail vs deep panel).
+              { type: investigationPaneType ?? "investigation", id: investigationId, stackId: data.stackId },
               { replace: true },
             );
           } else {
@@ -404,7 +415,7 @@ export function App() {
     if (investigationStackId !== activeStackId) {
       switchStack(investigationStackId!);
     }
-  }, [investigationId, investigationStackId, ownedByKnownStack, stacksLoading, activeStackId, switchStack, setLeftPane]);
+  }, [investigationId, investigationStackId, investigationPaneType, ownedByKnownStack, stacksLoading, activeStackId, switchStack, setLeftPane]);
 
   // Recovery for wrong-but-known stack URLs. Hand-edited links and
   // rename-stale bookmarks land on a known stack that doesn't actually own
@@ -549,7 +560,7 @@ export function App() {
           <ResizablePanelGroup orientation="horizontal">
             <ResizablePanel defaultSize={60} minSize={30}>
               <div className="h-full bg-grid relative">
-                <div key={leftPane.type === "investigation" ? `inv-${leftPane.id}` : leftPane.type === "pattern" ? `pattern-${leftPane.id}` : leftPane.type} className="h-full animate-fade-in">
+                <div key={leftPane.type === "investigation" ? `inv-${leftPane.id}` : leftPane.type === "investigation-deep" ? `deep-${leftPane.id}` : leftPane.type === "pattern" ? `pattern-${leftPane.id}` : leftPane.type} className="h-full animate-fade-in">
                   {leftPane.type === "dashboard" ? (
                     <Dashboard
                       wsMessages={ws.messages}
@@ -607,6 +618,31 @@ export function App() {
                       }}
                       onOrchestratorDecision={(invId, decision) => {
                         ws.send({ type: "orchestrator_decision", investigationId: invId, decision });
+                      }}
+                      onWrongStack={handleWrongStack}
+                      onOpenDeep={(invId) => setLeftPane({ type: "investigation-deep", id: invId, stackId: activeStackId })}
+                    />
+                    ) : (
+                      <div className="h-full flex items-center justify-center">
+                        <span className="font-mono text-[11px] text-muted-foreground/70">
+                          Resolving investigation…
+                        </span>
+                      </div>
+                    )
+                  ) : leftPane.type === "investigation-deep" ? (
+                    // The wide Deep Investigation panel (PR-2d). Same stack-resolution
+                    // guard as the detail pane: wait until the active stack matches the
+                    // URL's stack (or the legacy locate-and-redirect lands) before
+                    // mounting, so the panel's GET carries the right X-Stack-Id.
+                    leftPane.stackId && leftPane.stackId === activeStackId ? (
+                    <DeepInvestigationPanel
+                      investigationId={leftPane.id}
+                      onBack={() => {
+                        if (window.history.state?.fromApp) {
+                          window.history.back();
+                        } else {
+                          setLeftPane({ type: "investigation", id: leftPane.id, stackId: activeStackId });
+                        }
                       }}
                       onWrongStack={handleWrongStack}
                     />

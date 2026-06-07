@@ -30,10 +30,15 @@ const COUNTDOWN_FROM = 3;
 export function ScopedDeepMenu({
   investigationId,
   canChallenge,
+  onFullStart,
 }: {
   investigationId: string;
   /** The report has a loop outcome — deep mode has ruled-out causes to re-judge. */
   canChallenge: boolean;
+  /** Called when a Full run is dispatched (after the countdown). The Console
+   *  uses it to auto-navigate to the wide /deep panel (PR-2d, D2). Optional —
+   *  the panel's own empty-state menu omits it (already on /deep). */
+  onFullStart?: (investigationId: string) => void;
 }) {
   const { start, connectionStatus } = useOrchestratorRunActions();
   const run = useOrchestratorRun(investigationId);
@@ -53,11 +58,12 @@ export function ScopedDeepMenu({
     if (countdown <= 0) {
       setCountdown(null);
       start(investigationId, "full");
+      onFullStart?.(investigationId); // auto-nav to the wide /deep panel (D2)
       return;
     }
     const t = setTimeout(() => setCountdown((c) => (c === null ? null : c - 1)), 900);
     return () => clearTimeout(t);
-  }, [countdown, investigationId, start, run?.running]);
+  }, [countdown, investigationId, start, run?.running, onFullStart]);
 
   const deepEnabled = typeof window !== "undefined" && !!window.__DEEP_MODE_ENABLED__ && canChallenge;
   const fullEnabled = typeof window !== "undefined" && !!window.__ORCHESTRATOR_ENABLED__;

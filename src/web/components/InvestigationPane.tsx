@@ -15,6 +15,7 @@ import { RcaReport } from "./RcaReport";
 import { DeepModeStream } from "./DeepModeStream";
 import { OrchestratorStream } from "./OrchestratorStream";
 import { useOrchestratorRun, useOrchestratorRunActions } from "../contexts/OrchestratorRunContext";
+import { useInvestigationRunHydration } from "../hooks/useInvestigationRunHydration";
 import { ScopedDeepMenu } from "./ScopedDeepMenu";
 import { InvestigationFeedback } from "./InvestigationFeedback";
 import { useStackContext } from "../contexts/StackContext";
@@ -150,6 +151,7 @@ export function InvestigationPane({
   onDeepMode,
   onOrchestrate,
   onWrongStack,
+  onOpenDeep,
 }: {
   investigationId: string;
   wsMessages: ServerMessage[];
@@ -172,6 +174,10 @@ export function InvestigationPane({
    *  hand-edited or rename-stale links resolving instead of dead-ending
    *  on "not found" when the id genuinely exists somewhere. */
   onWrongStack?: (correctStackId: string) => void;
+  /** Open the wide Deep Investigation panel (PR-2d). Wired by the parent to
+   *  navigate to /stacks/:stackId/investigations/:id/deep. Used to auto-navigate
+   *  when a Full run launches from the report's Investigate-deeply menu. */
+  onOpenDeep?: (investigationId: string) => void;
 }) {
   const { stackFetch, activeStackId } = useStackContext();
   const { markViewed } = useUnreadInvestigations();
@@ -182,7 +188,9 @@ export function InvestigationPane({
   // (OrchestratorRunContext) so the Console inline surface and this pane read one
   // source of truth. Derive the former local vars from the registry's tagged run.
   const run = useOrchestratorRun(investigationId);
-  const { decide, hydrate, subscribe, unsubscribe, connectionStatus } = useOrchestratorRunActions();
+  // GET + legacy-redirect + hydrate + subscribe now live in the shared hook
+  // (PR-2d, T3) so this pane and the wide Deep panel reattach identically.
+  const { decide } = useOrchestratorRunActions();
   const deepRun = run?.kind === "deep-mode" ? run : undefined;
   const orchRun = run?.kind === "orchestrator" ? run : undefined;
   const deepModeRunning = !!deepRun?.running;
@@ -200,10 +208,6 @@ export function InvestigationPane({
   const orchDisposition = orchRun?.disposition;
   const [service, setService] = useState("");
   const [query, setQuery] = useState("");
-  /** Set when the REST fetch comes back 404. Visiting an investigation URL
-   *  whose ID is either garbage or belongs to a different stack previously
-   *  rendered an empty Phases skeleton with no explanation. */
-  const [notFound, setNotFound] = useState(false);
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
   const [phaseTokens, setPhaseTokens] = useState<Record<string, { inputTokens: number; outputTokens: number }>>({});
   const [totalUsage, setTotalUsage] = useState<{ inputTokens: number; outputTokens: number; durationMs: number } | null>(null);
@@ -283,154 +287,82 @@ export function InvestigationPane({
     return () => { cancelled = true; };
   }, [investigationId, query]);
 
-  // Fetch historical investigation data from REST API when not active
+  // Cold-load the historical investigation + reattach its Deep run (PR-2d, T3):
+  // the shared hook owns the GET, the legacy-stack /locate redirect, hydrate, and
+  // subscribe — the same path the wide Deep panel uses. Skipped when a live run
+  // is streaming here (isActive).
+  const { data: hydrationData, notFound } = useInvestigationRunHydration(investigationId, {
+    active: isActive,
+    onWrongStack,
+  });
+
+  // Shape this pane's local UI state (phases / evidence / report / timeline) from
+  // the hook's payload. The hook already performed hydrate + subscribe; this just
+  // maps the REST data into the detail-page surfaces.
   useEffect(() => {
-    if (isActive) return;
+    if (!hydrationData) return;
+    const { investigation, phases: phaseRows, events } = hydrationData;
+    setService(investigation.service);
+    if (investigation.query) setQuery(investigation.query);
 
-    let cancelled = false;
-    // Reset the not-found flag whenever the caller navigates to a new
-    // investigation ID — don't let a stale "not found" persist across ids.
-    setNotFound(false);
-    stackFetch(`/api/investigations/${investigationId}`)
-      .then(async (r) => {
-        if (r.status === 404) {
-          // The active stack doesn't have this investigation, but the URL
-          // could just have the wrong stack scope (hand-edited, or the
-          // stack got renamed). Probe the stack-agnostic locate endpoint:
-          // if the id lives in another stack, ask the parent to switch
-          // and re-route. Falls through to the existing "not found" UI
-          // when locate confirms the id doesn't exist anywhere.
-          try {
-            const lr = await stackFetch(`/api/investigations/${investigationId}/locate`);
-            if (cancelled) return null;
-            if (lr.ok) {
-              const ld = (await lr.json()) as { stackId?: string };
-              if (ld?.stackId && ld.stackId !== activeStackId && onWrongStack) {
-                onWrongStack(ld.stackId);
-                // Parent will replaceState onto the new stack-scoped URL,
-                // which remounts this pane against the right stack. Don't
-                // flip notFound — the brief blank on the existing pane is
-                // less jarring than a flash of "not found" before the
-                // re-route lands.
-                return null;
-              }
-            }
-          } catch { /* fall through to notFound */ }
-          if (!cancelled) setNotFound(true);
-          return null;
+    if (investigation.total_input_tokens && investigation.total_input_tokens > 0) {
+      setTotalUsage({
+        inputTokens: investigation.total_input_tokens,
+        outputTokens: investigation.total_output_tokens ?? 0,
+        durationMs: investigation.total_duration_ms ?? 0,
+      });
+    }
+
+    setInvestigationStatus(investigation.status as "running" | "complete" | "failed");
+
+    const phaseMap = new Map(phaseRows.map((p) => [p.phase, p]));
+    setPhases(DEFAULT_PHASES.map((dp) => {
+      const stored = phaseMap.get(dp.name);
+      if (stored) return { ...dp, status: stored.status as PhaseState["status"] };
+      if (investigation.status === "complete") return { ...dp, status: "complete" as const };
+      return dp;
+    }));
+
+    const evidenceData: Record<string, unknown> = {};
+    for (const p of phaseRows) {
+      if (p.findings) {
+        try { evidenceData[p.phase] = JSON.parse(p.findings); } catch { /* ignore */ }
+      }
+    }
+    if (investigation.report) {
+      try {
+        const rpt = JSON.parse(investigation.report);
+        if (rpt.evidence) {
+          if (rpt.evidence.metrics?.length && !evidenceData["metrics"]) evidenceData["metrics"] = { observations: rpt.evidence.metrics };
+          if (rpt.evidence.logs?.length && !evidenceData["logs"]) evidenceData["logs"] = { observations: rpt.evidence.logs };
+          if (rpt.evidence.infra?.length && !evidenceData["infra"]) evidenceData["infra"] = { observations: rpt.evidence.infra };
         }
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
-      .then((data: null | {
-        investigation: { service: string; query: string; status: string; report: string | null; total_input_tokens?: number; total_output_tokens?: number; total_duration_ms?: number };
-        phases: Array<{ phase: string; status: string; findings: string | null }>;
-        events?: Array<{ event_type: string; payload: string; created_at: string }>;
-      }) => {
-        if (cancelled || !data) return;
-        setService(data.investigation.service);
-        if (data.investigation.query) setQuery(data.investigation.query);
+      } catch { /* ignore */ }
+    }
+    if (Object.keys(evidenceData).length > 0) setEvidence(evidenceData);
 
-        if (data.investigation.total_input_tokens && data.investigation.total_input_tokens > 0) {
-          setTotalUsage({
-            inputTokens: data.investigation.total_input_tokens,
-            outputTokens: data.investigation.total_output_tokens ?? 0,
-            durationMs: data.investigation.total_duration_ms ?? 0,
-          });
-        }
+    if (investigation.report) {
+      try { setReport(JSON.parse(investigation.report)); } catch { /* ignore */ }
+    }
 
-        setInvestigationStatus(data.investigation.status as "running" | "complete" | "failed");
-
-        const phaseMap = new Map(data.phases.map((p) => [p.phase, p]));
-        setPhases(DEFAULT_PHASES.map((dp) => {
-          const stored = phaseMap.get(dp.name);
-          if (stored) {
-            return { ...dp, status: stored.status as PhaseState["status"] };
+    if (events && events.length > 0) {
+      const restored: TimelineEvent[] = [];
+      for (const row of events) {
+        try {
+          const payload = JSON.parse(row.payload);
+          const ts = new Date(row.created_at).getTime();
+          if (payload.type === "investigation:tool_call") {
+            restored.push({ type: "tool_call", phase: payload.phase, tool: payload.tool, args: payload.args ?? {}, status: payload.status, result: payload.result, durationMs: payload.durationMs, timestamp: ts });
+          } else if (payload.type === "investigation:iteration") {
+            restored.push({ type: "iteration", phase: payload.phase, iteration: payload.iteration, maxIterations: payload.maxIterations, description: payload.description, timestamp: ts });
+          } else if (payload.type === "investigation:phase") {
+            restored.push({ type: "phase_change", phase: payload.phase, status: payload.status, stats: payload.stats ? { toolCalls: payload.stats.toolCalls, iterations: payload.stats.iterations, durationMs: payload.stats.durationMs } : undefined, timestamp: ts });
           }
-          if (data.investigation.status === "complete") {
-            return { ...dp, status: "complete" as const };
-          }
-          return dp;
-        }));
-
-        const evidenceData: Record<string, unknown> = {};
-        for (const p of data.phases) {
-          if (p.findings) {
-            try { evidenceData[p.phase] = JSON.parse(p.findings); } catch { /* ignore */ }
-          }
-        }
-        if (data.investigation.report) {
-          try {
-            const rpt = JSON.parse(data.investigation.report);
-            if (rpt.evidence) {
-              if (rpt.evidence.metrics?.length && !evidenceData["metrics"]) {
-                evidenceData["metrics"] = { observations: rpt.evidence.metrics };
-              }
-              if (rpt.evidence.logs?.length && !evidenceData["logs"]) {
-                evidenceData["logs"] = { observations: rpt.evidence.logs };
-              }
-              if (rpt.evidence.infra?.length && !evidenceData["infra"]) {
-                evidenceData["infra"] = { observations: rpt.evidence.infra };
-              }
-            }
-          } catch { /* ignore */ }
-        }
-        if (Object.keys(evidenceData).length > 0) {
-          setEvidence(evidenceData);
-        }
-
-        if (data.investigation.report) {
-          try { setReport(JSON.parse(data.investigation.report)); } catch { /* ignore */ }
-        }
-
-        // Reconstruct any persisted Deep Investigation (orchestrator) run from
-        // its events (PR-2). hydrate is hydrate-if-absent and filters to
-        // orchestrator:* internally, so passing the full events array is safe —
-        // a live run (active pane) is never reached here (isActive guard above).
-        if (data.events && data.events.length > 0) {
-          hydrate(investigationId, data.events);
-        }
-
-        // Restore persisted timeline events
-        if (data.events && data.events.length > 0) {
-          const restored: TimelineEvent[] = [];
-          for (const row of data.events) {
-            try {
-              const payload = JSON.parse(row.payload);
-              const ts = new Date(row.created_at).getTime();
-              if (payload.type === "investigation:tool_call") {
-                restored.push({ type: "tool_call", phase: payload.phase, tool: payload.tool, args: payload.args ?? {}, status: payload.status, result: payload.result, durationMs: payload.durationMs, timestamp: ts });
-              } else if (payload.type === "investigation:iteration") {
-                restored.push({ type: "iteration", phase: payload.phase, iteration: payload.iteration, maxIterations: payload.maxIterations, description: payload.description, timestamp: ts });
-              } else if (payload.type === "investigation:phase") {
-                restored.push({ type: "phase_change", phase: payload.phase, status: payload.status, stats: payload.stats ? { toolCalls: payload.stats.toolCalls, iterations: payload.stats.iterations, durationMs: payload.stats.durationMs } : undefined, timestamp: ts });
-              }
-            } catch { /* ignore */ }
-          }
-          if (restored.length > 0) setTimelineEvents(restored);
-        }
-      })
-      .catch(() => { /* silently fail */ });
-
-    return () => { cancelled = true; };
-    // stackFetch and activeStackId are explicit deps so the effect re-runs
-    // after a stack switch (e.g., the wrong-stack callback below moves the
-    // user to the investigation's real stack). Without them, the effect
-    // would still hold the previous stack's fetcher in closure and never
-    // re-fetch against the corrected stack.
-  }, [investigationId, isActive, stackFetch, activeStackId, onWrongStack, hydrate]);
-
-  // Reattach to a live server-side Deep Investigation run (PR-2c). On (re)connect
-  // while viewing an investigation, subscribe: the server replays the run's
-  // history then streams it live (orchestrator:replay), or answers not_live and
-  // the cold GET/hydrate render stands. Re-runs on reconnect (connectionStatus
-  // flips), so a dropped socket reattaches automatically. The replay reducer is
-  // race-safe, so a redundant subscribe (e.g. for an in-session run) is harmless.
-  useEffect(() => {
-    if (!investigationId || connectionStatus !== "connected") return;
-    subscribe(investigationId);
-    return () => unsubscribe(investigationId);
-  }, [investigationId, connectionStatus, subscribe, unsubscribe]);
+        } catch { /* ignore */ }
+      }
+      if (restored.length > 0) setTimelineEvents(restored);
+    }
+  }, [hydrationData]);
 
   // Process live WebSocket messages
   useEffect(() => {
@@ -680,6 +612,7 @@ export function InvestigationPane({
             <ScopedDeepMenu
               investigationId={investigationId}
               canChallenge={!!(report as RcaReportType | null)?.loopOutcome}
+              onFullStart={onOpenDeep}
             />
           )}
           {/* Deep mode (Step 3): hidden from users until the Autonomous

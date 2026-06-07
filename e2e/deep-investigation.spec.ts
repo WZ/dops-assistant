@@ -133,3 +133,21 @@ test("deep investigation: a mid-flight run survives a reload — reattaches LIVE
   await page.getByRole("button", { name: /continue/i }).first().click();
   await expect(page.getByText(/statestore connection pool starvation/i).first()).toBeVisible({ timeout: 15_000 });
 });
+
+test("deep panel: direct deep-link renders the wide panel; no run → empty state with Start menu", async ({ page }) => {
+  test.skip(!seeded || !stackId, "Could not seed a completed investigation (stacks table empty?) — skipping.");
+
+  // Direct hit on the PR-2d route (no run started) → the wide panel cold-loads
+  // the investigation and shows its empty state.
+  await page.goto(`/stacks/${stackId}/investigations/${INV_ID}/deep`);
+
+  // The panel header always renders (the route resolves the stack + GETs the run).
+  await expect(page.getByRole("heading", { name: /Deep Investigation/ })).toBeVisible({ timeout: 15_000 });
+
+  // No deep run exists for this freshly-seeded investigation → empty state.
+  await expect(page.getByText(/No deep investigation yet/i)).toBeVisible({ timeout: 15_000 });
+
+  // Back returns to the detail page.
+  await page.getByRole("button", { name: /back to investigation/i }).click();
+  await expect(page.getByText(/Root Cause/i).first()).toBeVisible({ timeout: 15_000 });
+});

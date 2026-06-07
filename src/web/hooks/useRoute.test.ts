@@ -41,6 +41,37 @@ describe("parseUrl", () => {
     });
   });
 
+  it("parses /stacks/:stackId/investigations/:id/deep (PR-2d panel) — matched before the non-deep route", () => {
+    expect(parseUrl("/stacks/prod/investigations/inv_01KNR/deep")).toEqual({
+      type: "investigation-deep",
+      id: "inv_01KNR",
+      stackId: "prod",
+    });
+    // the non-deep route must NOT swallow the /deep suffix into the id
+    expect(parseUrl("/stacks/prod/investigations/inv_01KNR")).toEqual({
+      type: "investigation",
+      id: "inv_01KNR",
+      stackId: "prod",
+    });
+  });
+
+  it("parses legacy /investigations/:id/deep with stackId='' sentinel (locate-and-redirect)", () => {
+    expect(parseUrl("/investigations/inv_01KNR/deep")).toEqual({
+      type: "investigation-deep",
+      id: "inv_01KNR",
+      stackId: "",
+    });
+  });
+
+  it("round-trips investigation-deep through viewToUrl → parseUrl (stack-scoped + legacy)", () => {
+    const scoped = { type: "investigation-deep" as const, id: "inv_01KNR", stackId: "prod" };
+    expect(viewToUrl(scoped)).toBe("/stacks/prod/investigations/inv_01KNR/deep");
+    expect(parseUrl(viewToUrl(scoped))).toEqual(scoped);
+    const legacy = { type: "investigation-deep" as const, id: "inv_01KNR", stackId: "" };
+    expect(viewToUrl(legacy)).toBe("/investigations/inv_01KNR/deep");
+    expect(parseUrl(viewToUrl(legacy))).toEqual(legacy);
+  });
+
   it("parses /patterns/:id", () => {
     expect(parseUrl("/patterns/pat_01KNR")).toEqual({ type: "pattern", id: "pat_01KNR" });
   });
