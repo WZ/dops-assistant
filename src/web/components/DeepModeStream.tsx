@@ -10,10 +10,13 @@ export function DeepModeStream({
   events,
   stats,
   running,
+  startedAt,
 }: {
   events: AgentStreamEvent[];
   stats?: AgentStreamStats;
   running: boolean;
+  /** Run start (epoch ms) so the live timer survives a remount. */
+  startedAt?: number;
 }) {
   const footer: AgentStreamFooterItem[] | undefined = stats
     ? [
@@ -24,5 +27,5 @@ export function DeepModeStream({
         { label: "took", value: `${(stats.durationMs / 1000).toFixed(1)}s` },
       ]
     : undefined;
-  return <AgentStream label="Deep Mode · second look" events={events} footer={footer} running={running} />;
+  return <AgentStream label="Deep Mode · second look" events={events} footer={footer} running={running} startedAt={startedAt} />;
 }

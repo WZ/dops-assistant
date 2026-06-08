@@ -291,7 +291,7 @@ export function ResultView({
  *  (no trailing spinner) via the explicit `live` flag. */
 export function LiveView({ run, live }: { run: DeepRunState; live: boolean }) {
   if (run.kind === "deep-mode") {
-    return <DeepModeStream events={run.steps} stats={run.deepStats} running={live} />;
+    return <DeepModeStream events={run.steps} stats={run.deepStats} running={live} startedAt={run.startedAt} />;
   }
   const s = run.orchStats;
   const footer: AgentStreamFooterItem[] | undefined = s
@@ -303,7 +303,7 @@ export function LiveView({ run, live }: { run: DeepRunState; live: boolean }) {
         { label: "tokens", value: s.tokensSpent },
       ]
     : undefined;
-  return <AgentStream label="Deep Investigation" events={run.steps} footer={footer} running={live} />;
+  return <AgentStream label="Deep Investigation" events={run.steps} footer={footer} running={live} startedAt={run.startedAt} />;
 }
 
 /**

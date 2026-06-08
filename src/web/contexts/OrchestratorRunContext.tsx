@@ -56,6 +56,11 @@ export interface DeepRunState {
   readonly kind: DeepRunKind;
   readonly running: boolean;
   readonly steps: AgentStreamEvent[];
+  /** Epoch ms when the run started, stamped on the `*:started` message. The
+   *  elapsed timers anchor to this (not to component mount) so they keep counting
+   *  correctly when the operator navigates away from the Console and back — the
+   *  run lives in the registry, so this survives the inline region unmounting. */
+  readonly startedAt?: number;
   /** Shared: an engine/LLM/MCP error message (run stopped), else null. */
   readonly error: string | null;
   /** UI: whether the inline region is collapsed to its one-line summary (DZ2). */
@@ -132,9 +137,10 @@ interface OrchestratorRunContextValue {
 
 const OrchestratorRunContext = createContext<OrchestratorRunContextValue | null>(null);
 
-/** A fresh run record for a `*:started` message of the given kind. */
+/** A fresh run record for a `*:started` message of the given kind. `startedAt`
+ *  anchors the elapsed timers so they survive the inline region unmounting. */
 function freshRun(kind: DeepRunKind): DeepRunState {
-  return { kind, running: true, steps: [], error: null, collapsed: false };
+  return { kind, running: true, steps: [], error: null, collapsed: false, startedAt: Date.now() };
 }
 
 /** Reconstruct one run by replaying its persisted event envelopes through the

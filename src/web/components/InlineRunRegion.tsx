@@ -42,20 +42,21 @@ export function InlineRunRegion({
   // provenance) stays one click away; it never auto-takes over.
   const [view, setView] = useState<"result" | "live">("live");
 
-  // Live elapsed ticker while running (the run state only carries a final
-  // durationMs on completion). Resets when a new run starts. An interrupted
+  // Live elapsed while running. Anchored to the run's `startedAt` (held in the
+  // registry), not to mount — so it keeps counting when the operator leaves the
+  // Console and comes back instead of resetting to 0. The 1s tick only forces a
+  // re-render; the value is computed from startedAt below. An interrupted
   // (hydrated-running) run is NOT live, so the ticker stays off for it.
-  const [elapsed, setElapsed] = useState(0);
+  const [, setTick] = useState(0);
   const running = !!run?.running;
   const parked = !!run?.parked && running;
   const interrupted = !!run?.hydrated && running && !parked;
   const liveRunning = running && !interrupted && !parked;
   useEffect(() => {
     if (!liveRunning) return;
-    setElapsed(0);
-    const t = setInterval(() => setElapsed((e) => e + 1), 1000);
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
     return () => clearInterval(t);
-  }, [liveRunning, run?.kind, investigationId]);
+  }, [liveRunning]);
 
   if (!investigationId || !run) return null;
 
@@ -75,7 +76,10 @@ export function InlineRunRegion({
     run.kind === "orchestrator" && run.orchStats ? run.orchStats.durationMs / 1000
     : run.kind === "deep-mode" && run.deepStats ? run.deepStats.durationMs / 1000
     : undefined;
-  const elapsedLabel = liveRunning ? fmtSeconds(elapsed) : finalSeconds != null ? fmtSeconds(finalSeconds) : "";
+  // Computed from the run's start (survives remount via the registry), re-rendered
+  // by the 1s tick above. Falls back to 0 for an older run with no startedAt.
+  const liveElapsed = run.startedAt != null ? Math.max(0, Math.floor((Date.now() - run.startedAt) / 1000)) : 0;
+  const elapsedLabel = liveRunning ? fmtSeconds(liveElapsed) : finalSeconds != null ? fmtSeconds(finalSeconds) : "";
 
   const pulse = parked ? "bg-warning"
     : interrupted ? "bg-muted-foreground/40"

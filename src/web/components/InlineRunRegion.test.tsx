@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, cleanup, within } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, within, act } from "@testing-library/react";
 import { useEffect, type ReactNode } from "react";
 import type { ServerMessage, ClientMessage, AgentStreamEvent } from "../../types/ws-types.js";
 import { OrchestratorRunProvider, useOrchestratorRunActions } from "../contexts/OrchestratorRunContext";
@@ -123,6 +123,32 @@ describe("InlineRunRegion", () => {
     renderRegion(paused);
     fireEvent.click(screen.getByRole("button", { name: /click to collapse/i }));
     expect(screen.getByText(/needs your call/i)).toBeTruthy();
+  });
+
+  it("the live timer is anchored to the run's start and survives a Console remount (PR-6)", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-08T12:00:00.000Z"));
+    // The provider holds the run (with startedAt); only InlineRunRegion toggles,
+    // standing in for the operator navigating away from the Console and back.
+    const Harness = ({ show }: { show: boolean }) => (
+      <OrchestratorRunProvider wsMessages={startedRunning} wsSend={vi.fn()} connectionStatus="connected">
+        {show ? <InlineRunRegion investigationId={ID} service="impala" /> : <div />}
+      </OrchestratorRunProvider>
+    );
+    const { rerender } = render(<Harness show={true} />);
+
+    // 30s pass (advanceTimersByTime moves the mocked clock + fires the 1s tick).
+    // Both timers (strip "· 30s" + live header "· live · 30s") read 30s.
+    act(() => { vi.advanceTimersByTime(30_000); });
+    expect(screen.getAllByText(/30s/).length).toBeGreaterThan(0);
+
+    // "Click out" (unmount the region) then back — the timers must NOT reset to 0.
+    rerender(<Harness show={false} />);
+    rerender(<Harness show={true} />);
+    expect(screen.getAllByText(/30s/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/· 0s/)).toBeNull();
+    expect(screen.queryByText(/live · 0s/)).toBeNull();
+    vi.useRealTimers();
   });
 
   it("exposes a scoped assertive live region announcing the pause (DZ4)", () => {
