@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.11.1] - 2026-06-08
+
+### Changed
+- **One Deep Investigation entry instead of three.** A finished investigation's report had a "Investigate deeply" menu and two extra buttons ("Deep investigate", "Investigate autonomously") that did the same two things the menu already offers. The duplicate buttons are gone; "Investigate deeply" now is the single place to either challenge the existing RCA or launch a full autonomous investigation. (Feature still gated off.)
+
 ## [0.4.11.0] - 2026-06-08
 
 ### Added
