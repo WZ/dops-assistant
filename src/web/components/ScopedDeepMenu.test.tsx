@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import type { ServerMessage, ClientMessage } from "../../types/ws-types.js";
-import { OrchestratorRunProvider } from "../contexts/OrchestratorRunContext";
+import { OrchestratorRunProvider, useOrchestratorRunActions } from "../contexts/OrchestratorRunContext";
 import { ScopedDeepMenu } from "./ScopedDeepMenu";
 
 const ID = "inv_menu";
@@ -43,7 +43,31 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+/** Hydrate an interrupted (mid-flight) run into the registry, then render the menu. */
+const envRow = (message: unknown) => ({ event_type: (message as { type: string }).type, payload: JSON.stringify({ schemaVersion: 1, message }) });
+const INTERRUPTED_ROWS = [
+  envRow({ type: "orchestrator:started", investigationId: ID }),
+  envRow({ type: "orchestrator:step", investigationId: ID, event: { seq: 0, verb: "testing", target: "x", status: "running" } }),
+];
+function HydrateThenMenu() {
+  const { hydrate } = useOrchestratorRunActions();
+  useEffect(() => { hydrate(ID, INTERRUPTED_ROWS); }, [hydrate]);
+  return <ScopedDeepMenu investigationId={ID} canChallenge />;
+}
+
 describe("ScopedDeepMenu", () => {
+  it("an interrupted (hydrated) run does NOT lock the launch button — re-run is allowed (PR-6)", () => {
+    // A hydrated run reports running=true but is dead server-side; the trigger
+    // must stay enabled and labelled "Investigate deeply" (not "Investigating…").
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <OrchestratorRunProvider wsMessages={[]} wsSend={vi.fn()} connectionStatus="connected">{children}</OrchestratorRunProvider>
+    );
+    render(<HydrateThenMenu />, { wrapper });
+    const trigger = screen.getByRole("button", { name: /Investigate deeply/i });
+    expect((trigger as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText(/Investigating…/)).toBeNull();
+  });
+
   it("renders nothing when neither scope is enabled", () => {
     (window as unknown as Record<string, unknown>).__ORCHESTRATOR_ENABLED__ = false;
     (window as unknown as Record<string, unknown>).__DEEP_MODE_ENABLED__ = false;

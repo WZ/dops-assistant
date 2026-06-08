@@ -244,6 +244,19 @@ describe("InlineRunRegion — hydrated/interrupted (PR-2 T7)", () => {
     expect(live!.textContent).toMatch(/interrupted when the page reloaded/i);
   });
 
+  it("an interrupted run offers a RE-RUN button that relaunches the run (PR-6)", () => {
+    const send = vi.fn();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <OrchestratorRunProvider wsMessages={[]} wsSend={send} connectionStatus="connected">
+        {children}
+      </OrchestratorRunProvider>
+    );
+    render(<HydrateThenRender rows={MIDFLIGHT_ROWS} />, { wrapper });
+    fireEvent.click(screen.getByRole("button", { name: /re-run this deep investigation/i }));
+    // An orchestrator (Full) run relaunches via orchestrator_investigate.
+    expect(send).toHaveBeenCalledWith({ type: "orchestrator_investigate", investigationId: ID });
+  });
+
   it("a COMPLETED hydrated run renders as a normal finished result (NOT interrupted)", () => {
     renderHydrated(COMPLETED_ROWS);
     // Not interrupted — true regardless of view.

@@ -1119,9 +1119,15 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
         {isDeepMode ? <div className="h-12" /> : <div className="h-3" />}
       </div>
 
-      {/* Deep mode shortcut chips -- always visible */}
+      {/* Deep mode shortcut chips -- always visible. The "Investigate deeply"
+          entry (PR-6) leads the row as a same-size chip, ahead of the suggested
+          questions. It self-gates on the deep/orchestrator window flags and
+          renders null when neither is enabled. */}
       {isDeepMode && (
         <div className="px-3 pt-2 flex flex-wrap gap-1.5">
+          {activeInvestigationId && (
+            <ScopedDeepMenu investigationId={activeInvestigationId} canChallenge={canChallenge} />
+          )}
           {DEEP_DIVE_PROMPTS.map((prompt, i) => (
             <button
               key={prompt}
@@ -1133,16 +1139,6 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
               {prompt}
             </button>
           ))}
-        </div>
-      )}
-
-      {/* Deep Investigation entry (PR-6) — moved off the report into the Console,
-          on its own row below the shortcut chips and above the run strip. The
-          run itself streams in InlineRunRegion below. Self-gates on the deep/
-          orchestrator window flags; renders null when neither is enabled. */}
-      {isDeepMode && activeInvestigationId && (
-        <div className="px-3 pt-2">
-          <ScopedDeepMenu investigationId={activeInvestigationId} canChallenge={canChallenge} />
         </div>
       )}
 

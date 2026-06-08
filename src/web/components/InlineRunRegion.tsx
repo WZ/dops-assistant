@@ -35,7 +35,7 @@ export function InlineRunRegion({
   service?: string;
 }) {
   const run = useOrchestratorRun(investigationId);
-  const { decide, stop, accept, setCollapsed } = useOrchestratorRunActions();
+  const { decide, stop, accept, start, setCollapsed, connectionStatus } = useOrchestratorRunActions();
   const providers = useGrafanaProviders();
   // The move stream is the default view — operators want to watch the run as it
   // happens, not land on a static summary. RESULT (conclusion + causal chain +
@@ -152,13 +152,24 @@ export function InlineRunRegion({
 
       {/* Interrupted notice — a hydrated run with no live server-side run to
           reattach to (e.g. after a server restart). The steps shown are what
-          completed before it stopped; re-run to continue. */}
+          completed before it stopped; a fresh run can be launched from here. */}
       {!collapsed && interrupted && (
-        <div className="mx-3 mb-2 flex gap-2 items-start rounded-md border border-border/60 bg-muted/20 px-2.5 py-1.5">
-          <span className="text-muted-foreground text-[11px] leading-none mt-0.5" aria-hidden>⏸</span>
-          <span className="text-[10.5px] text-foreground/80 leading-snug">
-            This run was interrupted and can't be resumed here. The steps above are what completed before it stopped — re-run to continue.
-          </span>
+        <div className="mx-3 mb-2 flex gap-2 items-center justify-between rounded-md border border-border/60 bg-muted/20 px-2.5 py-1.5">
+          <div className="flex gap-2 items-start min-w-0">
+            <span className="text-muted-foreground text-[11px] leading-none mt-0.5" aria-hidden>⏸</span>
+            <span className="text-[10.5px] text-foreground/80 leading-snug">
+              This run was interrupted and can't be resumed here. The steps above are what completed before it stopped.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => start(id, run.kind === "deep-mode" ? "challenge" : "full")}
+            disabled={connectionStatus !== "connected"}
+            aria-label="Re-run this deep investigation from the start"
+            className="shrink-0 font-mono text-[9px] px-2 py-1 rounded-md border border-primary/40 text-primary/90 hover:bg-primary/8 hover:text-primary disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            ↻ RE-RUN
+          </button>
         </div>
       )}
 
