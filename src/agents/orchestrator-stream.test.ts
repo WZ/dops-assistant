@@ -27,13 +27,20 @@ describe("traceEntryToStreamEvent", () => {
     });
   });
 
-  it("maps a failed test → rejected 'ruled out' with a plain reason", () => {
+  it("maps an ABSENT test → inconclusive 'couldn't verify' (NOT a rule-out)", () => {
+    // Absence of evidence is not refutation — a true cause whose data source was
+    // unavailable must not read as "ruled out".
     const absent = traceEntryToStreamEvent({ move: "test", detail: "disk pressure", verdict: "absent" });
-    expect(absent.verb).toBe("ruled out");
-    expect(absent.status).toBe("rejected");
-    expect(absent.detail).toContain("no supporting evidence");
+    expect(absent.verb).toBe("couldn't verify");
+    expect(absent.status).toBe("inconclusive");
+    expect(absent.detail).toContain("no evidence gathered");
+    expect(absent.verb).not.toBe("ruled out");
+  });
 
+  it("maps a CONTRADICTED test → rejected 'ruled out' (evidence refutes it)", () => {
     const contradicted = traceEntryToStreamEvent({ move: "test", detail: "leak", verdict: "contradicted" });
+    expect(contradicted.verb).toBe("ruled out");
+    expect(contradicted.status).toBe("rejected");
     expect(contradicted.detail).toContain("contradicts");
   });
 

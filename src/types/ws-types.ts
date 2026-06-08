@@ -89,8 +89,9 @@ export type AgentStreamEvent = {
   targetKind?: "query" | "plain";
   /** Trailing muted detail (e.g. "→ climbs sawtooth", "(contradicted)"). */
   detail?: string;
-  /** Drives the icon + verb color: running ◉ · done ✓ · rejected ✗ · strong ✓(green). */
-  status: "running" | "done" | "rejected" | "strong";
+  /** Drives the icon + verb color: running ◉ · done ✓ · rejected ✗ · strong ✓(green)
+   *  · inconclusive ?(amber, "couldn't verify — no evidence gathered"). */
+  status: "running" | "done" | "rejected" | "strong" | "inconclusive";
   /** Nesting level for grouped sub-steps (0 = top level). */
   indent?: number;
 };

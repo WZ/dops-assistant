@@ -47,6 +47,7 @@ const STATUS_ICON: Record<AgentStreamEvent["status"], string> = {
   done: "✓",
   rejected: "✗",
   strong: "✓",
+  inconclusive: "?", // couldn't verify — no evidence gathered (not a refutation)
 };
 
 // Icon color by status; verbs reuse the same intent so the eye groups by outcome.
@@ -55,6 +56,7 @@ function statusClass(status: AgentStreamEvent["status"]): string {
     case "running": return "text-primary";
     case "strong": return "text-success";
     case "rejected": return "text-destructive";
+    case "inconclusive": return "text-warning";
     default: return "text-muted-foreground";
   }
 }
@@ -62,6 +64,7 @@ function verbClass(status: AgentStreamEvent["status"]): string {
   switch (status) {
     case "strong": return "text-success";
     case "rejected": return "text-destructive";
+    case "inconclusive": return "text-warning";
     default: return "text-accent/90"; // coral for actions, matching the design
   }
 }
