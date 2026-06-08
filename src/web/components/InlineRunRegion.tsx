@@ -13,7 +13,7 @@
  * the pause prompt only (never per-step), so a screen reader isn't spammed by
  * the streaming move log.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   useOrchestratorRun,
   useOrchestratorRunActions,
@@ -37,7 +37,10 @@ export function InlineRunRegion({
   const run = useOrchestratorRun(investigationId);
   const { decide, stop, accept, setCollapsed } = useOrchestratorRunActions();
   const providers = useGrafanaProviders();
-  const [view, setView] = useState<"result" | "live">("result");
+  // The move stream is the default view — operators want to watch the run as it
+  // happens, not land on a static summary. RESULT (conclusion + causal chain +
+  // provenance) stays one click away; it never auto-takes over.
+  const [view, setView] = useState<"result" | "live">("live");
 
   // Live elapsed ticker while running (the run state only carries a final
   // durationMs on completion). Resets when a new run starts. An interrupted
@@ -53,14 +56,6 @@ export function InlineRunRegion({
     const t = setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => clearInterval(t);
   }, [liveRunning, run?.kind, investigationId]);
-
-  // DZ2: on completion, auto-fall back to the Result view (the move log
-  // auto-collapses; the result stays promoted).
-  const wasRunning = useRef(false);
-  useEffect(() => {
-    if (wasRunning.current && run && !run.running) setView("result");
-    wasRunning.current = !!run?.running;
-  }, [run?.running, run]);
 
   if (!investigationId || !run) return null;
 

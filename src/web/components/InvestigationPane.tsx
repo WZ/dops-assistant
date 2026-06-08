@@ -15,7 +15,6 @@ import { RcaReport } from "./RcaReport";
 import { OrchestratorRefinedBanner } from "./OrchestratorRefinedBanner";
 import { useOrchestratorRun } from "../contexts/OrchestratorRunContext";
 import { useInvestigationRunHydration } from "../hooks/useInvestigationRunHydration";
-import { ScopedDeepMenu } from "./ScopedDeepMenu";
 import { InvestigationFeedback } from "./InvestigationFeedback";
 import { useStackContext } from "../contexts/StackContext";
 import { useGrafanaProviders } from "../hooks/useGrafanaProviders";
@@ -565,18 +564,9 @@ export function InvestigationPane({
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-          {/* The single Deep Investigation entry (PR-1): a scoped menu with both
-              "Challenge this RCA" (deep mode) and "Full deep investigation" (the
-              autonomous orchestrator) inside it. Self-gates on __DEEP_MODE_ENABLED__
-              / __ORCHESTRATOR_ENABLED__. The old standalone "Deep investigate" +
-              "Investigate autonomously" buttons were removed here — they duplicated
-              these two menu items. */}
-          {isComplete && (
-            <ScopedDeepMenu
-              investigationId={investigationId}
-              canChallenge={!!(report as RcaReportType | null)?.loopOutcome}
-            />
-          )}
+          {/* The Deep Investigation entry ("Investigate deeply") moved to the
+              Console (ChatPane), below the shortcut chips, in PR-6 — it no longer
+              lives on the report header. */}
         </div>
       </div>
       {deepModeError && (

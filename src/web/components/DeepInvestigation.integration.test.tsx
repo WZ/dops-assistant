@@ -91,14 +91,18 @@ describe("Deep Investigation — investigation→Console flow (T9)", () => {
       causalChain: [{ label: "impala", kind: "incident" }, { label: "root cause: statestore pool starvation", kind: "root-cause" }],
       traceSummary: "6 moves · confirmed at depth 1",
     });
+    // LIVE LOG is the default view (PR-6) — the conclusion lives in RESULT.
+    expect(screen.getByText(/Root cause confirmed/i)).toBeTruthy(); // completion toast (view-independent)
+    fireEvent.click(screen.getByRole("button", { name: "RESULT" }));
     expect(screen.getByText("statestore pool starvation")).toBeTruthy();
-    expect(screen.getByText(/Root cause confirmed/i)).toBeTruthy(); // completion toast
 
     // 6. Navigate away from the Console (unmount the region), then back — the run
     //    is still there because it lives in the registry, not the component.
     act(() => { showRegion = false; sync(); });
     expect(screen.queryByText("statestore pool starvation")).toBeNull();
     act(() => { showRegion = true; sync(); });
+    // Remount resets the view to the LIVE LOG default — click RESULT for the conclusion.
+    fireEvent.click(screen.getByRole("button", { name: "RESULT" }));
     expect(screen.getByText("statestore pool starvation")).toBeTruthy();
   });
 });
