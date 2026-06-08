@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.11.0] - 2026-06-08
+
+### Added
+- **Deep Investigation shows what changed vs the original report (gated off, PR-5 of a sequence).** When a deeper investigation reaches a different conclusion than the RCA report it was launched from, the panel now shows a before→after summary: for a full re-investigation, the original root cause struck through above the new one; for a "Challenge this RCA" re-examination, the ruled-out causes it resurrected and the confirmed cause it shook. When the deeper look agrees, it says so in one quiet line. The summary survives a reload, so reopening a finished deep investigation still shows what it revised.
+
 ## [0.4.10.0] - 2026-06-07
 
 ### Added
