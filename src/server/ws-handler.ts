@@ -616,7 +616,12 @@ async function handleOrchestratorInvestigate(
     // decision → complete) without the real LLM/MCP engine, so a browser test can
     // exercise the full Console flow. Gated by an env flag; off in every real deploy.
     if (process.env["DEEP_INVESTIGATION_E2E_STUB"] === "1") {
-      await streamStubbedOrchestrator(msg.investigationId, persistingSend, registry, abort.signal);
+      // Anchor the scripted run to the real investigation so the demo reads
+      // coherently (incident service + a real dependency-graph neighbor).
+      await streamStubbedOrchestrator(msg.investigationId, persistingSend, registry, abort.signal, {
+        service: investigation.service,
+        dependency: dependencies[0],
+      });
     } else {
       const agents = await getOrCreateAgents(stackId, ctx, deps.config, deps.db);
       await runOrchestratorStreamed(
@@ -941,17 +946,26 @@ async function runOrchestratorStreamed(
  * (started → ruled-out → follow → operator_pause → [await decision] → confirm →
  * complete) using the SAME WebSocket protocol + pause mechanism as the real run,
  * but with no LLM/MCP. Exported for unit testing; only reached when
- * DEEP_INVESTIGATION_E2E_STUB=1. `stepDelayMs` is the pause between streamed steps
- * (kept short for tests).
+ * DEEP_INVESTIGATION_E2E_STUB=1.
+ *
+ * The script is anchored to the REAL investigation so the demo reads coherently:
+ * `service` is the incident service (the causal chain's anchor + the confirmed
+ * root cause), and `dependency` (a dependency-graph neighbor, if any) is the link
+ * it "follows the trail" into. With no neighbor it confirms on the service itself
+ * at depth 0. `stepDelayMs` is the pause between streamed steps (short for tests).
  */
 export async function streamStubbedOrchestrator(
   investigationId: string,
   send: (m: ServerMessage) => void,
   registry: OrchestratorRunRegistry,
   signal: AbortSignal,
-  stepDelayMs = 300,
+  opts: { service?: string; dependency?: string; stepDelayMs?: number } = {},
 ): Promise<void> {
-  const stats = { moves: 4, toolCalls: 1, subagents: 0, tokensSpent: 0, strikes: 3, depth: 1, durationMs: 1200 };
+  const { service = "the incident service", dependency, stepDelayMs = 300 } = opts;
+  // The link the root cause lands on: the followed dependency if there is one,
+  // else the incident service itself.
+  const rootTarget = dependency ?? service;
+  const stats = { moves: 4, toolCalls: 1, subagents: 0, tokensSpent: 0, strikes: 3, depth: dependency ? 1 : 0, durationMs: 1200 };
   const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
   const complete = (outcome: string, extra: Partial<{ causalChain: ReturnType<typeof assembleCausalChain>; traceSummary: string }> = {}): void =>
     send({ type: "orchestrator:complete", investigationId, outcome, stats, ...extra });
@@ -964,7 +978,7 @@ export async function streamStubbedOrchestrator(
   if (signal.aborted) return complete("aborted", { traceSummary: "stubbed · aborted" });
   step("ruled out", "memory exhaustion", "rejected");
   await delay(stepDelayMs);
-  step("followed the trail to", "impala-statestore", "done");
+  step(dependency ? "followed the trail to" : "examined", dependency ?? service, "done");
   await delay(stepDelayMs);
   if (signal.aborted) return complete("aborted", { traceSummary: "stubbed · aborted" });
 
@@ -982,27 +996,27 @@ export async function streamStubbedOrchestrator(
     return complete("operator-pause", { traceSummary: "stubbed · 4 moves · paused" });
   }
 
-  step("evidence backs", "statestore connection pool starvation", "strong");
+  step("evidence backs", `${rootTarget} connection pool starvation`, "strong");
   await delay(stepDelayMs);
   complete("confirmed", {
     causalChain: [
-      { label: "impala", kind: "incident" },
-      { label: "impala-statestore", kind: "followed", evidence: "gRPC handshake latency climbing" },
+      { label: service, kind: "incident" },
+      ...(dependency ? [{ label: dependency, kind: "followed" as const, evidence: "gRPC handshake latency climbing" }] : []),
       {
-        label: "root cause: statestore connection pool starvation",
+        label: `root cause: ${rootTarget} connection pool starvation`,
         kind: "root-cause",
         evidence: "pool_used = 100% for 6m",
         // PR-3: deep-link provenance so the stubbed e2e exercises the "Grafana ↗"
         // render path (degrades to text-only when no provider webUrl is configured).
         provenance: {
           tool: "query_prometheus",
-          args: JSON.stringify({ expr: 'pool_used{service="impala-statestore"}', datasource: "Prometheus" }),
+          args: JSON.stringify({ expr: `pool_used{service="${rootTarget}"}`, datasource: "Prometheus" }),
           from: "2026-01-01T00:00:00Z",
           to: "2026-01-01T01:00:00Z",
         },
       },
     ],
-    traceSummary: "4 moves · 1 query · confirmed at depth 1",
+    traceSummary: `4 moves · 1 query · confirmed at depth ${dependency ? 1 : 0}`,
   });
 }
 
