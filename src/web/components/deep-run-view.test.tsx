@@ -90,3 +90,98 @@ describe("OperatorPauseBar continue-with-context (PR-4)", () => {
     expect(screen.getByText(/started after the 14:00 deploy/)).toBeTruthy();
   });
 });
+
+import { computeRevision, RevisionDiff } from "./deep-run-view";
+import type { DeepRunState } from "../contexts/OrchestratorRunContext";
+import type { RcaReport } from "../../types/rca-types";
+
+const baseReport = (over: Partial<RcaReport> = {}): RcaReport =>
+  ({ rootCause: "memory exhaustion", ruledOut: [], ...over } as RcaReport);
+
+const orchRun = (over: Partial<DeepRunState> = {}): DeepRunState =>
+  ({ kind: "orchestrator", running: false, steps: [], ...over } as DeepRunState);
+const deepRun = (over: Partial<DeepRunState> = {}): DeepRunState =>
+  ({ kind: "deep-mode", running: false, steps: [], ...over } as DeepRunState);
+const rootLink = (label: string) => [{ label: `root cause: ${label}`, kind: "root-cause" as const }];
+
+describe("computeRevision (PR-5)", () => {
+  it("orchestrator: revised root cause differs from the original → kind orchestrator", () => {
+    const r = computeRevision(orchRun({ causalChain: rootLink("statestore pool starvation"), outcome: "confirmed" }), baseReport());
+    expect(r).toEqual({ kind: "orchestrator", before: "memory exhaustion", after: "statestore pool starvation", outcome: "confirmed" });
+  });
+
+  it("orchestrator: revised equals original (normalized) → none, confirms", () => {
+    const r = computeRevision(orchRun({ causalChain: rootLink("  Memory   Exhaustion ") }), baseReport());
+    expect(r).toEqual({ kind: "none", confirms: true });
+  });
+
+  it("orchestrator: no root-cause link → none", () => {
+    expect(computeRevision(orchRun({ causalChain: [{ label: "svc", kind: "incident" }] }), baseReport()).kind).toBe("none");
+  });
+
+  it("deep-mode: resurrected → kind deep-mode with hypothesis names", () => {
+    const report = baseReport({ deepMode: { reexamined: [], resurrected: [{ hypothesis: "disk pressure", prediction: {} }], shaken: [], outcome: "resurrected-candidate" } as any });
+    const r = computeRevision(deepRun({ report }), baseReport());
+    expect(r).toMatchObject({ kind: "deep-mode", resurrected: ["disk pressure"], shaken: [] });
+  });
+
+  it("deep-mode: cold reload — verdict read from originalReport.deepMode when run.report is absent (D5)", () => {
+    const persisted = baseReport({ deepMode: { reexamined: [], resurrected: [], shaken: [{ hypothesis: "the original cause", prediction: {} }], outcome: "confirmation-shaken" } as any });
+    const r = computeRevision(deepRun({ report: undefined }), persisted);
+    expect(r).toMatchObject({ kind: "deep-mode", shaken: ["the original cause"] });
+  });
+
+  it("deep-mode: holds (0 resurrected, 0 shaken) → none, confirms", () => {
+    const report = baseReport({ deepMode: { reexamined: [], resurrected: [], shaken: [], outcome: "holds" } as any });
+    expect(computeRevision(deepRun({ report }), report)).toEqual({ kind: "none", confirms: true });
+  });
+
+  it("no original report → none (nothing to diff)", () => {
+    expect(computeRevision(orchRun({ causalChain: rootLink("x") }), null).kind).toBe("none");
+  });
+
+  it("a running run → none (only diff a finished run)", () => {
+    expect(computeRevision(orchRun({ running: true, causalChain: rootLink("x") }), baseReport()).kind).toBe("none");
+  });
+
+  it("cold reload (no run) — reads the persisted deep-mode verdict from the report (codex P2)", () => {
+    const persisted = baseReport({ deepMode: { reexamined: [], resurrected: [{ hypothesis: "disk pressure", prediction: {} }], shaken: [], outcome: "resurrected-candidate" } as any });
+    expect(computeRevision(undefined, persisted)).toMatchObject({ kind: "deep-mode", resurrected: ["disk pressure"] });
+  });
+
+  it("cold reload (no run), deep-mode held → none, confirms", () => {
+    const persisted = baseReport({ deepMode: { reexamined: [], resurrected: [], shaken: [], outcome: "holds" } as any });
+    expect(computeRevision(undefined, persisted)).toEqual({ kind: "none", confirms: true });
+  });
+
+  it("cold reload (no run), no deep-mode on the report → none", () => {
+    expect(computeRevision(undefined, baseReport()).kind).toBe("none");
+  });
+});
+
+describe("RevisionDiff render (PR-5)", () => {
+  it("orchestrator → shows BEFORE and AFTER", () => {
+    render(<RevisionDiff result={{ kind: "orchestrator", before: "memory exhaustion", after: "pool starvation" }} />);
+    expect(screen.getByText("memory exhaustion")).toBeTruthy();
+    expect(screen.getByText("pool starvation")).toBeTruthy();
+    expect(screen.getByText(/revised vs the original/i)).toBeTruthy();
+  });
+
+  it("deep-mode → lists resurrected and shaken cause names", () => {
+    render(<RevisionDiff result={{ kind: "deep-mode", resurrected: ["disk pressure"], shaken: ["old cause"] }} />);
+    expect(screen.getByText(/disk pressure/)).toBeTruthy();
+    expect(screen.getByText(/old cause/)).toBeTruthy();
+    expect(screen.getByText(/Resurrected/)).toBeTruthy();
+    expect(screen.getByText(/Shaken/)).toBeTruthy();
+  });
+
+  it("none + confirms → quiet confirm line", () => {
+    render(<RevisionDiff result={{ kind: "none", confirms: true }} />);
+    expect(screen.getByText(/confirms the original/i)).toBeTruthy();
+  });
+
+  it("none without confirms → renders nothing", () => {
+    const { container } = render(<RevisionDiff result={{ kind: "none" }} />);
+    expect(container.textContent).toBe("");
+  });
+});

@@ -17,12 +17,13 @@
  * Cold-load + reattach come from the shared `useInvestigationRunHydration` hook
  * (GET → /locate redirect → hydrate → subscribe), identical to the detail page.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useOrchestratorRun, useOrchestratorRunActions } from "../contexts/OrchestratorRunContext";
 import { useInvestigationRunHydration } from "../hooks/useInvestigationRunHydration";
 import { ScopedDeepMenu } from "./ScopedDeepMenu";
-import { ResultView, LiveView, fmtSeconds, isParked, isInterrupted, liveAnnouncement, OperatorPauseBar } from "./deep-run-view";
+import { ResultView, LiveView, fmtSeconds, isParked, isInterrupted, liveAnnouncement, OperatorPauseBar, RevisionDiff, computeRevision } from "./deep-run-view";
 import { useGrafanaProviders } from "../hooks/useGrafanaProviders";
+import type { RcaReport } from "../../types/rca-types";
 
 /** Best-effort: does the report carry a loop outcome / ruled-out causes that the
  *  "Challenge this RCA" (deep-mode) scope can re-judge? Drives the empty-state menu. */
@@ -59,6 +60,13 @@ export function DeepInvestigationPanel({
 
   const service = serviceProp || data?.investigation.service || "";
   const canChallenge = reportCanChallenge(data?.investigation.report);
+  // The original RCA report this deep run was launched from, for the revision diff
+  // (PR-5). Parsed once; null on absent/malformed JSON → no diff (graceful).
+  const originalReport = useMemo<RcaReport | null>(() => {
+    const raw = data?.investigation.report;
+    if (!raw) return null;
+    try { return JSON.parse(raw) as RcaReport; } catch { return null; }
+  }, [data?.investigation.report]);
 
   const running = !!run?.running;
   const parked = !!run?.parked && running;
@@ -125,6 +133,22 @@ export function DeepInvestigationPanel({
       <div className="flex-1 overflow-auto px-5 py-4">
         {!run && notFound ? (
           <div className="text-[13px] text-muted-foreground">This investigation could not be found.</div>
+        ) : !run && originalReport?.deepMode ? (
+          // Cold reload of a completed Challenge (deep-mode) run: no DeepRunState is
+          // hydrated (deep-mode results persist in report.deepMode, not as replayable
+          // orchestrator events), so render the persisted revision directly (PR-5, D5).
+          <div className="max-w-3xl">
+            <div className="font-mono text-[9px] tracking-[0.13em] uppercase text-accent/70">Deep re-examination</div>
+            <div className="font-semibold text-[14px] leading-snug mt-1 text-foreground">
+              {(() => {
+                const rev = computeRevision(undefined, originalReport);
+                return rev.kind === "none"
+                  ? "Deeper look complete — the original RCA stands"
+                  : "Deeper look revised the original RCA";
+              })()}
+            </div>
+            <RevisionDiff result={computeRevision(undefined, originalReport)} />
+          </div>
         ) : !run ? (
           // Empty state — no deep run yet. Offer to start one in place (D7).
           <div className="max-w-xl">
@@ -138,7 +162,7 @@ export function DeepInvestigationPanel({
         ) : (
           <div className="max-w-3xl flex flex-col gap-5">
             {/* Result-first dossier */}
-            <section><ResultView run={run} providers={providers} /></section>
+            <section><ResultView run={run} providers={providers} originalReport={originalReport} /></section>
 
             {/* Move log */}
             <section className="border-t border-border/60 pt-4">

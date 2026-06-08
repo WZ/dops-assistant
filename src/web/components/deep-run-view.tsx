@@ -17,6 +17,7 @@ import { buildExploreUrl, extractQueryFromToolCall } from "../lib/grafana-links"
 import type { GrafanaProvider } from "../hooks/useGrafanaProviders";
 import type { DeepRunState } from "../contexts/OrchestratorRunContext";
 import type { EvidenceProvenance } from "../../types/ws-types";
+import type { RcaReport, DeepModeReport } from "../../types/rca-types";
 
 /** Compact mm:ss / ss formatting for elapsed/duration. */
 export function fmtSeconds(s: number): string {
@@ -155,14 +156,125 @@ export function CausalChain({
   );
 }
 
-/** Result-first view (default): conclusion → causal chain → trace summary. The
- *  move log is hidden here (switch to Live log for it) — DZ1/DZ2. */
-export function ResultView({ run, providers = [] }: { run: DeepRunState; providers?: GrafanaProvider[] }) {
+/**
+ * Report-revision diff (PR-5): what a completed deep investigation changed vs the
+ * original RCA report it was launched from. Pure given the run + the original report.
+ *
+ * Cold-reload-safe (D5): deep-mode persists `{...report, deepMode}` back to
+ * `investigation.report`, so on reopen the fetched original already carries the
+ * verdict — we read it self-contained from `(run.report ?? originalReport).deepMode`,
+ * with the "before" from the report's preserved rootCause/ruledOut. Orchestrator:
+ * before = originalReport.rootCause, after = the (replayed-on-cold-load) root-cause link.
+ */
+export type RevisionResult =
+  | { kind: "none"; confirms?: boolean }
+  | { kind: "orchestrator"; before: string; after: string; outcome?: string }
+  | { kind: "deep-mode"; resurrected: string[]; shaken: string[]; outcome?: string };
+
+const normCause = (s: string): string => s.trim().toLowerCase().replace(/\s+/g, " ");
+
+/** The deep-mode verdict → RevisionResult. Shared by the live deep-mode branch and
+ *  the cold-reload path (where only `report.deepMode` survives). */
+function revisionFromDeepMode(deepMode: DeepModeReport | undefined): RevisionResult {
+  if (!deepMode) return { kind: "none" }; // deep-mode hasn't produced a verdict
+  const resurrected = deepMode.resurrected.map((h) => h.hypothesis);
+  const shaken = deepMode.shaken.map((h) => h.hypothesis);
+  if (resurrected.length === 0 && shaken.length === 0) return { kind: "none", confirms: true };
+  return { kind: "deep-mode", resurrected, shaken, outcome: deepMode.outcome };
+}
+
+export function computeRevision(
+  run: DeepRunState | null | undefined,
+  originalReport: RcaReport | null | undefined,
+): RevisionResult {
+  if (!originalReport) return { kind: "none" };
+
+  // Cold reload of a completed Challenge: no DeepRunState is hydrated (deep-mode
+  // results persist in report.deepMode, not as replayable orchestrator events), so
+  // read the verdict straight from the report (D5; codex P2). Orchestrator cold
+  // loads DO hydrate a run (orchestrator:* replay), so this only catches deep-mode.
+  if (!run) return revisionFromDeepMode(originalReport.deepMode);
+
+  // Only diff a finished run.
+  if (run.running) return { kind: "none" };
+
+  if (run.kind === "orchestrator") {
+    const link = run.causalChain?.find((l) => l.kind === "root-cause");
+    const after = link?.label.replace(/^root cause:\s*/i, "").trim() ?? "";
+    if (!after) return { kind: "none" };
+    const before = (originalReport.rootCause ?? "").trim();
+    if (before && normCause(before) === normCause(after)) return { kind: "none", confirms: true };
+    return { kind: "orchestrator", before: before || "(none recorded)", after, outcome: run.outcome };
+  }
+
+  if (run.kind === "deep-mode") {
+    return revisionFromDeepMode((run.report as RcaReport | undefined)?.deepMode ?? originalReport.deepMode);
+  }
+
+  return { kind: "none" };
+}
+
+/** Renders the revision result: a BEFORE→AFTER box on a real change, a quiet
+ *  confirm line when the deeper look held, or nothing. */
+export function RevisionDiff({ result }: { result: RevisionResult }) {
+  if (result.kind === "none") {
+    return result.confirms
+      ? <div className="mt-2 font-mono text-[10px] text-success/80">✓ Deeper look confirms the original cause</div>
+      : null;
+  }
+  const heading = (
+    <div className="font-mono text-[9px] tracking-[0.13em] uppercase text-accent/70 mb-1">Revised vs the original report</div>
+  );
+  if (result.kind === "orchestrator") {
+    return (
+      <div className="mt-3 rounded-lg border border-accent/25 bg-accent/[0.05] px-3 py-2.5">
+        {heading}
+        <div className="text-[11px] leading-snug">
+          <div className="text-muted-foreground/70 line-through">{result.before}</div>
+          <div className="text-muted-foreground/40 my-0.5 leading-none" aria-hidden>↓</div>
+          <div className="text-success font-medium">{result.after}</div>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="mt-3 rounded-lg border border-accent/25 bg-accent/[0.05] px-3 py-2.5">
+      {heading}
+      {result.resurrected.length > 0 && (
+        <div className="text-[11px] leading-snug mb-1.5">
+          <span className="text-warning font-medium">Resurrected</span> ruled-out cause{result.resurrected.length === 1 ? "" : "s"}:
+          <ul className="mt-0.5 pl-3">{result.resurrected.map((h, i) => <li key={i} className="text-foreground/85">• {h}</li>)}</ul>
+        </div>
+      )}
+      {result.shaken.length > 0 && (
+        <div className="text-[11px] leading-snug">
+          <span className="text-destructive font-medium">Shaken</span> confirmed cause{result.shaken.length === 1 ? "" : "s"}:
+          <ul className="mt-0.5 pl-3">{result.shaken.map((h, i) => <li key={i} className="text-foreground/85">• {h}</li>)}</ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Result-first view (default): conclusion → causal chain → revision diff → trace
+ *  summary. The move log is hidden here (switch to Live log for it) — DZ1/DZ2. */
+export function ResultView({
+  run,
+  providers = [],
+  originalReport,
+}: {
+  run: DeepRunState;
+  providers?: GrafanaProvider[];
+  /** The original RCA report this deep run was launched from (PR-5). Supplied by
+   *  the panel; the inline strip omits it (no diff inline, by design). */
+  originalReport?: RcaReport | null;
+}) {
   return (
     <div>
       <div className="font-mono text-[9px] tracking-[0.13em] uppercase text-accent/70">{kicker(run)}</div>
       <div className="font-semibold text-[14px] leading-snug mt-1 text-foreground">{conclusionHeadline(run)}</div>
       {run.causalChain && run.causalChain.length > 1 && <CausalChain chain={run.causalChain} providers={providers} />}
+      {originalReport !== undefined && <RevisionDiff result={computeRevision(run, originalReport)} />}
       {run.traceSummary && <div className="font-mono text-[10px] text-muted-foreground/60 mt-2">{run.traceSummary}</div>}
       {run.steps.length > 0 && (
         <div className="mt-2 font-mono text-[10px] text-muted-foreground/45">
