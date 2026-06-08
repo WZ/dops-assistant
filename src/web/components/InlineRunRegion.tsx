@@ -135,6 +135,14 @@ export function InlineRunRegion({
           >
             ✓ applied to report
           </span>
+        ) : run.refining ? (
+          <span
+            className="font-mono text-[9px] px-2 py-1 rounded-md border border-primary/40 bg-primary/8 text-primary/90 shrink-0"
+            role="status"
+            aria-live="polite"
+          >
+            ◌ re-synthesizing report…
+          </span>
         ) : (
           <button
             type="button"

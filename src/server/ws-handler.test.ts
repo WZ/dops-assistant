@@ -29,6 +29,8 @@ vi.mock("./agents.js", () => ({
       }),
     },
     discoverAgent: undefined,
+    // PR-6b re-synthesis: default to null → accept falls back to the field-merge.
+    refineReport: vi.fn().mockResolvedValue(null),
   }),
 }));
 
@@ -721,6 +723,43 @@ describe("handleClientMessage — orchestrator_accept (PR-6b)", () => {
     const acc = sent.find((m) => m.type === "orchestrator:accepted");
     expect(acc).toBeDefined();
     expect((acc as any).report.rootCause).toBe("connection pool exhaustion");
+  });
+
+  it("re-synthesizes the report narrative on apply, emitting orchestrator:refining (PR-6b)", async () => {
+    const deps = mockDeps();
+    (deps.config as any).agent.orchestratorEnabled = true;
+    (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
+      id: "inv_1", service: "payments-api", status: "complete", report: JSON.stringify(baseReport),
+    });
+    (deps.db.getEvents as ReturnType<typeof vi.fn>).mockReturnValue([completeEvent("confirmed", confirmedChain)]);
+    // Force a fresh agents build so the refineReport override is used, then restore.
+    clearStackCaches(S);
+    (createMastraAdapters as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      chatAgent: {}, investigationAgent: {}, discoverAgent: undefined,
+      refineReport: vi.fn().mockResolvedValue({
+        summary: "Refined: the connection pool drained to zero during the window.",
+        trigger: "pool drained",
+        impact: { duration: "8h", description: "backend had no endpoints" },
+        timeline: [{ time: "t0", event: "pool exhausted" }],
+        contributingFactors: ["no circuit breaker on the proxy"],
+        recommendedActions: ["raise the pool size", "add a circuit breaker"],
+      }),
+    });
+
+    const sent: ServerMessage[] = [];
+    await callHandler({ type: "orchestrator_accept", investigationId: "inv_1" }, (m) => sent.push(m), deps);
+    clearStackCaches(S); // restore default mock for later tests
+
+    expect(sent.some((m) => m.type === "orchestrator:refining")).toBe(true);
+    const writeArg = (deps.db.updateInvestigation as ReturnType<typeof vi.fn>).mock.calls[0]![1];
+    const persisted = JSON.parse(writeArg.report);
+    // Narrative regenerated to fit the confirmed cause…
+    expect(persisted.summary).toContain("connection pool drained");
+    expect(persisted.recommendedActions).toContain("raise the pool size");
+    // …with the confirmed cause + audit marker, flagged as resynthesized.
+    expect(persisted.rootCause).toBe("connection pool exhaustion");
+    expect(persisted.orchestratorRefined.resynthesized).toBe(true);
+    expect((sent.find((m) => m.type === "orchestrator:accepted") as any).report.summary).toContain("connection pool drained");
   });
 
   it("carries the operator's pause steer onto the refinement marker", async () => {

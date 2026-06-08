@@ -725,6 +725,7 @@ async function handleOrchestratorAccept(
   send: (m: ServerMessage) => void,
   deps: WsDeps,
   stackId: string,
+  ctx: StackContext,
   registry: OrchestratorRunRegistry,
 ): Promise<void> {
   const { db } = deps;
@@ -830,15 +831,48 @@ async function handleOrchestratorAccept(
     appliedCompleteEventId: completeRow!.id,
     ...(operatorNotes ? { operatorNotes } : {}),
   };
-  // Confirmed by an autonomous deep run → high confidence. Keep the rest of the
-  // report intact; only the conclusion + confidence + audit marker change.
-  const updated: RcaReport = {
-    ...report,
-    rootCause: refinedRootCause,
-    confidence: "high",
-    confidenceScore: 0.9,
-    orchestratorRefined: refinement,
-  };
+  // Re-synthesis (PR-6b): regenerate the report narrative so the whole report is
+  // coherent with the confirmed cause — not just a rootCause swap. One LLM pass,
+  // grounded in the original report + the causal chain. Announce it (seconds-long)
+  // so the Console shows "Re-synthesizing…", then fall back to the field-merge on
+  // any failure so Apply never breaks.
+  const refining: ServerMessage = { type: "orchestrator:refining", investigationId: id };
+  registry.broadcast(id, refining);
+  send(refining);
+
+  let narrative: Awaited<ReturnType<StackAgents["refineReport"]>> = null;
+  try {
+    const agents = await getOrCreateAgents(stackId, ctx, deps.config, deps.db);
+    narrative = await agents.refineReport(report, {
+      rootCause: refinedRootCause,
+      causalChain,
+      traceSummary: complete.traceSummary,
+      ...(operatorNotes ? { operatorNotes } : {}),
+    });
+  } catch (err) {
+    logger.warn({ err, investigationId: id }, "orchestrator accept: report re-synthesis failed → field-merge fallback");
+  }
+
+  // Confirmed by an autonomous deep run → high confidence. When re-synthesis
+  // produced a coherent narrative, swap the prose fields too (keeping the
+  // original's service/severity/evidence/dashboards); otherwise only the
+  // conclusion + confidence + audit marker change.
+  const updated: RcaReport = narrative
+    ? {
+        ...report,
+        ...narrative,
+        rootCause: refinedRootCause,
+        confidence: "high",
+        confidenceScore: 0.9,
+        orchestratorRefined: { ...refinement, resynthesized: true },
+      }
+    : {
+        ...report,
+        rootCause: refinedRootCause,
+        confidence: "high",
+        confidenceScore: 0.9,
+        orchestratorRefined: refinement,
+      };
   db.updateInvestigation(id, { report: JSON.stringify(updated) });
 
   // Fan out + persist (codex P2). The DB report is the source of truth (a cold GET
@@ -1453,7 +1487,7 @@ export async function handleClientMessage(
 
   // Operator accepts a confirmed deep run's conclusion → refine the report (PR-6b).
   if (msg.type === "orchestrator_accept") {
-    await handleOrchestratorAccept(msg, send, deps, stackId, runRegistry);
+    await handleOrchestratorAccept(msg, send, deps, stackId, ctx, runRegistry);
     return;
   }
 

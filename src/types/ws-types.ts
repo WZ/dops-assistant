@@ -197,6 +197,10 @@ export type ServerMessage =
   // `context` (PR-4): the free-text lead the operator steered with, if any —
   // persisted so a reattaching tab and a cold replay can show it read-only.
   | { type: "orchestrator:decision_locked"; investigationId: string; context?: string }
+  // Operator-accept is in flight (PR-6b re-synthesis): the report is being
+  // regenerated from the confirmed cause via an LLM pass. Lets the Console show
+  // "Re-synthesizing report…" while the (seconds-long) refine runs.
+  | { type: "orchestrator:refining"; investigationId: string }
   // Operator-accept write-back succeeded (PR-6b): the confirmed orchestrator
   // conclusion was merged into the investigation's RCA report. Carries the
   // refined report so every attached tab updates in place, and the id so the

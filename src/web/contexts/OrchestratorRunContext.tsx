@@ -99,6 +99,9 @@ export interface DeepRunState {
    *  into the RCA report (server `orchestrator:accepted`). Flips the Console's
    *  "Apply to report" action to a "✓ applied" confirmation. */
   readonly accepted?: boolean;
+  /** PR-6b: true while the server is re-synthesizing the report after an apply
+   *  (the seconds-long LLM pass). Drives the "Re-synthesizing report…" state. */
+  readonly refining?: boolean;
   /** PR-6b: a friendly reason the last apply attempt was rejected, else null. */
   readonly acceptError?: string | null;
 
@@ -276,15 +279,19 @@ export function applyMessage(
       if (!prev) return runs;
       return set({ ...prev, running: false, pause: null, error: typeof msg.message === "string" ? msg.message : "The orchestrator hit an error." });
 
+    // PR-6b: report re-synthesis is in flight after an apply.
+    case "orchestrator:refining":
+      if (!prev) return runs;
+      return set({ ...prev, refining: true, acceptError: null });
     // PR-6b: the operator applied this confirmed run to the report. Mark accepted
-    // (and clear any prior reject error) so the Console flips to "✓ applied".
+    // (clear refining + any prior reject error) so the Console flips to "✓ applied".
     case "orchestrator:accepted":
       if (!prev) return runs;
-      return set({ ...prev, accepted: true, acceptError: null });
+      return set({ ...prev, accepted: true, refining: false, acceptError: null });
     // PR-6b: the apply was rejected — surface the reason on the run for the strip.
     case "orchestrator:accept_rejected":
       if (!prev) return runs;
-      return set({ ...prev, acceptError: typeof msg.message === "string" ? msg.message : "Couldn't apply to the report." });
+      return set({ ...prev, refining: false, acceptError: typeof msg.message === "string" ? msg.message : "Couldn't apply to the report." });
 
     default:
       return runs;
@@ -391,13 +398,14 @@ export function OrchestratorRunProvider({
   const accept = useCallback(
     (investigationId: string) => {
       // Id-only: the server merges the authoritative result from the persisted
-      // complete-event. Optimistically clear any prior reject error so a retry
-      // doesn't show a stale message while the round-trip is in flight.
+      // complete-event. Optimistically flip to "refining" (clearing any prior
+      // reject error) so the Apply control shows "Re-synthesizing…" instantly,
+      // before the server's orchestrator:refining round-trips back.
       setRuns((prev) => {
         const cur = prev.get(investigationId);
-        if (!cur || cur.acceptError == null) return prev;
+        if (!cur || cur.accepted || cur.refining) return prev;
         const m = new Map(prev);
-        m.set(investigationId, { ...cur, acceptError: null });
+        m.set(investigationId, { ...cur, refining: true, acceptError: null });
         return m;
       });
       wsSend({ type: "orchestrator_accept", investigationId });
