@@ -35,7 +35,7 @@ export function InlineRunRegion({
   service?: string;
 }) {
   const run = useOrchestratorRun(investigationId);
-  const { decide, stop, setCollapsed } = useOrchestratorRunActions();
+  const { decide, stop, accept, setCollapsed } = useOrchestratorRunActions();
   const providers = useGrafanaProviders();
   const [view, setView] = useState<"result" | "live">("result");
 
@@ -69,6 +69,12 @@ export function InlineRunRegion({
   const paused = !!run.pause;
   const locked = !!run.decisionSubmitted;
   const title = `Deep Investigation${service ? ` · ${service}` : ""}`;
+
+  // PR-6b: a finished, confirmed Full (orchestrator) run can be applied back into
+  // the RCA report. Operator-gated — no auto-write-back — so a wrong confirm
+  // can't silently clobber a correct report. Hidden for deep-mode / unconfirmed
+  // / still-running runs.
+  const canApply = run.kind === "orchestrator" && !run.running && run.outcome === "confirmed";
 
   const finalSeconds =
     run.kind === "orchestrator" && run.orchStats ? run.orchStats.durationMs / 1000
@@ -122,6 +128,24 @@ export function InlineRunRegion({
             ■ STOP
           </button>
         )}
+
+        {canApply && (run.accepted ? (
+          <span
+            className="font-mono text-[9px] px-2 py-1 rounded-md border border-success/40 bg-success/8 text-success shrink-0"
+            role="status"
+          >
+            ✓ applied to report
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => accept(id)}
+            aria-label="Apply this confirmed deep-investigation conclusion to the RCA report"
+            className="font-mono text-[9px] px-2 py-1 rounded-md border border-primary/40 text-primary/90 hover:bg-primary/8 hover:text-primary shrink-0"
+          >
+            Apply to report
+          </button>
+        ))}
       </div>
 
       {/* Body */}
@@ -151,6 +175,15 @@ export function InlineRunRegion({
           <span className="text-[10.5px] text-foreground/80 leading-snug">
             This run parked itself while no one was watching, to save tokens. It resumes automatically now that you're back.
           </span>
+        </div>
+      )}
+
+      {/* Apply-to-report rejection notice (PR-6b) — the write-back was refused
+          (e.g. the report was missing/malformed). Shown until the next attempt. */}
+      {!collapsed && run.acceptError && (
+        <div className="mx-3 mb-2 flex gap-2 items-start rounded-md border border-destructive/30 bg-destructive/8 px-2.5 py-1.5" role="alert">
+          <span className="text-destructive text-[11px] leading-none mt-0.5" aria-hidden>!</span>
+          <span className="text-[10.5px] text-foreground/80 leading-snug">{run.acceptError}</span>
         </div>
       )}
 

@@ -81,20 +81,19 @@ describe("ScopedDeepMenu", () => {
     expect(send).toHaveBeenCalledWith({ type: "orchestrator_investigate", investigationId: ID });
   });
 
-  it("calls onFullStart after the Full run dispatches (auto-nav to the /deep panel, PR-2d)", async () => {
+  it("dispatches the Full run with no navigation callback — it streams in the Console (PR-6: /deep panel removed)", async () => {
     vi.useFakeTimers();
-    const onFullStart = vi.fn();
-    const wrapper = ({ children }: { children: ReactNode }) => (
-      <OrchestratorRunProvider wsMessages={[]} wsSend={vi.fn()} connectionStatus="connected">{children}</OrchestratorRunProvider>
-    );
-    render(<ScopedDeepMenu investigationId={ID} canChallenge onFullStart={onFullStart} />, { wrapper });
+    const send = vi.fn();
+    renderMenu({ send });
     openMenu();
     fireEvent.click(screen.getByRole("menuitem", { name: /Full deep investigation/i }));
-    expect(onFullStart).not.toHaveBeenCalled(); // not until the countdown dispatches
+    expect(send).not.toHaveBeenCalled(); // not until the countdown dispatches
     for (let i = 0; i < 4; i++) {
       await act(async () => { await vi.advanceTimersByTimeAsync(900); });
     }
-    expect(onFullStart).toHaveBeenCalledWith(ID);
+    // The run launches via the registry's start → orchestrator_investigate, and
+    // now renders inline in the Console; there is no auto-nav side channel.
+    expect(send).toHaveBeenCalledWith({ type: "orchestrator_investigate", investigationId: ID });
   });
 
   it("Full countdown can be cancelled before dispatch", () => {

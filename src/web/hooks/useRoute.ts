@@ -99,13 +99,16 @@ export function parseUrl(pathname: string, search: string = ""): LeftPaneView {
     return { type: "activity", tab: "investigations", query: parseInvestigationsQuery(search) };
   }
 
-  // /stacks/:stackId/investigations/:id/deep — the wide Deep Investigation panel
-  // (PR-2d). MUST be matched before the non-deep stack-scoped route below, or the
-  // `(.+)` id capture would swallow the `/deep` suffix.
+  // /stacks/:stackId/investigations/:id/deep — legacy deep-panel URL (PR-2d,
+  // removed in PR-6). The dedicated /deep panel is gone; a deep run now streams
+  // in the Console on the plain investigation pane. Strip the /deep suffix and
+  // resolve to that pane so old bookmarks/links still open the investigation
+  // instead of 404ing. MUST be matched before the non-deep stack-scoped route
+  // below, or the `(.+)` id capture would swallow the `/deep` suffix.
   const stackDeepMatch = p.match(/^\/stacks\/([^/]+)\/investigations\/(.+)\/deep$/);
   if (stackDeepMatch) {
     return {
-      type: "investigation-deep",
+      type: "investigation",
       stackId: safeDecode(stackDeepMatch[1]!),
       id: safeDecode(stackDeepMatch[2]!),
     };
@@ -126,12 +129,12 @@ export function parseUrl(pathname: string, search: string = ""): LeftPaneView {
     };
   }
 
-  // Legacy /investigations/:id/deep — the deep panel via a stackless link.
+  // Legacy /investigations/:id/deep — stackless deep-panel URL (removed in PR-6).
+  // Same graceful fallback as the stack-scoped form above: strip /deep and open
+  // the plain investigation pane (stackId="" → /locate resolves the stack).
   // Before the bare /investigations/:id branch (same swallow concern as above).
-  // stackId="" sentinel → the panel resolves the stack via /locate, mirroring
-  // the detail page.
   const deepMatch = p.match(/^\/investigations\/(.+)\/deep$/);
-  if (deepMatch) return { type: "investigation-deep", id: safeDecode(deepMatch[1]!), stackId: "" };
+  if (deepMatch) return { type: "investigation", id: safeDecode(deepMatch[1]!), stackId: "" };
 
   // Legacy /investigations/:id — kept so existing bookmarks, Slack links,
   // and event-log hrefs from before the stack-scoped URL change still
@@ -194,11 +197,6 @@ export function viewToUrl(view: LeftPaneView): string {
       return view.stackId
         ? `${base}/stacks/${encodeURIComponent(view.stackId)}/investigations/${encodeURIComponent(view.id)}`
         : `${base}/investigations/${encodeURIComponent(view.id)}`;
-    case "investigation-deep":
-      // Same stack-scoped/legacy split as `investigation`, with the /deep suffix.
-      return view.stackId
-        ? `${base}/stacks/${encodeURIComponent(view.stackId)}/investigations/${encodeURIComponent(view.id)}/deep`
-        : `${base}/investigations/${encodeURIComponent(view.id)}/deep`;
     case "pattern":
       return `${base}/patterns/${view.id}`;
     case "activity": {
@@ -283,7 +281,16 @@ export function useRoute(
     const canonical = viewToUrl(initialView);
     const current = window.location.pathname + window.location.search;
     if (canonical !== current && initialView.type !== "notfound") {
-      window.history.replaceState({ fromApp: true }, "", canonical);
+      // PRESERVE the existing fromApp flag — do NOT force it true. This effect
+      // runs once on first paint, so a canonicalization here is cleaning up the
+      // URL the user ARRIVED on (a direct link, bookmark, or reload), which is
+      // not in-app navigation. Forcing fromApp:true makes a detail page's Back
+      // button history.back() off the site for someone who opened e.g. a legacy
+      // `…/investigations/:id/deep` link directly (PR-6 strips /deep here). Keep
+      // a genuine in-app flag persisted across a reload, but default to false so
+      // direct links fall back to the dashboard instead of popping off-site.
+      const fromApp = (window.history.state as { fromApp?: boolean } | null)?.fromApp === true;
+      window.history.replaceState({ fromApp }, "", canonical);
     }
     const onPopstate = () => {
       setLeftPane(parseUrl(window.location.pathname, window.location.search));

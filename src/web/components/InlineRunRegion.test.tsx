@@ -123,6 +123,52 @@ describe("InlineRunRegion", () => {
     expect(live).toBeTruthy();
     expect(live!.textContent).toMatch(/your decision is needed/i);
   });
+
+  // ── PR-6b: Apply to report ──────────────────────────────────────────────
+  it("confirmed orchestrator run: shows Apply to report; click sends orchestrator_accept", () => {
+    const send = vi.fn();
+    renderRegion(confirmed, send);
+    const apply = screen.getByRole("button", { name: /apply this confirmed deep-investigation/i });
+    fireEvent.click(apply);
+    expect(send).toHaveBeenCalledWith({ type: "orchestrator_accept", investigationId: ID });
+  });
+
+  it("Apply flips to a '✓ applied to report' confirmation after orchestrator:accepted", () => {
+    renderRegion([...confirmed, { type: "orchestrator:accepted", investigationId: ID, report: {} }]);
+    expect(screen.getByText(/applied to report/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /apply this confirmed deep-investigation/i })).toBeNull();
+  });
+
+  it("surfaces an accept rejection notice and keeps the Apply button for a retry", () => {
+    renderRegion([
+      ...confirmed,
+      { type: "orchestrator:accept_rejected", investigationId: ID, message: "Investigation report not found." },
+    ]);
+    expect(screen.getByText(/Investigation report not found/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /apply this confirmed deep-investigation/i })).toBeTruthy();
+  });
+
+  it("no Apply button while the orchestrator run is still running", () => {
+    renderRegion(startedRunning);
+    expect(screen.queryByRole("button", { name: /apply this confirmed deep-investigation/i })).toBeNull();
+  });
+
+  it("no Apply button when the run is NOT confirmed", () => {
+    renderRegion([
+      ...startedRunning,
+      { type: "orchestrator:complete", investigationId: ID, outcome: "inconclusive",
+        stats: { moves: 1, toolCalls: 0, subagents: 0, tokensSpent: 1, strikes: 0, depth: 0, durationMs: 100 } },
+    ]);
+    expect(screen.queryByRole("button", { name: /apply this confirmed deep-investigation/i })).toBeNull();
+  });
+
+  it("no Apply button for a deep-mode (Challenge) run, even when complete", () => {
+    renderRegion([
+      { type: "deep_mode:started", investigationId: ID },
+      { type: "deep_mode:complete", investigationId: ID, report: { rootCause: "x" } },
+    ]);
+    expect(screen.queryByRole("button", { name: /apply this confirmed deep-investigation/i })).toBeNull();
+  });
 });
 
 // ── PR-2 (T7): hydrated runs reconstructed from persisted events render right ──

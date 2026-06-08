@@ -41,9 +41,11 @@ describe("parseUrl", () => {
     });
   });
 
-  it("parses /stacks/:stackId/investigations/:id/deep (PR-2d panel) — matched before the non-deep route", () => {
+  it("redirects legacy /stacks/:stackId/investigations/:id/deep to the plain investigation pane (PR-6: /deep panel removed)", () => {
+    // The dedicated /deep panel is gone; old bookmarks strip the /deep suffix
+    // and open the investigation (now streaming in the Console) instead of 404ing.
     expect(parseUrl("/stacks/prod/investigations/inv_01KNR/deep")).toEqual({
-      type: "investigation-deep",
+      type: "investigation",
       id: "inv_01KNR",
       stackId: "prod",
     });
@@ -55,21 +57,12 @@ describe("parseUrl", () => {
     });
   });
 
-  it("parses legacy /investigations/:id/deep with stackId='' sentinel (locate-and-redirect)", () => {
+  it("redirects legacy /investigations/:id/deep to the plain investigation pane with stackId='' sentinel", () => {
     expect(parseUrl("/investigations/inv_01KNR/deep")).toEqual({
-      type: "investigation-deep",
+      type: "investigation",
       id: "inv_01KNR",
       stackId: "",
     });
-  });
-
-  it("round-trips investigation-deep through viewToUrl → parseUrl (stack-scoped + legacy)", () => {
-    const scoped = { type: "investigation-deep" as const, id: "inv_01KNR", stackId: "prod" };
-    expect(viewToUrl(scoped)).toBe("/stacks/prod/investigations/inv_01KNR/deep");
-    expect(parseUrl(viewToUrl(scoped))).toEqual(scoped);
-    const legacy = { type: "investigation-deep" as const, id: "inv_01KNR", stackId: "" };
-    expect(viewToUrl(legacy)).toBe("/investigations/inv_01KNR/deep");
-    expect(parseUrl(viewToUrl(legacy))).toEqual(legacy);
   });
 
   it("parses /patterns/:id", () => {

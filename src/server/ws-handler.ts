@@ -2,12 +2,12 @@ import { Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { ulid } from "ulid";
 import { createLogger } from "../logger.js";
-import type { Database } from "./db.js";
+import type { Database, EventRow } from "./db.js";
 import type { IChatAgent, IInvestigationAgent, IDiscoverAgent, DiscoveryResult } from "../types/agent-interfaces.js";
 import type { IntentRouter } from "../agents/intent.js";
 import { resolveServiceFromHistory } from "../agents/intent.js";
 import type { ServiceConfig, DiscoveryConfig, Config } from "../config/schema.js";
-import type { ClientMessage, ServerMessage, ChartSeries, AgentStreamEvent } from "../types/ws-types.js";
+import type { ClientMessage, ServerMessage, ChartSeries, AgentStreamEvent, CausalChainLink } from "../types/ws-types.js";
 import { DEEP_INVESTIGATION_EVENT_SCHEMA } from "../types/ws-types.js";
 import { OrchestratorRunRegistry, type OperatorDecision } from "./orchestrator-run-registry.js";
 import { DEFAULT_STACK_SLUG } from "../types/stack-types.js";
@@ -24,7 +24,7 @@ import type { InvestigationDedup } from "./investigation-dedup.js";
 import { createMastraAdapters } from "./agents.js";
 import { getToolsByRole } from "../mcp/provider.js";
 import { ChatMessageSchema, DeepInvestigateMessageSchema, DeepModeInvestigateMessageSchema } from "./sanitize.js";
-import type { RcaReport } from "../types/rca-types.js";
+import type { RcaReport, OrchestratorRefinement } from "../types/rca-types.js";
 import { wrapUntrusted } from "../agents/shared/prompt-helpers.js";
 import { WsRateLimiter, classifyWsMessage } from "./rate-limit.js";
 import { isDemoMode } from "./demo-mode.js";
@@ -381,6 +381,11 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
             "discover:accept",
             "discover:reject",
             "scan:trigger",
+            // PR-6b: orchestrator_accept writes the refined conclusion back into
+            // the stored RCA report — a state mutation. Block it directly at the
+            // WS edge so a direct client can't bypass the demo no-mutation guard
+            // for any investigation that already has a persisted confirmed run.
+            "orchestrator_accept",
           ]);
           if (parsed && typeof parsed === "object" && "type" in parsed && blockedTypes.has(parsed.type as string)) {
             const t = parsed.type as string;
@@ -388,7 +393,9 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
               ? "Investigations are disabled on the demo site — LLM calls cost money and we can't let random visitors spend it. Click into a pre-recorded investigation to see a real RCA report, or clone the repo to try it yourself."
               : t === "scan:trigger"
                 ? "Scans are disabled on the demo site — they would query stub MCP providers and dispatch real investigations. Clone the repo and point it at your own stack."
-                : "Discovery is disabled on the demo site — it would call the LLM and run against stub MCP providers. Clone the repo and point it at your own stack.";
+                : t === "orchestrator_accept"
+                  ? "Editing investigation reports is disabled on the demo site. Clone the repo to try the deep-investigation refinement flow against your own stack."
+                  : "Discovery is disabled on the demo site — it would call the LLM and run against stub MCP providers. Clone the repo and point it at your own stack.";
             send({ type: "chat:stream_end", content: friendly });
             return;
           }
@@ -677,6 +684,167 @@ export function makeOrchestratorPersistingSend(
     if (mId === investigationId) persistOrchestratorEvent(db, investigationId, m);
     send(m);
   };
+}
+
+/**
+ * Parse one persisted orchestrator event row back to its original `ServerMessage`.
+ * Each row's payload is the `{schemaVersion, message}` envelope written by
+ * `persistOrchestratorEvent` (same shape `orchestrator_subscribe` replays).
+ * Returns `undefined` for a malformed row.
+ */
+function parseOrchestratorEventRow(row: EventRow): ServerMessage | undefined {
+  try {
+    const env = JSON.parse(row.payload) as { message?: unknown };
+    const m = env.message as ServerMessage | undefined;
+    return m && typeof m === "object" && "type" in m ? m : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Operator accepts a confirmed autonomous-orchestrator run's conclusion (PR-6b):
+ * merge it back into the investigation's RCA report. The write-back is
+ * server-authoritative — the result comes from the persisted `orchestrator:complete`
+ * event, never from the client message (which carries only the id). The original
+ * root cause is preserved on the `orchestratorRefined` marker so the report can
+ * render a reversible "was: …" audit line.
+ *
+ * Rejected (friendly `orchestrator:accept_rejected`) when: the orchestrator is
+ * disabled, the investigation/report is missing or malformed, there is no
+ * `orchestrator:complete` event, its outcome isn't "confirmed", or the chain has
+ * no root-cause link to refine from.
+ */
+async function handleOrchestratorAccept(
+  msg: { type: "orchestrator_accept"; investigationId: string },
+  send: (m: ServerMessage) => void,
+  deps: WsDeps,
+  stackId: string,
+  registry: OrchestratorRunRegistry,
+): Promise<void> {
+  const { db } = deps;
+  const id = msg.investigationId;
+  const reject = (message: string) => send({ type: "orchestrator:accept_rejected", investigationId: id, message });
+
+  if (!deps.config.agent?.orchestratorEnabled) {
+    reject("Autonomous orchestrator is not enabled.");
+    return;
+  }
+  // Don't apply while a deep run is still live (codex P2): the latest persisted
+  // complete is then from an OLDER run, so a stale tab could write back a result
+  // that a newer in-flight run is about to supersede. Make the operator wait for
+  // the running investigation to finish (then Apply reflects its real outcome).
+  if (registry.isLive(id)) {
+    reject("A deep investigation is still running. Wait for it to finish, then apply its result.");
+    return;
+  }
+  const investigation = db.getInvestigation(stackId, id);
+  if (!investigation || !investigation.report) {
+    reject("Investigation report not found.");
+    return;
+  }
+  let report: RcaReport;
+  try {
+    report = JSON.parse(investigation.report) as RcaReport;
+  } catch {
+    reject("Could not parse the investigation report.");
+    return;
+  }
+
+  // Read the event log once and bind everything to the SPECIFIC run being
+  // accepted (codex P2/P3). A single investigation can have several Full deep
+  // runs; the accepted one is the LATEST orchestrator:complete, and its window
+  // is [its own orchestrator:started, that complete]. The steer and the
+  // "original" must come from that window, not from a different/earlier run.
+  let rows: EventRow[];
+  try {
+    rows = db.getEvents(id);
+  } catch (err) {
+    logger.warn({ err, investigationId: id }, "Failed to read events for orchestrator accept");
+    reject("Couldn't read the deep investigation history. Try again.");
+    return;
+  }
+  let completeIdx = -1;
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i]!.event_type === "orchestrator:complete") completeIdx = i;
+  }
+  const completeRow = completeIdx >= 0 ? rows[completeIdx]! : undefined;
+  const complete = completeRow ? parseOrchestratorEventRow(completeRow) : undefined;
+  if (!complete || complete.type !== "orchestrator:complete") {
+    reject("No completed deep investigation to apply. Run a Full deep investigation first.");
+    return;
+  }
+  if (complete.outcome !== "confirmed") {
+    reject("The deep investigation didn't confirm a root cause, so there's nothing to apply.");
+    return;
+  }
+  const causalChain: CausalChainLink[] = complete.causalChain ?? [];
+  const rootLink = causalChain.find((l) => l.kind === "root-cause");
+  const refinedRootCause = rootLink?.label.replace(/^root cause:\s*/i, "").trim();
+  if (!refinedRootCause) {
+    reject("The deep investigation's result is missing a root cause to apply.");
+    return;
+  }
+
+  // The operator's free-text steer at the pause (PR-4), bound to THIS run's
+  // window: the last decision_locked AFTER the accepted run's own started and
+  // BEFORE its complete. Lower-bounding on the run's started (not the previous
+  // complete) means a steer from an EARLIER run that locked then errored without
+  // completing isn't mis-attributed to this one (codex P3).
+  let startIdx = -1;
+  for (let i = completeIdx - 1; i >= 0; i--) {
+    if (rows[i]!.event_type === "orchestrator:started") { startIdx = i; break; }
+  }
+  let operatorNotes: string | undefined;
+  for (let i = completeIdx - 1; i > startIdx; i--) {
+    if (rows[i]!.event_type !== "orchestrator:decision_locked") continue;
+    const m = parseOrchestratorEventRow(rows[i]!);
+    if (m && m.type === "orchestrator:decision_locked" && typeof m.context === "string" && m.context.trim()) {
+      operatorNotes = m.context.trim();
+      break;
+    }
+  }
+
+  // The "was: …" original. Preserve the genuine pre-refinement value ONLY when
+  // re-applying the very SAME complete event (idempotent retry after reload /
+  // cold hydrate / another tab) — keyed on the persisted event id. A NEW deep
+  // run is a fresh refinement, so its "was" is the report's CURRENT root cause
+  // (which may itself be a prior refinement). This keeps the audit trail correct
+  // across successive deep runs instead of freezing the first-ever original.
+  const isReapplyOfSameRun =
+    !!report.orchestratorRefined &&
+    report.orchestratorRefined.appliedCompleteEventId === completeRow!.id;
+  const originalRootCause = isReapplyOfSameRun
+    ? report.orchestratorRefined!.originalRootCause
+    : report.rootCause;
+  const refinement: OrchestratorRefinement = {
+    outcome: complete.outcome,
+    causalChain,
+    refinedAt: new Date().toISOString(),
+    originalRootCause,
+    appliedCompleteEventId: completeRow!.id,
+    ...(operatorNotes ? { operatorNotes } : {}),
+  };
+  // Confirmed by an autonomous deep run → high confidence. Keep the rest of the
+  // report intact; only the conclusion + confidence + audit marker change.
+  const updated: RcaReport = {
+    ...report,
+    rootCause: refinedRootCause,
+    confidence: "high",
+    confidenceScore: 0.9,
+    orchestratorRefined: refinement,
+  };
+  db.updateInvestigation(id, { report: JSON.stringify(updated) });
+
+  // Fan out + persist (codex P2). The DB report is the source of truth (a cold GET
+  // re-reads the refined report), but the live RUN's accepted state must converge
+  // everywhere: persist the event so a cold hydrate replays it (Apply button hidden),
+  // broadcast to every attached sink so other tabs update in place, and send to the
+  // initiating connection (which may not be a registry sink) so it flips immediately.
+  const accepted: ServerMessage = { type: "orchestrator:accepted", investigationId: id, report: updated };
+  persistOrchestratorEvent(db, id, accepted);
+  registry.broadcast(id, accepted);
+  send(accepted);
 }
 
 async function runOrchestratorStreamed(
@@ -1266,6 +1434,12 @@ export async function handleClientMessage(
   if (msg.type === "orchestrator_unsubscribe") {
     runRegistry.detachSink(msg.investigationId, send);
     myRuns.delete(msg.investigationId);
+    return;
+  }
+
+  // Operator accepts a confirmed deep run's conclusion → refine the report (PR-6b).
+  if (msg.type === "orchestrator_accept") {
+    await handleOrchestratorAccept(msg, send, deps, stackId, runRegistry);
     return;
   }
 

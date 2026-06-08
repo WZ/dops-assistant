@@ -1,13 +1,13 @@
 /**
  * useInvestigationRunHydration (PR-2d, T3) — the shared cold-load for an
- * investigation's Deep Investigation run, extracted from `InvestigationPane` so
- * BOTH the detail page and the wide `DeepInvestigationPanel` reattach the same
- * way (one source of truth — no divergent GET / hydrate / subscribe copies).
+ * investigation's Deep Investigation run, extracted from `InvestigationPane`.
+ * PR-6 removed the wide `/deep` panel, so the detail page (Console) is now the
+ * only consumer; the hook stays factored out as the single GET / hydrate /
+ * subscribe path.
  *
  * Owns, for a non-active (cold-loaded) investigation:
  *   1. GET /api/investigations/:id  → returns the raw payload to the caller
- *      (each surface shapes the parts it needs: the panel wants service/report,
- *      the detail page also wants phases/evidence/timeline).
+ *      (the detail page shapes service/report plus phases/evidence/timeline).
  *   2. Legacy stack redirect: a 404 in the active stack probes /locate and, if
  *      the id lives elsewhere, calls onWrongStack so the parent re-routes.
  *   3. hydrate(events) — reconstruct a persisted run (renders INTERRUPTED until
