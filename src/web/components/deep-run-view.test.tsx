@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { describe, it, expect, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
-import { CausalChain } from "./deep-run-view";
+import { describe, it, expect, afterEach, vi } from "vitest";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
+import { CausalChain, OperatorPauseBar } from "./deep-run-view";
 import type { CausalChainLink } from "../../types/ws-types.js";
 
 afterEach(cleanup);
@@ -60,5 +60,33 @@ describe("CausalChain Grafana deep-link (PR-3)", () => {
     const noWindow = { tool: "query_prometheus", args: JSON.stringify({ expr: "pool_used" }) };
     render(<CausalChain chain={rootCause({ provenance: noWindow })} providers={providers} />);
     expect(screen.queryByRole("link", { name: /grafana/i })).toBeNull();
+  });
+});
+
+describe("OperatorPauseBar continue-with-context (PR-4)", () => {
+  it("typing a lead + Continue calls onDecide('continue', lead)", () => {
+    const onDecide = vi.fn();
+    render(<OperatorPauseBar strikes={3} locked={false} onDecide={onDecide} />);
+    fireEvent.change(screen.getByLabelText(/optional lead/i), { target: { value: "check the DB pool" } });
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+    expect(onDecide).toHaveBeenCalledWith("continue", "check the DB pool");
+  });
+
+  it("Escalate / Wait send no lead", () => {
+    const onDecide = vi.fn();
+    render(<OperatorPauseBar strikes={3} locked={false} onDecide={onDecide} />);
+    fireEvent.click(screen.getByRole("button", { name: /escalate/i }));
+    expect(onDecide).toHaveBeenCalledWith("escalate");
+    onDecide.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: /instrument/i }));
+    expect(onDecide).toHaveBeenCalledWith("wait");
+  });
+
+  it("when locked: hides the textarea, disables the buttons, shows the steered-with lead read-only", () => {
+    render(<OperatorPauseBar strikes={2} locked operatorContext="started after the 14:00 deploy" onDecide={vi.fn()} />);
+    expect(screen.queryByLabelText(/optional lead/i)).toBeNull();
+    expect((screen.getByRole("button", { name: /continue/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/steered with:/i)).toBeTruthy();
+    expect(screen.getByText(/started after the 14:00 deploy/)).toBeTruthy();
   });
 });

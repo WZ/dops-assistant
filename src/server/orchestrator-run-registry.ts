@@ -29,6 +29,14 @@ const logger = createLogger("orchestrator-registry");
 /** An operator's reply to a strike-limit pause (3-enum; PR-4 adds a 4th path). */
 export type OperatorDecision = "continue" | "escalate" | "wait";
 
+/** An operator's reply plus the optional free-text lead they steered with (PR-4).
+ *  `context` is only meaningful with "continue"; it is injected into the
+ *  orchestrator's next decide-move prompt as standing human guidance. */
+export interface PauseResolution {
+  decision: OperatorDecision;
+  context?: string;
+}
+
 /** A function that delivers one server message to one attached client. */
 export type RunSink = (m: ServerMessage) => void;
 
@@ -41,7 +49,9 @@ export type RunStatus = "running" | "parked" | "terminal";
  * timer (it waits indefinitely for a reattach).
  */
 export interface PendingPause {
-  resolve: (decision: OperatorDecision) => void;
+  // PR-4: the resolver takes the operator's optional free-text lead alongside the
+  // decision. Park pauses pass `() => resolve()` and simply ignore both args.
+  resolve: (decision: OperatorDecision, context?: string) => void;
   timer: ReturnType<typeof setTimeout> | null;
   kind: "operator" | "park";
 }
@@ -204,15 +214,16 @@ export class OrchestratorRunRegistry {
     e.pause = null;
   }
 
-  /** Resolve a pending pause with a decision, unblocking the loop. No-op if there
-   *  is no pause. Clears the timer and the pause slot. */
-  resolvePause(investigationId: string, decision: OperatorDecision): void {
+  /** Resolve a pending pause with a decision (and optional operator lead, PR-4),
+   *  unblocking the loop. No-op if there is no pause. Clears the timer and the
+   *  pause slot. */
+  resolvePause(investigationId: string, decision: OperatorDecision, context?: string): void {
     const e = this.runs.get(investigationId);
     if (!e || !e.pause) return;
     const { resolve, timer } = e.pause;
     if (timer) clearTimeout(timer);
     e.pause = null;
-    resolve(decision);
+    resolve(decision, context);
   }
 
   /** PR-1 D7 (cross-tab): try to claim the decision lock. Returns true if this

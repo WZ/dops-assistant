@@ -1071,7 +1071,7 @@ describe("orchestrator_subscribe / _unsubscribe", () => {
     reg.setPause(ID, { resolve: parkResolve, timer: null, kind: "park" });
     await callSubscribe({ type: "orchestrator_subscribe", investigationId: ID }, vi.fn(), depsWithEvents(), reg, new Set());
     expect(reg.status(ID)).toBe("running");
-    expect(parkResolve).toHaveBeenCalledWith("continue");
+    expect(parkResolve).toHaveBeenCalledWith("continue", undefined);
   });
 
   it("unsubscribe detaches this connection's sink", async () => {
@@ -1109,7 +1109,7 @@ describe("orchestrator_subscribe / _unsubscribe", () => {
     reg.attachSink(ID, (m) => tabB.push(m));
 
     await callSubscribe({ type: "orchestrator_decision", investigationId: ID, decision: "escalate" }, vi.fn(), depsWithEvents(), reg, new Set());
-    expect(resolve).toHaveBeenCalledWith("escalate");
+    expect(resolve).toHaveBeenCalledWith("escalate", undefined);
     expect(tabA.some((m) => m.type === "orchestrator:decision_locked")).toBe(true);
     expect(tabB.some((m) => m.type === "orchestrator:decision_locked")).toBe(true);
 
@@ -1127,5 +1127,57 @@ describe("orchestrator_subscribe / _unsubscribe", () => {
     await callSubscribe({ type: "orchestrator_decision", investigationId: ID, decision: "escalate" }, vi.fn(), deps, reg, new Set());
     const createEvent = deps.db.createEvent as ReturnType<typeof vi.fn>;
     expect(createEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: "orchestrator:decision_locked" }));
+  });
+
+  it("a continue-with-context forwards the lead to resolvePause and persists it on decision_locked (PR-4)", async () => {
+    const reg = new OrchestratorRunRegistry();
+    reg.create(ID, new AbortController());
+    const resolve = vi.fn();
+    reg.setPause(ID, { resolve, timer: null, kind: "operator" });
+    const tab: ServerMessage[] = [];
+    reg.attachSink(ID, (m) => tab.push(m));
+    const deps = depsWithEvents();
+
+    await callSubscribe(
+      { type: "orchestrator_decision", investigationId: ID, decision: "continue", context: "  check the DB pool  " },
+      vi.fn(), deps, reg, new Set(),
+    );
+
+    // lead is trimmed and forwarded to the loop
+    expect(resolve).toHaveBeenCalledWith("continue", "check the DB pool");
+    // and persisted/broadcast on the lock so reattaching tabs + cold replays show it
+    const locked = tab.find((m) => m.type === "orchestrator:decision_locked");
+    expect(locked).toMatchObject({ context: "check the DB pool" });
+    const createEvent = deps.db.createEvent as ReturnType<typeof vi.fn>;
+    expect(createEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: "orchestrator:decision_locked", payload: expect.stringContaining("check the DB pool") }),
+    );
+  });
+
+  it("a non-continue decision drops any context (escalate/wait stop the run) (PR-4)", async () => {
+    const reg = new OrchestratorRunRegistry();
+    reg.create(ID, new AbortController());
+    const resolve = vi.fn();
+    reg.setPause(ID, { resolve, timer: null, kind: "operator" });
+    await callSubscribe(
+      { type: "orchestrator_decision", investigationId: ID, decision: "escalate", context: "ignored" },
+      vi.fn(), depsWithEvents(), reg, new Set(),
+    );
+    expect(resolve).toHaveBeenCalledWith("escalate", undefined);
+  });
+
+  it("a malformed non-string context does not throw or wedge the pause (PR-4, codex P2)", async () => {
+    const reg = new OrchestratorRunRegistry();
+    reg.create(ID, new AbortController());
+    const resolve = vi.fn();
+    reg.setPause(ID, { resolve, timer: null, kind: "operator" });
+    // A stale/direct WS client sends a non-string context; must not throw after the
+    // lock, must resolve the pause (lead coerced to undefined).
+    await callSubscribe(
+      { type: "orchestrator_decision", investigationId: ID, decision: "continue", context: {} as unknown as string },
+      vi.fn(), depsWithEvents(), reg, new Set(),
+    );
+    expect(resolve).toHaveBeenCalledWith("continue", undefined);
+    expect(reg.hasPause(ID)).toBe(false);
   });
 });

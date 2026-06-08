@@ -77,6 +77,10 @@ export interface OrchestratorState {
   readonly toolCalls: number;
   readonly elapsedMs: number;
   readonly trace: ReadonlyArray<TraceEntry>;
+  /** PR-4: the operator's free-text lead from a continue-with-context resume,
+   *  standing until the run ends or a later pause replaces it. Rendered into the
+   *  decide-move prompt as human guidance. Absent until the operator steers. */
+  readonly operatorContext?: string;
 }
 
 export type OrchestratorOutcome =
@@ -140,8 +144,14 @@ export interface OrchestratorDeps {
    * human. "continue" resets the strike counter and resumes the loop (the other
    * guards still bound it); "escalate"/"wait" stop with that disposition. Absent
    * → the strike limit stops directly (operator-pause), as before.
+   *
+   * PR-4: resolves to `{ decision, context? }` — `context` is the operator's
+   * optional free-text lead, applied as standing guidance from the next move on.
+   * (Inline type, not the registry's PauseResolution, to keep the core pure.)
    */
-  onOperatorPause?: (state: OrchestratorState) => Promise<"continue" | "escalate" | "wait">;
+  onOperatorPause?: (
+    state: OrchestratorState,
+  ) => Promise<{ decision: "continue" | "escalate" | "wait"; context?: string }>;
   guards: OrchestratorGuards;
   /**
    * Abort the run cooperatively (checked at the top of each move). The WS layer
@@ -247,6 +257,10 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
   let moves = 0;
   let stall = 0;
   let operatorContinues = 0;
+  // PR-4: the operator's standing lead from a continue-with-context resume. Set
+  // when a pause resolves with one, kept across moves until a later pause replaces
+  // it (D1 standing-until-replaced). Rendered into each decide-move prompt.
+  let operatorContext: string | undefined;
 
   const record = (entry: TraceEntry): void => {
     trace.push(entry);
@@ -289,12 +303,15 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
       // loop alive indefinitely.
       if (deps.onOperatorPause && operatorContinues < MAX_OPERATOR_CONTINUES) {
         const pauseState: OrchestratorState = {
-          hypotheses, evidence, dependencies, depth, subagents, strikes, tokensSpent, toolCalls, elapsedMs: elapsed(), trace,
+          hypotheses, evidence, dependencies, depth, subagents, strikes, tokensSpent, toolCalls, elapsedMs: elapsed(), trace, operatorContext,
         };
-        const decision = await deps.onOperatorPause(pauseState);
+        const { decision, context } = await deps.onOperatorPause(pauseState);
         if (decision === "continue") {
           operatorContinues++;
           strikes = 0;
+          // Standing-until-replaced (D1): adopt a new lead if given, else keep the
+          // prior one so earlier guidance still informs the resumed investigation.
+          operatorContext = context ?? operatorContext;
           continue;
         }
       }
@@ -313,6 +330,7 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
       toolCalls,
       elapsedMs: elapsed(),
       trace,
+      operatorContext,
     };
 
     const move = await deps.decideMove(state);

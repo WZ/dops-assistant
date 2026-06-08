@@ -744,8 +744,11 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       /** The incident service itself (for the cross-service confirm guard). */
       incidentService?: string;
       /** Interactive operator-pause hook (increment 5). Wired by the WS layer to
-       *  the pause card; absent → the strike limit stops directly. */
-      onOperatorPause?: (state: OrchestratorState) => Promise<"continue" | "escalate" | "wait">;
+       *  the pause card; absent → the strike limit stops directly. PR-4: resolves
+       *  to `{ decision, context? }` where `context` is the operator's free-text lead. */
+      onOperatorPause?: (
+        state: OrchestratorState,
+      ) => Promise<{ decision: "continue" | "escalate" | "wait"; context?: string }>;
       /** Cooperative abort — the WS layer aborts on a deliberate operator Stop. */
       signal?: AbortSignal;
       /** Move-boundary hook (PR-2c) — the WS layer parks a viewerless run. */

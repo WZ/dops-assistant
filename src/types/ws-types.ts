@@ -21,7 +21,10 @@ export type ClientMessage =
   // Operator's reply to an `orchestrator:operator_pause` prompt (increment 5):
   // "continue" resets strikes and resumes the move-loop; "escalate"/"wait" stop
   // it with that disposition. Matched to the paused run by investigationId.
-  | { type: "orchestrator_decision"; investigationId: string; decision: "continue" | "escalate" | "wait" }
+  // `context` (PR-4): an optional free-text lead the operator types alongside
+  // "continue" — injected into the orchestrator's next decide-move prompt as
+  // standing human guidance. Ignored for escalate/wait (those stop the run).
+  | { type: "orchestrator_decision"; investigationId: string; decision: "continue" | "escalate" | "wait"; context?: string }
   // Operator hit Stop on an in-flight Deep Investigation. Aborts the run (the
   // loop stops at its next guard check → "aborted") and unblocks it if paused.
   | { type: "orchestrator_stop"; investigationId: string }
@@ -183,7 +186,9 @@ export type ServerMessage =
   | { type: "orchestrator:parked"; investigationId: string }
   // The first operator decision at a pause was accepted (PR-2c, D7 cross-tab):
   // every attached tab locks its decision controls, not just the one that clicked.
-  | { type: "orchestrator:decision_locked"; investigationId: string }
+  // `context` (PR-4): the free-text lead the operator steered with, if any —
+  // persisted so a reattaching tab and a cold replay can show it read-only.
+  | { type: "orchestrator:decision_locked"; investigationId: string; context?: string }
   | { type: "session_cleared" }
   | { type: "context_switch"; previousService: string; newService: string }
   | { type: "services:health"; data: unknown[] }

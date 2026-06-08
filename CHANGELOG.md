@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.10.0] - 2026-06-07
+
+### Added
+- **Steer a paused Deep Investigation with a lead (gated off, PR-4 of a sequence).** When a deep investigation pauses because it ran out of ideas, you can now type a free-text hint — "check the database connection pool", "this started right after the 14:00 deploy" — next to the Continue button. The agent folds your lead into its next step as standing guidance, so the resumed investigation follows your domain knowledge instead of repeating the same dead ends. The lead sticks until the run ends or you give a new one at a later pause; Escalate and Wait ignore it. Reopening the run (or a second tab) shows what it was steered with.
+
+### Changed
+- The paused-run decision controls are now one shared bar across the inline Console strip and the full panel, so the new lead input and the Continue/Escalate/Wait buttons look and behave the same everywhere.
+
 ## [0.4.9.0] - 2026-06-07
 
 ### Added
