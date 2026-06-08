@@ -70,6 +70,19 @@ describe("DeepInvestigationPanel", () => {
     expect(screen.getByRole("button", { name: /Investigate deeply/i })).toBeTruthy();
   });
 
+  it("cold reload of a completed Challenge renders the persisted revision, not the empty state (PR-5, codex P2)", async () => {
+    // No run in the registry, but the GET returns a report carrying a deep-mode verdict.
+    const report = JSON.stringify({
+      service: "impala", rootCause: "memory exhaustion", ruledOut: [],
+      deepMode: { reexamined: [], resurrected: [{ hypothesis: "statestore pool starvation", prediction: {} }], shaken: [], outcome: "resurrected-candidate" },
+    });
+    mockFetch({ investigation: { service: "impala", query: "", status: "complete", report }, phases: [], events: [] });
+    renderPanel([]); // no orchestrator events → no DeepRunState hydrated
+    await waitFor(() => expect(screen.getByText(/Deep re-examination/i)).toBeTruthy());
+    expect(screen.getByText(/statestore pool starvation/)).toBeTruthy();
+    expect(screen.queryByText(/No deep investigation yet/i)).toBeNull();
+  });
+
   it("renders a not-found message when the investigation cannot be located", async () => {
     mockFetch({ error: "Not found" }, 404); // GET 404 → locate 404 → notFound
     renderPanel([]);
