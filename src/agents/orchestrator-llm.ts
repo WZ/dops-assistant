@@ -30,6 +30,9 @@ import { evaluatePrediction, type CorroborationContext, type HypothesisPredictio
 import { withLlmRetry, type LlmRetryConfig } from "./shared/llm-retry.js";
 import { LlmUnavailableError } from "./shared/llm-errors.js";
 import type { MastraProvider } from "../mcp/provider.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("orchestrator-llm");
 
 /** The move shape the LLM emits (`move` discriminant), validated before mapping
  *  to the core's `OrchestratorMove` (`type` discriminant). `done` → null. */
@@ -80,38 +83,58 @@ function extractJsonObject(text: string): string | null {
 }
 
 /**
- * Parse an LLM response into an OrchestratorMove. Returns null for an explicit
- * `done`, or for any unparseable / schema-invalid output (the caller treats
- * null as "no move" → the loop exhausts gracefully rather than crashing).
+ * The three distinct outcomes of reading an LLM move response. The orchestrator
+ * loop collapses any "no move" to `exhausted`, but the REASON matters: a genuine
+ * `done` is the agent deciding it's finished, while `unparseable` is a failed
+ * read (e.g. gpt-oss emitting `<|constrain|>json` or prose instead of a JSON
+ * object) — that should be retried, not silently treated as "investigation over".
  */
-export function parseMove(text: string): OrchestratorMove | null {
+export type MoveDecision =
+  | { kind: "move"; move: OrchestratorMove }
+  | { kind: "done" }
+  | { kind: "unparseable" };
+
+/** Classify an LLM response: a concrete move, an explicit `done`, or an
+ *  unparseable/schema-invalid reply. Never throws. */
+export function classifyMove(text: string): MoveDecision {
   const json = extractJsonObject(text);
-  if (!json) return null;
+  if (!json) return { kind: "unparseable" };
   let raw: unknown;
   try {
     raw = JSON.parse(json);
   } catch {
-    return null;
+    return { kind: "unparseable" };
   }
   const parsed = LlmMoveSchema.safeParse(raw);
-  if (!parsed.success) return null;
+  if (!parsed.success) return { kind: "unparseable" };
   const m = parsed.data;
   switch (m.move) {
     case "hypothesize":
-      return { type: "hypothesize", hypothesis: { hypothesis: m.hypothesis, prediction: m.prediction } };
+      return { kind: "move", move: { type: "hypothesize", hypothesis: { hypothesis: m.hypothesis, prediction: m.prediction } } };
     case "query":
-      return { type: "query", target: m.target };
+      return { kind: "move", move: { type: "query", target: m.target } };
     case "test":
-      return { type: "test", target: m.target };
+      return { kind: "move", move: { type: "test", target: m.target } };
     case "conclude":
-      return { type: "conclude", leading: m.leading, confidence: m.confidence, rationale: m.rationale };
+      return { kind: "move", move: { type: "conclude", leading: m.leading, confidence: m.confidence, rationale: m.rationale } };
     case "spawn-subagent":
-      return { type: "spawn-subagent", service: m.service, question: m.question };
+      return { kind: "move", move: { type: "spawn-subagent", service: m.service, question: m.question } };
     case "follow-cause":
-      return { type: "follow-cause", service: m.service };
+      return { kind: "move", move: { type: "follow-cause", service: m.service } };
     case "done":
-      return null;
+      return { kind: "done" };
   }
+}
+
+/**
+ * Parse an LLM response into an OrchestratorMove. Returns null for an explicit
+ * `done`, or for any unparseable / schema-invalid output (the caller treats
+ * null as "no move" → the loop exhausts gracefully rather than crashing).
+ * Use `classifyMove` when the caller needs to tell `done` from `unparseable`.
+ */
+export function parseMove(text: string): OrchestratorMove | null {
+  const d = classifyMove(text);
+  return d.kind === "move" ? d.move : null;
 }
 
 const SYSTEM_PROMPT = `You are an autonomous incident investigator. Each turn you choose ONE next move to find the ROOT CAUSE of an incident using read-only evidence. Reason briefly, then emit your move.
@@ -252,17 +275,40 @@ export function createLlmDecideMove(
     });
 
   return async (state) => {
-    const prompt = buildStatePrompt(opts.focus, state, opts.guards);
-    let text: string;
-    try {
-      text = await call(SYSTEM_PROMPT, prompt);
-    } catch (err) {
-      // LLM truly unavailable → propagate so the runner can fail cleanly.
-      // Any other error degrades to "no move" so a single bad turn doesn't crash.
-      if (err instanceof LlmUnavailableError) throw err;
+    const basePrompt = buildStatePrompt(opts.focus, state, opts.guards);
+    // One corrective retry on an UNPARSEABLE move. The model runs at temperature
+    // 0, so re-sending the identical prompt would deterministically reproduce the
+    // bad output; the retry appends a correction instead. This stops a single
+    // malformed reply (a known gpt-oss quirk: prose / `<|constrain|>json` instead
+    // of a JSON object) from ending the whole investigation as "no further moves".
+    const CORRECTION =
+      "\n\nYour previous reply was NOT a single valid JSON move object. Re-read the Moves list and reply with ONLY the JSON object for your chosen move — no prose, no code fence, no extra text.";
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      let text: string;
+      try {
+        text = await call(SYSTEM_PROMPT, attempt === 1 ? basePrompt : basePrompt + CORRECTION);
+      } catch (err) {
+        // LLM truly unavailable → propagate so the runner can fail cleanly.
+        if (err instanceof LlmUnavailableError) throw err;
+        // Any other error degrades to "no move" so a single bad turn doesn't crash.
+        logger.warn({ err: err instanceof Error ? err.message : String(err) }, "decideMove: LLM call errored → ending the investigation (exhausted)");
+        return null;
+      }
+      const decision = classifyMove(text);
+      if (decision.kind === "move") return decision.move;
+      if (decision.kind === "done") {
+        logger.info({ moves: state.trace.length }, "decideMove: agent signalled done → investigation complete");
+        return null;
+      }
+      // unparseable
+      if (attempt === 1) {
+        logger.warn({ sample: text.slice(0, 240) }, "decideMove: unparseable move, retrying once with a correction");
+        continue;
+      }
+      logger.warn({ sample: text.slice(0, 240) }, "decideMove: still unparseable after retry → ending the investigation (exhausted)");
       return null;
     }
-    return parseMove(text);
+    return null;
   };
 }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseMove, buildStatePrompt, createLlmDecideMove } from "./orchestrator-llm.js";
+import { parseMove, classifyMove, buildStatePrompt, createLlmDecideMove } from "./orchestrator-llm.js";
 import type { OrchestratorState, OrchestratorGuards } from "./orchestrator.js";
 import type { LanguageModel } from "ai";
 import { LlmUnavailableError } from "./shared/llm-errors.js";
@@ -180,5 +180,56 @@ describe("createLlmDecideMove", () => {
       },
     });
     await expect(decide(emptyState)).resolves.toBeNull();
+  });
+
+  // A malformed reply (a documented gpt-oss quirk) must not silently end the whole
+  // investigation as "no further moves" — it gets one corrective retry first.
+  it("retries once with a correction on an unparseable move, then recovers", async () => {
+    const prompts: string[] = [];
+    const decide = createLlmDecideMove({
+      model: stubModel,
+      focus: "x",
+      guards,
+      callModel: async (_system, prompt) => {
+        prompts.push(prompt);
+        return prompts.length === 1 ? "I think we should check the pods first." : '{"move":"query","target":0}';
+      },
+    });
+    await expect(decide(emptyState)).resolves.toEqual({ type: "query", target: 0 });
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain("NOT a single valid JSON move object"); // correction appended on retry
+  });
+
+  it("gives up (null) only after TWO unparseable replies — never on the first", async () => {
+    let calls = 0;
+    const decide = createLlmDecideMove({
+      model: stubModel,
+      focus: "x",
+      guards,
+      callModel: async () => { calls++; return "no json here, just prose"; },
+    });
+    await expect(decide(emptyState)).resolves.toBeNull();
+    expect(calls).toBe(2);
+  });
+
+  it("does NOT retry a genuine done — that's the agent finishing, not a failure", async () => {
+    let calls = 0;
+    const decide = createLlmDecideMove({
+      model: stubModel,
+      focus: "x",
+      guards,
+      callModel: async () => { calls++; return '{"move":"done"}'; },
+    });
+    await expect(decide(emptyState)).resolves.toBeNull();
+    expect(calls).toBe(1);
+  });
+});
+
+describe("classifyMove", () => {
+  it("distinguishes a concrete move, an explicit done, and an unparseable reply", () => {
+    expect(classifyMove('{"move":"query","target":0}')).toEqual({ kind: "move", move: { type: "query", target: 0 } });
+    expect(classifyMove('{"move":"done"}')).toEqual({ kind: "done" });
+    expect(classifyMove("sorry, I cannot decide")).toEqual({ kind: "unparseable" });
+    expect(classifyMove('{"move":"banana"}')).toEqual({ kind: "unparseable" }); // schema-invalid
   });
 });
