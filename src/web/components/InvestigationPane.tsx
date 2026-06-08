@@ -8,7 +8,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ArrowLeft, FilePlus, RotateCw, ChevronDown, Download, Link2, FileText, Image as ImageIcon, ClipboardCopy, Check, Telescope, Compass } from "lucide-react";
+import { ArrowLeft, FilePlus, RotateCw, ChevronDown, Download, Link2, FileText, Image as ImageIcon, ClipboardCopy, Check } from "lucide-react";
 import { PhaseStepper, type PhaseState } from "./PhaseStepper";
 import { EvidenceTimeline } from "./EvidenceTimeline";
 import { RcaReport } from "./RcaReport";
@@ -149,8 +149,6 @@ export function InvestigationPane({
   onBack,
   onNavigateSkills,
   onRerun,
-  onDeepMode,
-  onOrchestrate,
   onWrongStack,
   onOpenDeep,
 }: {
@@ -159,13 +157,6 @@ export function InvestigationPane({
   onBack: () => void;
   onNavigateSkills?: () => void;
   onRerun?: (investigationId: string, template?: string) => void;
-  /** Trigger deep mode (Step 3): skeptical re-examination of the loop's
-   *  ruled-out causes. Parent wires it to the deep_mode_investigate WS message. */
-  onDeepMode?: (investigationId: string) => void;
-  /** Trigger the autonomous orchestrator (Approach D): the unbounded read-only
-   *  move-loop that investigates for the real cause. Parent wires it to the
-   *  orchestrator_investigate WS message. */
-  onOrchestrate?: (investigationId: string) => void;
   /** Send the operator's strike-limit decision (increment 5) back over the WS.
    *  Parent wires it to the orchestrator_decision message. */
   onOrchestratorDecision?: (investigationId: string, decision: "continue" | "escalate" | "wait") => void;
@@ -589,9 +580,12 @@ export function InvestigationPane({
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-          {/* The new single "Investigate deeply" entry (scoped: Challenge + Full).
-              Self-gates on the same window flags as the legacy buttons below, which
-              coexist in PR-1 (D9); the IA cleanup that removes them is deferred. */}
+          {/* The single Deep Investigation entry (PR-1): a scoped menu with both
+              "Challenge this RCA" (deep mode) and "Full deep investigation" (the
+              autonomous orchestrator) inside it. Self-gates on __DEEP_MODE_ENABLED__
+              / __ORCHESTRATOR_ENABLED__. The old standalone "Deep investigate" +
+              "Investigate autonomously" buttons were removed here — they duplicated
+              these two menu items. */}
           {isComplete && (
             <ScopedDeepMenu
               investigationId={investigationId}
@@ -599,52 +593,6 @@ export function InvestigationPane({
               onFullStart={onOpenDeep}
             />
           )}
-          {/* Deep mode (Step 3): hidden from users until the Autonomous
-              Orchestrator ships. Today's bounded deep mode only re-judges the
-              existing RCA's hypotheses (resurrect a dismissed cause / weaken the
-              confirmed one) — it doesn't investigate freely for the real cause.
-              Gated behind config.agent.deepModeEnabled (server injects
-              window.__DEEP_MODE_ENABLED__); off by default. */}
-          {isComplete && onDeepMode && (() => {
-            const rpt = report as RcaReportType | null;
-            // Master gate: deep mode is not exposed to users yet.
-            if (typeof window !== "undefined" && !window.__DEEP_MODE_ENABLED__) return null;
-            // Needs a loop conclusion to dig into. Single-pass reports (no
-            // loopOutcome) have nothing to re-examine → hidden.
-            if (!rpt?.loopOutcome) return null;
-            const alreadyDeep = !!rpt.deepMode;
-            return (
-              <Button
-                variant="outline"
-                disabled={isRunning || deepModeRunning}
-                onClick={() => onDeepMode(investigationId)}
-                title="Re-examine the ruled-out causes with deeper read-only queries"
-                className="h-9 px-4 text-[12px] font-mono border-primary/30 text-primary/70 hover:bg-primary/8 hover:text-primary rounded-lg gap-1.5"
-              >
-                <Telescope size={12} className="!size-auto" />
-                {deepModeRunning ? "Deep investigating…" : alreadyDeep ? "Re-run deep mode" : "Deep investigate"}
-              </Button>
-            );
-          })()}
-          {/* Autonomous orchestrator (Approach D): hidden until validated. Gated
-              behind config.agent.orchestratorEnabled (server injects
-              window.__ORCHESTRATOR_ENABLED__). Unlike deep mode it investigates
-              for the real cause, so it doesn't require a prior loop outcome. */}
-          {isComplete && onOrchestrate && (() => {
-            if (typeof window !== "undefined" && !window.__ORCHESTRATOR_ENABLED__) return null;
-            return (
-              <Button
-                variant="outline"
-                disabled={isRunning || orchRunning}
-                onClick={() => onOrchestrate(investigationId)}
-                title="Run the autonomous orchestrator — an unbounded read-only investigation for the real cause"
-                className="h-9 px-4 text-[12px] font-mono border-accent/30 text-accent/80 hover:bg-accent/8 hover:text-accent rounded-lg gap-1.5"
-              >
-                <Compass size={12} className="!size-auto" />
-                {orchRunning ? "Investigating…" : "Investigate autonomously"}
-              </Button>
-            );
-          })()}
         </div>
       </div>
       {deepModeError && (
