@@ -185,5 +185,10 @@ export function traceEntryToStreamEvent(e: TraceEntry): Omit<AgentStreamEvent, "
 
     case "follow-cause":
       return { verb: "followed the trail to", target: e.detail, status: "done" };
+
+    case "decide":
+      // The decide-move watchdog tripped (a starved/hung brain) — surface it so the
+      // stall is visible rather than a silent gap, then the loop re-checks guards.
+      return { verb: "thinking timed out", detail: "(starved — re-checking limits)", status: "inconclusive" };
   }
 }

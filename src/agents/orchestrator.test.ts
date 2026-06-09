@@ -57,6 +57,21 @@ describe("runOrchestrator — happy path", () => {
   });
 });
 
+describe("runOrchestrator — decide-move watchdog (inc-7 starvation)", () => {
+  it("a stalled/hung decide-move times out and the run stops loudly (inconclusive), not a silent hang", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        // Never resolves — models a starved/hung brain under contention.
+        decideMove: () => new Promise<never>(() => {}),
+        guards: { ...generousGuards, opTimeoutMs: 5 },
+      }),
+    );
+    // Repeated decide timeouts increment stall → inconclusive (the loud stop),
+    // instead of hanging inside an unbounded await until the client cap.
+    expect(result.outcome).toBe("inconclusive");
+  });
+});
+
 describe("runOrchestrator — DECISION 1: hybrid stop never trusts self-confidence", () => {
   it("rejects conclude when the leading hypothesis was never keystone-confirmed", async () => {
     const result = await runOrchestrator(
