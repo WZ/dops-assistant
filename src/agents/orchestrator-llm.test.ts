@@ -133,6 +133,42 @@ describe("buildStatePrompt", () => {
     const plain = buildStatePrompt("incident", emptyState, guards);
     expect(plain).not.toContain("Operator guidance");
   });
+
+  it("nudges follow-through when a followed dependency has no hypothesis naming it (inc-7 #4)", () => {
+    const prompt = buildStatePrompt(
+      "incident",
+      {
+        ...emptyState,
+        followedServices: ["payment-service"],
+        hypotheses: [
+          { hypothesis: { hypothesis: "agw-admin-ui high latency", prediction: { kind: "metric-threshold", metric: "lat", op: ">", value: 1 } }, standing: "confirmed", lastVerdict: "satisfied" },
+        ],
+      },
+      guards,
+    );
+    expect(prompt).toContain("Followed but not yet pursued: payment-service");
+    expect(prompt).toContain("TEST it before you conclude");
+  });
+
+  it("drops the nudge once a hypothesis names the followed service (no over-firing)", () => {
+    const prompt = buildStatePrompt(
+      "incident",
+      {
+        ...emptyState,
+        followedServices: ["payment-service"],
+        hypotheses: [
+          { hypothesis: { hypothesis: "caused by payment-service connection-pool exhaustion", prediction: { kind: "metric-threshold", metric: "conns", op: ">", value: 90 } }, standing: "open" },
+        ],
+      },
+      guards,
+    );
+    expect(prompt).not.toContain("Followed but not yet pursued");
+  });
+
+  it("omits the follow-through nudge when nothing has been followed (regression)", () => {
+    const plain = buildStatePrompt("incident", emptyState, guards);
+    expect(plain).not.toContain("Followed but not yet pursued");
+  });
 });
 
 describe("createLlmDecideMove", () => {
