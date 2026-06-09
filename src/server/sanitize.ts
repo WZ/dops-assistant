@@ -99,6 +99,11 @@ export const ChatMessageSchema = z.object({
   type: z.literal("chat"),
   message: boundedString(MAX_CHAT_MESSAGE_LENGTH),
   serviceContext: boundedString(500).optional(),
+  // Explicit, unambiguous investigation request (the Service-detail Investigate
+  // button). The server uses it to skip the LLM router AND the confirm-dispatch
+  // countdown. Was being stripped here (Zod drops unknown keys), so the button's
+  // investigations still showed the dispatch timer in the Console — start now.
+  immediate: z.boolean().optional(),
 });
 
 // ── DeepInvestigateMessageSchema ────────────────────────────────────────────

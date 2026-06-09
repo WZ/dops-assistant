@@ -51,8 +51,19 @@ export function startEventsRetentionTask(deps: {
       total += removed;
       if (removed < PURGE_BATCH_LIMIT) break;
     }
+    // Also sweep the orchestrator replay log (investigation_events) — PR-2 made
+    // deep runs durable by persisting every move, so it grows unbounded too once
+    // the orchestrator fires regularly (inc-7 GC). Same cutoff + batch loop.
+    let invTotal = 0;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const removed = db.purgeInvestigationEventsOlderThan(cutoff);
+      invTotal += removed;
+      if (removed < PURGE_BATCH_LIMIT) break;
+    }
+    total += invTotal;
     if (total > 0) {
-      logger.info({ removed: total, retentionDays, cutoffMs: cutoff }, "events retention sweep");
+      logger.info({ removed: total, investigationEvents: invTotal, retentionDays, cutoffMs: cutoff }, "events retention sweep");
     }
     return total;
   };

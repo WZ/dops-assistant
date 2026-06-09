@@ -147,6 +147,11 @@ export interface OrchestratorDeps {
    *  cause about the incident service's own behavior isn't treated as needing a
    *  follow-cause. Mentions of OTHER (dependency) services do. */
   incidentService?: string;
+  /** All known service names (not just dep-graph neighbors). The cross-service
+   *  confirm guard checks against these too, so a false-confirm that blames
+   *  another service is caught even when the dependency graph is empty/missing
+   *  (inc-7 #3 — the keystone can be independently true but not causally linked). */
+  knownServices?: string[];
   /**
    * Strikes-limit hook: instead of silently stopping at the strike limit, ask a
    * human. "continue" resets the strike counter and resumes the loop (the other
@@ -210,13 +215,34 @@ export interface OrchestratorResult {
 
 /** Case-insensitive whole-token-ish mention of a service name in free text. */
 function mentionsService(text: string, service: string): boolean {
-  return text.toLowerCase().includes(service.toLowerCase());
+  const needle = service.trim().toLowerCase();
+  if (!needle) return false;
+  const haystack = text.toLowerCase();
+  const isServiceNameChar = (ch: string | undefined): boolean => !!ch && /[a-z0-9._-]/i.test(ch);
+  let from = 0;
+  while (from < haystack.length) {
+    const idx = haystack.indexOf(needle, from);
+    if (idx === -1) return false;
+    const before = haystack[idx - 1];
+    const after = haystack[idx + needle.length];
+    if (!isServiceNameChar(before) && !isServiceNameChar(after)) return true;
+    from = idx + 1;
+  }
+  return false;
 }
 
 /** Absolute backstop on move count — far above any real run; catches a runaway decide-fn. */
 const MAX_MOVES = 1000;
 /** Consecutive non-productive moves (no new evidence / hypotheses, rejected conclude) → inconclusive. */
 const MAX_STALL = 8;
+/**
+ * Fast no-evidence bail (inc-7): if this many queries have run and gathered ZERO
+ * evidence in total, the service is quiet/idle — there's nothing to find, so bail
+ * early instead of burning a full run (the idle-bench run cost 19 moves / 7
+ * queries / 16.6k tokens before pausing). Distinct from MAX_STALL, which counts
+ * CONSECUTIVE empties; this trips on cumulative emptiness across the whole run.
+ */
+const NO_EVIDENCE_BAIL_QUERIES = 4;
 /**
  * Hard cap on operator "continue" decisions. Each continue resets the strike
  * counter and resumes; without a ceiling, a hung or looping operator prompt
@@ -335,6 +361,9 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
       return finish("operator-pause");
     }
     if (stall >= MAX_STALL) return finish("inconclusive");
+    // Fast no-evidence bail: several queries in and nothing surfaced anywhere →
+    // the service is quiet. Stop now rather than burning the full run (inc-7 #5).
+    if (toolCalls >= NO_EVIDENCE_BAIL_QUERIES && evidence.length === 0) return finish("inconclusive");
 
     const state: OrchestratorState = {
       hypotheses,
@@ -427,12 +456,17 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
         // HYBRID STOP: stop only on deterministic confirmation. Self-reported
         // confidence is recorded for the trace but is never the gate.
         if (lead && lead.standing === "confirmed" && lead.lastVerdict === "satisfied") {
-          // CROSS-SERVICE GUARD: a cause that blames a dependency the agent
+          // CROSS-SERVICE GUARD: a cause that blames another service the agent
           // never investigated is correlational, not established — observing
           // that a neighbor is unhealthy doesn't prove it caused this incident.
           // Require a follow-cause into that service before naming it the cause.
-          // (Mentions of the incident service's own behavior are fine.)
-          const unfollowedDep = dependencies.find(
+          // (Mentions of the incident service's own behavior are fine.) Checks
+          // dep-graph neighbors AND all known services, so the guard still fires
+          // when the dependency graph is empty (inc-7 #3 false-confirm).
+          const candidateServices = dependencies.length || (deps.knownServices?.length ?? 0)
+            ? [...new Set([...dependencies, ...(deps.knownServices ?? [])])]
+            : [];
+          const unfollowedDep = candidateServices.find(
             (dep) =>
               dep !== deps.incidentService &&
               !followedServices.has(dep) &&

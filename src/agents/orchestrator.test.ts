@@ -102,6 +102,29 @@ describe("runOrchestrator — decide-move watchdog (inc-7 starvation)", () => {
   });
 });
 
+describe("runOrchestrator — fast no-evidence bail (inc-7 idle services)", () => {
+  it("bails to inconclusive after a few queries gather zero evidence — doesn't burn the full run", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        gatherEvidence: async () => [], // quiet/idle service — nothing surfaces anywhere
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("c1") },
+          { type: "query", target: 0 },
+          { type: "query", target: 0 },
+          { type: "query", target: 0 },
+          { type: "query", target: 0 },
+          { type: "query", target: 0 }, // would keep going, but the bail fires first
+          { type: "query", target: 0 },
+        ]),
+      }),
+    );
+    expect(result.outcome).toBe("inconclusive");
+    // Bailed at NO_EVIDENCE_BAIL_QUERIES (4), before MAX_STALL (8) or the scripted
+    // queries ran out — the run stops fast instead of burning tokens.
+    expect(result.stats.toolCalls).toBe(4);
+  });
+});
+
 describe("runOrchestrator — DECISION 1: hybrid stop never trusts self-confidence", () => {
   it("rejects conclude when the leading hypothesis was never keystone-confirmed", async () => {
     const result = await runOrchestrator(
@@ -526,6 +549,48 @@ describe("runOrchestrator — cross-service confirm guard", () => {
     expect(result.outcome).toBe("exhausted"); // confirm was blocked → ran to null
     expect(result.confirmed).toBeUndefined();
     expect(result.trace.some((t) => t.move === "conclude" && /never followed-cause/.test(t.detail))).toBe(true);
+  });
+
+  it("rejects a confirm blaming a known service even with an EMPTY dep graph (inc-7 #3 false-confirm)", async () => {
+    // The inc-7 no-go: a 0-replica service "confirmed" as caused by a degraded
+    // dependency with 0 follow-cause. With no dep-graph edge, the old guard (deps
+    // only) couldn't catch it. knownServices closes that gap.
+    const result = await runOrchestrator(
+      makeDeps({
+        dependencies: [], // no dependency graph available
+        incidentService: "agw-admin-ui",
+        knownServices: ["agw-admin-ui", "payment-service"],
+        evaluate: () => "satisfied",
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("agw-admin-ui unavailable due to degraded payment-service") },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          { type: "conclude", leading: 0, confidence: 0.95, rationale: "payment-service metric high" },
+          null,
+        ]),
+      }),
+    );
+    expect(result.outcome).toBe("exhausted"); // confirm blocked — payment-service never followed
+    expect(result.confirmed).toBeUndefined();
+    expect(result.trace.some((t) => t.move === "conclude" && /payment-service.*never followed-cause/.test(t.detail))).toBe(true);
+  });
+
+  it("does not block a confirm when a known service name is only a substring", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        dependencies: [],
+        incidentService: "checkout",
+        knownServices: ["pay"],
+        evaluate: () => "satisfied",
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("checkout payment queue backed up inside checkout") },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          { type: "conclude", leading: 0, confidence: 0.9, rationale: "local queue evidence" },
+        ]),
+      }),
+    );
+    expect(result.outcome).toBe("confirmed");
   });
 
   it("allows the confirm once the implicated dependency was followed", async () => {

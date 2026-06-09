@@ -744,6 +744,8 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       dependencies?: string[];
       /** The incident service itself (for the cross-service confirm guard). */
       incidentService?: string;
+      /** All known service names — the cross-service guard checks these too. */
+      knownServices?: string[];
       /** Interactive operator-pause hook (increment 5). Wired by the WS layer to
        *  the pause card; absent → the strike limit stops directly. PR-4: resolves
        *  to `{ decision, context? }` where `context` is the operator's free-text lead. */
@@ -801,6 +803,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       spawnSubagent,
       dependencies: opts?.dependencies,
       incidentService: opts?.incidentService,
+      knownServices: opts?.knownServices,
       onOperatorPause: opts?.onOperatorPause,
       signal: opts?.signal,
       onMoveBoundary: opts?.onMoveBoundary,

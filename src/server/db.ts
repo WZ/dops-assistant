@@ -634,6 +634,7 @@ export class Database {
         payload           TEXT NOT NULL,
         created_at        TEXT NOT NULL DEFAULT (datetime('now'))
       );
+      CREATE INDEX IF NOT EXISTS idx_investigation_events_created_at ON investigation_events (created_at);
       CREATE TABLE IF NOT EXISTS investigation_feedback (
         id                TEXT PRIMARY KEY,
         investigation_id  TEXT NOT NULL REFERENCES investigations(id),
@@ -2460,6 +2461,23 @@ export class Database {
     const result = this.db.prepare(
       `DELETE FROM events WHERE id IN (SELECT id FROM events WHERE ts < ? LIMIT 50000)`
     ).run(beforeMs);
+    return Number(result.changes);
+  }
+
+  /**
+   * Retention for the orchestrator replay log (`investigation_events`). PR-2 made
+   * deep runs durable by persisting every move; without a sweep this table grows
+   * unbounded once the orchestrator fires regularly (inc-7 GC). Prune by the
+   * event's own `created_at` (TEXT datetime), batch-capped like the events sweep.
+   * An old run's whole log ages out together; a live/recent run's events are kept
+   * (replay needs them — no run lasts the retention window).
+   */
+  purgeInvestigationEventsOlderThan(beforeMs: number): number {
+    const result = this.db.prepare(
+      `DELETE FROM investigation_events WHERE id IN (
+         SELECT id FROM investigation_events WHERE created_at < datetime(?, 'unixepoch') LIMIT 50000
+       )`
+    ).run(Math.floor(beforeMs / 1000));
     return Number(result.changes);
   }
 

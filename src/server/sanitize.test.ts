@@ -206,6 +206,18 @@ describe("ChatMessageSchema", () => {
     expect(result.success).toBe(false);
   });
 
+  it("preserves the `immediate` flag (Service-detail Investigate → skip the dispatch countdown)", () => {
+    // Regression: Zod drops unknown keys, so before adding `immediate` to the
+    // schema it was stripped here — the Investigate button's investigations still
+    // showed the confirm-dispatch timer in the Console instead of starting at once.
+    const result = ChatMessageSchema.safeParse({ type: "chat", message: "investigate payments-api", serviceContext: "payments-api", immediate: true });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.immediate).toBe(true);
+      expect(result.data.serviceContext).toBe("payments-api");
+    }
+  });
+
   it("rejects messages without a message field", () => {
     const result = ChatMessageSchema.safeParse({ type: "chat" });
     expect(result.success).toBe(false);

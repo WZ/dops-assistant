@@ -334,6 +334,9 @@ export interface RunAutonomousOrchestratorOptions {
   dependencies?: string[];
   /** The incident service itself (for the cross-service confirm guard). */
   incidentService?: string;
+  /** All known service names — the cross-service guard checks these too, so a
+   *  false-confirm blaming another service is caught even with an empty dep graph. */
+  knownServices?: string[];
   /** Interactive strike-limit hook (increment 5). Absent → the strike limit
    *  stops directly. Wired by the orchestrate adapter to the WS pause card. */
   onOperatorPause?: (
@@ -390,6 +393,7 @@ export async function runAutonomousOrchestrator(
     spawnSubagent: opts.spawnSubagent,
     dependencies: opts.dependencies,
     incidentService: opts.incidentService,
+    knownServices: opts.knownServices,
     onOperatorPause: opts.onOperatorPause,
     signal: opts.signal,
     onMoveBoundary: opts.onMoveBoundary,
