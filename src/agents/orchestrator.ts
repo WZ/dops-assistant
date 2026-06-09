@@ -61,7 +61,10 @@ export interface TrackedHypothesis {
 }
 
 export interface TraceEntry {
-  move: OrchestratorMove["type"];
+  // The move types, plus "decide" — a non-move trace entry recorded when the
+  // decide-move watchdog trips (a starved/hung brain), so the stall is visible in
+  // the stream instead of a silent gap.
+  move: OrchestratorMove["type"] | "decide";
   detail: string;
   verdict?: Verdict;
 }
@@ -338,7 +341,19 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
       operatorContext,
     };
 
-    const move = await deps.decideMove(state);
+    // Watchdog the brain too — not just evidence gathers. Under contention (the
+    // health-poller firing many concurrent auto-investigates), the decide-move LLM
+    // call can stall for minutes; an unbounded await here was the inc-7 "0 steps in
+    // 8 min" silent hang — the wall-clock guard can't fire while we're parked inside
+    // the await. A timeout records a visible step and loops back to the guards, so a
+    // starved run stops LOUDLY (repeated timeouts → stall → wall-clock) instead of
+    // hanging with no output.
+    const { timedOut: decideTimedOut, value: move } = await raceOp(deps.decideMove(state), deps.guards.opTimeoutMs, null);
+    if (decideTimedOut) {
+      record({ move: "decide", detail: "decide-move timed out (starved or hung) — re-checking guards" });
+      stall++;
+      continue;
+    }
     if (move === null) return finish("exhausted");
     moves++;
     tokensSpent += Math.max(0, estimate(move));

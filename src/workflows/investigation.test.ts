@@ -132,6 +132,18 @@ describe("createInvestigationWorkflow", () => {
     expect(workflow2.id).toBe("investigation");
   });
 
+  it("builds the quick template wired so synthesis gets a valid metrics-evidence shape (inc-7 regression)", () => {
+    // The quick template must feed synthesis via `.parallel([metricsStep])`, not
+    // `.then(metricsStep)` — otherwise synthesis' inputSchema (which requires the
+    // `metrics-evidence` key) fails validation and every quick run (incl. every
+    // orchestrator subagent, which uses "quick") degrades to an empty report.
+    // This was the "Step input validation failed ×11" no-go from the 2026-06-03
+    // Increment-7 batch; fixed in #232. Lock the template exists + commits.
+    const workflow = createInvestigationWorkflow({ model: fakeModel, providers: [], services: [] }, "quick");
+    expect(workflow.id).toBe("investigation-quick");
+    expect(workflow).toBeDefined();
+  });
+
   it("workflow is committed after creation", () => {
     const workflow = createInvestigationWorkflow({
       model: fakeModel,
