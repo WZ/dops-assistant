@@ -6,6 +6,13 @@ dops-assistant is an AI-powered DevOps assistant that connects to monitoring inf
 
 It exposes two interfaces — a web UI on port 3000 and a terminal CLI — both backed by Mastra agents and workflows. Investigations can be triggered four ways: operator chat, Alertmanager webhooks, a background health poller, or a cron-driven proactive scan. Multiple stacks (prod, staging, dev) can run side-by-side in one deployment, each with its own providers, services, and history.
 
+Two investigation modes sit on top of that stack:
+
+- **Investigation Pipeline** — the *automatic first responder*. A fixed, bounded 6-phase workflow that fires the moment an alert, scan, or health transition trips, turning a raw signal into an evidence-backed RCA report before anyone opens a dashboard. It runs on **every** trigger.
+- **Deep Investigation** — the operator-invoked *autonomous orchestrator*. An unbounded, read-only reason→act loop that hunts a single incident's *true* root cause across service boundaries when the bounded pass isn't enough. You reach for it by hand; it costs more and digs deeper.
+
+The pipeline gives you context-enriched alerts at scale; Deep Investigation gives you a tireless on-call detective for the hard ones. (Deep Investigation ships gated off — `agent.autonomousInvestigationEnabled`, default `false` — until live validation completes.)
+
 ![System Overview](img/system-overview.svg)
 
 ---
@@ -116,7 +123,7 @@ The `IntentRouter` (`src/agents/intent.ts`) classifies every chat message before
 
 ## Investigation Pipeline
 
-The investigation workflow (`src/workflows/investigation.ts`) is a 6-phase Mastra workflow. It is the core of the system.
+The investigation workflow (`src/workflows/investigation.ts`) is a fixed, 6-phase Mastra workflow — the **automatic first responder**. All four trigger sources converge on it (via `InvestigationRunner`), so an alert, scan hit, or health transition becomes an evidence-backed RCA report with zero human input. One pass, bounded cost, ~2–3 minutes.
 
 ![Investigation Flow](img/investigation-flow.svg)
 
@@ -184,15 +191,40 @@ Each agent gets only the tools relevant to its role. Providing all 50+ tools cau
 
 `InvestigationRunner` (`src/server/investigation-runner.ts`) is the headless executor that all four trigger sources converge on. It exposes a `run({ trigger, service, query, template, ... })` method with pluggable callbacks for progress events, terminal output, and completion. Webhook handler, health poller, scan probe, and the WebSocket message dispatcher all instantiate it the same way; the only difference is which callbacks they attach.
 
-The runner owns: workflow construction (template-aware), DB persistence (`investigations` + `investigation_phases` + `investigation_events`), event dispatch, error wrapping (`friendlyError()`), and graceful shutdown on cancellation.
+The runner owns: workflow construction (template-aware), DB persistence (`investigations` + `investigation_phases` + `investigation_events`), event dispatch, error wrapping (`friendlyError()`), and graceful shutdown on cancellation. Every model call is wrapped in `withLlmRetry` (exponential backoff + jitter); when a provider stays down, the runner fails the investigation with the actual reason instead of spinning. (Details: `src/agents/shared/llm-retry.ts`.)
 
-### LLM retry & graceful failure
+---
 
-Every model call is wrapped in `withLlmRetry` (`src/agents/shared/llm-retry.ts`) with exponential backoff and jitter. Transient failures (HTTP 408/409/429/5xx flagged retryable by the AI SDK, or connection-level errors like `ECONNREFUSED`/`ETIMEDOUT`) trigger retries up to `llm.retry.maxAttempts` (default 8). Permanent errors (4xx, schema errors, context-length issues) bypass retry. Tool errors are intentionally NOT classified as LLM outages — see `isLlmUnavailable` in `src/agents/shared/llm-errors.ts`.
+## Deep Investigation (Autonomous Orchestrator)
 
-When retries are exhausted, the wrapper throws `LlmUnavailableError` carrying the original cause. The runner's top-level catch persists `status: "failed"`, fires the `onFailed` callback with a friendly message, and emits `investigation:failed` over WS. Mastra absorbs step throws into `runResult.steps[].error`; `MastraInvestigationAdapter` (`src/server/agents.ts`) scans those and rethrows so the runner sees the error.
+Where the pipeline runs a fixed DAG once, **Deep Investigation** is an operator-invoked agent that decides its *next move* each turn and keeps going until it deterministically confirms a root cause or a safety guard stops it. It **wraps** the bounded pipeline rather than replacing it — it can spawn the `quick` template as a depth-1 subagent scoped to a sub-question, and follow the cause across service boundaries via the dependency graph.
 
-Tool-using agent paths (anomaly, evidence, planning, synthesis) gate retry behind `safeAgentRetryConfig(config.llmRetry, config.readOnlyTools)`. Retries only engage when `readOnlyTools: true` to avoid replaying write-capable tool calls. Read-only call sites (intent routing, discovery) keep the full retry budget.
+![Deep Investigation Flow](img/deep-investigation-flow.svg)
+
+It streams live in the Console as an interruptible **move-loop** — `hypothesize → query → test → (spawn-subagent / follow-cause) → conclude` — with a progress footer (moves · queries · subagents · depth · strikes · tokens · elapsed). Two depths from the single **Investigate deeply** menu:
+
+- **Challenge this RCA** — a fast re-judge of the causes the bounded pipeline ruled out.
+- **Full deep investigation** — the unbounded autonomous hunt.
+
+Two invariants define it:
+
+1. **Hybrid stop (the keystone).** The agent may *propose* `conclude`, but the loop only stops on a confirmed conclusion when the leading hypothesis is **deterministically corroborated** (`evaluatePrediction` → verdict `satisfied`). The LLM's self-reported confidence is recorded in the trace but never gates the stop — self-confidence can *direct* the search, never *end* it.
+2. **Safety harness.** Every other exit is a hard, config-tunable guard — token budget, tool-cap, wall-clock, consecutive rule-outs (strikes), stall detector, per-op watchdog, and an absolute move backstop. Hitting the strike limit is a first-class **operator-pause**: the agent hands an ambiguous call back to a human (continue / escalate / instrument-&-wait) rather than guessing.
+
+On a confirmed run it emits a **causal chain** (incident → followed dependencies → root cause, each with source attribution and a Grafana deep-link) and a one-line **trace summary**. Runs are durable: persisted as they stream, they survive a reload, reattach live across tabs, and auto-park when no one is watching. The operator can then **Apply to report** to write the confirmed cause back into the original RCA (operator-gated, server-authoritative, reversible).
+
+Cost is 3–10× a bounded investigation, so it ships **gated off** (`agent.autonomousInvestigationEnabled`, default `false`) until live validation completes.
+
+| Layer | File |
+|---|---|
+| Pure move-loop — guards, hybrid stop, watchdog, abort, cross-service guard | `src/agents/orchestrator.ts` |
+| LLM brain + runner — decide / gather / keystone / subagent / deps | `src/agents/orchestrator-llm.ts` |
+| Trace → stream, causal-chain assembly, trace summary | `src/agents/orchestrator-stream.ts` |
+| Run registry — cross-connection durability, park / reattach | `src/server/orchestrator-run-registry.ts` |
+| WebSocket wiring — pending-pause registry, abort-on-disconnect | `src/server/ws-handler.ts` |
+| Console UI — move stream, pause card, causal chain, trace summary | `src/web/components/OrchestratorStream.tsx` |
+
+**Full design reference:** [Autonomous Orchestrator — the Agentic Loop](orchestrator-agentic-loop.md) — the move-loop pseudocode, every guard default, the operator-pause sequence, and the false-confirm cross-service guard.
 
 ---
 
@@ -300,7 +332,7 @@ Two independent mechanisms cover two scenarios:
 
 **Static demo** (`VITE_DEMO_STATIC=true` build-time flag) — `src/web/lib/staticFetch.ts` intercepts all `/api/*` calls in the SPA and serves them from pre-baked JSON snapshots at `dist/web/api/*.json`. `scripts/export-static.ts` boots a seeded server briefly, walks every GET endpoint, and dumps the responses. The result is a fully server-less demo deployable to GitHub Pages with zero backend.
 
-Seed fixtures (15 services, 5 investigations, 2 scan runs, 2 patterns, 3 stub providers) live in `scripts/seed-demo.ts`.
+Seed fixtures (15 services, 5 investigations — one carrying a replayable Deep Investigation run, persisted as `orchestrator:*` events so the static demo hydrates it cold — 2 scan runs, 2 patterns, 3 stub providers) live in `scripts/seed-demo.ts`.
 
 ---
 
