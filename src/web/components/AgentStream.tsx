@@ -110,7 +110,7 @@ function MoveRow({ e }: { e: AgentStreamEvent }) {
 function LiveMoveIndicator({ move, elapsed }: { move: AgentStreamEvent | null; elapsed: number }) {
   return (
     <div className="flex flex-col gap-0.5 pt-1">
-      <div className="flex items-center gap-2 text-[12px]">
+      <div className="flex items-center gap-2 text-[13px]">
         <span className="w-2.5 h-2.5 rounded-full border-2 border-primary border-t-transparent animate-spin shrink-0" aria-hidden />
         <span className="text-foreground/90">{move?.verb ?? "thinking"}</span>
         <span
@@ -120,7 +120,7 @@ function LiveMoveIndicator({ move, elapsed }: { move: AgentStreamEvent | null; e
         <span className="ml-auto text-[10px] text-muted-foreground/60 tabular-nums">{elapsed}s</span>
       </div>
       {move?.target && (
-        <div className="pl-[18px] text-[10.5px] text-muted-foreground/70 truncate">
+        <div className="pl-[18px] text-[11px] text-muted-foreground/70 truncate">
           {move.targetKind === "query" ? "querying " : ""}
           <span className="text-primary/90">{move.target}</span>
         </div>
@@ -161,7 +161,7 @@ export function AgentStream({
     const settled = lastRunning ? events.slice(0, -1) : events;
     const currentMove = lastRunning ? events[events.length - 1] : null;
     return (
-      <div className="font-mono text-[12px] leading-[1.7]">
+      <div className="font-mono text-[13px] leading-[1.65]">
         {settled.map((e) => <MoveRow key={e.seq} e={e} />)}
         {running && <LiveMoveIndicator move={currentMove} elapsed={elapsed} />}
         {banner && !running && (
