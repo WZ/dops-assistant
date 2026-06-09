@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createStackFetch } from "../lib/createStackFetch";
 import { safeGetItem, safeSetItem } from "../lib/utils";
+import { isDemoActive } from "../components/DemoBanner";
 
 export type SetupStage = "needs-provider" | "needs-provider-connected" | "needs-discovery" | "complete";
 
@@ -75,6 +76,15 @@ export function useSetupStage(activeStackId: string): UseSetupStageResult {
 
   useEffect(() => {
     stackIdAtFetchRef.current = activeStackId;
+
+    // Read-only demo: there's no onboarding flow to run (the seeded stack is
+    // the showcase). Skip the provider/service probe entirely so the app never
+    // redirects to Settings or renders the empty "connect your stack" desk.
+    if (isDemoActive()) {
+      setStage("complete");
+      setLoading(false);
+      return;
+    }
 
     const completedAt = safeGetItem(COMPLETED_KEY_PREFIX + activeStackId);
     if (completedAt) {

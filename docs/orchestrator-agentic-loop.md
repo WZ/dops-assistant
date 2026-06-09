@@ -53,43 +53,11 @@ picks exactly one move from the read-only state. The loop checks the safety
 guards **before** spending the move, dispatches the move, records a trace entry,
 and repeats.
 
-```mermaid
-flowchart TD
-    start([start]) --> guards{guards OK?}
-    guards -- aborted --> oAbort([aborted])
-    guards -- tokens spent --> oBudget([budget-exhausted])
-    guards -- tool cap --> oTool([tool-cap])
-    guards -- wall-clock --> oWall([wall-clock])
-    guards -- strikes >= max --> pause{onOperatorPause<br/>wired?}
-    guards -- stalled --> oInc([inconclusive])
-    guards -- ok --> decide[decideMove state]
+![Deep Investigation move-loop](img/deep-investigation-flow.svg)
 
-    pause -- no, or continues spent --> oPause([operator-pause])
-    pause -- continue --> reset[strikes = 0] --> decide
-    pause -- escalate / wait --> oPause
-
-    decide -- null --> oExh([exhausted])
-    decide --> move{move type}
-
-    move -- hypothesize --> mH[track candidate cause<br/>+ checkable prediction]
-    move -- query --> mQ[gather read-only evidence<br/>watchdog-bounded]
-    move -- test --> mT[score vs evidence<br/>via keystone]
-    move -- spawn-subagent --> mS[depth-1 sub-investigation<br/>findings fold into evidence]
-    move -- follow-cause --> mF[sub-investigate a known<br/>dependency neighbor]
-    move -- conclude --> gate{leading hypothesis<br/>verdict == satisfied?}
-
-    mH --> guards
-    mQ --> guards
-    mS --> guards
-    mF --> guards
-    mT -- satisfied --> reset2[standing = confirmed<br/>strikes = 0] --> guards
-    mT -- contradicted / absent --> strike[standing = ruled-out<br/>strikes++] --> guards
-
-    gate -- no --> rej[record 'not confirmed'<br/>keep looking] --> guards
-    gate -- yes --> xguard{blames an un-followed<br/>dependency?}
-    xguard -- yes --> rej
-    xguard -- no --> oConf([confirmed])
-```
+Each iteration: check guards → `decideMove` picks one move → act → record a trace
+entry → repeat. A guard trip ends the run with its outcome; a `conclude` only ends
+it when the keystone agrees (and it isn't blaming an un-followed dependency).
 
 ### The loop in pseudocode
 
@@ -99,64 +67,30 @@ next move is spent**, and `conclude` only ends the run when the deterministic
 keystone agrees (DECISION 1) — self-reported confidence never does.
 
 ```text
-function runOrchestrator(deps):
-    state = { hypotheses: [], evidence: [], dependencies, followedServices: {} }
-    strikes = tokensSpent = toolCalls = moves = stall = operatorContinues = 0
+while moves < MAX_MOVES:                              # absolute backstop (1000)
+    # Guards (DECISION 2) — checked BEFORE spending a move
+    if aborted | tokens | toolCalls | wallClock | stall:  return finish(<reason>)
+    if strikes >= maxStrikes:                         # N causes ruled out
+        d = await onOperatorPause(state)              # inc-5 — BLOCKS on a human
+        if d == "continue" (capped):  strikes = 0; continue
+        return finish("operator-pause")
 
-    while moves < MAX_MOVES:                       # absolute backstop (1000)
+    move = await decideMove(state)                    # LLM in prod, scripted in tests
+    if move == null:  return finish("exhausted")
+    moves++
 
-        # ── 1. Safety harness (DECISION 2) — checked BEFORE spending a move ──
-        if deps.signal.aborted:        return finish("aborted")        # operator disconnected
-        if tokensSpent >= maxTokens:   return finish("budget-exhausted")
-        if toolCalls   >= maxToolCalls:return finish("tool-cap")
-        if elapsed()   >= wallClockMs: return finish("wall-clock")
-        if strikes     >= maxStrikes:                                  # N causes ruled out
-            if onOperatorPause and operatorContinues < MAX_OPERATOR_CONTINUES:
-                decision = await onOperatorPause(state)   # increment 5 — BLOCKS on a human
-                if decision == "continue":
-                    operatorContinues += 1
-                    strikes = 0
-                    continue                              # resume; other guards still bound it
-            return finish("operator-pause")               # escalate / wait / timeout / no hook
-        if stall >= MAX_STALL:         return finish("inconclusive")   # no progress (8)
+    switch move.type:
+        hypothesize:  add candidate cause + checkable prediction
+        query:        evidence += watchdog(gather(h)); toolCalls++
+        test:         v = evaluate(h.prediction, evidence)        # the keystone
+                      v=="satisfied" ? (h.confirmed; strikes=0) : (h.ruledOut; strikes++)
+        spawn|follow: evidence += watchdog(spawnSubagent(svc))    # follow: known dep only
+        conclude:     # DECISION 1 — hybrid stop
+                      if lead.confirmed and not blames-unfollowed-dep:
+                          return finish("confirmed", lead)
+                      else: stall++          # self-confidence is traced, never the gate
 
-        # ── 2. The agent's brain picks ONE move ──
-        move = await deps.decideMove(state)        # LLM in prod, scripted in tests
-        if move == null:               return finish("exhausted")
-        moves += 1
-        tokensSpent += estimateTokens(move)
-
-        # ── 3. Act on the move ──
-        switch move.type:
-            case "hypothesize":
-                hypotheses.add(move.hypothesis)                  # + a checkable prediction
-                stall = 0
-
-            case "query":
-                obs = watchdog(gatherEvidence(h), opTimeoutMs)   # read-only; bounded
-                evidence += obs;  toolCalls += 1
-                stall = obs.empty ? stall + 1 : 0
-
-            case "test":                                         # the keystone — deterministic
-                verdict = evaluate(h.prediction, evidence)
-                if verdict == "satisfied":  h.standing = "confirmed";  strikes = 0
-                else:                       h.standing = "ruled-out";  strikes += 1
-
-            case "spawn-subagent" | "follow-cause":              # follow-cause: known dep only
-                followedServices.add(move.service)
-                evidence += watchdog(spawnSubagent(move.service), opTimeoutMs)
-
-            case "conclude":                                     # DECISION 1 — hybrid stop
-                if lead.standing == "confirmed" and lead.lastVerdict == "satisfied":
-                    if lead names a dependency NOT in followedServices:   # inc-7 guard
-                        record("not confirmed — investigate that dep first");  stall += 1
-                    else:
-                        return finish("confirmed", lead)
-                else:
-                    # self-reported confidence is recorded for the trace, never the gate
-                    stall += 1
-
-    return finish("inconclusive")                  # hit the move backstop
+return finish("inconclusive")                         # hit the move backstop
 ```
 
 ### Moves
@@ -272,42 +206,9 @@ move log:
 The core is a **pure, fully-injected control loop** (deterministic given a
 deterministic `decideMove`) — unit-testable without an LLM or MCP. The real LLM
 brain, evidence gather, keystone, subagent dispatch, and WebSocket streaming are
-layered around it.
-
-```mermaid
-flowchart LR
-    subgraph UI["Web UI (React)"]
-        IP[InvestigationPane] --> OS[OrchestratorStream<br/>stream · pause card · causal chain]
-        IP -- orchestrator_investigate --> APP[App ws.send]
-        APP -- orchestrator_decision --> IP
-    end
-
-    subgraph SRV["Server"]
-        WS[ws-handler<br/>runOrchestratorStreamed<br/>+ pending-pause registry<br/>+ concurrency guard / abort]
-        AD[agents.ts · orchestrate<br/>spawnSubagent = quick investigation]
-    end
-
-    subgraph CORE["Agent core"]
-        LLM[orchestrator-llm.ts<br/>createLlmDecideMove<br/>runAutonomousOrchestrator]
-        LOOP[orchestrator.ts<br/>runOrchestrator — pure move-loop]
-        STREAM[orchestrator-stream.ts<br/>trace→stream · causal chain · trace summary]
-    end
-
-    subgraph SHARED["Reused building blocks"]
-        GATHER[createGatherEvidence<br/>read-only]
-        KEY[evaluatePrediction<br/>keystone]
-        DAG[runInvestigation<br/>fixed DAG = subagent]
-        DEP[inferDependencyGraph]
-    end
-
-    APP -. WebSocket .-> WS
-    WS --> AD --> LLM --> LOOP
-    LOOP --> STREAM --> WS --> OS
-    LLM --> GATHER
-    LOOP --> KEY
-    AD --> DAG
-    WS --> DEP
-```
+layered around it. Data flow: `App` ws.send → `ws-handler` → `agents.ts` →
+`orchestrator-llm` → the pure `orchestrator` loop → `orchestrator-stream` → back
+over WS to `OrchestratorStream`.
 
 | Layer | File | Responsibility |
 |---|---|---|
