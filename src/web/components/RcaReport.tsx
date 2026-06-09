@@ -133,7 +133,7 @@ export function RcaReport({ report, hideOldDashboardLinks }: { report: RcaReport
           </div>
         )}
         {report.summary && (
-          <p className="text-xs font-body text-muted-foreground leading-relaxed mt-2">
+          <p className="text-sm font-body text-muted-foreground leading-relaxed mt-2">
             {renderInline(report.summary)}
           </p>
         )}
@@ -160,17 +160,17 @@ export function RcaReport({ report, hideOldDashboardLinks }: { report: RcaReport
         <div className="space-y-4">
           <div>
             <SectionLabel color="text-primary">Root Cause</SectionLabel>
-            <p className={`text-[13px] font-body leading-relaxed ${confFrac != null && confFrac < 0.5 ? "text-foreground/50 italic" : "text-foreground/90"}`}>{renderInline(report.rootCause)}</p>
+            <p className={`text-sm font-body leading-relaxed ${confFrac != null && confFrac < 0.5 ? "text-foreground/50 italic" : "text-foreground/90"}`}>{renderInline(report.rootCause)}</p>
           </div>
 
           <div>
             <SectionLabel color="text-accent">Trigger</SectionLabel>
-            <p className="text-[13px] font-body text-foreground/85 leading-relaxed">{renderInline(report.trigger)}</p>
+            <p className="text-sm font-body text-foreground/85 leading-relaxed">{renderInline(report.trigger)}</p>
           </div>
 
           <div>
             <SectionLabel>Impact</SectionLabel>
-            <p className="text-[13px] font-body text-foreground/85 leading-relaxed">{renderInline(report.impact.description)}</p>
+            <p className="text-sm font-body text-foreground/85 leading-relaxed">{renderInline(report.impact.description)}</p>
             <span className="text-[10px] font-mono text-muted-foreground mt-1 inline-block">
               Duration: {report.impact.duration}
             </span>
@@ -184,7 +184,7 @@ export function RcaReport({ report, hideOldDashboardLinks }: { report: RcaReport
               {report.timeline.map((evt, i) => (
                 <div key={i} className="flex items-start gap-2.5 animate-fade-up" style={{ animationDelay: `${i * 0.04}s` }}>
                   <span className="text-[10px] font-mono text-primary/70 whitespace-nowrap mt-[3px]">{evt.time}</span>
-                  <span className="text-[13px] font-body text-foreground/75 leading-relaxed">{renderInline(evt.event)}</span>
+                  <span className="text-sm font-body text-foreground/75 leading-relaxed">{renderInline(evt.event)}</span>
                 </div>
               ))}
             </div>
@@ -196,7 +196,7 @@ export function RcaReport({ report, hideOldDashboardLinks }: { report: RcaReport
           <Section label="Contributing Factors" count={report.contributingFactors.length}>
             <ul className="space-y-1.5 ml-1">
               {report.contributingFactors.map((f, i) => (
-                <li key={i} className="flex items-start gap-2 text-[13px] font-body text-foreground/75 leading-relaxed">
+                <li key={i} className="flex items-start gap-2 text-sm font-body text-foreground/75 leading-relaxed">
                   <span className="text-accent mt-0.5 shrink-0">&bull;</span>
                   <span>{renderInline(stripLeadingNumber(f))}</span>
                 </li>
@@ -212,7 +212,7 @@ export function RcaReport({ report, hideOldDashboardLinks }: { report: RcaReport
           <Section label="Ruled Out" count={report.ruledOut.length}>
             <ul className="space-y-1.5 ml-1">
               {report.ruledOut.map((r, i) => (
-                <li key={i} className="flex items-start gap-2 text-[13px] font-body leading-relaxed">
+                <li key={i} className="flex items-start gap-2 text-sm font-body leading-relaxed">
                   <span className="text-destructive/70 mt-0.5 shrink-0 font-mono text-[11px]">&times;</span>
                   <span>
                     <span className="text-muted-foreground line-through decoration-muted-foreground/40">{renderInline(r.hypothesis)}</span>
@@ -265,7 +265,7 @@ export function RcaReport({ report, hideOldDashboardLinks }: { report: RcaReport
                   ? (r.flipped ? "worth another look — deeper evidence now points to it" : "still unlikely — deeper evidence still doesn't support it")
                   : (r.flipped ? "probably not the cause — the evidence that would confirm it isn't there" : "still the likely cause — deeper evidence backs it up");
                 return (
-                  <li key={i} className="flex items-start gap-2 text-[13px] font-body leading-relaxed">
+                  <li key={i} className="flex items-start gap-2 text-sm font-body leading-relaxed">
                     <span className={`mt-0.5 shrink-0 font-mono text-[11px] ${r.flipped ? "text-warning/80" : "text-muted-foreground/60"}`}>
                       {r.priorStanding === "ruled-out" ? (r.flipped ? "↑" : "·") : (r.flipped ? "⚠" : "✓")}
                     </span>
@@ -290,7 +290,7 @@ export function RcaReport({ report, hideOldDashboardLinks }: { report: RcaReport
               {report.recommendedActions.map((a, i) => (
                 <li
                   key={i}
-                  className="flex items-start gap-2 text-[13px] font-body text-foreground/85 leading-relaxed animate-fade-up"
+                  className="flex items-start gap-2 text-sm font-body text-foreground/85 leading-relaxed animate-fade-up"
                   style={{ animationDelay: `${i * 0.04}s` }}
                 >
                   <span className="text-[10px] font-mono text-primary/70 shrink-0 mt-[3px] tabular-nums">{i + 1}.</span>
