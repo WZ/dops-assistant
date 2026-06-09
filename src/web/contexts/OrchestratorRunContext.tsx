@@ -230,7 +230,12 @@ export function applyMessage(
     }
     case "orchestrator:operator_pause":
       if (!prev) return runs;
-      return set({ ...prev, pause: { strikes: msg.strikes, hypothesesTried: msg.hypothesesTried }, decisionSubmitted: false });
+      return set({
+        ...prev,
+        pause: { strikes: msg.strikes, hypothesesTried: msg.hypothesesTried },
+        decisionSubmitted: false,
+        error: null,
+      });
     // PR-2c reattach: a one-shot catch-up. Reconstruct the run from the replayed
     // history and mark it LIVE (not hydrated/interrupted, not parked); subsequent
     // live steps dedup against lastSeq. Race-safe: if we already hold a live run
@@ -269,6 +274,7 @@ export function applyMessage(
       return set({
         ...prev,
         running: false,
+        error: null,
         pause: null,
         decisionSubmitted: false,
         orchStats: msg.stats,

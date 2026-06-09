@@ -55,6 +55,23 @@ describe("applyMessage — reducer transitions", () => {
     expect(m.get(ID)).toMatchObject({ running: false, error: "boom", pause: null });
   });
 
+  it("keeps duplicate-launch errors transient and clears them on pause or completion", () => {
+    let m = applyMessage(empty(), { type: "orchestrator:started", investigationId: ID });
+    m = applyMessage(m, { type: "orchestrator:error", investigationId: ID, message: "Already running for this report." });
+    expect(m.get(ID)).toMatchObject({ running: true, error: "Already running for this report." });
+
+    const paused = applyMessage(m, { type: "orchestrator:operator_pause", investigationId: ID, strikes: 3, hypothesesTried: ["a"] });
+    expect(paused.get(ID)).toMatchObject({ running: true, error: null, pause: { strikes: 3, hypothesesTried: ["a"] } });
+
+    m = applyMessage(m, {
+      type: "orchestrator:complete",
+      investigationId: ID,
+      outcome: "confirmed",
+      stats: { moves: 1, toolCalls: 1, subagents: 0, tokensSpent: 50, strikes: 0, depth: 1, durationMs: 1000 },
+    });
+    expect(m.get(ID)).toMatchObject({ running: false, error: null, outcome: "confirmed" });
+  });
+
   it("deep-mode: started → step → complete carries the report + stats", () => {
     let m = applyMessage(empty(), { type: "deep_mode:started", investigationId: ID });
     expect(m.get(ID)).toMatchObject({ kind: "deep-mode", running: true });
