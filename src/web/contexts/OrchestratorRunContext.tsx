@@ -114,8 +114,9 @@ interface OrchestratorRunContextValue {
   readonly runs: ReadonlyMap<string, DeepRunState>;
   /** Convenience accessor (identical to `runs.get(id)`). */
   getRun: (investigationId: string) => DeepRunState | undefined;
-  /** Kick a run: "challenge" → deep_mode_investigate, "full" → orchestrator_investigate. */
-  start: (investigationId: string, scope: DeepRunScope) => void;
+  /** Kick a run: "challenge" → deep_mode_investigate, "full" → orchestrator_investigate.
+   *  `lead` (Full only): an optional operator hunch that seeds the run (Follow a lead). */
+  start: (investigationId: string, scope: DeepRunScope, lead?: string) => void;
   /** Send a strike-limit pause decision. No-ops if one was already submitted (D7). */
   decide: (investigationId: string, decision: OperatorDecision, context?: string) => void;
   /** Stop an in-flight run (server aborts it → outcome "aborted"). */
@@ -361,11 +362,12 @@ export function OrchestratorRunProvider({
   }, [wsMessages]);
 
   const start = useCallback(
-    (investigationId: string, scope: DeepRunScope) => {
+    (investigationId: string, scope: DeepRunScope, lead?: string) => {
+      const trimmed = lead?.trim();
       wsSend(
         scope === "challenge"
           ? { type: "deep_mode_investigate", investigationId }
-          : { type: "orchestrator_investigate", investigationId },
+          : { type: "orchestrator_investigate", investigationId, ...(trimmed ? { lead: trimmed } : {}) },
       );
     },
     [wsSend],

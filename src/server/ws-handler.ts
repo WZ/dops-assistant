@@ -545,7 +545,7 @@ async function handleDeepModeInvestigate(
  * is hidden client-side; this rejects any direct message when disabled.
  */
 async function handleOrchestratorInvestigate(
-  msg: { type: "orchestrator_investigate"; investigationId: string },
+  msg: { type: "orchestrator_investigate"; investigationId: string; lead?: string },
   send: (m: ServerMessage) => void,
   deps: WsDeps,
   stackId: string,
@@ -590,6 +590,9 @@ async function handleOrchestratorInvestigate(
   }
   const focus = investigation.query?.trim() || report?.summary || `investigate ${investigation.service}`;
   const timeRange = report?.timeRange;
+  // Follow a lead: an optional operator hunch seeds the run. Trim + cap it (it
+  // rides into the LLM prompt, so bound the length); empty → a blind hunt.
+  const lead = typeof msg.lead === "string" ? msg.lead.trim().slice(0, 500) || undefined : undefined;
 
   // Resolve the incident service's dependency-graph neighbors (both directions)
   // so the agent can follow-cause into them. Empty when there's no usable graph
@@ -638,7 +641,7 @@ async function handleOrchestratorInvestigate(
       await runOrchestratorStreamed(
         msg.investigationId,
         focus,
-        { timeRange, ctx: { incidentTime: timeRange?.from }, dependencies, incidentService: investigation.service, signal: abort.signal },
+        { timeRange, ctx: { incidentTime: timeRange?.from }, dependencies, incidentService: investigation.service, signal: abort.signal, lead },
         agents.orchestrate,
         persistingSend,
         registry,
@@ -900,7 +903,7 @@ async function handleOrchestratorAccept(
 async function runOrchestratorStreamed(
   investigationId: string,
   focus: string,
-  opts: { timeRange?: { from: string; to: string }; ctx?: { incidentTime?: string }; dependencies?: string[]; incidentService?: string; signal?: AbortSignal },
+  opts: { timeRange?: { from: string; to: string }; ctx?: { incidentTime?: string }; dependencies?: string[]; incidentService?: string; signal?: AbortSignal; lead?: string },
   orchestrate: StackAgents["orchestrate"],
   send: (m: ServerMessage) => void,
   registry: OrchestratorRunRegistry,
@@ -915,6 +918,7 @@ async function runOrchestratorStreamed(
       dependencies: opts.dependencies,
       incidentService: opts.incidentService,
       signal: opts.signal,
+      lead: opts.lead,
       onStep: (ev) => send({ type: "orchestrator:step", investigationId, event: { ...ev, seq: seq++ } }),
       // Auto-park (PR-2c): if the watchdog flagged this run as viewerless, block
       // here until a client reattaches (or aborts). Emits a persisted

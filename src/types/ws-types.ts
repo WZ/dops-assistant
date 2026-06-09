@@ -17,7 +17,10 @@ export type ClientMessage =
   // Autonomous orchestrator (Approach D): run the unbounded read-only move-loop
   // seeded from a completed investigation's context. Heavier opt-in than deep
   // mode; gated behind config.agent.autonomousInvestigationEnabled.
-  | { type: "orchestrator_investigate"; investigationId: string }
+  // `lead` (Follow a lead): an OPTIONAL operator hunch that seeds the run — folded
+  // in as the agent's standing guidance from move 1 (reuses PR-4's operatorContext
+  // path). Absent → a blind hunt, exactly as before.
+  | { type: "orchestrator_investigate"; investigationId: string; lead?: string }
   // Operator's reply to an `orchestrator:operator_pause` prompt (increment 5):
   // "continue" resets strikes and resumes the move-loop; "escalate"/"wait" stop
   // it with that disposition. Matched to the paused run by investigationId.

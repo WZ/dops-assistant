@@ -340,6 +340,8 @@ export interface RunAutonomousOrchestratorOptions {
   signal?: AbortSignal;
   /** Move-boundary hook (PR-2c) — the WS layer parks a viewerless run here. */
   onMoveBoundary?: () => Promise<void> | void;
+  /** Follow a lead: an optional operator hunch that seeds the run from move 1. */
+  initialLead?: string;
 }
 
 /**
@@ -388,6 +390,7 @@ export async function runAutonomousOrchestrator(
     onOperatorPause: opts.onOperatorPause,
     signal: opts.signal,
     onMoveBoundary: opts.onMoveBoundary,
+    initialLead: opts.initialLead,
     guards: opts.guards,
     onStep: opts.onStep,
     // Drain tokens accrued (decide + query) since the previous move.

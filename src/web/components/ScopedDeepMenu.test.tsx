@@ -95,7 +95,7 @@ describe("ScopedDeepMenu", () => {
     openMenu();
     fireEvent.click(screen.getByRole("menuitem", { name: /Full deep investigation/i }));
     // countdown shows, nothing dispatched yet
-    expect(screen.getByText(/Starting Full Deep Investigation in 3/)).toBeTruthy();
+    expect(screen.getByText(/Starting deep investigation in 3/)).toBeTruthy();
     expect(send).not.toHaveBeenCalled();
     // Step each tick with an effect-flush between, so the chained setTimeout
     // (3→2→1→0) re-arms and the zero-render dispatches.
@@ -117,6 +117,33 @@ describe("ScopedDeepMenu", () => {
     }
     // The run launches via the registry's start → orchestrator_investigate, and
     // now renders inline in the Console; there is no auto-nav side channel.
+    expect(send).toHaveBeenCalledWith({ type: "orchestrator_investigate", investigationId: ID });
+  });
+
+  it("Follow a lead: + add a lead → type → Go dispatches a SEEDED orchestrator run", async () => {
+    vi.useFakeTimers();
+    const send = vi.fn();
+    renderMenu({ send });
+    openMenu();
+    // The lead box is collapsed by default — open it via the opt-in affordance.
+    fireEvent.click(screen.getByRole("menuitem", { name: /add a lead/i }));
+    const ta = screen.getByRole("textbox", { name: /lead to seed/i });
+    fireEvent.change(ta, { target: { value: "  check the connection pool  " } });
+    fireEvent.click(screen.getByRole("button", { name: /Go/ }));
+    for (let i = 0; i < 4; i++) { await act(async () => { await vi.advanceTimersByTimeAsync(900); }); }
+    // dispatched with the trimmed lead attached
+    expect(send).toHaveBeenCalledWith({ type: "orchestrator_investigate", investigationId: ID, lead: "check the connection pool" });
+  });
+
+  it("Follow a lead: an empty lead box dispatches a blind Full run (no lead field)", async () => {
+    vi.useFakeTimers();
+    const send = vi.fn();
+    renderMenu({ send });
+    openMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: /add a lead/i }));
+    // leave the textarea empty → Go
+    fireEvent.click(screen.getByRole("button", { name: /Go/ }));
+    for (let i = 0; i < 4; i++) { await act(async () => { await vi.advanceTimersByTimeAsync(900); }); }
     expect(send).toHaveBeenCalledWith({ type: "orchestrator_investigate", investigationId: ID });
   });
 
@@ -146,13 +173,13 @@ describe("ScopedDeepMenu", () => {
     const { rerender } = render(<ScopedDeepMenu investigationId={ID} canChallenge />, { wrapper });
     fireEvent.pointerDown(screen.getByRole("button", { name: /Investigate deeply/i }));
     fireEvent.click(screen.getByRole("menuitem", { name: /Full deep investigation/i }));
-    expect(screen.getByText(/Starting Full Deep Investigation/)).toBeTruthy();
+    expect(screen.getByText(/Starting deep investigation/)).toBeTruthy();
     // The server reports a run already started (e.g. from the legacy button).
     act(() => {
       ref.current = [...ref.current, { type: "orchestrator:started", investigationId: ID }];
       rerender(<ScopedDeepMenu investigationId={ID} canChallenge />);
     });
-    expect(screen.queryByText(/Starting Full Deep Investigation/)).toBeNull(); // countdown aborted
+    expect(screen.queryByText(/Starting deep investigation/)).toBeNull(); // countdown aborted
     act(() => { vi.advanceTimersByTime(900 * 4); });
     expect(send).not.toHaveBeenCalledWith({ type: "orchestrator_investigate", investigationId: ID });
   });

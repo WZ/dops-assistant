@@ -39,8 +39,13 @@ export function ScopedDeepMenu({
   const run = useOrchestratorRun(investigationId);
   // null = idle; a number = a Full run is in its confirm-dispatch countdown.
   const [countdown, setCountdown] = useState<number | null>(null);
+  // Follow a lead: the optional hunch box. Progressive disclosure — collapsed until
+  // the operator clicks "+ add a lead", so the blind-Full path is never interrupted.
+  // An empty lead dispatches exactly today's blind Full run.
+  const [leadOpen, setLeadOpen] = useState(false);
+  const [lead, setLead] = useState("");
 
-  // Tick the countdown; at zero, dispatch the Full run.
+  // Tick the countdown; at zero, dispatch the Full run (seeded if a lead was typed).
   useEffect(() => {
     if (countdown === null) return;
     // A live run started elsewhere while we were counting down — abort so we
@@ -54,12 +59,14 @@ export function ScopedDeepMenu({
       setCountdown(null);
       // The Full run streams in the Console (InlineRunRegion) — the single home
       // for a deep run (PR-6). No navigation; the operator stays on the report.
-      start(investigationId, "full");
+      // `lead` is "" for a direct Full click → a blind hunt.
+      start(investigationId, "full", lead);
+      setLead("");
       return;
     }
     const t = setTimeout(() => setCountdown((c) => (c === null ? null : c - 1)), 900);
     return () => clearTimeout(t);
-  }, [countdown, investigationId, start, run?.running]);
+  }, [countdown, investigationId, start, run?.running, lead]);
 
   const deepEnabled = typeof window !== "undefined" && !!window.__CHALLENGE__ && canChallenge;
   const fullEnabled = typeof window !== "undefined" && !!window.__AUTONOMOUS__;
@@ -79,8 +86,8 @@ export function ScopedDeepMenu({
         role="status"
         aria-live="polite"
       >
-        <span className="text-accent/90">Starting Full Deep Investigation in {countdown}…</span>
-        <span className="text-muted-foreground/60">~3–8min · $$$</span>
+        <span className="text-accent/90">Starting deep investigation in {countdown}…</span>
+        <span className="text-muted-foreground/60">{lead.trim() ? "~1–4min · $$" : "~3–8min · $$$"}</span>
         <button
           type="button"
           onClick={() => setCountdown(null)}
@@ -89,6 +96,50 @@ export function ScopedDeepMenu({
         >
           <X size={10} className="!size-auto" /> cancel
         </button>
+      </div>
+    );
+  }
+
+  // Lead-input mode (Follow a lead) — replaces the trigger, like the countdown.
+  // The textarea lives OUTSIDE the Radix menu (menus don't host text inputs well):
+  // clicking "+ add a lead" closes the menu and opens this, then Go starts the
+  // (seeded) countdown.
+  if (leadOpen) {
+    return (
+      <div
+        className="inline-flex flex-col gap-1.5 py-2 px-2.5 rounded-lg border border-primary/40 bg-primary/[0.06] w-[300px]"
+        role="group"
+        aria-label="Add a lead, then start the deep investigation"
+      >
+        <span className="font-mono text-[9px] uppercase tracking-[0.1em] text-primary/70">Follow a lead — your hunch seeds the run</span>
+        <textarea
+          autoFocus
+          value={lead}
+          onChange={(e) => setLead(e.target.value)}
+          rows={2}
+          aria-label="Lead to seed the deep investigation"
+          placeholder="e.g. check the connection pool — or: started right after the 14:00 deploy"
+          className="w-full rounded-md border border-border/60 bg-background/60 px-2 py-1.5 text-[11.5px] font-sans resize-y focus:outline-none focus:border-primary/50"
+        />
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            disabled={offline}
+            onClick={() => { setLeadOpen(false); setCountdown(COUNTDOWN_FROM); }}
+            className="font-mono text-[10px] px-3 py-1 rounded-md border border-primary/50 bg-primary/10 text-primary hover:bg-primary/15 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            ▸ Go
+          </button>
+          <span className="font-mono text-[9.5px] text-warning/80">{lead.trim() ? "~1–4min · $$ · warm start" : "~3–8min · $$$ · blind hunt"}</span>
+          <button
+            type="button"
+            onClick={() => { setLeadOpen(false); setLead(""); }}
+            className="ml-auto font-mono text-[9.5px] inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
+            aria-label="Cancel"
+          >
+            <X size={10} className="!size-auto" /> cancel
+          </button>
+        </div>
       </div>
     );
   }
@@ -123,20 +174,33 @@ export function ScopedDeepMenu({
           </DropdownMenuItem>
         )}
         {fullEnabled && (
-          <DropdownMenuItem
-            disabled={running || offline}
-            onClick={() => setCountdown(COUNTDOWN_FROM)}
-            className="flex flex-col items-start gap-0.5 py-2"
-          >
-            <span className="text-[12.5px] font-sans font-semibold text-foreground">Full deep investigation</span>
-            <span className="text-[11px] text-muted-foreground">
-              {offline ? "Unavailable while reconnecting" : "Autonomous hunt for the real cause across dependencies"}
-            </span>
-            <span className="flex gap-2 font-mono text-[9.5px] mt-0.5">
-              <span className="text-warning">~3–8min · $$$</span>
-              <span className="text-warning/80">ends if you leave</span>
-            </span>
-          </DropdownMenuItem>
+          <>
+            <DropdownMenuItem
+              disabled={running || offline}
+              onClick={() => setCountdown(COUNTDOWN_FROM)}
+              className="flex flex-col items-start gap-0.5 py-2"
+            >
+              <span className="text-[12.5px] font-sans font-semibold text-foreground">Full deep investigation</span>
+              <span className="text-[11px] text-muted-foreground">
+                {offline ? "Unavailable while reconnecting" : "Autonomous hunt for the real cause across dependencies"}
+              </span>
+              <span className="flex gap-2 font-mono text-[9.5px] mt-0.5">
+                <span className="text-warning">~3–8min · $$$</span>
+                <span className="text-warning/80">ends if you leave</span>
+              </span>
+            </DropdownMenuItem>
+            {/* Follow a lead — opt-in refinement. Collapsed link; clicking it closes
+                the menu and opens the lead-input pill. Clicking Full above just runs
+                a blind hunt as before, so this never interrupts the no-lead path. */}
+            <DropdownMenuItem
+              disabled={running}
+              onClick={() => setLeadOpen(true)}
+              className="flex items-center gap-1.5 py-1.5 -mt-0.5"
+            >
+              <span className="font-mono text-[10px] text-primary/85">+ add a lead</span>
+              <span className="font-mono text-[9.5px] text-muted-foreground/55">optional — start from a hunch</span>
+            </DropdownMenuItem>
+          </>
         )}
       </DropdownMenuContent>
     </DropdownMenu>

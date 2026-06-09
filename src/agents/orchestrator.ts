@@ -157,6 +157,13 @@ export interface OrchestratorDeps {
   onOperatorPause?: (
     state: OrchestratorState,
   ) => Promise<{ decision: "continue" | "escalate" | "wait"; context?: string }>;
+  /**
+   * Follow a lead: an OPTIONAL operator hunch supplied at launch. Seeds the run's
+   * standing guidance (`operatorContext`) from move 1, so `decideMove` opens against
+   * the lead instead of a cold hypothesis. Same standing-until-replaced semantics as
+   * a pause lead (PR-4) — a later pause lead replaces it. Absent → a blind hunt.
+   */
+  initialLead?: string;
   guards: OrchestratorGuards;
   /**
    * Abort the run cooperatively (checked at the top of each move). The WS layer
@@ -265,7 +272,9 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
   // PR-4: the operator's standing lead from a continue-with-context resume. Set
   // when a pause resolves with one, kept across moves until a later pause replaces
   // it (D1 standing-until-replaced). Rendered into each decide-move prompt.
-  let operatorContext: string | undefined;
+  // Follow a lead: seeded here from the launch-time lead so the run opens against
+  // the operator's hunch (a trimmed-empty lead is treated as absent → blind hunt).
+  let operatorContext: string | undefined = deps.initialLead?.trim() || undefined;
 
   const record = (entry: TraceEntry): void => {
     trace.push(entry);
