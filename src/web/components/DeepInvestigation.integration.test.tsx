@@ -67,7 +67,7 @@ describe("Deep Investigation — investigation→Console flow (T9)", () => {
     // 2. Server streams it → the inline region shows the running run.
     emit({ type: "orchestrator:started", investigationId: ID });
     emit({ type: "orchestrator:step", investigationId: ID, event: step(0, "impala-statestore") });
-    expect(screen.getByText(/Deep Investigation · impala/)).toBeTruthy();
+    expect(screen.getByText("Deep Investigation")).toBeTruthy(); // band stamp (inline redesign)
     expect(screen.getByRole("button", { name: /stop the deep investigation/i })).toBeTruthy();
 
     // 3. Pause → region pause bar + a notification toast.
@@ -91,9 +91,8 @@ describe("Deep Investigation — investigation→Console flow (T9)", () => {
       causalChain: [{ label: "impala", kind: "incident" }, { label: "root cause: statestore pool starvation", kind: "root-cause" }],
       traceSummary: "6 moves · confirmed at depth 1",
     });
-    // LIVE LOG is the default view (PR-6) — the conclusion lives in RESULT.
-    expect(screen.getByText(/Root cause confirmed/i)).toBeTruthy(); // completion toast (view-independent)
-    fireEvent.click(screen.getByRole("button", { name: "RESULT" }));
+    // The conclusion renders inline once confirmed (no RESULT toggle — redesign).
+    expect(screen.getByText(/Root cause confirmed/i)).toBeTruthy(); // completion toast
     expect(screen.getByText("statestore pool starvation")).toBeTruthy();
 
     // 6. Navigate away from the Console (unmount the region), then back — the run
@@ -101,8 +100,7 @@ describe("Deep Investigation — investigation→Console flow (T9)", () => {
     act(() => { showRegion = false; sync(); });
     expect(screen.queryByText("statestore pool starvation")).toBeNull();
     act(() => { showRegion = true; sync(); });
-    // Remount resets the view to the LIVE LOG default — click RESULT for the conclusion.
-    fireEvent.click(screen.getByRole("button", { name: "RESULT" }));
+    // Conclusion is back inline (the run lives in the registry, not the component).
     expect(screen.getByText("statestore pool starvation")).toBeTruthy();
   });
 });

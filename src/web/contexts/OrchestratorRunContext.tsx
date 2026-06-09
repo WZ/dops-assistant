@@ -224,12 +224,18 @@ export function applyMessage(
         pause: null,
         decisionSubmitted: false,
         parked: false,
+        error: null, // a new move means the run is progressing — clear any transient error
         lastSeq: typeof seq === "number" ? seq : prev.lastSeq,
       });
     }
     case "orchestrator:operator_pause":
       if (!prev) return runs;
-      return set({ ...prev, pause: { strikes: msg.strikes, hypothesesTried: msg.hypothesesTried }, decisionSubmitted: false });
+      return set({
+        ...prev,
+        pause: { strikes: msg.strikes, hypothesesTried: msg.hypothesesTried },
+        decisionSubmitted: false,
+        error: null,
+      });
     // PR-2c reattach: a one-shot catch-up. Reconstruct the run from the replayed
     // history and mark it LIVE (not hydrated/interrupted, not parked); subsequent
     // live steps dedup against lastSeq. Race-safe: if we already hold a live run
@@ -268,6 +274,7 @@ export function applyMessage(
       return set({
         ...prev,
         running: false,
+        error: null,
         pause: null,
         decisionSubmitted: false,
         orchStats: msg.stats,
@@ -275,9 +282,15 @@ export function applyMessage(
         causalChain: msg.causalChain,
         traceSummary: msg.traceSummary,
       });
-    case "orchestrator:error":
+    case "orchestrator:error": {
       if (!prev) return runs;
-      return set({ ...prev, running: false, pause: null, error: typeof msg.message === "string" ? msg.message : "The orchestrator hit an error." });
+      const message = typeof msg.message === "string" ? msg.message : "The orchestrator hit an error.";
+      // A duplicate-launch rejection ("already running for this report") must NOT
+      // kill the live run — surface the message as a transient notice but keep the
+      // run running; it clears on the next streamed step.
+      if (/already running/i.test(message) && prev.running) return set({ ...prev, error: message });
+      return set({ ...prev, running: false, pause: null, error: message });
+    }
 
     // PR-6b: report re-synthesis is in flight after an apply.
     case "orchestrator:refining":

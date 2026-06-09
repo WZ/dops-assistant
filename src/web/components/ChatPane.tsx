@@ -13,6 +13,8 @@ import { MetricChart, type TimeSeriesData } from "./MetricChart";
 import { useStackContext } from "../contexts/StackContext";
 import { InlineRunRegion } from "./InlineRunRegion";
 import { ScopedDeepMenu } from "./ScopedDeepMenu";
+import { ThinkingIndicator } from "./AgentStream";
+import { useOrchestratorRun } from "../contexts/OrchestratorRunContext";
 import { safeGetItem, safeSetItem } from "../lib/utils";
 import { ConfirmActionDialog } from "./ConfirmActionDialog";
 import type { useWebSocket } from "../hooks/useWebSocket";
@@ -70,6 +72,12 @@ const DEEP_DIVE_PROMPTS = [
 ];
 
 const LAST_VISITED_KEY = "consoleFeed:lastVisitedAt";
+
+// Deep run band placement, keyed by `${investigationId}:${startedAt}`. Module-level
+// (not component state) so the band's launch position survives the Console pane
+// unmounting and remounting (navigate away + back), instead of re-snapping to the
+// bottom and pushing post-run chat above it.
+const deepBandAnchors = new Map<string, number>();
 
 /** Convert ChartSeries (wire format) to TimeSeriesData (component prop) */
 function toTimeSeries(c: ChartSeries): TimeSeriesData {
@@ -212,6 +220,11 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
   // viewport without follow-up scroll updates.
   const streamingContentLen = streamingMessage?.content.length ?? 0;
   const streamingReasoningLen = streamingMessage?.reasoning.length ?? 0;
+  // Read the active deep run up here so its streaming move-log growth feeds the
+  // auto-scroll deps below. The inline band lives in the stream but updates via the
+  // run registry (not the message arrays), so without these deps the Console
+  // wouldn't follow the deep investigation as moves arrive (QA: no auto-scroll).
+  const activeRun = useOrchestratorRun(activeInvestigationId);
   const scrollRef = useAutoScroll([
     chatMessages,
     deepMessages,
@@ -224,6 +237,10 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
     // appears we want the same scroll-to-bottom behavior as a new message,
     // so the [Cancel] pill is reachable without scrolling.
     pendingConfirm?.id,
+    // Deep run progress — the inline band grows as moves stream in.
+    activeRun?.steps.length,
+    activeRun?.running,
+    activeRun?.refining,
   ]);
   const processedCount = useRef(0);
   const historyLoaded = useRef(false);
@@ -235,6 +252,10 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
   const isDeepMode = !!activeInvestigationId;
   const messages = isDeepMode ? deepMessages : chatMessages;
   const isLoading = isDeepMode ? deepLoading : chatLoading;
+  // While a deep run is live, the shortcut row is dimmed + inert (not hidden) —
+  // no composer reflow, and it doubles as a busy cue alongside the run's shimmer.
+  // (activeRun is read above, for the auto-scroll deps.)
+  const chipsBusy = deepLoading || !!activeRun?.running;
 
   // First-load migration toast: show once to teach the new chat-default + /investigate UX
   useEffect(() => {
@@ -656,6 +677,31 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
     let lastDateKey = "";
     let unreadInserted = false;
 
+    // Deep run band placement. A LIVE run (started this session) is anchored after
+    // the messages that existed when it launched, so it queues at the bottom on
+    // start and later chat sorts below it (it never jumps to the top). A hydrated
+    // / cold-loaded run can't reconstruct that split, so it renders at the bottom
+    // (its "latest result" slot). Anchor captured once per run, timestamp-free.
+    const hasRun = isDeepMode && activeRun?.startedAt != null;
+    const liveRun = hasRun && !activeRun?.hydrated;
+    const runKey = liveRun ? `${activeInvestigationId}:${activeRun?.startedAt}` : null;
+    if (runKey && !deepBandAnchors.has(runKey)) {
+      deepBandAnchors.set(runKey, messages.length);
+    }
+    const bandEl = hasRun ? (
+      <InlineRunRegion key="deep-run-band" investigationId={activeInvestigationId} service={serviceContext} />
+    ) : null;
+    // Clamp to the current message count so a stale anchor (e.g. after a reload
+    // returned fewer messages) can't place the band past the end and sandwich a
+    // just-sent follow-up above it.
+    const bandAfter = Math.min(
+      runKey != null && deepBandAnchors.has(runKey) ? deepBandAnchors.get(runKey)! : messages.length,
+      messages.length,
+    );
+    let bandPushed = false;
+    const pushBand = () => { if (bandEl && !bandPushed) { elements.push(bandEl); bandPushed = true; } };
+    if (bandAfter <= 0) pushBand();
+
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i]!;
 
@@ -678,30 +724,31 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
         <div
           key={msg.id || i}
           className={`animate-fade-up group/msg flex ${
-            msg.role === "user" ? "justify-end" :
-            msg.role === "system" ? "justify-center" :
-            "justify-start"
+            msg.role === "system" ? "justify-center" : "justify-start"
           }`}
           style={{ animationDelay: `${Math.min(i * 0.02, 0.1)}s` }}
         >
           {msg.role === "user" ? (
-            <div className="max-w-[85%] flex flex-col items-end gap-0.5">
-              <div className="flex items-center gap-1.5">
+            // Claude-Code style: the user's turn is a full-width highlighted block
+            // (a tinted background + a left accent rail), not a right-aligned bubble
+            // — so it reads in one column with the responses below it.
+            <div className="w-full flex flex-col gap-0.5">
+              <div className="flex items-start gap-1.5">
+                <div className={`flex-1 rounded-md px-3.5 py-2 text-[13px] font-body whitespace-pre-wrap text-foreground/90 border-l-2 ${isDeepMode ? "bg-accent/8 border-accent/50" : "bg-primary/8 border-primary/50"}`}>
+                  {msg.content}
+                </div>
                 {msg.id && (
                   <button
                     onClick={() => handleDeleteMessage(msg.id!)}
-                    className="opacity-0 group-hover/msg:opacity-100 transition-opacity p-1 rounded text-muted-foreground hover:text-destructive"
+                    className="opacity-0 group-hover/msg:opacity-100 transition-opacity p-1 rounded text-muted-foreground hover:text-destructive shrink-0"
                     aria-label="Delete message"
                   >
                     <Trash2 size={12} className="!size-auto" />
                   </button>
                 )}
-                <div className={`px-3.5 py-2 rounded-xl rounded-br-sm text-sm font-body whitespace-pre-wrap ${isDeepMode ? "bg-accent/12 border border-accent/20 text-foreground/85" : "bg-primary/12 border border-primary/20 text-foreground/85"}`}>
-                  {msg.content}
-                </div>
               </div>
               {msg.createdAt && (
-                <span className="font-mono text-[10px] text-muted-foreground/50 mr-1">
+                <span className="font-mono text-[10px] text-muted-foreground/50 pl-3.5">
                   {formatTime(msg.createdAt)}
                 </span>
               )}
@@ -783,7 +830,15 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
               );
             })()
           ) : (
-            <div className="max-w-[85%] space-y-2">
+            <div className="w-full space-y-2">
+              {/* Green delimiter — separates each response, consistent with the
+                  deep-investigation band's rule; the timestamp rides the right edge. */}
+              <div className="flex items-center gap-2.5">
+                <span className="flex-1 h-px" style={{ background: "linear-gradient(90deg, rgba(45,212,168,0.22), rgba(45,212,168,0.04) 55%, transparent)" }} />
+                {msg.createdAt && (
+                  <span className="font-mono text-[10px] text-muted-foreground/45 shrink-0">{formatTime(msg.createdAt)}</span>
+                )}
+              </div>
               {msg.skillsUsed && msg.skillsUsed.length > 0 && (
                 <div className="flex flex-wrap gap-1 mb-1">
                   {msg.skillsUsed.map((s, si) => (
@@ -794,7 +849,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                   ))}
                 </div>
               )}
-              <div className="px-3.5 py-2.5 rounded-xl rounded-bl-sm bg-secondary/50 border border-border/40 text-sm font-body">
+              <div className="text-[13px] font-body leading-relaxed text-foreground/90">
                 {renderMarkdown(msg.content)}
               </div>
               {msg.chartData && msg.chartData.length > 0 && (
@@ -822,20 +877,18 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                 </Button>
               )}
               {msg.tokenUsage && (
-                <div className="text-[10px] font-mono text-muted-foreground/70 mt-1">
-                  {formatTokens(msg.tokenUsage.inputTokens + msg.tokenUsage.outputTokens)} tokens · {(msg.tokenUsage.durationMs / 1000).toFixed(1)}s
+                <div className="mt-2 pt-1.5 border-t border-border/30 text-[10px] font-mono text-muted-foreground/60 flex gap-3.5 flex-wrap">
+                  <span>tokens <span className="text-foreground/70">{formatTokens(msg.tokenUsage.inputTokens + msg.tokenUsage.outputTokens)}</span></span>
+                  <span>took <span className="text-foreground/70">{(msg.tokenUsage.durationMs / 1000).toFixed(1)}s</span></span>
                 </div>
-              )}
-              {msg.createdAt && (
-                <span className="font-mono text-[10px] text-muted-foreground/50">
-                  {formatTime(msg.createdAt)}
-                </span>
               )}
             </div>
           )}
         </div>
       );
+      if (i + 1 === bandAfter) pushBand();
     }
+    pushBand(); // fallback: bottom (anchor beyond the current message count)
 
     return elements;
   };
@@ -955,7 +1008,11 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4" ref={scrollRef}>
-        <div className="space-y-3">
+        {/* Deep mode is bottom-anchored (justify-end + min-h-full): short
+            conversations rest near the composer and overflow scrolls up off the
+            top, like a terminal. The deep run band is the last child, so it reads
+            as the latest turn. Console mode keeps the classic top-down flow. */}
+        <div className={isDeepMode ? "min-h-full flex flex-col justify-end space-y-3" : "space-y-3"}>
           {/* Loading state for initial history fetch — 3 fake message rows
               using Tailwind `animate-pulse`. Mirrors the real bubble layout
               (user right, assistant left, with varying widths) so the
@@ -1059,7 +1116,14 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
           })()}
           {streamingMessage && (
             <div className="flex justify-start animate-fade-in">
-              <div className="max-w-[85%] space-y-2">
+              <div className="w-full space-y-2">
+                {/* Green delimiter — same separator as a finished response (shown
+                    once real content starts streaming). */}
+                {streamingMessage.content && (
+                  <div className="flex items-center gap-2.5">
+                    <span className="flex-1 h-px" style={{ background: "linear-gradient(90deg, rgba(45,212,168,0.22), rgba(45,212,168,0.04) 55%, transparent)" }} />
+                  </div>
+                )}
                 {/* Reasoning indicator */}
                 {streamingMessage.reasoning && (
                   <div>
@@ -1082,65 +1146,35 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                   </div>
                 )}
                 {/* Content -- only show if we have content */}
-                {streamingMessage.content ? (
-                  <div className="px-3.5 py-2.5 rounded-xl rounded-bl-sm bg-secondary/50 border border-border/40 text-sm font-body">
+                {streamingMessage.content && (
+                  <div className="text-[13px] font-body leading-relaxed text-foreground/90">
                     {renderMarkdown(streamingMessage.content)}
                   </div>
-                ) : streamingMessage.reasoning ? (
-                  /* Still in reasoning phase -- show pulsing indicator */
-                  <div className="px-3.5 py-2 rounded-xl rounded-bl-sm bg-secondary/50 border border-border/40">
-                    <div className="flex items-center gap-1.5">
-                      <div className={`w-1.5 h-1.5 rounded-full animate-status-pulse ${isDeepMode ? "bg-accent" : "bg-primary"}`} />
-                      <span className="text-[11px] font-mono text-muted-foreground/70">thinking...</span>
-                    </div>
-                  </div>
-                ) : null}
+                )}
+                {/* Live progress — shown the WHOLE time the response is streaming
+                    (not just before content arrives), the same shimmer as the deep
+                    run's live indicator. Works for console + deep follow-ups. */}
+                <ThinkingIndicator
+                  label={streamingMessage.content ? "responding…" : isDeepMode ? "investigating…" : "thinking…"}
+                />
               </div>
             </div>
           )}
           {isLoading && !streamingMessage && (
             <div className="flex justify-start animate-fade-in">
               <div className="px-3.5 py-2 rounded-xl rounded-bl-sm bg-secondary/50 border border-border/40">
-                <div className="flex items-center gap-1.5">
-                  <div className={`w-1.5 h-1.5 rounded-full animate-status-pulse ${isDeepMode ? "bg-accent" : "bg-primary"}`} />
-                  <span className="text-[11px] font-mono text-muted-foreground/50">
-                    {activeTool
-                      ? `querying ${activeTool.replace(/_/g, " ")}...`
-                      : isDeepMode ? "investigating..." : "thinking..."}
-                  </span>
-                </div>
+                <ThinkingIndicator
+                  label={activeTool
+                    ? `querying ${activeTool.replace(/_/g, " ")}…`
+                    : isDeepMode ? "investigating…" : "thinking…"}
+                />
               </div>
             </div>
           )}
         </div>
-        {/* Spacer so auto-scroll clears the shortcut chips overlay (deep mode)
-            or so the streaming bubble + thinking indicator have breathing
-            room above the input box (console mode). */}
-        {isDeepMode ? <div className="h-12" /> : <div className="h-3" />}
+        {/* Console mode keeps a little breathing room above the input box. */}
+        {!isDeepMode && <div className="h-3" />}
       </div>
-
-      {/* Deep mode shortcut chips -- always visible. The "Investigate deeply"
-          entry (PR-6) leads the row as a same-size chip, ahead of the suggested
-          questions. It self-gates on the deep/orchestrator window flags and
-          renders null when neither is enabled. */}
-      {isDeepMode && (
-        <div className="px-3 pt-2 flex flex-wrap gap-1.5">
-          {activeInvestigationId && (
-            <ScopedDeepMenu investigationId={activeInvestigationId} canChallenge={canChallenge} />
-          )}
-          {DEEP_DIVE_PROMPTS.map((prompt, i) => (
-            <button
-              key={prompt}
-              style={{ animationDelay: `${i * 0.03}s` }}
-              onClick={() => handleSubmit(prompt)}
-              disabled={deepLoading || status !== "connected"}
-              className="px-2.5 py-1 text-[10px] font-mono rounded-full border border-accent/25 text-accent/70 hover:bg-accent/10 hover:border-accent/40 transition-colors disabled:opacity-30 disabled:cursor-not-allowed animate-fade-in"
-            >
-              {prompt}
-            </button>
-          ))}
-        </div>
-      )}
 
       {/* Session token usage footer */}
       {sessionTokens.messageCount > 0 && (
@@ -1152,9 +1186,40 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
         </div>
       )}
 
-      {/* Deep Investigation run — a pinned projection of the run registry, sitting
-          between the thread and the composer (not a chat message). */}
-      <InlineRunRegion investigationId={activeInvestigationId} service={serviceContext} />
+      {/* Deep run error / rejection — surfaced HERE in the Console, next to where
+          the operator launched the run (not on the report header). Transient: a
+          "already running" rejection clears on the run's next streamed step. */}
+      {isDeepMode && activeRun?.error && (
+        <div className="mx-3 mt-2 rounded-md border border-destructive/30 bg-destructive/8 px-2.5 py-1.5 text-[11px] font-mono text-destructive/85" role="alert">
+          {activeRun.error}
+        </div>
+      )}
+
+      {/* Deep mode shortcut chips — now sit directly above the composer (redesign).
+          "Investigate deeply" leads the row; it self-gates on the deep/autonomous
+          window flags. While a run is in progress the whole row is dimmed + inert
+          (not hidden) so the composer never reflows; it doubles as a busy cue. */}
+      {isDeepMode && (
+        <div
+          className={`px-3 pt-2 flex flex-wrap gap-1.5 transition-opacity ${chipsBusy ? "opacity-40 pointer-events-none" : ""}`}
+          aria-disabled={chipsBusy || undefined}
+        >
+          {activeInvestigationId && (
+            <ScopedDeepMenu investigationId={activeInvestigationId} canChallenge={canChallenge} />
+          )}
+          {DEEP_DIVE_PROMPTS.map((prompt, i) => (
+            <button
+              key={prompt}
+              style={{ animationDelay: `${i * 0.03}s` }}
+              onClick={() => handleSubmit(prompt)}
+              disabled={chipsBusy || status !== "connected"}
+              className="px-2.5 py-1 text-[10px] font-mono rounded-full border border-accent/25 text-accent/70 hover:bg-accent/10 hover:border-accent/40 transition-colors disabled:opacity-30 disabled:cursor-not-allowed animate-fade-in"
+            >
+              {prompt}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Input */}
       <div className={`p-3 border-t transition-colors ${isDeepMode ? "border-accent/15" : "border-border/30"}`}>

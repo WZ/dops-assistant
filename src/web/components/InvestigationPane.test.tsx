@@ -104,6 +104,24 @@ describe("InvestigationPane — deep run is Console-only (PR-6)", () => {
     expect(screen.queryByText(/confirmed at depth 1/i)).toBeNull();
   });
 
+  it("shows a re-synthesis progress bar above the report while the run is refining (PR-6b)", async () => {
+    const messages: ServerMessage[] = [
+      { type: "orchestrator:started", investigationId: ID },
+      {
+        type: "orchestrator:complete",
+        investigationId: ID,
+        outcome: "confirmed",
+        stats: { moves: 3, toolCalls: 1, subagents: 0, tokensSpent: 50, strikes: 0, depth: 1, durationMs: 1000 },
+        causalChain: [{ label: "impala", kind: "incident" }, { label: "root cause: pool starvation", kind: "root-cause" }],
+      },
+      // Operator clicked Apply → server acked it's regenerating the narrative.
+      { type: "orchestrator:refining", investigationId: ID },
+    ];
+    renderPane(messages);
+    expect(await screen.findByText(/Prometheus scrape target for impala is unreachable/i)).toBeTruthy();
+    expect(screen.getByText(/Re-synthesizing report/i)).toBeTruthy();
+  });
+
   it("does NOT render an in-pane operator-pause card for a paused run", async () => {
     const messages: ServerMessage[] = [
       { type: "orchestrator:started", investigationId: ID },
