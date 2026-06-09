@@ -1137,16 +1137,17 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                   </div>
                 )}
                 {/* Content -- only show if we have content */}
-                {streamingMessage.content ? (
+                {streamingMessage.content && (
                   <div className="text-[13px] font-body leading-relaxed text-foreground/90">
                     {renderMarkdown(streamingMessage.content)}
                   </div>
-                ) : streamingMessage.reasoning ? (
-                  /* Still in reasoning phase -- the shared thinking effect */
-                  <div className="px-3.5 py-2 rounded-xl rounded-bl-sm bg-secondary/50 border border-border/40">
-                    <ThinkingIndicator label="thinking…" />
-                  </div>
-                ) : null}
+                )}
+                {/* Live progress — shown the WHOLE time the response is streaming
+                    (not just before content arrives), the same shimmer as the deep
+                    run's live indicator. Works for console + deep follow-ups. */}
+                <ThinkingIndicator
+                  label={streamingMessage.content ? "responding…" : isDeepMode ? "investigating…" : "thinking…"}
+                />
               </div>
             </div>
           )}
