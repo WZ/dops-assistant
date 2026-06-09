@@ -188,3 +188,100 @@ describe("synthesis step — learned pattern injection", () => {
     await expect(step.execute(makeStepCtx(synthesisInput))).resolves.toBeDefined();
   });
 });
+
+describe("planning step — malformed planner focus fields (gpt-oss non-array)", () => {
+  it("coerces non-array focus fields to [] instead of crashing on .map", async () => {
+    // gpt-oss intermittently emits a focus field as a bare string instead of an
+    // array; safeJsonParse returns it un-validated, so the later `.map` used to
+    // throw and kill the planning step (seen live crashing follow-cause sub-investigations).
+    const generateMock = vi.fn().mockResolvedValue({
+      text: JSON.stringify({
+        hypotheses: [{ hypothesis: "h", evidenceNeeded: "e" }],
+        metricFocus: ["cpu"],
+        logFocus: "errors",          // string, not array
+        infraFocus: "node health",   // string, not array → the crash
+      }),
+    });
+    const { createPlannerAgent } = await import("../../agents/planner.js");
+    vi.mocked(createPlannerAgent).mockReturnValue({ generate: generateMock } as any);
+
+    const step = buildPlanningStep({
+      model: fakeModel,
+      providers: [],
+      services: [{ name: "payments-api", metrics: [], logLabels: {} }],
+    });
+    const result = await step.execute(makeStepCtx(planningInput));
+    expect(result.infraFocus).toEqual([]);     // coerced, not crashed
+    expect(result.logFocus).toEqual([]);
+    expect(result.metricFocus).toEqual(["cpu"]); // valid array preserved
+    expect(result.hypotheses).toHaveLength(1);
+  });
+
+  it("coerces a non-array hypotheses field to [] (the other .map site)", async () => {
+    const generateMock = vi.fn().mockResolvedValue({
+      text: JSON.stringify({ hypotheses: "not an array", metricFocus: [], logFocus: [], infraFocus: [] }),
+    });
+    const { createPlannerAgent } = await import("../../agents/planner.js");
+    vi.mocked(createPlannerAgent).mockReturnValue({ generate: generateMock } as any);
+
+    const step = buildPlanningStep({
+      model: fakeModel,
+      providers: [],
+      services: [{ name: "payments-api", metrics: [], logLabels: {} }],
+    });
+    const result = await step.execute(makeStepCtx(planningInput));
+    expect(result.hypotheses).toEqual([]);
+  });
+
+  it("filters malformed hypothesis array entries before emitting progress", async () => {
+    const onIteration = vi.fn();
+    const generateMock = vi.fn().mockResolvedValue({
+      text: JSON.stringify({
+        hypotheses: [
+          null,
+          { hypothesis: "valid", evidenceNeeded: "what to check" },
+          { hypothesis: "missing evidence" },
+          "not an object",
+        ],
+        metricFocus: [],
+        logFocus: [],
+        infraFocus: [],
+      }),
+    });
+    const { createPlannerAgent } = await import("../../agents/planner.js");
+    vi.mocked(createPlannerAgent).mockReturnValue({ generate: generateMock } as any);
+
+    const step = buildPlanningStep({
+      model: fakeModel,
+      providers: [],
+      services: [{ name: "payments-api", metrics: [], logLabels: {} }],
+      onIteration,
+    });
+    const result = await step.execute(makeStepCtx(planningInput));
+    expect(result.hypotheses).toEqual([{ hypothesis: "valid", evidenceNeeded: "what to check" }]);
+    expect(onIteration).toHaveBeenCalledWith("planning", 0, 1, "Hypotheses: valid → what to check");
+  });
+
+  it("filters non-string focus array entries", async () => {
+    const generateMock = vi.fn().mockResolvedValue({
+      text: JSON.stringify({
+        hypotheses: [],
+        metricFocus: ["cpu", null, { query: "up" }, 42],
+        logFocus: [false, "timeout"],
+        infraFocus: [{ check: "node" }, "node health"],
+      }),
+    });
+    const { createPlannerAgent } = await import("../../agents/planner.js");
+    vi.mocked(createPlannerAgent).mockReturnValue({ generate: generateMock } as any);
+
+    const step = buildPlanningStep({
+      model: fakeModel,
+      providers: [],
+      services: [{ name: "payments-api", metrics: [], logLabels: {} }],
+    });
+    const result = await step.execute(makeStepCtx(planningInput));
+    expect(result.metricFocus).toEqual(["cpu"]);
+    expect(result.logFocus).toEqual(["timeout"]);
+    expect(result.infraFocus).toEqual(["node health"]);
+  });
+});

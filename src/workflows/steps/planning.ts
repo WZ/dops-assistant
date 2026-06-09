@@ -17,6 +17,22 @@ import { withLlmRetry, safeAgentRetryConfig } from "../../agents/shared/llm-retr
 import { LlmUnavailableError } from "../../agents/shared/llm-errors.js";
 import { formatPatterns } from "../../agents/shared/patterns.js";
 
+type PlannerHypothesis = { hypothesis: string; evidenceNeeded: string };
+
+function toStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function isPlannerHypothesis(value: unknown): value is PlannerHypothesis {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.hypothesis === "string" && typeof candidate.evidenceNeeded === "string";
+}
+
+function toPlannerHypotheses(value: unknown): PlannerHypothesis[] {
+  return Array.isArray(value) ? value.filter(isPlannerHypothesis) : [];
+}
+
 /**
  * Build a planning step that fetches recent incidents and creates an investigation plan.
  */
@@ -108,10 +124,13 @@ export function buildPlanningStep(config: WorkflowConfig) {
 
       const plannerParsed = safeJsonParse(agentResult.text);
       if (plannerParsed) {
-        hypotheses = plannerParsed.hypotheses ?? [];
-        metricFocus = plannerParsed.metricFocus ?? [];
-        logFocus = plannerParsed.logFocus ?? [];
-        infraFocus = plannerParsed.infraFocus ?? [];
+        // safeJsonParse returns raw LLM JSON, not Zod-validated data. Keep only
+        // values matching the step output schema so progress callbacks and
+        // downstream evidence steps never see malformed planner fields.
+        hypotheses = toPlannerHypotheses(plannerParsed.hypotheses);
+        metricFocus = toStringArray(plannerParsed.metricFocus);
+        logFocus = toStringArray(plannerParsed.logFocus);
+        infraFocus = toStringArray(plannerParsed.infraFocus);
       }
 
       // Emit plan details so the UI can display them (matches legacy behavior)
