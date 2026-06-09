@@ -86,6 +86,52 @@ describe("ChatPane loading skeleton", () => {
   });
 });
 
+describe("ChatPane start-here cue", () => {
+  beforeEach(() => {
+    cleanup();
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve([]) });
+    if (!("scrollTo" in Element.prototype)) {
+      // @ts-expect-error — patching jsdom prototype
+      Element.prototype.scrollTo = () => {};
+    } else {
+      Element.prototype.scrollTo = vi.fn();
+    }
+    try { localStorage.setItem("consoleFeed:migrationToastSeen", "1"); } catch { /* test env may stub localStorage */ }
+  });
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("focuses the console input and exposes a visible keyboard focus style", async () => {
+    renderChat();
+    await waitFor(() => {
+      expect(screen.queryByTestId("chat-loading-skeleton")).toBeNull();
+    });
+
+    const cue = screen.getByRole("button", { name: "Focus the chat input" });
+    expect(cue.className).toContain("focus-visible:ring-2");
+
+    fireEvent.click(cue);
+    const input = screen.getByPlaceholderText(/Ask anything/);
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("shows the deep-mode cue with the same keyboard focus style", async () => {
+    renderChat({ activeInvestigationId: "inv_test_001" });
+    await waitFor(() => {
+      expect(screen.getByText("Drill deeper into the investigation results")).toBeDefined();
+    });
+
+    const cue = screen.getByRole("button", { name: "Focus the chat input" });
+    expect(cue.className).toContain("focus-visible:ring-2");
+
+    fireEvent.click(cue);
+    const input = screen.getByPlaceholderText(/Ask a follow-up/);
+    expect(document.activeElement).toBe(input);
+  });
+});
+
 describe("ChatPane clear history", () => {
   beforeEach(() => {
     cleanup();
