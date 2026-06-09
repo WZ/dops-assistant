@@ -110,16 +110,44 @@ function perProviderPaths(name: string): string[] {
 
 // ── Server bootstrapping ────────────────────────────────────────────────────
 
-async function waitForServer(url: string, timeoutMs = 30_000): Promise<void> {
+async function waitForServer(
+  url: string,
+  opts: { timeoutMs?: number; validate?: (body: unknown) => boolean } = {},
+): Promise<void> {
+  const { timeoutMs = 30_000, validate } = opts;
   const start = Date.now();
+  let last = "no response";
   while (Date.now() - start < timeoutMs) {
     try {
       const r = await fetch(url);
-      if (r.ok) return;
-    } catch { /* retry */ }
+      if (r.ok) {
+        // No validator → a 200 is enough (liveness). With a validator, also
+        // confirm the body has the expected shape (readiness) — `/api/health`
+        // can go green before the stack/DB is serving data endpoints, so a
+        // not-yet-ready `/api/investigations` would otherwise return a shape
+        // without `rows` and crash the export mid-run.
+        if (!validate) return;
+        const body = await r.json().catch(() => undefined);
+        if (validate(body)) return;
+        last = "200 but response not ready yet";
+      } else {
+        last = `status ${r.status}`;
+      }
+    } catch (e) { last = e instanceof Error ? e.message : String(e); }
     await new Promise((ok) => setTimeout(ok, 250));
   }
-  throw new Error(`server did not come up within ${timeoutMs}ms`);
+  throw new Error(`server did not become ready at ${url} within ${timeoutMs}ms (last: ${last})`);
+}
+
+/** Assert a live endpoint returned a list, with a diagnosable error if not.
+ *  After the readiness wait this should always hold; the guard turns any
+ *  surprise (an error object, a partial response) into a clear message instead
+ *  of a cryptic `Cannot read properties of undefined (reading 'flatMap')`. */
+function asList<T>(label: string, value: T[] | undefined): T[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`[export-static] ${label} was not a list (server not ready?): ${JSON.stringify(value)?.slice(0, 200)}`);
+  }
+  return value;
 }
 
 function startServer(): ChildProcess {
@@ -207,21 +235,32 @@ async function main() {
   process.on("SIGTERM", () => { shutdown(); process.exit(143); });
 
   try {
-    await waitForServer(`${BASE}/api/health`);
+    // Generous timeout: booting the demo server walks the (deliberately
+    // unreachable) stub MCP providers, whose connect attempts can take tens of
+    // seconds to fail depending on how fast DNS rejects the `.invalid` hosts.
+    await waitForServer(`${BASE}/api/health`, { timeoutMs: 90_000 });
+    // Liveness (health 200) isn't readiness: the per-stack DB/registry can still
+    // be initializing. Wait until a representative data endpoint serves its
+    // expected shape before resolving IDs — this is what intermittently failed
+    // the Pages deploy ("rows undefined → flatMap" mid-export).
+    await waitForServer(`${BASE}/api/investigations?limit=50`, {
+      timeoutMs: 60_000,
+      validate: (b) => Array.isArray((b as { rows?: unknown })?.rows),
+    });
     console.log(`[export-static] server up`);
 
     // Resolve IDs from the live endpoints — seed regenerates ULIDs on every run.
-    const invs = (await (await fetch(`${BASE}/api/investigations?limit=50`)).json()) as { rows: Array<{ id: string }> };
-    const scanRuns = (await (await fetch(`${BASE}/api/scan/runs?limit=50`)).json()) as { runs: Array<{ id: string }> };
+    const invs = (await (await fetch(`${BASE}/api/investigations?limit=50`)).json()) as { rows?: Array<{ id: string }> };
+    const scanRuns = (await (await fetch(`${BASE}/api/scan/runs?limit=50`)).json()) as { runs?: Array<{ id: string }> };
     const services = (await (await fetch(`${BASE}/api/services`)).json()) as Array<{ name: string }>;
     const providers = (await (await fetch(`${BASE}/api/providers`)).json()) as Array<{ name: string }>;
 
     const paths: string[] = [
       ...STATIC_TOP,
-      ...invs.rows.flatMap((i) => perInvestigationPaths(i.id)),
-      ...services.flatMap((s) => perServicePaths(s.name)),
-      ...scanRuns.runs.flatMap((r) => perScanRunPaths(r.id)),
-      ...providers.flatMap((p) => perProviderPaths(p.name)),
+      ...asList("investigations.rows", invs.rows).flatMap((i) => perInvestigationPaths(i.id)),
+      ...asList("services", services).flatMap((s) => perServicePaths(s.name)),
+      ...asList("scan/runs.runs", scanRuns.runs).flatMap((r) => perScanRunPaths(r.id)),
+      ...asList("providers", providers).flatMap((p) => perProviderPaths(p.name)),
     ];
 
     let wrote = 0;
