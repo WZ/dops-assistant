@@ -59,16 +59,20 @@ describe("runOrchestrator — happy path", () => {
 
 describe("runOrchestrator — decide-move watchdog (inc-7 starvation)", () => {
   it("a stalled/hung decide-move times out and the run stops loudly (inconclusive), not a silent hang", async () => {
+    const streamedMoves: string[] = [];
     const result = await runOrchestrator(
       makeDeps({
         // Never resolves — models a starved/hung brain under contention.
         decideMove: () => new Promise<never>(() => {}),
         guards: { ...generousGuards, opTimeoutMs: 5 },
+        onStep: (entry) => { streamedMoves.push(entry.move); },
       }),
     );
     // Repeated decide timeouts increment stall → inconclusive (the loud stop),
     // instead of hanging inside an unbounded await until the client cap.
     expect(result.outcome).toBe("inconclusive");
+    expect(result.trace.some((entry) => entry.move === "decide" && entry.detail.includes("timed out"))).toBe(true);
+    expect(streamedMoves).toContain("decide");
   });
 });
 

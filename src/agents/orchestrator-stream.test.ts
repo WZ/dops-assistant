@@ -19,6 +19,14 @@ describe("traceEntryToStreamEvent", () => {
     expect(ev.detail).toContain("+3 observations");
   });
 
+  it("maps a decide timeout → visible inconclusive 'thinking timed out' row", () => {
+    expect(traceEntryToStreamEvent({ move: "decide", detail: "decide-move timed out (starved or hung)" })).toEqual({
+      verb: "thinking timed out",
+      detail: "(starved — re-checking limits)",
+      status: "inconclusive",
+    });
+  });
+
   it("maps a satisfied test → strong 'evidence backs'", () => {
     expect(traceEntryToStreamEvent({ move: "test", detail: "memory exhaustion", verdict: "satisfied" })).toEqual({
       verb: "evidence backs",
