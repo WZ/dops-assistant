@@ -7,12 +7,20 @@ tags:
   - consul
   - bare-metal
   - host-process
-  - fortidata
+  - bigdata
 scope:
   - discovery
+  - investigation
 ---
 ## When to use
 This stack runs services on bare-metal hosts (not K8s). They are registered in Consul and export health status via the `consul_health_service_status` metric.
+
+## When investigating a root cause (read this first)
+If a service appears down but has **no Kubernetes Deployment / Pod**, that is EXPECTED here — it is a bare-metal Consul service, not a k8s workload. Do NOT report "deployment missing" or "not deployed in the cluster" as the root cause. Its health signal is the Consul metric:
+```
+max by (service_name) (consul_health_service_status{service_name="<name>",status="passing"})
+```
+A value of `0` (or no row) means the bare-metal service is failing its Consul health check — that is the real signal to investigate (check the host process, its logs via the bare-metal logLabels, and any upstream it depends on). Only conclude a k8s cause for services that actually have k8s objects.
 
 ## Discovery strategy
 
@@ -21,7 +29,7 @@ Query:
 ```
 count by (service_name) (consul_health_service_status)
 ```
-Each unique `service_name` is a service. The `node` label (e.g., `blade-198-18-1-10`) identifies which host runs it.
+Each unique `service_name` is a service. The `node` label (e.g., `host-node-01`) identifies which host runs it.
 
 ### Step 2: Build service entries for bare-metal services
 For each bare-metal-only service, use this format:
@@ -58,4 +66,4 @@ new services are added regularly and won't appear in this list.
 
 Known examples (not exhaustive):
 hdfs-datanode, hdfs-namenode, hdfs-journalnode, hdfs-zkfc, impala, impala-catalog,
-hbase, kudu, kudu-tserver, spark, zookeeper, consul, hive-metastore, fazbdregistry
+impala-statestore, hbase, kudu, kudu-tserver, spark, zookeeper, consul, hive-metastore

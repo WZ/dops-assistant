@@ -713,6 +713,65 @@ describe("handleClientMessage — orchestrator_investigate", () => {
     expect(err).toBeDefined();
     expect((err as any).message).toContain("completed investigation");
   });
+
+  it("passes enabled investigation skills into the autonomous orchestrator", async () => {
+    clearStackCaches(S);
+    const deps = mockDeps();
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
+    const ctx = mockCtx();
+    const skill = {
+      id: "consul",
+      title: "Consul Bare Metal",
+      services: [],
+      alerts: [],
+      tags: ["consul"],
+      scope: ["investigation"],
+      filePath: "skills/consul.md",
+      body: "Bare-metal Consul services have no k8s Deployment.",
+    };
+    const skillContext = "## Team Knowledge (Skills)\nBare-metal Consul services have no k8s Deployment.";
+    deps.skillStore = {
+      getAllForScopeEnabled: vi.fn(() => [skill]),
+      formatForPrompt: vi.fn(() => skillContext),
+    } as any;
+    (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
+      id: "inv_skills",
+      service: "payments-api",
+      query: "payments-api down",
+      status: "complete",
+      report: JSON.stringify({ summary: "payments-api down", timeRange: { from: "2026-06-09T00:00:00Z", to: "2026-06-09T01:00:00Z" } }),
+    });
+    const orchestrate = vi.fn().mockResolvedValue({
+      outcome: "exhausted",
+      hypotheses: [],
+      evidence: [],
+      trace: [],
+      stats: { moves: 0, toolCalls: 0, tokensSpent: 0, strikes: 0, depth: 0, subagents: 0, elapsedMs: 0 },
+    });
+    (createMastraAdapters as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      chatAgent: { chat: vi.fn() },
+      investigationAgent: { investigate: vi.fn() },
+      discoverAgent: undefined,
+      orchestrate,
+      refineReport: vi.fn().mockResolvedValue(null),
+    });
+
+    await callHandler(
+      { type: "orchestrator_investigate", investigationId: "inv_skills" },
+      vi.fn(),
+      deps,
+      ctx,
+    );
+
+    expect(deps.skillStore.getAllForScopeEnabled).toHaveBeenCalledWith("investigation", expect.any(Set));
+    expect(orchestrate).toHaveBeenCalledWith(
+      "payments-api down",
+      expect.objectContaining({
+        skillContext,
+        skills: [skill],
+      }),
+    );
+  });
 });
 
 describe("handleClientMessage — orchestrator_accept (PR-6b)", () => {
