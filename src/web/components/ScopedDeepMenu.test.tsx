@@ -147,6 +147,26 @@ describe("ScopedDeepMenu", () => {
     expect(send).toHaveBeenCalledWith({ type: "orchestrator_investigate", investigationId: ID });
   });
 
+  it("clears a canceled lead so a later direct Full click stays blind", async () => {
+    vi.useFakeTimers();
+    const send = vi.fn();
+    renderMenu({ send });
+
+    openMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: /add a lead/i }));
+    fireEvent.change(screen.getByRole("textbox", { name: /lead to seed/i }), {
+      target: { value: "check the connection pool" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Go/ }));
+    fireEvent.click(screen.getByRole("button", { name: /cancel the deep investigation/i }));
+
+    openMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: /Full deep investigation/i }));
+    for (let i = 0; i < 4; i++) { await act(async () => { await vi.advanceTimersByTimeAsync(900); }); }
+    expect(send).toHaveBeenCalledWith({ type: "orchestrator_investigate", investigationId: ID });
+    expect(send).not.toHaveBeenCalledWith({ type: "orchestrator_investigate", investigationId: ID, lead: expect.any(String) });
+  });
+
   it("Full countdown can be cancelled before dispatch", () => {
     vi.useFakeTimers();
     const send = vi.fn();

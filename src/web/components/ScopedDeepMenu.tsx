@@ -53,6 +53,7 @@ export function ScopedDeepMenu({
     // reports running=true but is dead server-side, so it does NOT block a launch.
     if (run?.running && !run.hydrated) {
       setCountdown(null);
+      setLead("");
       return;
     }
     if (countdown <= 0) {
@@ -88,9 +89,9 @@ export function ScopedDeepMenu({
       >
         <span className="text-accent/90">Starting deep investigation in {countdown}…</span>
         <span className="text-muted-foreground/60">{lead.trim() ? "~1–4min · $$" : "~3–8min · $$$"}</span>
-        <button
-          type="button"
-          onClick={() => setCountdown(null)}
+          <button
+            type="button"
+          onClick={() => { setCountdown(null); setLead(""); }}
           className="ml-0.5 inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
           aria-label="Cancel the deep investigation"
         >
@@ -177,7 +178,7 @@ export function ScopedDeepMenu({
           <>
             <DropdownMenuItem
               disabled={running || offline}
-              onClick={() => setCountdown(COUNTDOWN_FROM)}
+              onClick={() => { setLead(""); setCountdown(COUNTDOWN_FROM); }}
               className="flex flex-col items-start gap-0.5 py-2"
             >
               <span className="text-[12.5px] font-sans font-semibold text-foreground">Full deep investigation</span>
