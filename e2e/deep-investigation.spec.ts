@@ -90,7 +90,7 @@ test("deep investigation: report → Investigate deeply → Full → streams →
   // The fixture config intentionally has no service dependency graph, so the
   // deterministic stub first emits a stable generic ruling-out step before it
   // confirms on the incident service itself.
-  await expect(page.getByText(/Starting Full Deep Investigation/i)).toBeVisible();
+  await expect(page.getByText(/Starting deep investigation/i)).toBeVisible();
   await expect(page.getByText(/memory exhaustion/i).first()).toBeVisible({ timeout: 15_000 });
 
   // The operator-pause prompt appears; steer it with "continue".

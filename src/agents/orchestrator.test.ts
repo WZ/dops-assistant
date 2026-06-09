@@ -57,6 +57,32 @@ describe("runOrchestrator — happy path", () => {
   });
 });
 
+describe("runOrchestrator — Follow a lead (initialLead seeds the run)", () => {
+  it("seeds operatorContext from the launch lead, trimmed, on move 1", async () => {
+    const seen: Array<string | undefined> = [];
+    await runOrchestrator(
+      makeDeps({
+        initialLead: "  check the connection pool  ",
+        decideMove: async (state) => { seen.push(state.operatorContext); return null; },
+      }),
+    );
+    // the lead is the standing guidance on the very first decide-move call
+    expect(seen[0]).toBe("check the connection pool");
+  });
+
+  it("no lead → operatorContext undefined (a blind hunt, as before)", async () => {
+    const seen: Array<string | undefined> = [];
+    await runOrchestrator(makeDeps({ decideMove: async (state) => { seen.push(state.operatorContext); return null; } }));
+    expect(seen[0]).toBeUndefined();
+  });
+
+  it("a blank lead is treated as absent (no seeding)", async () => {
+    const seen: Array<string | undefined> = [];
+    await runOrchestrator(makeDeps({ initialLead: "   ", decideMove: async (state) => { seen.push(state.operatorContext); return null; } }));
+    expect(seen[0]).toBeUndefined();
+  });
+});
+
 describe("runOrchestrator — decide-move watchdog (inc-7 starvation)", () => {
   it("a stalled/hung decide-move times out and the run stops loudly (inconclusive), not a silent hang", async () => {
     const streamedMoves: string[] = [];

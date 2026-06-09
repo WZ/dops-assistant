@@ -754,6 +754,8 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       signal?: AbortSignal;
       /** Move-boundary hook (PR-2c) — the WS layer parks a viewerless run. */
       onMoveBoundary?: () => Promise<void> | void;
+      /** Follow a lead: an optional operator hunch that seeds the run from move 1. */
+      lead?: string;
     },
   ): Promise<OrchestratorResult> {
     const guards: OrchestratorGuards = { ...DEFAULT_ORCHESTRATOR_GUARDS, ...opts?.guards };
@@ -802,6 +804,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       onOperatorPause: opts?.onOperatorPause,
       signal: opts?.signal,
       onMoveBoundary: opts?.onMoveBoundary,
+      initialLead: opts?.lead,
     });
   }
 
