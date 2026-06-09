@@ -108,10 +108,16 @@ export function buildPlanningStep(config: WorkflowConfig) {
 
       const plannerParsed = safeJsonParse(agentResult.text);
       if (plannerParsed) {
-        hypotheses = plannerParsed.hypotheses ?? [];
-        metricFocus = plannerParsed.metricFocus ?? [];
-        logFocus = plannerParsed.logFocus ?? [];
-        infraFocus = plannerParsed.infraFocus ?? [];
+        // safeJsonParse returns RAW LLM JSON (not Zod-validated), so a field the
+        // schema calls string[] can arrive as a bare string / object when gpt-oss
+        // emits e.g. "infraFocus":"node health" instead of ["node health"]. `?? []`
+        // only guards null/undefined — a non-array slips through and the later
+        // `.map` throws, crashing the planning step (seen live killing follow-cause
+        // sub-investigations). Coerce each list to an array defensively.
+        hypotheses = Array.isArray(plannerParsed.hypotheses) ? plannerParsed.hypotheses : [];
+        metricFocus = Array.isArray(plannerParsed.metricFocus) ? plannerParsed.metricFocus : [];
+        logFocus = Array.isArray(plannerParsed.logFocus) ? plannerParsed.logFocus : [];
+        infraFocus = Array.isArray(plannerParsed.infraFocus) ? plannerParsed.infraFocus : [];
       }
 
       // Emit plan details so the UI can display them (matches legacy behavior)
