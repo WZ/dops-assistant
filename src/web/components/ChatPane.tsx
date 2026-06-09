@@ -73,6 +73,12 @@ const DEEP_DIVE_PROMPTS = [
 
 const LAST_VISITED_KEY = "consoleFeed:lastVisitedAt";
 
+// Deep run band placement, keyed by `${investigationId}:${startedAt}`. Module-level
+// (not component state) so the band's launch position survives the Console pane
+// unmounting and remounting (navigate away + back), instead of re-snapping to the
+// bottom and pushing post-run chat above it.
+const deepBandAnchors = new Map<string, number>();
+
 /** Convert ChartSeries (wire format) to TimeSeriesData (component prop) */
 function toTimeSeries(c: ChartSeries): TimeSeriesData {
   return {
@@ -662,24 +668,26 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
     let lastDateKey = "";
     let unreadInserted = false;
 
-    // The deep run band is placed chronologically — right after the last message
-    // that predates the run's start — so a follow-up asked AFTER the run sorts
-    // BELOW it (like a normal chat turn), not above. Messages with no timestamp
-    // (a just-sent follow-up) count as newer than the run.
-    const runStart = isDeepMode && activeRun?.startedAt != null ? activeRun.startedAt : null;
-    const bandEl =
-      runStart != null ? (
-        <InlineRunRegion key="deep-run-band" investigationId={activeInvestigationId} service={serviceContext} />
-      ) : null;
-    let bandAfterIndex = -2; // -2 = don't render a band
-    if (runStart != null) {
-      bandAfterIndex = -1; // default: before all messages
-      for (let i = 0; i < messages.length; i++) {
-        const c = messages[i]?.createdAt;
-        if (c && new Date(c).getTime() <= runStart) bandAfterIndex = i;
-      }
+    // Deep run band placement. A LIVE run (started this session) is anchored after
+    // the messages that existed when it launched, so it queues at the bottom on
+    // start and later chat sorts below it (it never jumps to the top). A hydrated
+    // / cold-loaded run can't reconstruct that split, so it renders at the bottom
+    // (its "latest result" slot). Anchor captured once per run, timestamp-free.
+    const hasRun = isDeepMode && activeRun?.startedAt != null;
+    const liveRun = hasRun && !activeRun?.hydrated;
+    const runKey = liveRun ? `${activeInvestigationId}:${activeRun?.startedAt}` : null;
+    if (runKey && !deepBandAnchors.has(runKey)) {
+      deepBandAnchors.set(runKey, messages.length);
     }
-    if (bandAfterIndex === -1 && bandEl) elements.push(bandEl);
+    const bandEl = hasRun ? (
+      <InlineRunRegion key="deep-run-band" investigationId={activeInvestigationId} service={serviceContext} />
+    ) : null;
+    const bandAfter = runKey != null && deepBandAnchors.has(runKey)
+      ? deepBandAnchors.get(runKey)!
+      : messages.length;
+    let bandPushed = false;
+    const pushBand = () => { if (bandEl && !bandPushed) { elements.push(bandEl); bandPushed = true; } };
+    if (bandAfter <= 0) pushBand();
 
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i]!;
@@ -703,30 +711,31 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
         <div
           key={msg.id || i}
           className={`animate-fade-up group/msg flex ${
-            msg.role === "user" ? "justify-end" :
-            msg.role === "system" ? "justify-center" :
-            "justify-start"
+            msg.role === "system" ? "justify-center" : "justify-start"
           }`}
           style={{ animationDelay: `${Math.min(i * 0.02, 0.1)}s` }}
         >
           {msg.role === "user" ? (
-            <div className="max-w-[85%] flex flex-col items-end gap-0.5">
-              <div className="flex items-center gap-1.5">
+            // Claude-Code style: the user's turn is a full-width highlighted block
+            // (a tinted background + a left accent rail), not a right-aligned bubble
+            // — so it reads in one column with the responses below it.
+            <div className="w-full flex flex-col gap-0.5">
+              <div className="flex items-start gap-1.5">
+                <div className={`flex-1 rounded-md px-3.5 py-2 text-sm font-body whitespace-pre-wrap text-foreground/90 border-l-2 ${isDeepMode ? "bg-accent/8 border-accent/50" : "bg-primary/8 border-primary/50"}`}>
+                  {msg.content}
+                </div>
                 {msg.id && (
                   <button
                     onClick={() => handleDeleteMessage(msg.id!)}
-                    className="opacity-0 group-hover/msg:opacity-100 transition-opacity p-1 rounded text-muted-foreground hover:text-destructive"
+                    className="opacity-0 group-hover/msg:opacity-100 transition-opacity p-1 rounded text-muted-foreground hover:text-destructive shrink-0"
                     aria-label="Delete message"
                   >
                     <Trash2 size={12} className="!size-auto" />
                   </button>
                 )}
-                <div className={`px-3.5 py-2 rounded-xl rounded-br-sm text-sm font-body whitespace-pre-wrap ${isDeepMode ? "bg-accent/12 border border-accent/20 text-foreground/85" : "bg-primary/12 border border-primary/20 text-foreground/85"}`}>
-                  {msg.content}
-                </div>
               </div>
               {msg.createdAt && (
-                <span className="font-mono text-[10px] text-muted-foreground/50 mr-1">
+                <span className="font-mono text-[10px] text-muted-foreground/50 pl-3.5">
                   {formatTime(msg.createdAt)}
                 </span>
               )}
@@ -808,7 +817,15 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
               );
             })()
           ) : (
-            <div className="max-w-[85%] space-y-2">
+            <div className="w-full space-y-2">
+              {/* Green delimiter — separates each response, consistent with the
+                  deep-investigation band's rule; the timestamp rides the right edge. */}
+              <div className="flex items-center gap-2.5">
+                <span className="flex-1 h-px" style={{ background: "linear-gradient(90deg, rgba(45,212,168,0.22), rgba(45,212,168,0.04) 55%, transparent)" }} />
+                {msg.createdAt && (
+                  <span className="font-mono text-[10px] text-muted-foreground/45 shrink-0">{formatTime(msg.createdAt)}</span>
+                )}
+              </div>
               {msg.skillsUsed && msg.skillsUsed.length > 0 && (
                 <div className="flex flex-wrap gap-1 mb-1">
                   {msg.skillsUsed.map((s, si) => (
@@ -819,7 +836,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                   ))}
                 </div>
               )}
-              <div className="px-3.5 py-2.5 rounded-xl rounded-bl-sm bg-secondary/50 border border-border/40 text-sm font-body">
+              <div className="text-sm font-body leading-relaxed text-foreground/90">
                 {renderMarkdown(msg.content)}
               </div>
               {msg.chartData && msg.chartData.length > 0 && (
@@ -847,21 +864,18 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                 </Button>
               )}
               {msg.tokenUsage && (
-                <div className="text-[10px] font-mono text-muted-foreground/70 mt-1">
-                  {formatTokens(msg.tokenUsage.inputTokens + msg.tokenUsage.outputTokens)} tokens · {(msg.tokenUsage.durationMs / 1000).toFixed(1)}s
+                <div className="mt-2 pt-1.5 border-t border-border/30 text-[10px] font-mono text-muted-foreground/60 flex gap-3.5 flex-wrap">
+                  <span>tokens <span className="text-foreground/70">{formatTokens(msg.tokenUsage.inputTokens + msg.tokenUsage.outputTokens)}</span></span>
+                  <span>took <span className="text-foreground/70">{(msg.tokenUsage.durationMs / 1000).toFixed(1)}s</span></span>
                 </div>
-              )}
-              {msg.createdAt && (
-                <span className="font-mono text-[10px] text-muted-foreground/50">
-                  {formatTime(msg.createdAt)}
-                </span>
               )}
             </div>
           )}
         </div>
       );
-      if (i === bandAfterIndex && bandEl) elements.push(bandEl);
+      if (i + 1 === bandAfter) pushBand();
     }
+    pushBand(); // fallback: bottom (anchor beyond the current message count)
 
     return elements;
   };
@@ -1089,7 +1103,14 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
           })()}
           {streamingMessage && (
             <div className="flex justify-start animate-fade-in">
-              <div className="max-w-[85%] space-y-2">
+              <div className="w-full space-y-2">
+                {/* Green delimiter — same separator as a finished response (shown
+                    once real content starts streaming). */}
+                {streamingMessage.content && (
+                  <div className="flex items-center gap-2.5">
+                    <span className="flex-1 h-px" style={{ background: "linear-gradient(90deg, rgba(45,212,168,0.22), rgba(45,212,168,0.04) 55%, transparent)" }} />
+                  </div>
+                )}
                 {/* Reasoning indicator */}
                 {streamingMessage.reasoning && (
                   <div>
@@ -1113,7 +1134,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                 )}
                 {/* Content -- only show if we have content */}
                 {streamingMessage.content ? (
-                  <div className="px-3.5 py-2.5 rounded-xl rounded-bl-sm bg-secondary/50 border border-border/40 text-sm font-body">
+                  <div className="text-sm font-body leading-relaxed text-foreground/90">
                     {renderMarkdown(streamingMessage.content)}
                   </div>
                 ) : streamingMessage.reasoning ? (
