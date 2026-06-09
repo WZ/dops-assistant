@@ -494,7 +494,7 @@ async function handleDeepModeInvestigate(
   // Master gate: deep mode is hidden from users until the Autonomous
   // Orchestrator ships. The button is suppressed client-side; this rejects any
   // direct deep_mode_investigate (e.g. a stale client) when disabled.
-  if (!deps.config.agent?.deepModeEnabled) {
+  if (!deps.config.agent?.challengeEnabled) {
     send({ type: "deep_mode:error", investigationId: msg.investigationId, message: "Deep mode is not enabled." });
     return;
   }
@@ -530,7 +530,7 @@ async function handleDeepModeInvestigate(
 /**
  * Autonomous orchestrator (Approach D): run the unbounded read-only move-loop
  * seeded from a completed investigation's context, streaming each move to the
- * agent-stream UI. Gated behind config.agent.orchestratorEnabled — the trigger
+ * agent-stream UI. Gated behind config.agent.autonomousInvestigationEnabled — the trigger
  * is hidden client-side; this rejects any direct message when disabled.
  */
 async function handleOrchestratorInvestigate(
@@ -544,7 +544,7 @@ async function handleOrchestratorInvestigate(
   myRuns: Set<string>,
 ): Promise<void> {
   const { db } = deps;
-  if (!deps.config.agent?.orchestratorEnabled) {
+  if (!deps.config.agent?.autonomousInvestigationEnabled) {
     send({ type: "orchestrator:error", investigationId: msg.investigationId, message: "Autonomous orchestrator is not enabled." });
     return;
   }
@@ -732,7 +732,7 @@ async function handleOrchestratorAccept(
   const id = msg.investigationId;
   const reject = (message: string) => send({ type: "orchestrator:accept_rejected", investigationId: id, message });
 
-  if (!deps.config.agent?.orchestratorEnabled) {
+  if (!deps.config.agent?.autonomousInvestigationEnabled) {
     reject("Autonomous orchestrator is not enabled.");
     return;
   }
@@ -1881,15 +1881,7 @@ export async function handleClientMessage(
 
     const runner = new InvestigationRunner({ db, investigationAgent, skillStore: deps.skillStore, globalOnComplete: deps.globalOnComplete });
     try {
-      const report = await runner.run({ service, message: routedMessage, investigationId: invId, stackId, disabledSkillIds: deps.db.getDisabledSkills(stackId), callbacks: wsCallbacks, source: "manual" });
-      // Deep-from-start: when the deployment opts in (agent.deepModeOnComplete)
-      // and the loop ran, chain the deep re-examination right after — resurrect
-      // ruled-out causes or refute the confirmed one. One pass, no second click.
-      // Gated by deepModeEnabled (deep mode is hidden from users until the
-      // Autonomous Orchestrator ships).
-      if (deps.config.agent?.deepModeEnabled && deps.config.agent?.deepModeOnComplete && report?.loopOutcome) {
-        await runDeepModeStreamed(invId, report, agents.deepModeReexamine, db, send);
-      }
+      await runner.run({ service, message: routedMessage, investigationId: invId, stackId, disabledSkillIds: deps.db.getDisabledSkills(stackId), callbacks: wsCallbacks, source: "manual" });
     } catch {
       // Error already handled by runner's onFailed callback
     }

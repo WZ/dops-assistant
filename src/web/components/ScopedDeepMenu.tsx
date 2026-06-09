@@ -12,8 +12,8 @@
  * confirm-dispatch countdown (DT2); Challenge launches immediately. Full is
  * disabled while the socket is reconnecting (D6/T6) and while a run is active.
  *
- * Gating mirrors the legacy buttons: Challenge needs `__DEEP_MODE_ENABLED__` and a
- * report with a `loopOutcome` to re-examine; Full needs `__ORCHESTRATOR_ENABLED__`.
+ * Gating mirrors the legacy buttons: Challenge needs `__CHALLENGE__` and a
+ * report with a `loopOutcome` to re-examine; Full needs `__AUTONOMOUS__`.
  */
 import { useEffect, useState } from "react";
 import { Compass, X } from "lucide-react";
@@ -61,8 +61,8 @@ export function ScopedDeepMenu({
     return () => clearTimeout(t);
   }, [countdown, investigationId, start, run?.running]);
 
-  const deepEnabled = typeof window !== "undefined" && !!window.__DEEP_MODE_ENABLED__ && canChallenge;
-  const fullEnabled = typeof window !== "undefined" && !!window.__ORCHESTRATOR_ENABLED__;
+  const deepEnabled = typeof window !== "undefined" && !!window.__CHALLENGE__ && canChallenge;
+  const fullEnabled = typeof window !== "undefined" && !!window.__AUTONOMOUS__;
   if (!deepEnabled && !fullEnabled) return null;
 
   // A hydrated (interrupted) run reports running=true but is dead server-side —

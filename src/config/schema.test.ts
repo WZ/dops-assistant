@@ -48,12 +48,10 @@ describe("ConfigSchema – defaults", () => {
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      // Master gate must default false: the bounded deep mode only re-judges
-      // the existing RCA; the "investigate for the real cause" version is the
-      // not-yet-built Autonomous Orchestrator. Shipping ON would expose a
-      // half-feature. Both deepModeEnabled and deepModeOnComplete stay off.
-      expect(result.data.agent.deepModeEnabled).toBe(false);
-      expect(result.data.agent.deepModeOnComplete).toBe(false);
+      // Master gate must default false: the bounded "Challenge" mode only
+      // re-judges the existing RCA; the "investigate for the real cause" version
+      // is the autonomous orchestrator. Shipping ON would expose a half-feature.
+      expect(result.data.agent.challengeEnabled).toBe(false);
     }
   });
 
@@ -66,7 +64,7 @@ describe("ConfigSchema – defaults", () => {
     if (result.success) {
       // The orchestrator is the heaviest mode (3-10x a normal run) and is built
       // incrementally — it must never ship on by default.
-      expect(result.data.agent.orchestratorEnabled).toBe(false);
+      expect(result.data.agent.autonomousInvestigationEnabled).toBe(false);
     }
   });
 

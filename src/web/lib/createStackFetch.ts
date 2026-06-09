@@ -4,13 +4,13 @@ import { staticFetch, isStaticDemoBuild } from "./staticFetch";
 declare global {
   interface Window {
     __APP_BASE__?: string;
-    /** Server-injected (index.ts) when config.agent.deepModeEnabled is true.
+    /** Server-injected (index.ts) when config.agent.challengeEnabled is true.
      *  Gates the "Deep investigate" button — hidden from users until the
      *  Autonomous Orchestrator ships. */
-    __DEEP_MODE_ENABLED__?: boolean;
-    /** Server-injected (index.ts) when config.agent.orchestratorEnabled is true.
+    __CHALLENGE__?: boolean;
+    /** Server-injected (index.ts) when config.agent.autonomousInvestigationEnabled is true.
      *  Gates the "Investigate autonomously" trigger — hidden until validated. */
-    __ORCHESTRATOR_ENABLED__?: boolean;
+    __AUTONOMOUS__?: boolean;
   }
 }
 

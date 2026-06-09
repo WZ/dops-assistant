@@ -29,8 +29,8 @@ beforeEach(() => {
   Element.prototype.setPointerCapture = vi.fn();
   Element.prototype.releasePointerCapture = vi.fn();
   Element.prototype.scrollIntoView = vi.fn();
-  (window as unknown as Record<string, unknown>).__ORCHESTRATOR_ENABLED__ = true;
-  (window as unknown as Record<string, unknown>).__DEEP_MODE_ENABLED__ = true;
+  (window as unknown as Record<string, unknown>).__AUTONOMOUS__ = true;
+  (window as unknown as Record<string, unknown>).__CHALLENGE__ = true;
 });
 
 /** Radix DropdownMenu opens on pointerDown, not click (mirrors ScanRunDetail.test). */
@@ -38,8 +38,8 @@ function openMenu() {
   fireEvent.pointerDown(screen.getByRole("button", { name: /Investigate deeply/i }));
 }
 afterEach(() => {
-  (window as unknown as Record<string, unknown>).__ORCHESTRATOR_ENABLED__ = undefined;
-  (window as unknown as Record<string, unknown>).__DEEP_MODE_ENABLED__ = undefined;
+  (window as unknown as Record<string, unknown>).__AUTONOMOUS__ = undefined;
+  (window as unknown as Record<string, unknown>).__CHALLENGE__ = undefined;
   vi.useRealTimers();
 });
 
@@ -69,8 +69,8 @@ describe("ScopedDeepMenu", () => {
   });
 
   it("renders nothing when neither scope is enabled", () => {
-    (window as unknown as Record<string, unknown>).__ORCHESTRATOR_ENABLED__ = false;
-    (window as unknown as Record<string, unknown>).__DEEP_MODE_ENABLED__ = false;
+    (window as unknown as Record<string, unknown>).__AUTONOMOUS__ = false;
+    (window as unknown as Record<string, unknown>).__CHALLENGE__ = false;
     const { container } = renderMenu();
     expect(container.firstChild).toBeNull();
   });

@@ -26,13 +26,13 @@ beforeEach(() => {
   Element.prototype.hasPointerCapture = vi.fn(() => false);
   Element.prototype.setPointerCapture = vi.fn();
   Element.prototype.scrollIntoView = vi.fn();
-  (window as unknown as Record<string, unknown>).__ORCHESTRATOR_ENABLED__ = true;
-  (window as unknown as Record<string, unknown>).__DEEP_MODE_ENABLED__ = true;
+  (window as unknown as Record<string, unknown>).__AUTONOMOUS__ = true;
+  (window as unknown as Record<string, unknown>).__CHALLENGE__ = true;
   vi.useFakeTimers();
 });
 afterEach(() => {
-  (window as unknown as Record<string, unknown>).__ORCHESTRATOR_ENABLED__ = undefined;
-  (window as unknown as Record<string, unknown>).__DEEP_MODE_ENABLED__ = undefined;
+  (window as unknown as Record<string, unknown>).__AUTONOMOUS__ = undefined;
+  (window as unknown as Record<string, unknown>).__CHALLENGE__ = undefined;
   vi.useRealTimers();
 });
 

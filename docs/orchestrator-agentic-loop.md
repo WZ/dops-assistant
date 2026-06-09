@@ -17,7 +17,7 @@ re-judges an existing report's ruled-out hypotheses; the orchestrator goes
 further — it can pivot, follow dependencies, and assemble a cross-service causal
 chain.
 
-It is **gated off** by default (`config.agent.orchestratorEnabled`, default
+It is **gated off** by default (`config.agent.autonomousInvestigationEnabled`, default
 `false`) and is internal until validation (increment 7) completes.
 
 | | Bounded investigation | Deep mode | Autonomous orchestrator |
@@ -349,7 +349,7 @@ flowchart LR
 
 ```yaml
 agent:
-  orchestratorEnabled: false   # master gate; default off (internal until inc-7 validation)
+  autonomousInvestigationEnabled: false   # master gate; default off (internal until inc-7 validation)
 ```
 
 Guards default conservatively (`DEFAULT_ORCHESTRATOR_GUARDS` in

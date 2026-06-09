@@ -588,7 +588,7 @@ describe("handleClientMessage — orchestrator_investigate", () => {
   it("rejects when the orchestrator gate is disabled", async () => {
     const deps = mockDeps();
     const ctx = mockCtx();
-    // Default mockDeps config has no agent.orchestratorEnabled flag.
+    // Default mockDeps config has no agent.autonomousInvestigationEnabled flag.
     const sent: ServerMessage[] = [];
     const send = (m: ServerMessage) => sent.push(m);
 
@@ -605,7 +605,7 @@ describe("handleClientMessage — orchestrator_investigate", () => {
 
   it("returns error for a non-existent investigation when gated on", async () => {
     const deps = mockDeps();
-    (deps.config as any).agent.orchestratorEnabled = true;
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
     const ctx = mockCtx();
     (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
 
@@ -624,7 +624,7 @@ describe("handleClientMessage — orchestrator_investigate", () => {
 
   it("rejects a still-running investigation — no autonomous run without a completed report", async () => {
     const deps = mockDeps();
-    (deps.config as any).agent.orchestratorEnabled = true;
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
     const ctx = mockCtx();
     (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
       id: "inv_running", service: "payments-api", query: "orig", status: "running", report: null,
@@ -645,7 +645,7 @@ describe("handleClientMessage — orchestrator_investigate", () => {
 
   it("rejects a completed-but-report-less investigation", async () => {
     const deps = mockDeps();
-    (deps.config as any).agent.orchestratorEnabled = true;
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
     const ctx = mockCtx();
     (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
       id: "inv_noreport", service: "payments-api", query: "orig", status: "complete", report: null,
@@ -700,7 +700,7 @@ describe("handleClientMessage — orchestrator_accept (PR-6b)", () => {
 
   it("merges the confirmed root cause into the report, preserves the original, and persists", async () => {
     const deps = mockDeps();
-    (deps.config as any).agent.orchestratorEnabled = true;
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
     (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
       id: "inv_1", service: "payments-api", status: "complete", report: JSON.stringify(baseReport),
     });
@@ -727,7 +727,7 @@ describe("handleClientMessage — orchestrator_accept (PR-6b)", () => {
 
   it("re-synthesizes the report narrative on apply, emitting orchestrator:refining (PR-6b)", async () => {
     const deps = mockDeps();
-    (deps.config as any).agent.orchestratorEnabled = true;
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
     (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
       id: "inv_1", service: "payments-api", status: "complete", report: JSON.stringify(baseReport),
     });
@@ -764,7 +764,7 @@ describe("handleClientMessage — orchestrator_accept (PR-6b)", () => {
 
   it("carries the operator's pause steer onto the refinement marker", async () => {
     const deps = mockDeps();
-    (deps.config as any).agent.orchestratorEnabled = true;
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
     (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
       id: "inv_1", service: "payments-api", status: "complete", report: JSON.stringify(baseReport),
     });
@@ -785,7 +785,7 @@ describe("handleClientMessage — orchestrator_accept (PR-6b)", () => {
 
   it("does NOT attribute a steer from an earlier run that locked then errored without completing", async () => {
     const deps = mockDeps();
-    (deps.config as any).agent.orchestratorEnabled = true;
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
     (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
       id: "inv_1", service: "payments-api", status: "complete", report: JSON.stringify(baseReport),
     });
@@ -810,7 +810,7 @@ describe("handleClientMessage — orchestrator_accept (PR-6b)", () => {
 
   it("rejects while a deep run is still live (don't apply a soon-to-be-superseded result)", async () => {
     const deps = mockDeps();
-    (deps.config as any).agent.orchestratorEnabled = true;
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
     const registry = new OrchestratorRunRegistry();
     vi.spyOn(registry, "isLive").mockReturnValue(true);
 
@@ -830,7 +830,7 @@ describe("handleClientMessage — orchestrator_accept (PR-6b)", () => {
 
   it("rejects when there is no completed orchestrator event", async () => {
     const deps = mockDeps();
-    (deps.config as any).agent.orchestratorEnabled = true;
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
     (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
       id: "inv_1", service: "payments-api", status: "complete", report: JSON.stringify(baseReport),
     });
@@ -844,7 +844,7 @@ describe("handleClientMessage — orchestrator_accept (PR-6b)", () => {
 
   it("rejects when the run outcome is not confirmed", async () => {
     const deps = mockDeps();
-    (deps.config as any).agent.orchestratorEnabled = true;
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
     (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
       id: "inv_1", service: "payments-api", status: "complete", report: JSON.stringify(baseReport),
     });
@@ -859,7 +859,7 @@ describe("handleClientMessage — orchestrator_accept (PR-6b)", () => {
 
   it("rejects when the report is missing", async () => {
     const deps = mockDeps();
-    (deps.config as any).agent.orchestratorEnabled = true;
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
     (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
       id: "inv_1", service: "payments-api", status: "complete", report: null,
     });
@@ -872,7 +872,7 @@ describe("handleClientMessage — orchestrator_accept (PR-6b)", () => {
 
   it("rejects a malformed report JSON", async () => {
     const deps = mockDeps();
-    (deps.config as any).agent.orchestratorEnabled = true;
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
     (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
       id: "inv_1", service: "payments-api", status: "complete", report: "{not json",
     });
@@ -886,7 +886,7 @@ describe("handleClientMessage — orchestrator_accept (PR-6b)", () => {
 
   it("rejects when the confirmed chain has no root-cause link", async () => {
     const deps = mockDeps();
-    (deps.config as any).agent.orchestratorEnabled = true;
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
     (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
       id: "inv_1", service: "payments-api", status: "complete", report: JSON.stringify(baseReport),
     });
@@ -903,7 +903,7 @@ describe("handleClientMessage — orchestrator_accept (PR-6b)", () => {
 
   it("uses the LATEST complete event when several are persisted", async () => {
     const deps = mockDeps();
-    (deps.config as any).agent.orchestratorEnabled = true;
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
     (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
       id: "inv_1", service: "payments-api", status: "complete", report: JSON.stringify(baseReport),
     });
@@ -921,7 +921,7 @@ describe("handleClientMessage — orchestrator_accept (PR-6b)", () => {
 
   it("re-applying the SAME complete event preserves the TRUE original (idempotent audit trail)", async () => {
     const deps = mockDeps();
-    (deps.config as any).agent.orchestratorEnabled = true;
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
     // Already refined from event "evt_runA"; rootCause is that refined value.
     const alreadyRefined = {
       ...baseReport,
@@ -943,7 +943,7 @@ describe("handleClientMessage — orchestrator_accept (PR-6b)", () => {
 
   it("applying a NEW deep run uses the report's CURRENT root cause as the 'was' (audit trail advances)", async () => {
     const deps = mockDeps();
-    (deps.config as any).agent.orchestratorEnabled = true;
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
     // Already refined from run A → rootCause is causeA.
     const refinedFromA = {
       ...baseReport,
@@ -974,7 +974,7 @@ describe("handleClientMessage — orchestrator_accept (PR-6b)", () => {
 
   it("persists the orchestrator:accepted event so cold clients converge", async () => {
     const deps = mockDeps();
-    (deps.config as any).agent.orchestratorEnabled = true;
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
     (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
       id: "inv_1", service: "payments-api", status: "complete", report: JSON.stringify(baseReport),
     });

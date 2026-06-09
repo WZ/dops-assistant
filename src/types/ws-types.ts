@@ -16,7 +16,7 @@ export type ClientMessage =
   | { type: "deep_mode_investigate"; investigationId: string }
   // Autonomous orchestrator (Approach D): run the unbounded read-only move-loop
   // seeded from a completed investigation's context. Heavier opt-in than deep
-  // mode; gated behind config.agent.orchestratorEnabled.
+  // mode; gated behind config.agent.autonomousInvestigationEnabled.
   | { type: "orchestrator_investigate"; investigationId: string }
   // Operator's reply to an `orchestrator:operator_pause` prompt (increment 5):
   // "continue" resets strikes and resumes the move-loop; "escalate"/"wait" stop
