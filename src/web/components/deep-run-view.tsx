@@ -319,18 +319,17 @@ export function LiveView({ run, live, inline = false }: { run: DeepRunState; liv
 export function BandRule({ run, elapsedLabel }: { run: DeepRunState; elapsedLabel: string }) {
   const live = run.running && !isInterrupted(run) && !isParked(run);
   const confirmed = !run.running && run.outcome === "confirmed";
-  const stamp = live
-    ? "Deep Investigation"
-    : confirmed
-    ? "Confirmed"
-    : isParked(run) ? "Parked" : isInterrupted(run) ? "Interrupted" : outcomeHeadline(run.outcome);
+  // The stamp ALWAYS reads "DEEP INVESTIGATION" — it's the section delimiter, so it
+  // persists through every state (the specific outcome shows in the conclusion
+  // below). Only the colour shifts: teal while live, green once confirmed, muted
+  // when stopped/interrupted/parked.
   const lineColor = confirmed ? "rgba(78,219,148,0.30)" : live ? "rgba(45,212,168,0.30)" : "rgba(120,120,130,0.20)";
   return (
     <div className="flex items-center gap-2.5 mb-1.5">
       <span
         className={`font-mono text-[9.5px] tracking-[0.14em] uppercase whitespace-nowrap ${confirmed ? "text-success" : live ? "text-primary/80" : "text-muted-foreground/70"}`}
       >
-        {stamp}
+        Deep Investigation
       </span>
       <span className="flex-1 h-px" style={{ background: `linear-gradient(90deg, ${lineColor}, transparent)` }} />
       {elapsedLabel && <span className="font-mono text-[10px] text-muted-foreground/55 tabular-nums shrink-0">{elapsedLabel}</span>}

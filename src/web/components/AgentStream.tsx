@@ -1,5 +1,24 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { AgentStreamEvent } from "../../types/ws-types.js";
+
+/**
+ * The shared "thinking" effect — a spinner + label + an animated shimmer bar.
+ * Used by the deep-investigation live move indicator AND regular chat responses
+ * (console + deep follow-ups) so "the agent is working" looks the same everywhere.
+ */
+export function ThinkingIndicator({ label, trailing }: { label: string; trailing?: ReactNode }) {
+  return (
+    <div className="flex items-center gap-2 text-[13px]">
+      <span className="w-2.5 h-2.5 rounded-full border-2 border-primary border-t-transparent animate-spin shrink-0" aria-hidden />
+      <span className="text-foreground/90">{label}</span>
+      <span
+        className="inline-block w-14 h-1 rounded bg-gradient-to-r from-transparent via-primary to-transparent bg-[length:200%_100%] animate-[shimmer_1.15s_ease-in-out_infinite]"
+        aria-hidden
+      />
+      {trailing}
+    </div>
+  );
+}
 
 /** Ticking "Ns" since the run went live — proves the agent is alive between
  *  steps (decideMove thinking, a long query, a running subagent), so the stream
@@ -110,15 +129,10 @@ function MoveRow({ e }: { e: AgentStreamEvent }) {
 function LiveMoveIndicator({ move, elapsed }: { move: AgentStreamEvent | null; elapsed: number }) {
   return (
     <div className="flex flex-col gap-0.5 pt-1">
-      <div className="flex items-center gap-2 text-[13px]">
-        <span className="w-2.5 h-2.5 rounded-full border-2 border-primary border-t-transparent animate-spin shrink-0" aria-hidden />
-        <span className="text-foreground/90">{move?.verb ?? "thinking"}</span>
-        <span
-          className="inline-block w-14 h-1 rounded bg-gradient-to-r from-transparent via-primary to-transparent bg-[length:200%_100%] animate-[shimmer_1.15s_ease-in-out_infinite]"
-          aria-hidden
-        />
-        <span className="ml-auto text-[10px] text-muted-foreground/60 tabular-nums">{elapsed}s</span>
-      </div>
+      <ThinkingIndicator
+        label={move?.verb ?? "thinking"}
+        trailing={<span className="ml-auto text-[10px] text-muted-foreground/60 tabular-nums">{elapsed}s</span>}
+      />
       {move?.target && (
         <div className="pl-[18px] text-[11px] text-muted-foreground/70 truncate">
           {move.targetKind === "query" ? "querying " : ""}

@@ -64,9 +64,12 @@ describe("InlineRunRegion", () => {
     expect(screen.getByText("Deep Investigation")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "RESULT" })).toBeNull();
     expect(screen.queryByText(/this run stops if you reload/i)).toBeNull();
-    // Stop → orchestrator_stop
+    // Stop → orchestrator_stop, then the control flips to a "Stopping…" status
+    // while the abort is in flight (the server finishes the in-flight move first).
     fireEvent.click(screen.getByRole("button", { name: /stop the deep investigation/i }));
     expect(send).toHaveBeenCalledWith({ type: "orchestrator_stop", investigationId: ID });
+    expect(screen.getByText(/Stopping/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /stop the deep investigation/i })).toBeNull();
   });
 
   it("running Challenge (deep-mode) run shows NO Stop — it has no abort path", () => {
@@ -83,8 +86,9 @@ describe("InlineRunRegion", () => {
     expect(screen.getByText("statestore pool starvation")).toBeTruthy();
     expect(screen.getByText(/root cause: statestore pool starvation/)).toBeTruthy();
     expect(screen.getByText(/confirmed at depth 1/)).toBeTruthy();
-    // the band stamp flips to "Confirmed"; no Stop once finished
-    expect(screen.getByText("Confirmed")).toBeTruthy();
+    // the "DEEP INVESTIGATION" delimiter persists (state shows in the conclusion);
+    // no Stop once finished.
+    expect(screen.getByText("Deep Investigation")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /stop the deep/i })).toBeNull();
     // the move log is NOT hidden after finishing — the explored steps stay.
     expect(screen.getByText(/impala-statestore/)).toBeTruthy();
@@ -233,8 +237,9 @@ describe("InlineRunRegion — hydrated/interrupted (PR-2 T7)", () => {
     // no live affordances — the server lost this run on reload
     expect(screen.queryByRole("button", { name: /stop the deep investigation/i })).toBeNull();
     expect(screen.queryByText(/this run stops if you reload/i)).toBeNull();
-    // The band stamp reads "Interrupted" (no RESULT toggle anymore).
-    expect(screen.getByText("Interrupted")).toBeTruthy();
+    // The delimiter persists as "DEEP INVESTIGATION"; the interrupted state is
+    // carried by the notice, not the stamp.
+    expect(screen.getByText("Deep Investigation")).toBeTruthy();
   });
 
   it("announces the interruption on the scoped live region (DZ4)", () => {
@@ -287,8 +292,9 @@ describe("InlineRunRegion — parked (PR-2c)", () => {
     // not a live affordance and not "interrupted"
     expect(screen.queryByRole("button", { name: /stop the deep investigation/i })).toBeNull();
     expect(screen.queryByText(/can't be resumed here/i)).toBeNull();
-    // The band stamp reads "Parked" (no RESULT toggle).
-    expect(screen.getByText("Parked")).toBeTruthy();
+    // The delimiter persists as "DEEP INVESTIGATION"; the parked state is carried
+    // by the resume notice, not the stamp.
+    expect(screen.getByText("Deep Investigation")).toBeTruthy();
   });
 
   it("a live step after parking clears the Parked state (resumed)", () => {

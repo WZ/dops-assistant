@@ -39,6 +39,10 @@ export function InlineRunRegion({
   // Console and comes back instead of resetting to 0. The 1s tick only forces a
   // re-render; the value is computed from startedAt below.
   const [, setTick] = useState(0);
+  // Stop has a delay — the server finishes the in-flight move before aborting. Show
+  // "Stopping…" in that window so the button doesn't look unresponsive. Reset once
+  // the run is no longer live (aborted, or a fresh run started).
+  const [stopping, setStopping] = useState(false);
   const running = !!run?.running;
   const parked = !!run?.parked && running;
   const interrupted = !!run?.hydrated && running && !parked;
@@ -47,6 +51,9 @@ export function InlineRunRegion({
     if (!liveRunning) return;
     const t = setInterval(() => setTick((n) => n + 1), 1000);
     return () => clearInterval(t);
+  }, [liveRunning]);
+  useEffect(() => {
+    if (!liveRunning) setStopping(false);
   }, [liveRunning]);
 
   if (!investigationId || !run) return null;
@@ -98,14 +105,24 @@ export function InlineRunRegion({
           {liveRunning && run.kind === "orchestrator" && (
             // Stop only on the abortable Full run — the server only aborts
             // orchestrator runs. A Challenge (deep-mode) run has no abort path.
-            <button
-              type="button"
-              onClick={() => stop(id)}
-              aria-label="Stop the deep investigation"
-              className="font-mono text-[9.5px] px-2.5 py-1 rounded-md border border-border/60 text-muted-foreground hover:text-destructive hover:border-destructive/40"
-            >
-              ■ STOP
-            </button>
+            stopping ? (
+              <span
+                className="font-mono text-[9.5px] px-2.5 py-1 rounded-md border border-border/60 text-muted-foreground/70"
+                role="status"
+                aria-live="polite"
+              >
+                ■ Stopping…
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => { setStopping(true); stop(id); }}
+                aria-label="Stop the deep investigation"
+                className="font-mono text-[9.5px] px-2.5 py-1 rounded-md border border-border/60 text-muted-foreground hover:text-destructive hover:border-destructive/40"
+              >
+                ■ STOP
+              </button>
+            )
           )}
           {canApply && (run.accepted ? (
             <span className="font-mono text-[9.5px] px-2.5 py-1 rounded-md border border-success/40 bg-success/8 text-success" role="status">

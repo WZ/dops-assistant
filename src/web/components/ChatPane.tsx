@@ -13,6 +13,7 @@ import { MetricChart, type TimeSeriesData } from "./MetricChart";
 import { useStackContext } from "../contexts/StackContext";
 import { InlineRunRegion } from "./InlineRunRegion";
 import { ScopedDeepMenu } from "./ScopedDeepMenu";
+import { ThinkingIndicator } from "./AgentStream";
 import { useOrchestratorRun } from "../contexts/OrchestratorRunContext";
 import { safeGetItem, safeSetItem } from "../lib/utils";
 import { ConfirmActionDialog } from "./ConfirmActionDialog";
@@ -661,6 +662,25 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
     let lastDateKey = "";
     let unreadInserted = false;
 
+    // The deep run band is placed chronologically — right after the last message
+    // that predates the run's start — so a follow-up asked AFTER the run sorts
+    // BELOW it (like a normal chat turn), not above. Messages with no timestamp
+    // (a just-sent follow-up) count as newer than the run.
+    const runStart = isDeepMode && activeRun?.startedAt != null ? activeRun.startedAt : null;
+    const bandEl =
+      runStart != null ? (
+        <InlineRunRegion key="deep-run-band" investigationId={activeInvestigationId} service={serviceContext} />
+      ) : null;
+    let bandAfterIndex = -2; // -2 = don't render a band
+    if (runStart != null) {
+      bandAfterIndex = -1; // default: before all messages
+      for (let i = 0; i < messages.length; i++) {
+        const c = messages[i]?.createdAt;
+        if (c && new Date(c).getTime() <= runStart) bandAfterIndex = i;
+      }
+    }
+    if (bandAfterIndex === -1 && bandEl) elements.push(bandEl);
+
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i]!;
 
@@ -840,6 +860,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
           )}
         </div>
       );
+      if (i === bandAfterIndex && bandEl) elements.push(bandEl);
     }
 
     return elements;
@@ -1096,12 +1117,9 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                     {renderMarkdown(streamingMessage.content)}
                   </div>
                 ) : streamingMessage.reasoning ? (
-                  /* Still in reasoning phase -- show pulsing indicator */
+                  /* Still in reasoning phase -- the shared thinking effect */
                   <div className="px-3.5 py-2 rounded-xl rounded-bl-sm bg-secondary/50 border border-border/40">
-                    <div className="flex items-center gap-1.5">
-                      <div className={`w-1.5 h-1.5 rounded-full animate-status-pulse ${isDeepMode ? "bg-accent" : "bg-primary"}`} />
-                      <span className="text-[11px] font-mono text-muted-foreground/70">thinking...</span>
-                    </div>
+                    <ThinkingIndicator label="thinking…" />
                   </div>
                 ) : null}
               </div>
@@ -1110,21 +1128,14 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
           {isLoading && !streamingMessage && (
             <div className="flex justify-start animate-fade-in">
               <div className="px-3.5 py-2 rounded-xl rounded-bl-sm bg-secondary/50 border border-border/40">
-                <div className="flex items-center gap-1.5">
-                  <div className={`w-1.5 h-1.5 rounded-full animate-status-pulse ${isDeepMode ? "bg-accent" : "bg-primary"}`} />
-                  <span className="text-[11px] font-mono text-muted-foreground/50">
-                    {activeTool
-                      ? `querying ${activeTool.replace(/_/g, " ")}...`
-                      : isDeepMode ? "investigating..." : "thinking..."}
-                  </span>
-                </div>
+                <ThinkingIndicator
+                  label={activeTool
+                    ? `querying ${activeTool.replace(/_/g, " ")}…`
+                    : isDeepMode ? "investigating…" : "thinking…"}
+                />
               </div>
             </div>
           )}
-          {/* Deep Investigation run — the inline band, last child of the
-              bottom-anchored stream so it reads as the latest turn (redesign).
-              Returns null when there's no run. */}
-          {isDeepMode && <InlineRunRegion investigationId={activeInvestigationId} service={serviceContext} />}
         </div>
         {/* Console mode keeps a little breathing room above the input box. */}
         {!isDeepMode && <div className="h-3" />}
