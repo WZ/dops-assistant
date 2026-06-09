@@ -23,19 +23,16 @@ AI-powered incident response for DevOps teams. Connects to your monitoring stack
 
 ## Features
 
-- **Context-enriched alerts, automatically** — every alert, scan hit, or health transition fires a bounded 6-phase RCA pipeline (prefetch → anomaly detection → planning → parallel evidence: metrics + logs + infra + changes → synthesis → report). Your page arrives *already investigated* — root cause, timeline, evidence, and next steps — in ~2 minutes, with no human in the loop
-- **Deep Investigation — an autonomous root-cause agent** — when one pass isn't enough, point it at an incident and it runs an unbounded, read-only reason→act loop: forms hypotheses, gathers evidence, tests each against a deterministic check, and *follows the cause across service boundaries* until it confirms a real root cause — or pauses and hands an ambiguous call back to you. Streams live, survives reloads, and writes its conclusion back to the report. (Ships gated off.)
-- **Proactive scanning** — cron-driven probe evaluates PromQL and LogQL rules across every configured service and kicks off headless investigations when thresholds trip. Four-track evaluator covers availability, pod-restart storms, log-error bursts, and custom rules
-- **AI service discovery** — guided setup wizard walks your Prometheus and Loki stack, with live progress (discover → validate → review) and a one-click **Accept** to populate the service catalog with canonical metrics, log labels, and per-service + stack-wide probe rules. Headless `npm run discover` available for CI
-- **MCP-agnostic providers** — pluggable architecture. Wire in Grafana, Kubernetes, GitLab, Coroot, or any MCP-compatible backend and assign roles (metrics, logs, infrastructure, changes, dependencies) in config
-- **Four trigger sources** — operator messages in chat, Alertmanager webhooks, health-poller transitions, and scheduled scans
-- **Notifications** — deliver every completed investigation to Slack and/or email. Per-recipient severity threshold and source allowlist (webhook / scan / poller / manual). Teams-safe HTML email
-- **Operations Desk** — live catalog of services with health chips, investigation stream, recent scan runs, and an event rail in one view
-- **Activity center** — unified `/activity` route with four tabs (Investigations, Scans, Patterns, Events). Shared filter-bar idiom, URL-driven state, paginated history, and a 30-day persistent event feed
-- **Multi-stack** — run prod, staging, and dev side-by-side in one deployment. Each stack has its own providers, services, probe rules, and investigation history
-- **Web UI + CLI** — real-time progress over WebSocket, or a terminal REPL (Ink) with tool call visibility
-- **LLM resilience** — every model call retries with exponential backoff on transient provider blips (HTTP 408/409/429/5xx, connection errors). When the LLM stays down, investigations fail loudly with the actual reason instead of spinning forever. Tunable via `llm.retry` in config
-- **Deploy anywhere** — single Docker image, Helm chart for Kubernetes, or run `npm run web` behind your own process manager
+- **Context-enriched alerts, automatically** — every trigger (operator chat, Alertmanager webhook, health-poller transition, or scheduled scan) auto-runs a bounded 6-phase RCA pipeline (metrics + logs + infra + changes, in parallel). The page arrives *already investigated* in ~2 minutes, no human in the loop.
+- **Deep Investigation — an autonomous root-cause agent** — point it at an incident and it hypothesizes, tests, and *follows the cause across service boundaries* until it confirms one — or pauses and hands an ambiguous call back to you. Streams live, writes its conclusion back to the report. (Ships gated off.)
+- **Proactive scanning** — a cron probe evaluates PromQL/LogQL rules per service (availability, restart storms, log-error bursts, custom) and auto-investigates when one trips.
+- **AI service discovery** — a setup wizard walks your Prometheus/Loki stack and populates the catalog with metrics, log labels, and probe rules (`npm run discover` for CI).
+- **MCP-agnostic** — wire in Grafana, Kubernetes, GitLab, Coroot, or any MCP backend, assigned by role (metrics, logs, infra, changes, dependencies).
+- **Notifications** — Slack + email per completed investigation, with per-recipient severity and source filters (Teams-safe HTML).
+- **Operations Desk + Activity** — a live SOC console plus a unified `/activity` view (Investigations · Scans · Patterns · Events); real-time over WebSocket, or a terminal CLI.
+- **Multi-stack** — prod, staging, and dev side-by-side, each with its own providers, services, rules, and history.
+- **LLM resilience** — model calls retry with backoff on transient blips and fail loudly (never spin) when the provider stays down.
+- **Deploy anywhere** — single Docker image, Helm chart, or `npm run web`.
 
 ## Quick Start
 
