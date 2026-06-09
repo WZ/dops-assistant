@@ -758,6 +758,8 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       onMoveBoundary?: () => Promise<void> | void;
       /** Follow a lead: an optional operator hunch that seeds the run from move 1. */
       lead?: string;
+      /** Team-knowledge skills (formatted) for the decide-move system prompt. */
+      skillContext?: string;
     },
   ): Promise<OrchestratorResult> {
     const guards: OrchestratorGuards = { ...DEFAULT_ORCHESTRATOR_GUARDS, ...opts?.guards };
@@ -808,6 +810,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       signal: opts?.signal,
       onMoveBoundary: opts?.onMoveBoundary,
       initialLead: opts?.lead,
+      skillContext: opts?.skillContext,
     });
   }
 

@@ -205,6 +205,30 @@ describe("createLlmDecideMove", () => {
     expect(seenPrompt).toContain("pool starvation");
   });
 
+  it("injects skillContext into the decide-move system prompt (orchestrator skill wiring)", async () => {
+    let seenSystem = "";
+    const decide = createLlmDecideMove({
+      model: stubModel,
+      focus: "impala is down",
+      guards,
+      skillContext: "## Team Knowledge (Skills)\nimpala is a bare-metal Consul service; it has no k8s Deployment.",
+      callModel: async (system) => { seenSystem = system; return '{"move":"done"}'; },
+    });
+    await decide(emptyState);
+    expect(seenSystem).toContain("bare-metal Consul service");
+    expect(seenSystem).toContain("autonomous incident investigator"); // base prompt still present
+  });
+
+  it("omits the skill block when no skillContext is given (regression)", async () => {
+    let seenSystem = "";
+    const decide = createLlmDecideMove({
+      model: stubModel, focus: "x", guards,
+      callModel: async (system) => { seenSystem = system; return '{"move":"done"}'; },
+    });
+    await decide(emptyState);
+    expect(seenSystem).not.toContain("Team Knowledge");
+  });
+
   it("propagates LlmUnavailableError so the runner can fail cleanly", async () => {
     const decide = createLlmDecideMove({
       model: stubModel,

@@ -274,6 +274,8 @@ export interface CreateLlmDecideMoveOptions {
   callModel?: (system: string, prompt: string) => Promise<string>;
   /** Backoff between corrective retries on a bad reply (ms). Default 250; tests set 0. */
   retryBackoffMs?: number;
+  /** Team-knowledge skills (already formatted) appended to the system prompt. */
+  skillContext?: string;
 }
 
 /**
@@ -308,6 +310,11 @@ export function createLlmDecideMove(
     });
 
   const backoffMs = opts.retryBackoffMs ?? 250;
+  // Append team-knowledge skills to the system rules so stack-level context (e.g.
+  // "these services are bare-metal Consul, not k8s") informs every move choice.
+  const systemPrompt = opts.skillContext
+    ? `${SYSTEM_PROMPT}\n\n${wrapUntrusted("team_skills", opts.skillContext)}`
+    : SYSTEM_PROMPT;
   return async (state) => {
     const basePrompt = buildStatePrompt(opts.focus, state, opts.guards);
     // Corrective retries on a bad reply. The model runs at temperature 0, so
@@ -327,7 +334,7 @@ export function createLlmDecideMove(
     for (let attempt = 1; attempt <= MAX_DECIDE_ATTEMPTS; attempt++) {
       let text: string;
       try {
-        text = await call(SYSTEM_PROMPT, attempt === 1 ? basePrompt : basePrompt + CORRECTION);
+        text = await call(systemPrompt, attempt === 1 ? basePrompt : basePrompt + CORRECTION);
       } catch (err) {
         // LLM truly unavailable → propagate so the runner can fail cleanly.
         if (err instanceof LlmUnavailableError) throw err;
@@ -388,6 +395,11 @@ export interface RunAutonomousOrchestratorOptions {
   onMoveBoundary?: () => Promise<void> | void;
   /** Follow a lead: an optional operator hunch that seeds the run from move 1. */
   initialLead?: string;
+  /** Team-knowledge skills (already formatted) injected into the decide-move
+   *  system prompt so the agent has stack-level runbook context — e.g. that
+   *  certain services are bare-metal Consul services with no k8s Deployment, so
+   *  "deployment missing" is the wrong conclusion for them. */
+  skillContext?: string;
 }
 
 /**
@@ -420,6 +432,7 @@ export async function runAutonomousOrchestrator(
     llmRetry: opts.llmRetry,
     llmCallMs: opts.llmCallMs,
     onUsage: addTokens,
+    skillContext: opts.skillContext,
   });
 
   return runOrchestrator({
