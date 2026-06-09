@@ -232,4 +232,56 @@ describe("planning step — malformed planner focus fields (gpt-oss non-array)",
     const result = await step.execute(makeStepCtx(planningInput));
     expect(result.hypotheses).toEqual([]);
   });
+
+  it("filters malformed hypothesis array entries before emitting progress", async () => {
+    const onIteration = vi.fn();
+    const generateMock = vi.fn().mockResolvedValue({
+      text: JSON.stringify({
+        hypotheses: [
+          null,
+          { hypothesis: "valid", evidenceNeeded: "what to check" },
+          { hypothesis: "missing evidence" },
+          "not an object",
+        ],
+        metricFocus: [],
+        logFocus: [],
+        infraFocus: [],
+      }),
+    });
+    const { createPlannerAgent } = await import("../../agents/planner.js");
+    vi.mocked(createPlannerAgent).mockReturnValue({ generate: generateMock } as any);
+
+    const step = buildPlanningStep({
+      model: fakeModel,
+      providers: [],
+      services: [{ name: "payments-api", metrics: [], logLabels: {} }],
+      onIteration,
+    });
+    const result = await step.execute(makeStepCtx(planningInput));
+    expect(result.hypotheses).toEqual([{ hypothesis: "valid", evidenceNeeded: "what to check" }]);
+    expect(onIteration).toHaveBeenCalledWith("planning", 0, 1, "Hypotheses: valid → what to check");
+  });
+
+  it("filters non-string focus array entries", async () => {
+    const generateMock = vi.fn().mockResolvedValue({
+      text: JSON.stringify({
+        hypotheses: [],
+        metricFocus: ["cpu", null, { query: "up" }, 42],
+        logFocus: [false, "timeout"],
+        infraFocus: [{ check: "node" }, "node health"],
+      }),
+    });
+    const { createPlannerAgent } = await import("../../agents/planner.js");
+    vi.mocked(createPlannerAgent).mockReturnValue({ generate: generateMock } as any);
+
+    const step = buildPlanningStep({
+      model: fakeModel,
+      providers: [],
+      services: [{ name: "payments-api", metrics: [], logLabels: {} }],
+    });
+    const result = await step.execute(makeStepCtx(planningInput));
+    expect(result.metricFocus).toEqual(["cpu"]);
+    expect(result.logFocus).toEqual(["timeout"]);
+    expect(result.infraFocus).toEqual(["node health"]);
+  });
 });
