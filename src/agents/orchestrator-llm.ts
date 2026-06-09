@@ -270,7 +270,18 @@ export interface CreateLlmDecideMoveOptions {
    * verified without a live model.
    */
   callModel?: (system: string, prompt: string) => Promise<string>;
+  /** Backoff between corrective retries on a bad reply (ms). Default 250; tests set 0. */
+  retryBackoffMs?: number;
 }
+
+/**
+ * How many times decideMove asks the model for a valid move before giving up and
+ * ending the run (→ exhausted). >2 because empty completions are a transient
+ * gpt-oss behavior under load — a single empty turn must not prematurely kill an
+ * otherwise-progressing investigation (the dominant failure mode seen in the
+ * inc-7 validation batch).
+ */
+const MAX_DECIDE_ATTEMPTS = 4;
 
 /** Build the LLM-backed decide-fn for runOrchestrator. */
 export function createLlmDecideMove(
@@ -294,16 +305,24 @@ export function createLlmDecideMove(
       return text;
     });
 
+  const backoffMs = opts.retryBackoffMs ?? 250;
   return async (state) => {
     const basePrompt = buildStatePrompt(opts.focus, state, opts.guards);
-    // One corrective retry on an UNPARSEABLE move. The model runs at temperature
-    // 0, so re-sending the identical prompt would deterministically reproduce the
-    // bad output; the retry appends a correction instead. This stops a single
-    // malformed reply (a known gpt-oss quirk: prose / `<|constrain|>json` instead
-    // of a JSON object) from ending the whole investigation as "no further moves".
+    // Corrective retries on a bad reply. The model runs at temperature 0, so
+    // re-sending the identical prompt would deterministically reproduce the bad
+    // output; retries append a correction to vary it. Two failure modes, both
+    // gpt-oss quirks under load:
+    //   - EMPTY completion ("") — a transient endpoint/truncation hiccup, NOT a
+    //     deliberate decision. It's the single likeliest way a mid-progress run
+    //     dies prematurely (one empty turn → "no further moves" → exhausted), so
+    //     we retry it several times with a short backoff before giving up.
+    //   - non-empty UNPARSEABLE (prose / `<|constrain|>json`) — the model
+    //     produced something but in the wrong shape; the correction usually fixes
+    //     it on the next attempt.
+    // Only after exhausting all attempts do we return null (→ exhausted).
     const CORRECTION =
       "\n\nYour previous reply was NOT a single valid JSON move object. Re-read the Moves list and reply with ONLY the JSON object for your chosen move — no prose, no code fence, no extra text.";
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    for (let attempt = 1; attempt <= MAX_DECIDE_ATTEMPTS; attempt++) {
       let text: string;
       try {
         text = await call(SYSTEM_PROMPT, attempt === 1 ? basePrompt : basePrompt + CORRECTION);
@@ -320,12 +339,14 @@ export function createLlmDecideMove(
         logger.info({ moves: state.trace.length }, "decideMove: agent signalled done → investigation complete");
         return null;
       }
-      // unparseable
-      if (attempt === 1) {
-        logger.warn({ sample: text.slice(0, 240) }, "decideMove: unparseable move, retrying once with a correction");
+      // unparseable (includes the empty-completion case)
+      const empty = text.trim() === "";
+      if (attempt < MAX_DECIDE_ATTEMPTS) {
+        logger.warn({ attempt, empty, sample: text.slice(0, 240) }, `decideMove: ${empty ? "empty" : "unparseable"} move, retrying with a correction`);
+        if (backoffMs > 0) await new Promise((resolve) => setTimeout(resolve, backoffMs));
         continue;
       }
-      logger.warn({ sample: text.slice(0, 240) }, "decideMove: still unparseable after retry → ending the investigation (exhausted)");
+      logger.warn({ attempts: MAX_DECIDE_ATTEMPTS, empty, sample: text.slice(0, 240) }, `decideMove: still ${empty ? "empty" : "unparseable"} after ${MAX_DECIDE_ATTEMPTS} attempts → ending the investigation (exhausted)`);
       return null;
     }
     return null;

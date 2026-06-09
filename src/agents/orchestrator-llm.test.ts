@@ -237,6 +237,7 @@ describe("createLlmDecideMove", () => {
       model: stubModel,
       focus: "x",
       guards,
+      retryBackoffMs: 0,
       callModel: async (_system, prompt) => {
         prompts.push(prompt);
         return prompts.length === 1 ? "I think we should check the pods first." : '{"move":"query","target":0}';
@@ -247,16 +248,45 @@ describe("createLlmDecideMove", () => {
     expect(prompts[1]).toContain("NOT a single valid JSON move object"); // correction appended on retry
   });
 
-  it("gives up (null) only after TWO unparseable replies — never on the first", async () => {
+  it("gives up (null) only after MAX_DECIDE_ATTEMPTS unparseable replies — never on the first", async () => {
     let calls = 0;
     const decide = createLlmDecideMove({
       model: stubModel,
       focus: "x",
       guards,
+      retryBackoffMs: 0,
       callModel: async () => { calls++; return "no json here, just prose"; },
     });
     await expect(decide(emptyState)).resolves.toBeNull();
-    expect(calls).toBe(2);
+    expect(calls).toBe(4);
+  });
+
+  // The dominant inc-7-batch failure: gpt-oss returns an EMPTY completion under
+  // load. That's transient, not a decision — it must NOT end a mid-progress run.
+  it("recovers from transient empty completions instead of exhausting the run", async () => {
+    let calls = 0;
+    const decide = createLlmDecideMove({
+      model: stubModel,
+      focus: "x",
+      guards,
+      retryBackoffMs: 0,
+      callModel: async () => { calls++; return calls <= 2 ? "" : '{"move":"query","target":0}'; },
+    });
+    await expect(decide(emptyState)).resolves.toEqual({ type: "query", target: 0 });
+    expect(calls).toBe(3); // two empties retried, third attempt is a real move
+  });
+
+  it("exhausts (null) only after MAX_DECIDE_ATTEMPTS persistently-empty completions", async () => {
+    let calls = 0;
+    const decide = createLlmDecideMove({
+      model: stubModel,
+      focus: "x",
+      guards,
+      retryBackoffMs: 0,
+      callModel: async () => { calls++; return "   "; }, // whitespace-only == empty
+    });
+    await expect(decide(emptyState)).resolves.toBeNull();
+    expect(calls).toBe(4);
   });
 
   it("does NOT retry a genuine done — that's the agent finishing, not a failure", async () => {
