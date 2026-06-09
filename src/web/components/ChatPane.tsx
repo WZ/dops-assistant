@@ -13,6 +13,7 @@ import { MetricChart, type TimeSeriesData } from "./MetricChart";
 import { useStackContext } from "../contexts/StackContext";
 import { InlineRunRegion } from "./InlineRunRegion";
 import { ScopedDeepMenu } from "./ScopedDeepMenu";
+import { useOrchestratorRun } from "../contexts/OrchestratorRunContext";
 import { safeGetItem, safeSetItem } from "../lib/utils";
 import { ConfirmActionDialog } from "./ConfirmActionDialog";
 import type { useWebSocket } from "../hooks/useWebSocket";
@@ -235,6 +236,10 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
   const isDeepMode = !!activeInvestigationId;
   const messages = isDeepMode ? deepMessages : chatMessages;
   const isLoading = isDeepMode ? deepLoading : chatLoading;
+  // While a deep run is live, the shortcut row is dimmed + inert (not hidden) —
+  // no composer reflow, and it doubles as a busy cue alongside the run's shimmer.
+  const activeRun = useOrchestratorRun(activeInvestigationId);
+  const chipsBusy = deepLoading || !!activeRun?.running;
 
   // First-load migration toast: show once to teach the new chat-default + /investigate UX
   useEffect(() => {
@@ -955,7 +960,11 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4" ref={scrollRef}>
-        <div className="space-y-3">
+        {/* Deep mode is bottom-anchored (justify-end + min-h-full): short
+            conversations rest near the composer and overflow scrolls up off the
+            top, like a terminal. The deep run band is the last child, so it reads
+            as the latest turn. Console mode keeps the classic top-down flow. */}
+        <div className={isDeepMode ? "min-h-full flex flex-col justify-end space-y-3" : "space-y-3"}>
           {/* Loading state for initial history fetch — 3 fake message rows
               using Tailwind `animate-pulse`. Mirrors the real bubble layout
               (user right, assistant left, with varying widths) so the
@@ -1112,35 +1121,14 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
               </div>
             </div>
           )}
+          {/* Deep Investigation run — the inline band, last child of the
+              bottom-anchored stream so it reads as the latest turn (redesign).
+              Returns null when there's no run. */}
+          {isDeepMode && <InlineRunRegion investigationId={activeInvestigationId} service={serviceContext} />}
         </div>
-        {/* Spacer so auto-scroll clears the shortcut chips overlay (deep mode)
-            or so the streaming bubble + thinking indicator have breathing
-            room above the input box (console mode). */}
-        {isDeepMode ? <div className="h-12" /> : <div className="h-3" />}
+        {/* Console mode keeps a little breathing room above the input box. */}
+        {!isDeepMode && <div className="h-3" />}
       </div>
-
-      {/* Deep mode shortcut chips -- always visible. The "Investigate deeply"
-          entry (PR-6) leads the row as a same-size chip, ahead of the suggested
-          questions. It self-gates on the deep/orchestrator window flags and
-          renders null when neither is enabled. */}
-      {isDeepMode && (
-        <div className="px-3 pt-2 flex flex-wrap gap-1.5">
-          {activeInvestigationId && (
-            <ScopedDeepMenu investigationId={activeInvestigationId} canChallenge={canChallenge} />
-          )}
-          {DEEP_DIVE_PROMPTS.map((prompt, i) => (
-            <button
-              key={prompt}
-              style={{ animationDelay: `${i * 0.03}s` }}
-              onClick={() => handleSubmit(prompt)}
-              disabled={deepLoading || status !== "connected"}
-              className="px-2.5 py-1 text-[10px] font-mono rounded-full border border-accent/25 text-accent/70 hover:bg-accent/10 hover:border-accent/40 transition-colors disabled:opacity-30 disabled:cursor-not-allowed animate-fade-in"
-            >
-              {prompt}
-            </button>
-          ))}
-        </div>
-      )}
 
       {/* Session token usage footer */}
       {sessionTokens.messageCount > 0 && (
@@ -1152,9 +1140,31 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
         </div>
       )}
 
-      {/* Deep Investigation run — a pinned projection of the run registry, sitting
-          between the thread and the composer (not a chat message). */}
-      <InlineRunRegion investigationId={activeInvestigationId} service={serviceContext} />
+      {/* Deep mode shortcut chips — now sit directly above the composer (redesign).
+          "Investigate deeply" leads the row; it self-gates on the deep/autonomous
+          window flags. While a run is in progress the whole row is dimmed + inert
+          (not hidden) so the composer never reflows; it doubles as a busy cue. */}
+      {isDeepMode && (
+        <div
+          className={`px-3 pt-2 flex flex-wrap gap-1.5 transition-opacity ${chipsBusy ? "opacity-40 pointer-events-none" : ""}`}
+          aria-disabled={chipsBusy || undefined}
+        >
+          {activeInvestigationId && (
+            <ScopedDeepMenu investigationId={activeInvestigationId} canChallenge={canChallenge} />
+          )}
+          {DEEP_DIVE_PROMPTS.map((prompt, i) => (
+            <button
+              key={prompt}
+              style={{ animationDelay: `${i * 0.03}s` }}
+              onClick={() => handleSubmit(prompt)}
+              disabled={chipsBusy || status !== "connected"}
+              className="px-2.5 py-1 text-[10px] font-mono rounded-full border border-accent/25 text-accent/70 hover:bg-accent/10 hover:border-accent/40 transition-colors disabled:opacity-30 disabled:cursor-not-allowed animate-fade-in"
+            >
+              {prompt}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Input */}
       <div className={`p-3 border-t transition-colors ${isDeepMode ? "border-accent/15" : "border-border/30"}`}>

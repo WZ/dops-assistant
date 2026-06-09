@@ -263,21 +263,25 @@ export function ResultView({
   run,
   providers = [],
   originalReport,
+  inline = false,
 }: {
   run: DeepRunState;
   providers?: GrafanaProvider[];
   /** The original RCA report this deep run was launched from (PR-5). Supplied by
    *  the panel; the inline strip omits it (no diff inline, by design). */
   originalReport?: RcaReport | null;
+  /** Inline Console band: the BandRule already shows the kicker/stamp, and there's
+   *  no Live-log toggle to point at, so both are dropped. */
+  inline?: boolean;
 }) {
   return (
     <div>
-      <div className="font-mono text-[9px] tracking-[0.13em] uppercase text-accent/70">{kicker(run)}</div>
-      <div className="font-semibold text-[14px] leading-snug mt-1 text-foreground">{conclusionHeadline(run)}</div>
+      {!inline && <div className="font-mono text-[9px] tracking-[0.13em] uppercase text-accent/70">{kicker(run)}</div>}
+      <div className={`font-semibold text-[13.5px] leading-snug text-foreground ${inline ? "" : "mt-1"}`}>{conclusionHeadline(run)}</div>
       {run.causalChain && run.causalChain.length > 1 && <CausalChain chain={run.causalChain} providers={providers} />}
       {originalReport !== undefined && <RevisionDiff result={computeRevision(run, originalReport)} />}
       {run.traceSummary && <div className="font-mono text-[10px] text-muted-foreground/60 mt-2">{run.traceSummary}</div>}
-      {run.steps.length > 0 && (
+      {!inline && run.steps.length > 0 && (
         <div className="mt-2 font-mono text-[10px] text-muted-foreground/45">
           {run.steps.length} move{run.steps.length === 1 ? "" : "s"} · switch to Live log for detail
         </div>
@@ -288,10 +292,11 @@ export function ResultView({
 
 /** The raw move stream — reuses the same renderers as the legacy surfaces. A
  *  hydrated-interrupted run is not live, so its stream is rendered settled
- *  (no trailing spinner) via the explicit `live` flag. */
-export function LiveView({ run, live }: { run: DeepRunState; live: boolean }) {
+ *  (no trailing spinner) via the explicit `live` flag. `inline` drops the card
+ *  chrome for the Console band (the in-flight move becomes the shimmer effect). */
+export function LiveView({ run, live, inline = false }: { run: DeepRunState; live: boolean; inline?: boolean }) {
   if (run.kind === "deep-mode") {
-    return <DeepModeStream events={run.steps} stats={run.deepStats} running={live} startedAt={run.startedAt} />;
+    return <DeepModeStream events={run.steps} stats={run.deepStats} running={live} startedAt={run.startedAt} inline={inline} />;
   }
   const s = run.orchStats;
   const footer: AgentStreamFooterItem[] | undefined = s
@@ -303,7 +308,34 @@ export function LiveView({ run, live }: { run: DeepRunState; live: boolean }) {
         { label: "tokens", value: s.tokensSpent },
       ]
     : undefined;
-  return <AgentStream label="Deep Investigation" events={run.steps} footer={footer} running={live} startedAt={run.startedAt} />;
+  return <AgentStream label="Deep Investigation" events={run.steps} footer={footer} running={live} startedAt={run.startedAt} inline={inline} />;
+}
+
+/**
+ * The band's rule line (the case-file "stamp" + a fading hairline + the elapsed
+ * clock / outcome). Teal while live, success-green when a cause is confirmed,
+ * muted otherwise — the one bit of color that tells you the run's state at a glance.
+ */
+export function BandRule({ run, elapsedLabel }: { run: DeepRunState; elapsedLabel: string }) {
+  const live = run.running && !isInterrupted(run) && !isParked(run);
+  const confirmed = !run.running && run.outcome === "confirmed";
+  const stamp = live
+    ? "Deep Investigation"
+    : confirmed
+    ? "Confirmed"
+    : isParked(run) ? "Parked" : isInterrupted(run) ? "Interrupted" : outcomeHeadline(run.outcome);
+  const lineColor = confirmed ? "rgba(78,219,148,0.30)" : live ? "rgba(45,212,168,0.30)" : "rgba(120,120,130,0.20)";
+  return (
+    <div className="flex items-center gap-2.5 mb-1.5">
+      <span
+        className={`font-mono text-[9.5px] tracking-[0.14em] uppercase whitespace-nowrap ${confirmed ? "text-success" : live ? "text-primary/80" : "text-muted-foreground/70"}`}
+      >
+        {stamp}
+      </span>
+      <span className="flex-1 h-px" style={{ background: `linear-gradient(90deg, ${lineColor}, transparent)` }} />
+      {elapsedLabel && <span className="font-mono text-[10px] text-muted-foreground/55 tabular-nums shrink-0">{elapsedLabel}</span>}
+    </div>
+  );
 }
 
 /**

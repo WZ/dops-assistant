@@ -56,16 +56,13 @@ describe("InlineRunRegion", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it("running orchestrator: shows the title and a Stop control (PR-2c: no ephemerality notice — runs now survive reload)", () => {
+  it("running orchestrator: shows the band stamp + a Stop control (inline redesign)", () => {
     const send = vi.fn();
     renderRegion(startedRunning, send);
-    expect(screen.getByText(/Deep Investigation · impala/)).toBeTruthy();
-    // LIVE LOG is the default view — the RESULT-only headline isn't shown until
-    // you click RESULT (PR-6).
-    expect(screen.queryByText(/Working theory/i)).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "RESULT" }));
-    expect(screen.getByText(/Working theory/i)).toBeTruthy();
-    // The "this run stops if you reload" warning is gone — PR-2c makes runs durable.
+    // The band's "Deep Investigation" stamp identifies the run (no title bar / no
+    // RESULT|LIVE toggle anymore — the live log is the only view while running).
+    expect(screen.getByText("Deep Investigation")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "RESULT" })).toBeNull();
     expect(screen.queryByText(/this run stops if you reload/i)).toBeNull();
     // Stop → orchestrator_stop
     fireEvent.click(screen.getByRole("button", { name: /stop the deep investigation/i }));
@@ -79,33 +76,16 @@ describe("InlineRunRegion", () => {
     expect(screen.queryByRole("button", { name: /stop the deep investigation/i })).toBeNull();
   });
 
-  it("confirmed run: defaults to LIVE LOG; RESULT shows the conclusion + causal chain + trace", () => {
+  it("confirmed run: shows the conclusion + causal chain + trace inline (no toggle)", () => {
     renderRegion(confirmed);
-    // Default view is LIVE LOG — the conclusion isn't shown until RESULT (PR-6).
-    expect(screen.queryByText("Current conclusion")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "RESULT" }));
-    expect(screen.getByText("Current conclusion")).toBeTruthy();
+    // The conclusion renders inline once finished — no RESULT click needed.
     // headline drops the "root cause:" prefix; the chain keeps it — assert both.
     expect(screen.getByText("statestore pool starvation")).toBeTruthy();
     expect(screen.getByText(/root cause: statestore pool starvation/)).toBeTruthy();
     expect(screen.getByText(/confirmed at depth 1/)).toBeTruthy();
-    // no Stop once finished
+    // the band stamp flips to "Confirmed"; no Stop once finished
+    expect(screen.getByText("Confirmed")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /stop the deep/i })).toBeNull();
-  });
-
-  it("collapse toggle hides the body (DZ2)", () => {
-    renderRegion(confirmed);
-    fireEvent.click(screen.getByRole("button", { name: "RESULT" }));
-    expect(screen.getByText("statestore pool starvation")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /click to collapse/i }));
-    expect(screen.queryByText("statestore pool starvation")).toBeNull();
-  });
-
-  it("Result/Live toggle switches to the move stream", () => {
-    renderRegion(confirmed);
-    fireEvent.click(screen.getByRole("button", { name: "LIVE LOG" }));
-    // the AgentStream footer surfaces the move count
-    expect(screen.getByText(/moves/i)).toBeTruthy();
   });
 
   it("paused run: docked pause bar, decision routes through the registry and locks (D7)", () => {
@@ -117,12 +97,6 @@ describe("InlineRunRegion", () => {
     expect(screen.getByText(/decision sent — controls locked/i)).toBeTruthy();
     // a second click is ignored (buttons disabled)
     expect((within(group).getByRole("button", { name: /escalate/i }) as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it("pause bar stays visible even when the region is collapsed (DZ2)", () => {
-    renderRegion(paused);
-    fireEvent.click(screen.getByRole("button", { name: /click to collapse/i }));
-    expect(screen.getByText(/needs your call/i)).toBeTruthy();
   });
 
   it("the live timer is anchored to the run's start and survives a Console remount (PR-6)", () => {
@@ -251,17 +225,14 @@ function renderHydrated(rows: Row[]) {
 }
 
 describe("InlineRunRegion — hydrated/interrupted (PR-2 T7)", () => {
-  it("a mid-flight hydrated run renders INTERRUPTED: notice shown, no Stop, no ephemerality warning", () => {
+  it("a mid-flight hydrated run renders INTERRUPTED: notice + Interrupted stamp, no Stop", () => {
     renderHydrated(MIDFLIGHT_ROWS);
-    // The interrupted notice shows regardless of view (it's not the RESULT body).
     expect(screen.getByText(/steps above are what completed/i)).toBeTruthy();
     // no live affordances — the server lost this run on reload
     expect(screen.queryByRole("button", { name: /stop the deep investigation/i })).toBeNull();
     expect(screen.queryByText(/this run stops if you reload/i)).toBeNull();
-    // The "Interrupted" headline carries in the RESULT view (default is LIVE).
-    fireEvent.click(screen.getByRole("button", { name: "RESULT" }));
-    expect(screen.getByText("Interrupted")).toBeTruthy(); // the kicker (exact)
-    expect(screen.getByText(/interrupted while investigating: impala-statestore/i)).toBeTruthy();
+    // The band stamp reads "Interrupted" (no RESULT toggle anymore).
+    expect(screen.getByText("Interrupted")).toBeTruthy();
   });
 
   it("announces the interruption on the scoped live region (DZ4)", () => {
@@ -285,11 +256,9 @@ describe("InlineRunRegion — hydrated/interrupted (PR-2 T7)", () => {
 
   it("a COMPLETED hydrated run renders as a normal finished result (NOT interrupted)", () => {
     renderHydrated(COMPLETED_ROWS);
-    // Not interrupted — true regardless of view.
     expect(screen.queryByText(/interrupted when the page reloaded/i)).toBeNull();
-    expect(screen.queryByText(/^Interrupted$/)).toBeNull();
-    // The conclusion lives in RESULT (default is LIVE).
-    fireEvent.click(screen.getByRole("button", { name: "RESULT" }));
+    expect(screen.queryByText("Interrupted")).toBeNull();
+    // The conclusion renders inline (no RESULT toggle).
     expect(screen.getByText("statestore pool starvation")).toBeTruthy();
     expect(screen.getByText(/confirmed at depth 2/)).toBeTruthy();
   });
@@ -310,24 +279,21 @@ describe("InlineRunRegion — parked (PR-2c)", () => {
     { type: "orchestrator:parked", investigationId: ID },
   ];
 
-  it("a parked run renders the Parked state: kicker + resume notice, no Stop control", () => {
+  it("a parked run renders the Parked state: resume notice + Parked stamp, no Stop control", () => {
     renderRegion(parked);
-    // The resume notice shows regardless of view.
     expect(screen.getByText(/parked itself while no one was watching/i)).toBeTruthy();
     // not a live affordance and not "interrupted"
     expect(screen.queryByRole("button", { name: /stop the deep investigation/i })).toBeNull();
     expect(screen.queryByText(/can't be resumed here/i)).toBeNull();
-    // The "Parked" headline carries in RESULT (default is LIVE).
-    fireEvent.click(screen.getByRole("button", { name: "RESULT" }));
-    expect(screen.getByText("Parked")).toBeTruthy(); // kicker (exact)
+    // The band stamp reads "Parked" (no RESULT toggle).
+    expect(screen.getByText("Parked")).toBeTruthy();
   });
 
   it("a live step after parking clears the Parked state (resumed)", () => {
     renderRegion([...parked, { type: "orchestrator:step", investigationId: ID, event: step(1, "checking pool") }]);
     // The parked notice is gone — the run resumed.
     expect(screen.queryByText(/parked itself while no one was watching/i)).toBeNull();
-    // Back to a live working theory (visible in RESULT; default view is LIVE).
-    fireEvent.click(screen.getByRole("button", { name: "RESULT" }));
-    expect(screen.getByText(/Working theory/i)).toBeTruthy();
+    // Resumed → live band; the current-move indicator shows what it's checking.
+    expect(screen.getByText(/checking pool/)).toBeTruthy();
   });
 });

@@ -11,12 +11,15 @@ export function DeepModeStream({
   stats,
   running,
   startedAt,
+  inline = false,
 }: {
   events: AgentStreamEvent[];
   stats?: AgentStreamStats;
   running: boolean;
   /** Run start (epoch ms) so the live timer survives a remount. */
   startedAt?: number;
+  /** Bandless Console rendering (see AgentStream). */
+  inline?: boolean;
 }) {
   const footer: AgentStreamFooterItem[] | undefined = stats
     ? [
@@ -27,5 +30,5 @@ export function DeepModeStream({
         { label: "took", value: `${(stats.durationMs / 1000).toFixed(1)}s` },
       ]
     : undefined;
-  return <AgentStream label="Deep Mode · second look" events={events} footer={footer} running={running} startedAt={startedAt} />;
+  return <AgentStream label="Deep Mode · second look" events={events} footer={footer} running={running} startedAt={startedAt} inline={inline} />;
 }
