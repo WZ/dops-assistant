@@ -15,7 +15,7 @@ import { inferDependencyGraph } from "./dependency-graph.js";
 import { assembleCausalChain, traceSummary } from "../agents/orchestrator-stream.js";
 import type { OrchestratorState } from "../agents/orchestrator.js";
 import type { ValidatedServiceConfig } from "../types/discovery-types.js";
-import type { SkillStore } from "../skills/store.js";
+import type { Skill, SkillStore } from "../skills/store.js";
 import { LlmUnavailableError } from "../agents/shared/llm-errors.js";
 import { InvestigationRunner, friendlyError } from "./investigation-runner.js";
 import type { InvestigationCallbacks, RunnerDeps } from "./investigation-runner.js";
@@ -616,9 +616,13 @@ async function handleOrchestratorInvestigate(
   // token-matching — e.g. the bare-metal/Consul runbook, so the agent doesn't
   // mistake a Consul service's missing k8s Deployment for the root cause.
   let skillContext: string | undefined;
+  let investigationSkills: Skill[] | undefined;
   if (deps.skillStore) {
     const skills = deps.skillStore.getAllForScopeEnabled("investigation", deps.db.getDisabledSkills(stackId));
-    if (skills.length > 0) skillContext = deps.skillStore.formatForPrompt(skills);
+    if (skills.length > 0) {
+      skillContext = deps.skillStore.formatForPrompt(skills);
+      investigationSkills = skills;
+    }
   }
 
   const abort = new AbortController();
@@ -652,7 +656,7 @@ async function handleOrchestratorInvestigate(
       await runOrchestratorStreamed(
         msg.investigationId,
         focus,
-        { timeRange, ctx: { incidentTime: timeRange?.from }, dependencies, incidentService: investigation.service, knownServices: allServices.map((s) => s.name), signal: abort.signal, lead, skillContext },
+        { timeRange, ctx: { incidentTime: timeRange?.from }, dependencies, incidentService: investigation.service, knownServices: allServices.map((s) => s.name), signal: abort.signal, lead, skillContext, skills: investigationSkills },
         agents.orchestrate,
         persistingSend,
         registry,
@@ -914,7 +918,7 @@ async function handleOrchestratorAccept(
 async function runOrchestratorStreamed(
   investigationId: string,
   focus: string,
-  opts: { timeRange?: { from: string; to: string }; ctx?: { incidentTime?: string }; dependencies?: string[]; incidentService?: string; knownServices?: string[]; signal?: AbortSignal; lead?: string; skillContext?: string },
+  opts: { timeRange?: { from: string; to: string }; ctx?: { incidentTime?: string }; dependencies?: string[]; incidentService?: string; knownServices?: string[]; signal?: AbortSignal; lead?: string; skillContext?: string; skills?: Skill[] },
   orchestrate: StackAgents["orchestrate"],
   send: (m: ServerMessage) => void,
   registry: OrchestratorRunRegistry,
@@ -932,6 +936,7 @@ async function runOrchestratorStreamed(
       signal: opts.signal,
       lead: opts.lead,
       skillContext: opts.skillContext,
+      skills: opts.skills,
       onStep: (ev) => send({ type: "orchestrator:step", investigationId, event: { ...ev, seq: seq++ } }),
       // Auto-park (PR-2c): if the watchdog flagged this run as viewerless, block
       // here until a client reattaches (or aborts). Emits a persisted

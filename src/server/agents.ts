@@ -51,6 +51,7 @@ import { traceEntryToStreamEvent } from "../agents/orchestrator-stream.js";
 import type { OrchestratorGuards, OrchestratorResult, OrchestratorState } from "../agents/orchestrator.js";
 import { refineReportFromDeepRun, type RefineInput, type RefinedNarrative } from "../agents/orchestrator-refine.js";
 import type { CorroborationContext, NormalizedObservation } from "../workflows/steps/corroboration.js";
+import type { Skill } from "../skills/store.js";
 
 /** Conservative default safety harness for the autonomous orchestrator. The
  *  budget guard is the cost backstop; defaults stay low because an autonomous
@@ -760,6 +761,8 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       lead?: string;
       /** Team-knowledge skills (formatted) for the decide-move system prompt. */
       skillContext?: string;
+      /** Pre-filtered team-knowledge skills for spawned sub-investigations. */
+      skills?: Skill[];
     },
   ): Promise<OrchestratorResult> {
     const guards: OrchestratorGuards = { ...DEFAULT_ORCHESTRATOR_GUARDS, ...opts?.guards };
@@ -780,7 +783,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
           // a "standard" run costs — an autonomous run can spawn several, so the
           // cheaper template matters. Revisit if subagents miss log-based causes.
           svc, null, undefined, undefined, args.question,
-          undefined, undefined, undefined, undefined, "quick", true,
+          undefined, undefined, undefined, opts?.skillContext, "quick", true, opts?.skills,
         );
         const rc =
           report.rootCause && !/^under investigation$|^unable to determine/i.test(report.rootCause.trim())

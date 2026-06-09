@@ -14,6 +14,7 @@ const {
   mockCreateModel,
   mockRunStart,
   mockCreateRun,
+  mockRunAutonomousOrchestrator,
 } = vi.hoisted(() => {
   const runStart = vi.fn();
   return {
@@ -24,6 +25,7 @@ const {
     mockCreateRun: vi.fn().mockResolvedValue({
       start: runStart,
     }),
+    mockRunAutonomousOrchestrator: vi.fn(),
   };
 });
 
@@ -37,6 +39,10 @@ vi.mock("../mcp/provider.js", () => ({
 
 vi.mock("../mastra/index.js", () => ({
   createModel: mockCreateModel,
+}));
+
+vi.mock("../agents/orchestrator-llm.js", () => ({
+  runAutonomousOrchestrator: mockRunAutonomousOrchestrator,
 }));
 
 vi.mock("../workflows/investigation.js", async (importOriginal) => {
@@ -561,6 +567,81 @@ describe("createMastraAdapters", () => {
         grafana_get_panel_image: expect.any(Object),
       },
     }));
+  });
+
+  it("passes team-knowledge skills into autonomous sub-investigations", async () => {
+    mockGetAllTools.mockResolvedValue({});
+    mockCreateChatAgent.mockImplementation((config) => ({
+      id: config.agentId,
+      stream: vi.fn(),
+      generate: vi.fn(),
+    }));
+    mockRunAutonomousOrchestrator.mockImplementationOnce(async (opts: any) => {
+      await opts.spawnSubagent({ service: "dep", question: "why is dep failing?" });
+      return {
+        outcome: "exhausted",
+        hypotheses: [],
+        evidence: [],
+        trace: [],
+        stats: { moves: 0, toolCalls: 0, tokensSpent: 0, strikes: 0, depth: 0, subagents: 1, elapsedMs: 0 },
+      };
+    });
+
+    const { orchestrate, investigationAgent } = await createMastraAdapters({
+      config: {
+        ...baseConfig,
+        services: [
+          { name: "svc", metrics: [], logLabels: {} },
+          { name: "dep", metrics: [], logLabels: {} },
+        ],
+      },
+      providers: [],
+    });
+    const investigate = vi.spyOn(investigationAgent, "investigate").mockResolvedValue({
+      service: "dep",
+      severity: "medium",
+      summary: "dep failed",
+      impact: { duration: "unknown", description: "dep failed" },
+      rootCause: "Consul health failed",
+      trigger: "Consul health check",
+      contributingFactors: [],
+      timeline: [],
+      evidence: { metrics: [], logs: [], infra: [] },
+      dashboardLinks: [],
+      recommendedActions: [],
+      confidence: "medium",
+      confidenceScore: 0.5,
+      savedToHistory: false,
+      investigatedAt: "2026-06-09T00:00:00Z",
+    });
+    const skill = {
+      id: "consul",
+      title: "Consul Bare Metal",
+      services: [],
+      alerts: [],
+      tags: ["consul"],
+      scope: ["investigation"],
+      filePath: "skills/consul.md",
+      body: "Bare-metal Consul services have no k8s Deployment.",
+    } as any;
+    const skillContext = "## Team Knowledge (Skills)\nBare-metal Consul services have no k8s Deployment.";
+
+    await orchestrate("svc is down", { skillContext, skills: [skill] } as any);
+
+    expect(investigate).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "dep" }),
+      null,
+      undefined,
+      undefined,
+      "why is dep failing?",
+      undefined,
+      undefined,
+      undefined,
+      skillContext,
+      "quick",
+      true,
+      [skill],
+    );
   });
 
   const baseConfig = {
