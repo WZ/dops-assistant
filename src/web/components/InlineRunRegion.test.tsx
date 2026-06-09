@@ -79,18 +79,20 @@ describe("InlineRunRegion", () => {
     expect(screen.queryByRole("button", { name: /stop the deep investigation/i })).toBeNull();
   });
 
-  it("confirmed run: shows the conclusion + causal chain + trace inline (no toggle)", () => {
+  it("confirmed run: conclusion stays inline; the move log collapses behind a toggle", () => {
     renderRegion(confirmed);
     // The conclusion renders inline once finished — no RESULT click needed.
     // headline drops the "root cause:" prefix; the chain keeps it — assert both.
     expect(screen.getByText("statestore pool starvation")).toBeTruthy();
     expect(screen.getByText(/root cause: statestore pool starvation/)).toBeTruthy();
     expect(screen.getByText(/confirmed at depth 1/)).toBeTruthy();
-    // the "DEEP INVESTIGATION" delimiter persists (state shows in the conclusion);
-    // no Stop once finished.
+    // the "DEEP INVESTIGATION" delimiter persists; no Stop once finished.
     expect(screen.getByText("Deep Investigation")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /stop the deep/i })).toBeNull();
-    // the move log is NOT hidden after finishing — the explored steps stay.
+    // the move log COLLAPSES after finishing (keeps the band compact) — the move
+    // isn't shown until the operator expands it via the toggle.
+    expect(screen.queryByText(/impala-statestore/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /show the .* investigation move/i }));
     expect(screen.getByText(/impala-statestore/)).toBeTruthy();
   });
 

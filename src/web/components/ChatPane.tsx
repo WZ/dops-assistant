@@ -682,9 +682,13 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
     const bandEl = hasRun ? (
       <InlineRunRegion key="deep-run-band" investigationId={activeInvestigationId} service={serviceContext} />
     ) : null;
-    const bandAfter = runKey != null && deepBandAnchors.has(runKey)
-      ? deepBandAnchors.get(runKey)!
-      : messages.length;
+    // Clamp to the current message count so a stale anchor (e.g. after a reload
+    // returned fewer messages) can't place the band past the end and sandwich a
+    // just-sent follow-up above it.
+    const bandAfter = Math.min(
+      runKey != null && deepBandAnchors.has(runKey) ? deepBandAnchors.get(runKey)! : messages.length,
+      messages.length,
+    );
     let bandPushed = false;
     const pushBand = () => { if (bandEl && !bandPushed) { elements.push(bandEl); bandPushed = true; } };
     if (bandAfter <= 0) pushBand();
@@ -721,7 +725,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
             // — so it reads in one column with the responses below it.
             <div className="w-full flex flex-col gap-0.5">
               <div className="flex items-start gap-1.5">
-                <div className={`flex-1 rounded-md px-3.5 py-2 text-sm font-body whitespace-pre-wrap text-foreground/90 border-l-2 ${isDeepMode ? "bg-accent/8 border-accent/50" : "bg-primary/8 border-primary/50"}`}>
+                <div className={`flex-1 rounded-md px-3.5 py-2 text-[13px] font-body whitespace-pre-wrap text-foreground/90 border-l-2 ${isDeepMode ? "bg-accent/8 border-accent/50" : "bg-primary/8 border-primary/50"}`}>
                   {msg.content}
                 </div>
                 {msg.id && (
@@ -836,7 +840,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                   ))}
                 </div>
               )}
-              <div className="text-sm font-body leading-relaxed text-foreground/90">
+              <div className="text-[13px] font-body leading-relaxed text-foreground/90">
                 {renderMarkdown(msg.content)}
               </div>
               {msg.chartData && msg.chartData.length > 0 && (
@@ -1134,7 +1138,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
                 )}
                 {/* Content -- only show if we have content */}
                 {streamingMessage.content ? (
-                  <div className="text-sm font-body leading-relaxed text-foreground/90">
+                  <div className="text-[13px] font-body leading-relaxed text-foreground/90">
                     {renderMarkdown(streamingMessage.content)}
                   </div>
                 ) : streamingMessage.reasoning ? (

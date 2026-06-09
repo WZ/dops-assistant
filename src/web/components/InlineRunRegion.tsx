@@ -43,6 +43,10 @@ export function InlineRunRegion({
   // "Stopping…" in that window so the button doesn't look unresponsive. Reset once
   // the run is no longer live (aborted, or a fresh run started).
   const [stopping, setStopping] = useState(false);
+  // Once the run finishes, the (often long) move log collapses behind a toggle so
+  // the band stays compact and the conclusion + any follow-up chat below it stay
+  // visible. The result itself never collapses. Reset to collapsed on a new run.
+  const [movesExpanded, setMovesExpanded] = useState(false);
   const running = !!run?.running;
   const parked = !!run?.parked && running;
   const interrupted = !!run?.hydrated && running && !parked;
@@ -54,6 +58,9 @@ export function InlineRunRegion({
   }, [liveRunning]);
   useEffect(() => {
     if (!liveRunning) setStopping(false);
+  }, [liveRunning]);
+  useEffect(() => {
+    if (liveRunning) setMovesExpanded(false);
   }, [liveRunning]);
 
   if (!investigationId || !run) return null;
@@ -91,12 +98,29 @@ export function InlineRunRegion({
 
       <BandRule run={run} elapsedLabel={elapsedLabel} />
 
-      <LiveView run={run} live={liveRunning} inline />
-
-      {showResult && (
-        <div className="mt-2.5 pt-2.5 border-t border-border/40">
+      {showResult ? (
+        // Finished: the conclusion stays; the move log collapses behind a toggle.
+        <>
           <ResultView run={run} providers={providers} inline />
-        </div>
+          {run.steps.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setMovesExpanded((v) => !v)}
+              aria-expanded={movesExpanded}
+              className="mt-2 flex items-center gap-1.5 font-mono text-[10px] text-muted-foreground/55 hover:text-muted-foreground/85"
+            >
+              <span aria-hidden>{movesExpanded ? "▾" : "▸"}</span>
+              {movesExpanded ? "Hide" : "Show"} the {run.steps.length} investigation move{run.steps.length === 1 ? "" : "s"}
+            </button>
+          )}
+          {movesExpanded && (
+            <div className="mt-2 pt-2 border-t border-border/40">
+              <LiveView run={run} live={false} inline />
+            </div>
+          )}
+        </>
+      ) : (
+        <LiveView run={run} live={liveRunning} inline />
       )}
 
       {/* Action row — right-aligned, below the run it controls. */}
