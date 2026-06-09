@@ -1818,6 +1818,13 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   app.get("/api/providers", (req: Request, res: Response) => {
     const providerRegistry = req.stackContext.providerRegistry;
     const providers = providerRegistry.getAll();
+    // Demo mode: the seeded stub providers point at *.invalid URLs that can't
+    // resolve, so they'd report status "error" / 0 tools and the UI would treat
+    // the stack as unconfigured (onboarding redirect + empty desk). Present them
+    // as connected with a representative tool count so the read-only showcase
+    // renders like a live deployment. No real MCP call is ever made in demo mode.
+    const demo = isDemoMode();
+    const demoToolCount = (p: any) => Math.max(p.toolCount, (p.config.roles?.length ?? 1) * 4);
     res.json(providers.map((p: any) => ({
       name: p.config.name,
       roles: p.config.roles,
@@ -1826,10 +1833,10 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       url: p.config.mcpServer.transport === "http" ? p.config.mcpServer.url : undefined,
       webUrl: p.config.webUrl,
       source: p.source,
-      status: p.status,
-      toolCount: p.toolCount,
-      enabledToolCount: p.enabledToolCount,
-      error: p.error,
+      status: demo ? "connected" : p.status,
+      toolCount: demo ? demoToolCount(p) : p.toolCount,
+      enabledToolCount: demo ? demoToolCount(p) : p.enabledToolCount,
+      error: demo ? undefined : p.error,
       // Resolved Prometheus datasource UID — lets the UI point metric deep links
       // at the right datasource instead of falling through to Grafana's default
       // (which may be Loki, breaking PromQL in Explore).
