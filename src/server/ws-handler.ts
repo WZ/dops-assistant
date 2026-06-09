@@ -2,12 +2,12 @@ import { Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { ulid } from "ulid";
 import { createLogger } from "../logger.js";
-import type { Database } from "./db.js";
+import type { Database, EventRow } from "./db.js";
 import type { IChatAgent, IInvestigationAgent, IDiscoverAgent, DiscoveryResult } from "../types/agent-interfaces.js";
 import type { IntentRouter } from "../agents/intent.js";
 import { resolveServiceFromHistory } from "../agents/intent.js";
 import type { ServiceConfig, DiscoveryConfig, Config } from "../config/schema.js";
-import type { ClientMessage, ServerMessage, ChartSeries, AgentStreamEvent } from "../types/ws-types.js";
+import type { ClientMessage, ServerMessage, ChartSeries, AgentStreamEvent, CausalChainLink } from "../types/ws-types.js";
 import { DEEP_INVESTIGATION_EVENT_SCHEMA } from "../types/ws-types.js";
 import { OrchestratorRunRegistry, type OperatorDecision } from "./orchestrator-run-registry.js";
 import { DEFAULT_STACK_SLUG } from "../types/stack-types.js";
@@ -24,7 +24,7 @@ import type { InvestigationDedup } from "./investigation-dedup.js";
 import { createMastraAdapters } from "./agents.js";
 import { getToolsByRole } from "../mcp/provider.js";
 import { ChatMessageSchema, DeepInvestigateMessageSchema, DeepModeInvestigateMessageSchema } from "./sanitize.js";
-import type { RcaReport } from "../types/rca-types.js";
+import type { RcaReport, OrchestratorRefinement } from "../types/rca-types.js";
 import { wrapUntrusted } from "../agents/shared/prompt-helpers.js";
 import { WsRateLimiter, classifyWsMessage } from "./rate-limit.js";
 import { isDemoMode } from "./demo-mode.js";
@@ -381,14 +381,32 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
             "discover:accept",
             "discover:reject",
             "scan:trigger",
+            // PR-6b: orchestrator_accept writes the refined conclusion back into
+            // the stored RCA report — a state mutation. Block it directly at the
+            // WS edge so a direct client can't bypass the demo no-mutation guard
+            // for any investigation that already has a persisted confirmed run.
+            "orchestrator_accept",
           ]);
           if (parsed && typeof parsed === "object" && "type" in parsed && blockedTypes.has(parsed.type as string)) {
             const t = parsed.type as string;
             const friendly = (t === "chat" || t === "deep_investigate" || t === "rerun")
-              ? "Investigations are disabled on the demo site — LLM calls cost money and we can't let random visitors spend it. Click into a pre-recorded investigation to see a real RCA report, or clone the repo to try it yourself."
+                ? "Investigations are disabled on the demo site — LLM calls cost money and we can't let random visitors spend it. Click into a pre-recorded investigation to see a real RCA report, or clone the repo to try it yourself."
               : t === "scan:trigger"
                 ? "Scans are disabled on the demo site — they would query stub MCP providers and dispatch real investigations. Clone the repo and point it at your own stack."
-                : "Discovery is disabled on the demo site — it would call the LLM and run against stub MCP providers. Clone the repo and point it at your own stack.";
+                : t === "orchestrator_accept"
+                  ? "Editing investigation reports is disabled on the demo site. Clone the repo to try the deep-investigation refinement flow against your own stack."
+                  : "Discovery is disabled on the demo site — it would call the LLM and run against stub MCP providers. Clone the repo and point it at your own stack.";
+            if (t === "orchestrator_accept") {
+              const investigationId = typeof (parsed as { investigationId?: unknown }).investigationId === "string"
+                ? (parsed as { investigationId: string }).investigationId
+                : "";
+              if (investigationId) {
+                send({ type: "orchestrator:accept_rejected", investigationId, message: friendly });
+              } else {
+                send({ type: "error", message: friendly });
+              }
+              return;
+            }
             send({ type: "chat:stream_end", content: friendly });
             return;
           }
@@ -487,7 +505,7 @@ async function handleDeepModeInvestigate(
   // Master gate: deep mode is hidden from users until the Autonomous
   // Orchestrator ships. The button is suppressed client-side; this rejects any
   // direct deep_mode_investigate (e.g. a stale client) when disabled.
-  if (!deps.config.agent?.deepModeEnabled) {
+  if (!deps.config.agent?.challengeEnabled) {
     send({ type: "deep_mode:error", investigationId: msg.investigationId, message: "Deep mode is not enabled." });
     return;
   }
@@ -523,7 +541,7 @@ async function handleDeepModeInvestigate(
 /**
  * Autonomous orchestrator (Approach D): run the unbounded read-only move-loop
  * seeded from a completed investigation's context, streaming each move to the
- * agent-stream UI. Gated behind config.agent.orchestratorEnabled — the trigger
+ * agent-stream UI. Gated behind config.agent.autonomousInvestigationEnabled — the trigger
  * is hidden client-side; this rejects any direct message when disabled.
  */
 async function handleOrchestratorInvestigate(
@@ -537,7 +555,7 @@ async function handleOrchestratorInvestigate(
   myRuns: Set<string>,
 ): Promise<void> {
   const { db } = deps;
-  if (!deps.config.agent?.orchestratorEnabled) {
+  if (!deps.config.agent?.autonomousInvestigationEnabled) {
     send({ type: "orchestrator:error", investigationId: msg.investigationId, message: "Autonomous orchestrator is not enabled." });
     return;
   }
@@ -609,7 +627,12 @@ async function handleOrchestratorInvestigate(
     // decision → complete) without the real LLM/MCP engine, so a browser test can
     // exercise the full Console flow. Gated by an env flag; off in every real deploy.
     if (process.env["DEEP_INVESTIGATION_E2E_STUB"] === "1") {
-      await streamStubbedOrchestrator(msg.investigationId, persistingSend, registry, abort.signal);
+      // Anchor the scripted run to the real investigation so the demo reads
+      // coherently (incident service + a real dependency-graph neighbor).
+      await streamStubbedOrchestrator(msg.investigationId, persistingSend, registry, abort.signal, {
+        service: investigation.service,
+        dependency: dependencies[0],
+      });
     } else {
       const agents = await getOrCreateAgents(stackId, ctx, deps.config, deps.db);
       await runOrchestratorStreamed(
@@ -677,6 +700,201 @@ export function makeOrchestratorPersistingSend(
     if (mId === investigationId) persistOrchestratorEvent(db, investigationId, m);
     send(m);
   };
+}
+
+/**
+ * Parse one persisted orchestrator event row back to its original `ServerMessage`.
+ * Each row's payload is the `{schemaVersion, message}` envelope written by
+ * `persistOrchestratorEvent` (same shape `orchestrator_subscribe` replays).
+ * Returns `undefined` for a malformed row.
+ */
+function parseOrchestratorEventRow(row: EventRow): ServerMessage | undefined {
+  try {
+    const env = JSON.parse(row.payload) as { message?: unknown };
+    const m = env.message as ServerMessage | undefined;
+    return m && typeof m === "object" && "type" in m ? m : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Operator accepts a confirmed autonomous-orchestrator run's conclusion (PR-6b):
+ * merge it back into the investigation's RCA report. The write-back is
+ * server-authoritative — the result comes from the persisted `orchestrator:complete`
+ * event, never from the client message (which carries only the id). The original
+ * root cause is preserved on the `orchestratorRefined` marker so the report can
+ * render a reversible "was: …" audit line.
+ *
+ * Rejected (friendly `orchestrator:accept_rejected`) when: the orchestrator is
+ * disabled, the investigation/report is missing or malformed, there is no
+ * `orchestrator:complete` event, its outcome isn't "confirmed", or the chain has
+ * no root-cause link to refine from.
+ */
+async function handleOrchestratorAccept(
+  msg: { type: "orchestrator_accept"; investigationId: string },
+  send: (m: ServerMessage) => void,
+  deps: WsDeps,
+  stackId: string,
+  ctx: StackContext,
+  registry: OrchestratorRunRegistry,
+): Promise<void> {
+  const { db } = deps;
+  const id = msg.investigationId;
+  const reject = (message: string) => send({ type: "orchestrator:accept_rejected", investigationId: id, message });
+
+  if (!deps.config.agent?.autonomousInvestigationEnabled) {
+    reject("Autonomous orchestrator is not enabled.");
+    return;
+  }
+  // Don't apply while a deep run is still live (codex P2): the latest persisted
+  // complete is then from an OLDER run, so a stale tab could write back a result
+  // that a newer in-flight run is about to supersede. Make the operator wait for
+  // the running investigation to finish (then Apply reflects its real outcome).
+  if (registry.isLive(id)) {
+    reject("A deep investigation is still running. Wait for it to finish, then apply its result.");
+    return;
+  }
+  const investigation = db.getInvestigation(stackId, id);
+  if (!investigation || !investigation.report) {
+    reject("Investigation report not found.");
+    return;
+  }
+  let report: RcaReport;
+  try {
+    report = JSON.parse(investigation.report) as RcaReport;
+  } catch {
+    reject("Could not parse the investigation report.");
+    return;
+  }
+
+  // Read the event log once and bind everything to the SPECIFIC run being
+  // accepted (codex P2/P3). A single investigation can have several Full deep
+  // runs; the accepted one is the LATEST orchestrator:complete, and its window
+  // is [its own orchestrator:started, that complete]. The steer and the
+  // "original" must come from that window, not from a different/earlier run.
+  let rows: EventRow[];
+  try {
+    rows = db.getEvents(id);
+  } catch (err) {
+    logger.warn({ err, investigationId: id }, "Failed to read events for orchestrator accept");
+    reject("Couldn't read the deep investigation history. Try again.");
+    return;
+  }
+  let completeIdx = -1;
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i]!.event_type === "orchestrator:complete") completeIdx = i;
+  }
+  const completeRow = completeIdx >= 0 ? rows[completeIdx]! : undefined;
+  const complete = completeRow ? parseOrchestratorEventRow(completeRow) : undefined;
+  if (!complete || complete.type !== "orchestrator:complete") {
+    reject("No completed deep investigation to apply. Run a Full deep investigation first.");
+    return;
+  }
+  if (complete.outcome !== "confirmed") {
+    reject("The deep investigation didn't confirm a root cause, so there's nothing to apply.");
+    return;
+  }
+  const causalChain: CausalChainLink[] = complete.causalChain ?? [];
+  const rootLink = causalChain.find((l) => l.kind === "root-cause");
+  const refinedRootCause = rootLink?.label.replace(/^root cause:\s*/i, "").trim();
+  if (!refinedRootCause) {
+    reject("The deep investigation's result is missing a root cause to apply.");
+    return;
+  }
+
+  // The operator's free-text steer at the pause (PR-4), bound to THIS run's
+  // window: the last decision_locked AFTER the accepted run's own started and
+  // BEFORE its complete. Lower-bounding on the run's started (not the previous
+  // complete) means a steer from an EARLIER run that locked then errored without
+  // completing isn't mis-attributed to this one (codex P3).
+  let startIdx = -1;
+  for (let i = completeIdx - 1; i >= 0; i--) {
+    if (rows[i]!.event_type === "orchestrator:started") { startIdx = i; break; }
+  }
+  let operatorNotes: string | undefined;
+  for (let i = completeIdx - 1; i > startIdx; i--) {
+    if (rows[i]!.event_type !== "orchestrator:decision_locked") continue;
+    const m = parseOrchestratorEventRow(rows[i]!);
+    if (m && m.type === "orchestrator:decision_locked" && typeof m.context === "string" && m.context.trim()) {
+      operatorNotes = m.context.trim();
+      break;
+    }
+  }
+
+  // The "was: …" original. Preserve the genuine pre-refinement value ONLY when
+  // re-applying the very SAME complete event (idempotent retry after reload /
+  // cold hydrate / another tab) — keyed on the persisted event id. A NEW deep
+  // run is a fresh refinement, so its "was" is the report's CURRENT root cause
+  // (which may itself be a prior refinement). This keeps the audit trail correct
+  // across successive deep runs instead of freezing the first-ever original.
+  const isReapplyOfSameRun =
+    !!report.orchestratorRefined &&
+    report.orchestratorRefined.appliedCompleteEventId === completeRow!.id;
+  const originalRootCause = isReapplyOfSameRun
+    ? report.orchestratorRefined!.originalRootCause
+    : report.rootCause;
+  const refinement: OrchestratorRefinement = {
+    outcome: complete.outcome,
+    causalChain,
+    refinedAt: new Date().toISOString(),
+    originalRootCause,
+    appliedCompleteEventId: completeRow!.id,
+    ...(operatorNotes ? { operatorNotes } : {}),
+  };
+  // Re-synthesis (PR-6b): regenerate the report narrative so the whole report is
+  // coherent with the confirmed cause — not just a rootCause swap. One LLM pass,
+  // grounded in the original report + the causal chain. Announce it (seconds-long)
+  // so the Console shows "Re-synthesizing…", then fall back to the field-merge on
+  // any failure so Apply never breaks.
+  const refining: ServerMessage = { type: "orchestrator:refining", investigationId: id };
+  registry.broadcast(id, refining);
+  send(refining);
+
+  let narrative: Awaited<ReturnType<StackAgents["refineReport"]>> = null;
+  try {
+    const agents = await getOrCreateAgents(stackId, ctx, deps.config, deps.db);
+    narrative = await agents.refineReport(report, {
+      rootCause: refinedRootCause,
+      causalChain,
+      traceSummary: complete.traceSummary,
+      ...(operatorNotes ? { operatorNotes } : {}),
+    });
+  } catch (err) {
+    logger.warn({ err, investigationId: id }, "orchestrator accept: report re-synthesis failed → field-merge fallback");
+  }
+
+  // Confirmed by an autonomous deep run → high confidence. When re-synthesis
+  // produced a coherent narrative, swap the prose fields too (keeping the
+  // original's service/severity/evidence/dashboards); otherwise only the
+  // conclusion + confidence + audit marker change.
+  const updated: RcaReport = narrative
+    ? {
+        ...report,
+        ...narrative,
+        rootCause: refinedRootCause,
+        confidence: "high",
+        confidenceScore: 0.9,
+        orchestratorRefined: { ...refinement, resynthesized: true },
+      }
+    : {
+        ...report,
+        rootCause: refinedRootCause,
+        confidence: "high",
+        confidenceScore: 0.9,
+        orchestratorRefined: refinement,
+      };
+  db.updateInvestigation(id, { report: JSON.stringify(updated) });
+
+  // Fan out + persist (codex P2). The DB report is the source of truth (a cold GET
+  // re-reads the refined report), but the live RUN's accepted state must converge
+  // everywhere: persist the event so a cold hydrate replays it (Apply button hidden),
+  // broadcast to every attached sink so other tabs update in place, and send to the
+  // initiating connection (which may not be a registry sink) so it flips immediately.
+  const accepted: ServerMessage = { type: "orchestrator:accepted", investigationId: id, report: updated };
+  persistOrchestratorEvent(db, id, accepted);
+  registry.broadcast(id, accepted);
+  send(accepted);
 }
 
 async function runOrchestratorStreamed(
@@ -773,17 +991,26 @@ async function runOrchestratorStreamed(
  * (started → ruled-out → follow → operator_pause → [await decision] → confirm →
  * complete) using the SAME WebSocket protocol + pause mechanism as the real run,
  * but with no LLM/MCP. Exported for unit testing; only reached when
- * DEEP_INVESTIGATION_E2E_STUB=1. `stepDelayMs` is the pause between streamed steps
- * (kept short for tests).
+ * DEEP_INVESTIGATION_E2E_STUB=1.
+ *
+ * The script is anchored to the REAL investigation so the demo reads coherently:
+ * `service` is the incident service (the causal chain's anchor + the confirmed
+ * root cause), and `dependency` (a dependency-graph neighbor, if any) is the link
+ * it "follows the trail" into. With no neighbor it confirms on the service itself
+ * at depth 0. `stepDelayMs` is the pause between streamed steps (short for tests).
  */
 export async function streamStubbedOrchestrator(
   investigationId: string,
   send: (m: ServerMessage) => void,
   registry: OrchestratorRunRegistry,
   signal: AbortSignal,
-  stepDelayMs = 300,
+  opts: { service?: string; dependency?: string; stepDelayMs?: number } = {},
 ): Promise<void> {
-  const stats = { moves: 4, toolCalls: 1, subagents: 0, tokensSpent: 0, strikes: 3, depth: 1, durationMs: 1200 };
+  const { service = "the incident service", dependency, stepDelayMs = 300 } = opts;
+  // The link the root cause lands on: the followed dependency if there is one,
+  // else the incident service itself.
+  const rootTarget = dependency ?? service;
+  const stats = { moves: 4, toolCalls: 1, subagents: 0, tokensSpent: 0, strikes: 3, depth: dependency ? 1 : 0, durationMs: 1200 };
   const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
   const complete = (outcome: string, extra: Partial<{ causalChain: ReturnType<typeof assembleCausalChain>; traceSummary: string }> = {}): void =>
     send({ type: "orchestrator:complete", investigationId, outcome, stats, ...extra });
@@ -796,7 +1023,7 @@ export async function streamStubbedOrchestrator(
   if (signal.aborted) return complete("aborted", { traceSummary: "stubbed · aborted" });
   step("ruled out", "memory exhaustion", "rejected");
   await delay(stepDelayMs);
-  step("followed the trail to", "impala-statestore", "done");
+  step(dependency ? "followed the trail to" : "examined", dependency ?? service, "done");
   await delay(stepDelayMs);
   if (signal.aborted) return complete("aborted", { traceSummary: "stubbed · aborted" });
 
@@ -814,27 +1041,27 @@ export async function streamStubbedOrchestrator(
     return complete("operator-pause", { traceSummary: "stubbed · 4 moves · paused" });
   }
 
-  step("evidence backs", "statestore connection pool starvation", "strong");
+  step("evidence backs", `${rootTarget} connection pool starvation`, "strong");
   await delay(stepDelayMs);
   complete("confirmed", {
     causalChain: [
-      { label: "impala", kind: "incident" },
-      { label: "impala-statestore", kind: "followed", evidence: "gRPC handshake latency climbing" },
+      { label: service, kind: "incident" },
+      ...(dependency ? [{ label: dependency, kind: "followed" as const, evidence: "gRPC handshake latency climbing" }] : []),
       {
-        label: "root cause: statestore connection pool starvation",
+        label: `root cause: ${rootTarget} connection pool starvation`,
         kind: "root-cause",
         evidence: "pool_used = 100% for 6m",
         // PR-3: deep-link provenance so the stubbed e2e exercises the "Grafana ↗"
         // render path (degrades to text-only when no provider webUrl is configured).
         provenance: {
           tool: "query_prometheus",
-          args: JSON.stringify({ expr: 'pool_used{service="impala-statestore"}', datasource: "Prometheus" }),
+          args: JSON.stringify({ expr: `pool_used{service="${rootTarget}"}`, datasource: "Prometheus" }),
           from: "2026-01-01T00:00:00Z",
           to: "2026-01-01T01:00:00Z",
         },
       },
     ],
-    traceSummary: "4 moves · 1 query · confirmed at depth 1",
+    traceSummary: `4 moves · 1 query · confirmed at depth ${dependency ? 1 : 0}`,
   });
 }
 
@@ -1269,6 +1496,12 @@ export async function handleClientMessage(
     return;
   }
 
+  // Operator accepts a confirmed deep run's conclusion → refine the report (PR-6b).
+  if (msg.type === "orchestrator_accept") {
+    await handleOrchestratorAccept(msg, send, deps, stackId, ctx, runRegistry);
+    return;
+  }
+
   if (msg.type === "rerun") {
     await handleRerun(msg, send, deps, threadId, stackId, ctx);
     return;
@@ -1659,15 +1892,7 @@ export async function handleClientMessage(
 
     const runner = new InvestigationRunner({ db, investigationAgent, skillStore: deps.skillStore, globalOnComplete: deps.globalOnComplete });
     try {
-      const report = await runner.run({ service, message: routedMessage, investigationId: invId, stackId, disabledSkillIds: deps.db.getDisabledSkills(stackId), callbacks: wsCallbacks, source: "manual" });
-      // Deep-from-start: when the deployment opts in (agent.deepModeOnComplete)
-      // and the loop ran, chain the deep re-examination right after — resurrect
-      // ruled-out causes or refute the confirmed one. One pass, no second click.
-      // Gated by deepModeEnabled (deep mode is hidden from users until the
-      // Autonomous Orchestrator ships).
-      if (deps.config.agent?.deepModeEnabled && deps.config.agent?.deepModeOnComplete && report?.loopOutcome) {
-        await runDeepModeStreamed(invId, report, agents.deepModeReexamine, db, send);
-      }
+      await runner.run({ service, message: routedMessage, investigationId: invId, stackId, disabledSkillIds: deps.db.getDisabledSkills(stackId), callbacks: wsCallbacks, source: "manual" });
     } catch {
       // Error already handled by runner's onFailed callback
     }

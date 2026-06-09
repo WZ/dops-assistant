@@ -9,7 +9,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ChatPane } from "./components/ChatPane";
 import { Dashboard } from "./components/Dashboard";
 import { InvestigationPane } from "./components/InvestigationPane";
-import { DeepInvestigationPanel } from "./components/DeepInvestigationPanel";
 import { PatternDetail } from "./components/PatternDetail";
 import { ScanRunDetail } from "./components/ScanRunDetail";
 import { ActivityPage } from "./components/ActivityPage";
@@ -62,7 +61,6 @@ export type LeftPaneView =
   // /stacks/:stackId/investigations/:id/deep. Same stackId semantics as
   // `investigation` (empty string = legacy /investigations/:id/deep sentinel,
   // resolved via /locate). Distinct pane so it has its own URL + back-nav.
-  | { type: "investigation-deep"; id: string; stackId: string }
   | { type: "pattern"; id: string }
   | ActivityView
   | { type: "services"; initialService?: string }
@@ -85,9 +83,9 @@ export type LeftPaneView =
  *   - settings → stacks: the Stacks tab IS the stack-management surface;
  *                        yanking the user off it mid-management is wrong
  *
- * The investigation-deep-link case (URL like /stacks/:stackId/investigations/:id
- * driving an automatic switchStack) is handled separately at the call site
- * via the `investigationOwnsThisStack` check.
+ * The investigation deep-link case (a direct URL like
+ * /stacks/:stackId/investigations/:id driving an automatic switchStack) is
+ * handled separately at the call site via the `investigationOwnsThisStack` check.
  *
  * Exported for unit testing.
  */
@@ -232,7 +230,6 @@ export function App() {
     : leftPane.type === "settings" ? "settings"
     : leftPane.type === "activity" ? "activity"
     : leftPane.type === "investigation" ? "activity"
-    : leftPane.type === "investigation-deep" ? "activity"
     : "dashboard";
 
   const stackFetchForBranding = useMemo(() => createStackFetch(activeStackId), [activeStackId]);
@@ -359,8 +356,7 @@ export function App() {
   // so it has a real stack list to validate against — otherwise it could
   // race with the bootstrap and switch to a stack that's about to be
   // overwritten by the localStorage default-pick.
-  // Both the detail page and the wide Deep panel (PR-2d) need stack resolution.
-  const invPane = leftPane.type === "investigation" || leftPane.type === "investigation-deep" ? leftPane : null;
+  const invPane = leftPane.type === "investigation" ? leftPane : null;
   const investigationStackId = invPane ? invPane.stackId : null;
   const investigationId = invPane ? invPane.id : null;
   const investigationPaneType = invPane ? invPane.type : null;
@@ -427,9 +423,8 @@ export function App() {
   const handleWrongStack = useCallback(
     (correctStackId: string) => {
       const pane = leftPaneRef.current;
-      // Both the detail page and the wide Deep panel (PR-2d) can land on a
-      // known-but-wrong stack; preserve whichever surface the user is on.
-      if (pane.type !== "investigation" && pane.type !== "investigation-deep") return;
+      // The detail page can land on a known-but-wrong stack; preserve it.
+      if (pane.type !== "investigation") return;
       switchStack(correctStackId);
       setLeftPane(
         { type: pane.type, id: pane.id, stackId: correctStackId },
@@ -455,7 +450,7 @@ export function App() {
       // link the user just opened. Only reset when the new active stack
       // genuinely doesn't match the pane's intent.
       const investigationOwnsThisStack =
-        (pane.type === "investigation" || pane.type === "investigation-deep") && pane.stackId === activeStackId;
+        pane.type === "investigation" && pane.stackId === activeStackId;
       if (shouldResetOnStackSwitch(pane) && !investigationOwnsThisStack) {
         setLeftPane({ type: "dashboard" });
       }
@@ -562,7 +557,7 @@ export function App() {
           <ResizablePanelGroup orientation="horizontal">
             <ResizablePanel defaultSize={60} minSize={30}>
               <div className="h-full bg-grid relative">
-                <div key={leftPane.type === "investigation" ? `inv-${leftPane.id}` : leftPane.type === "investigation-deep" ? `deep-${leftPane.id}` : leftPane.type === "pattern" ? `pattern-${leftPane.id}` : leftPane.type} className="h-full animate-fade-in">
+                <div key={leftPane.type === "investigation" ? `inv-${leftPane.id}` : leftPane.type === "pattern" ? `pattern-${leftPane.id}` : leftPane.type} className="h-full animate-fade-in">
                   {leftPane.type === "dashboard" ? (
                     <Dashboard
                       wsMessages={ws.messages}
@@ -611,34 +606,6 @@ export function App() {
                       onNavigateSkills={() => setLeftPane({ type: "settings", initialTab: "skills" })}
                       onRerun={(invId, template) => {
                         ws.send({ type: "rerun", investigationId: invId, template: template as any });
-                      }}
-                      onOrchestratorDecision={(invId, decision) => {
-                        ws.send({ type: "orchestrator_decision", investigationId: invId, decision });
-                      }}
-                      onWrongStack={handleWrongStack}
-                      onOpenDeep={(invId) => setLeftPane({ type: "investigation-deep", id: invId, stackId: activeStackId })}
-                    />
-                    ) : (
-                      <div className="h-full flex items-center justify-center">
-                        <span className="font-mono text-[11px] text-muted-foreground/70">
-                          Resolving investigation…
-                        </span>
-                      </div>
-                    )
-                  ) : leftPane.type === "investigation-deep" ? (
-                    // The wide Deep Investigation panel (PR-2d). Same stack-resolution
-                    // guard as the detail pane: wait until the active stack matches the
-                    // URL's stack (or the legacy locate-and-redirect lands) before
-                    // mounting, so the panel's GET carries the right X-Stack-Id.
-                    leftPane.stackId && leftPane.stackId === activeStackId ? (
-                    <DeepInvestigationPanel
-                      investigationId={leftPane.id}
-                      onBack={() => {
-                        if (window.history.state?.fromApp) {
-                          window.history.back();
-                        } else {
-                          setLeftPane({ type: "investigation", id: leftPane.id, stackId: activeStackId });
-                        }
                       }}
                       onWrongStack={handleWrongStack}
                     />

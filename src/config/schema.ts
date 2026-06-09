@@ -130,34 +130,26 @@ const AgentSchema = z.object({
    */
   synthesisLoopRounds: z.number().int().min(1).max(5).default(1),
   /**
-   * Deep mode (Step 3) "from start": when true, an interactive investigation
-   * that ran the loop and ruled causes out automatically chains the deep
-   * re-examination on completion — no second click. Requires synthesisLoopRounds
-   * > 1 to have anything to re-examine. Default off (deep mode stays on-demand).
+   * Exposure gate for "Challenge this RCA" — the cheap, bounded re-examination
+   * that re-judges an existing report's ruled-out causes (resurrect a dismissed
+   * cause / weaken the confirmed one). It does NOT investigate freely for the
+   * real cause (that's `autonomousInvestigationEnabled`). Default OFF: the
+   * "Challenge" entry is suppressed and `deep_mode_investigate` is rejected
+   * unless this is true. Flip on for internal testing (e.g. dev/config.yaml).
    */
-  deepModeOnComplete: z.boolean().default(false),
+  challengeEnabled: z.boolean().default(false),
   /**
-   * Master switch for deep mode (Step 3) user exposure. Default OFF: the
-   * bounded re-examination only re-judges the existing RCA's hypotheses
-   * (resurrect a dismissed cause / weaken the confirmed one) — it does NOT
-   * investigate freely for the real cause. That fuller capability is the
-   * Autonomous Orchestrator (designed, not yet built). Until it ships we keep
-   * deep mode hidden from users: the "Deep investigate" button is suppressed
-   * and `deep_mode_investigate` is rejected unless this is true. Flip to true
-   * for internal testing (e.g. dev/config.yaml).
-   */
-  deepModeEnabled: z.boolean().default(false),
-  /**
-   * Autonomous orchestrator (Approach D). When true, exposes the unbounded,
-   * read-only move-loop that investigates for the real cause (not just
-   * re-judges the existing one like deep mode). Hard-guarded by the safety
-   * harness (budget / depth / strikes→operator-pause / tool-cap / wall-clock)
-   * and a hybrid stop (deterministic keystone confirmation, never the LLM's
-   * self-confidence). Default OFF — it's the heaviest, opt-in mode and is built
-   * incrementally; do not expose to users until validated. See
+   * Exposure gate for "Full deep investigation" — the autonomous orchestrator
+   * (Approach D): an unbounded, read-only move-loop that hunts for the real
+   * cause across dependencies. Hard-guarded by the safety harness (budget /
+   * depth / strikes→operator-pause / tool-cap / wall-clock) and a hybrid stop
+   * (deterministic keystone confirmation, never the LLM's self-confidence).
+   * Default OFF — the heaviest, opt-in mode, built incrementally; do not expose
+   * until validated. Suppresses the "Full" entry and rejects
+   * `orchestrator_investigate`/`orchestrator_accept` unless true. See
    * src/agents/orchestrator.ts.
    */
-  orchestratorEnabled: z.boolean().default(false),
+  autonomousInvestigationEnabled: z.boolean().default(false),
   // @deprecated: use top-level `memory` config instead; will be removed in a future version
   conversationMemory: ConversationMemorySchema.optional().default({}),
   investigationTriggerPhrases: z.array(z.string()).optional().default([

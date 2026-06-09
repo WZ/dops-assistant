@@ -12,18 +12,16 @@ import { ArrowLeft, FilePlus, RotateCw, ChevronDown, Download, Link2, FileText, 
 import { PhaseStepper, type PhaseState } from "./PhaseStepper";
 import { EvidenceTimeline } from "./EvidenceTimeline";
 import { RcaReport } from "./RcaReport";
-import { DeepModeStream } from "./DeepModeStream";
-import { OrchestratorStream } from "./OrchestratorStream";
-import { useOrchestratorRun, useOrchestratorRunActions } from "../contexts/OrchestratorRunContext";
+import { OrchestratorRefinedBanner } from "./OrchestratorRefinedBanner";
+import { useOrchestratorRun } from "../contexts/OrchestratorRunContext";
 import { useInvestigationRunHydration } from "../hooks/useInvestigationRunHydration";
-import { ScopedDeepMenu } from "./ScopedDeepMenu";
 import { InvestigationFeedback } from "./InvestigationFeedback";
 import { useStackContext } from "../contexts/StackContext";
 import { useGrafanaProviders } from "../hooks/useGrafanaProviders";
 import { useUnreadInvestigations } from "../hooks/useUnreadInvestigations";
 import type { TimelineEvent } from "./ActivityTimeline";
 import type { TimeSeriesData } from "./MetricChart";
-import type { ServerMessage, AgentStreamEvent, AgentStreamStats, OrchestratorStreamStats, CausalChainLink } from "../../types/ws-types.js";
+import type { ServerMessage } from "../../types/ws-types.js";
 import type { RcaReport as RcaReportType } from "../../types/rca-types.js";
 import { formatTokens } from "../lib/formatTokens.js";
 import { buildPhaseActions } from "../lib/grafana-links.js";
@@ -139,9 +137,6 @@ function ExportMenu({ report, service, reportRef, onSaveAsSkill }: ExportMenuPro
   );
 }
 
-/** Stable empty stream so a run-less render doesn't hand the stream components a
- *  fresh `[]` each time (avoids needless AgentStream re-renders). */
-const EMPTY_STREAM: AgentStreamEvent[] = [];
 
 export function InvestigationPane({
   investigationId,
@@ -150,26 +145,18 @@ export function InvestigationPane({
   onNavigateSkills,
   onRerun,
   onWrongStack,
-  onOpenDeep,
 }: {
   investigationId: string;
   wsMessages: ServerMessage[];
   onBack: () => void;
   onNavigateSkills?: () => void;
   onRerun?: (investigationId: string, template?: string) => void;
-  /** Send the operator's strike-limit decision (increment 5) back over the WS.
-   *  Parent wires it to the orchestrator_decision message. */
-  onOrchestratorDecision?: (investigationId: string, decision: "continue" | "escalate" | "wait") => void;
   /** Called when the investigation 404s in the active stack but the locate
    *  endpoint reports it lives in a different stack. The parent should
    *  switchStack + navigate to the correct stack-scoped URL — keeps
    *  hand-edited or rename-stale links resolving instead of dead-ending
    *  on "not found" when the id genuinely exists somewhere. */
   onWrongStack?: (correctStackId: string) => void;
-  /** Open the wide Deep Investigation panel (PR-2d). Wired by the parent to
-   *  navigate to /stacks/:stackId/investigations/:id/deep. Used to auto-navigate
-   *  when a Full run launches from the report's Investigate-deeply menu. */
-  onOpenDeep?: (investigationId: string) => void;
 }) {
   const { stackFetch, activeStackId } = useStackContext();
   const { markViewed } = useUnreadInvestigations();
@@ -182,22 +169,12 @@ export function InvestigationPane({
   const run = useOrchestratorRun(investigationId);
   // GET + legacy-redirect + hydrate + subscribe now live in the shared hook
   // (PR-2d, T3) so this pane and the wide Deep panel reattach identically.
-  const { decide } = useOrchestratorRunActions();
   const deepRun = run?.kind === "deep-mode" ? run : undefined;
   const orchRun = run?.kind === "orchestrator" ? run : undefined;
-  const deepModeRunning = !!deepRun?.running;
+  // The deep/orchestrator run now renders solely in the Console (InlineRunRegion);
+  // this pane keeps only the run's error to surface a failure banner below the report.
   const deepModeError = deepRun?.error ?? null;
-  const deepSteps = deepRun?.steps ?? EMPTY_STREAM;
-  const deepStats = deepRun?.deepStats;
-  const orchRunning = !!orchRun?.running;
   const orchError = orchRun?.error ?? null;
-  const orchSteps = orchRun?.steps ?? EMPTY_STREAM;
-  const orchStats = orchRun?.orchStats;
-  const orchOutcome = orchRun?.outcome;
-  const orchChain = orchRun?.causalChain;
-  const orchTraceSummary = orchRun?.traceSummary;
-  const orchPause = orchRun?.pause ?? null;
-  const orchDisposition = orchRun?.disposition;
   const [service, setService] = useState("");
   const [query, setQuery] = useState("");
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
@@ -438,6 +415,13 @@ export function InvestigationPane({
       if (msg.type === "deep_mode:complete" && msg.investigationId === investigationId) {
         setReport(msg.report);
       }
+      // PR-6b: the operator applied a confirmed deep run's conclusion back into
+      // the report. The server persisted the refined report and echoed it here —
+      // swap the rendered snapshot so the refined root cause + the "Refined by
+      // deep investigation (was: …)" banner appear without a reload.
+      if (msg.type === "orchestrator:accepted" && msg.investigationId === investigationId) {
+        setReport(msg.report);
+      }
     }
   }, [wsMessages, investigationId]);
 
@@ -580,19 +564,9 @@ export function InvestigationPane({
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-          {/* The single Deep Investigation entry (PR-1): a scoped menu with both
-              "Challenge this RCA" (deep mode) and "Full deep investigation" (the
-              autonomous orchestrator) inside it. Self-gates on __DEEP_MODE_ENABLED__
-              / __ORCHESTRATOR_ENABLED__. The old standalone "Deep investigate" +
-              "Investigate autonomously" buttons were removed here — they duplicated
-              these two menu items. */}
-          {isComplete && (
-            <ScopedDeepMenu
-              investigationId={investigationId}
-              canChallenge={!!(report as RcaReportType | null)?.loopOutcome}
-              onFullStart={onOpenDeep}
-            />
-          )}
+          {/* The Deep Investigation entry ("Investigate deeply") moved to the
+              Console (ChatPane), below the shortcut chips, in PR-6 — it no longer
+              lives on the report header. */}
         </div>
       </div>
       {deepModeError && (
@@ -694,19 +668,9 @@ export function InvestigationPane({
               </section>
             )}
 
-            {/* Deep mode (Step 3) — dedicated structured agent stream (live + final). */}
-            <DeepModeStream events={deepSteps} stats={deepStats} running={deepModeRunning} />
-            <OrchestratorStream
-              events={orchSteps}
-              stats={orchStats}
-              outcome={orchOutcome}
-              causalChain={orchChain}
-              traceSummary={orchTraceSummary}
-              running={orchRunning}
-              pause={orchPause}
-              disposition={orchDisposition}
-              onDecision={(decision) => decide(investigationId, decision)}
-            />
+            {/* The deep mode / orchestrator run streams in the Console
+                (InlineRunRegion), the single home for a deep run — no duplicate
+                card here (PR-6). */}
 
             {investigationStatus === "failed" && !report ? (
               <section className="rounded-lg border border-destructive/30 bg-destructive/5 px-5 py-4 animate-fade-up">
@@ -724,6 +688,12 @@ export function InvestigationPane({
               </section>
             ) : report ? (
               <section ref={reportRef} className="animate-fade-up">
+                {/* Refined-by-deep-investigation banner (PR-6b) — shown only after
+                    the operator applied a confirmed deep run; the preserved original
+                    root cause makes the change visible/reversible. */}
+                {(report as any)?.orchestratorRefined && (
+                  <OrchestratorRefinedBanner refinement={(report as any).orchestratorRefined} />
+                )}
                 <RcaReport report={report as any} hideOldDashboardLinks={providers.length > 0} />
                 {/* Feedback prompt — only visible once the report has rendered.
                     Before that there's nothing to rate. Closes the Learned

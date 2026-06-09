@@ -13,7 +13,7 @@
  * the pause prompt only (never per-step), so a screen reader isn't spammed by
  * the streaming move log.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   useOrchestratorRun,
   useOrchestratorRunActions,
@@ -35,32 +35,28 @@ export function InlineRunRegion({
   service?: string;
 }) {
   const run = useOrchestratorRun(investigationId);
-  const { decide, stop, setCollapsed } = useOrchestratorRunActions();
+  const { decide, stop, accept, start, setCollapsed, connectionStatus } = useOrchestratorRunActions();
   const providers = useGrafanaProviders();
-  const [view, setView] = useState<"result" | "live">("result");
+  // The move stream is the default view — operators want to watch the run as it
+  // happens, not land on a static summary. RESULT (conclusion + causal chain +
+  // provenance) stays one click away; it never auto-takes over.
+  const [view, setView] = useState<"result" | "live">("live");
 
-  // Live elapsed ticker while running (the run state only carries a final
-  // durationMs on completion). Resets when a new run starts. An interrupted
+  // Live elapsed while running. Anchored to the run's `startedAt` (held in the
+  // registry), not to mount — so it keeps counting when the operator leaves the
+  // Console and comes back instead of resetting to 0. The 1s tick only forces a
+  // re-render; the value is computed from startedAt below. An interrupted
   // (hydrated-running) run is NOT live, so the ticker stays off for it.
-  const [elapsed, setElapsed] = useState(0);
+  const [, setTick] = useState(0);
   const running = !!run?.running;
   const parked = !!run?.parked && running;
   const interrupted = !!run?.hydrated && running && !parked;
   const liveRunning = running && !interrupted && !parked;
   useEffect(() => {
     if (!liveRunning) return;
-    setElapsed(0);
-    const t = setInterval(() => setElapsed((e) => e + 1), 1000);
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
     return () => clearInterval(t);
-  }, [liveRunning, run?.kind, investigationId]);
-
-  // DZ2: on completion, auto-fall back to the Result view (the move log
-  // auto-collapses; the result stays promoted).
-  const wasRunning = useRef(false);
-  useEffect(() => {
-    if (wasRunning.current && run && !run.running) setView("result");
-    wasRunning.current = !!run?.running;
-  }, [run?.running, run]);
+  }, [liveRunning]);
 
   if (!investigationId || !run) return null;
 
@@ -70,11 +66,20 @@ export function InlineRunRegion({
   const locked = !!run.decisionSubmitted;
   const title = `Deep Investigation${service ? ` · ${service}` : ""}`;
 
+  // PR-6b: a finished, confirmed Full (orchestrator) run can be applied back into
+  // the RCA report. Operator-gated — no auto-write-back — so a wrong confirm
+  // can't silently clobber a correct report. Hidden for deep-mode / unconfirmed
+  // / still-running runs.
+  const canApply = run.kind === "orchestrator" && !run.running && run.outcome === "confirmed";
+
   const finalSeconds =
     run.kind === "orchestrator" && run.orchStats ? run.orchStats.durationMs / 1000
     : run.kind === "deep-mode" && run.deepStats ? run.deepStats.durationMs / 1000
     : undefined;
-  const elapsedLabel = liveRunning ? fmtSeconds(elapsed) : finalSeconds != null ? fmtSeconds(finalSeconds) : "";
+  // Computed from the run's start (survives remount via the registry), re-rendered
+  // by the 1s tick above. Falls back to 0 for an older run with no startedAt.
+  const liveElapsed = run.startedAt != null ? Math.max(0, Math.floor((Date.now() - run.startedAt) / 1000)) : 0;
+  const elapsedLabel = liveRunning ? fmtSeconds(liveElapsed) : finalSeconds != null ? fmtSeconds(finalSeconds) : "";
 
   const pulse = parked ? "bg-warning"
     : interrupted ? "bg-muted-foreground/40"
@@ -122,6 +127,32 @@ export function InlineRunRegion({
             ■ STOP
           </button>
         )}
+
+        {canApply && (run.accepted ? (
+          <span
+            className="font-mono text-[9px] px-2 py-1 rounded-md border border-success/40 bg-success/8 text-success shrink-0"
+            role="status"
+          >
+            ✓ applied to report
+          </span>
+        ) : run.refining ? (
+          <span
+            className="font-mono text-[9px] px-2 py-1 rounded-md border border-primary/40 bg-primary/8 text-primary/90 shrink-0"
+            role="status"
+            aria-live="polite"
+          >
+            ◌ re-synthesizing report…
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => accept(id)}
+            aria-label="Apply this confirmed deep-investigation conclusion to the RCA report"
+            className="font-mono text-[9px] px-2 py-1 rounded-md border border-primary/40 text-primary/90 hover:bg-primary/8 hover:text-primary shrink-0"
+          >
+            Apply to report
+          </button>
+        ))}
       </div>
 
       {/* Body */}
@@ -133,13 +164,24 @@ export function InlineRunRegion({
 
       {/* Interrupted notice — a hydrated run with no live server-side run to
           reattach to (e.g. after a server restart). The steps shown are what
-          completed before it stopped; re-run to continue. */}
+          completed before it stopped; a fresh run can be launched from here. */}
       {!collapsed && interrupted && (
-        <div className="mx-3 mb-2 flex gap-2 items-start rounded-md border border-border/60 bg-muted/20 px-2.5 py-1.5">
-          <span className="text-muted-foreground text-[11px] leading-none mt-0.5" aria-hidden>⏸</span>
-          <span className="text-[10.5px] text-foreground/80 leading-snug">
-            This run was interrupted and can't be resumed here. The steps above are what completed before it stopped — re-run to continue.
-          </span>
+        <div className="mx-3 mb-2 flex gap-2 items-center justify-between rounded-md border border-border/60 bg-muted/20 px-2.5 py-1.5">
+          <div className="flex gap-2 items-start min-w-0">
+            <span className="text-muted-foreground text-[11px] leading-none mt-0.5" aria-hidden>⏸</span>
+            <span className="text-[10.5px] text-foreground/80 leading-snug">
+              This run was interrupted and can't be resumed here. The steps above are what completed before it stopped.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => start(id, run.kind === "deep-mode" ? "challenge" : "full")}
+            disabled={connectionStatus !== "connected"}
+            aria-label="Re-run this deep investigation from the start"
+            className="shrink-0 font-mono text-[9px] px-2 py-1 rounded-md border border-primary/40 text-primary/90 hover:bg-primary/8 hover:text-primary disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            ↻ RE-RUN
+          </button>
         </div>
       )}
 
@@ -151,6 +193,15 @@ export function InlineRunRegion({
           <span className="text-[10.5px] text-foreground/80 leading-snug">
             This run parked itself while no one was watching, to save tokens. It resumes automatically now that you're back.
           </span>
+        </div>
+      )}
+
+      {/* Apply-to-report rejection notice (PR-6b) — the write-back was refused
+          (e.g. the report was missing/malformed). Shown until the next attempt. */}
+      {!collapsed && run.acceptError && (
+        <div className="mx-3 mb-2 flex gap-2 items-start rounded-md border border-destructive/30 bg-destructive/8 px-2.5 py-1.5" role="alert">
+          <span className="text-destructive text-[11px] leading-none mt-0.5" aria-hidden>!</span>
+          <span className="text-[10.5px] text-foreground/80 leading-snug">{run.acceptError}</span>
         </div>
       )}
 

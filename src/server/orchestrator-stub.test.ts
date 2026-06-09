@@ -29,7 +29,7 @@ describe("streamStubbedOrchestrator (E2E engine stub)", () => {
   it("continue → streams, pauses, resumes, and confirms a cause", async () => {
     const { sent, send } = collect();
     const reg = registryFor(new AbortController());
-    const run = streamStubbedOrchestrator(ID, send, reg, new AbortController().signal, 0);
+    const run = streamStubbedOrchestrator(ID, send, reg, new AbortController().signal, { stepDelayMs: 0 });
     await answerPause(reg, "continue");
     await run;
 
@@ -54,7 +54,7 @@ describe("streamStubbedOrchestrator (E2E engine stub)", () => {
   it("escalate → stops with an operator-pause outcome (no further steps)", async () => {
     const { sent, send } = collect();
     const reg = registryFor(new AbortController());
-    const run = streamStubbedOrchestrator(ID, send, reg, new AbortController().signal, 0);
+    const run = streamStubbedOrchestrator(ID, send, reg, new AbortController().signal, { stepDelayMs: 0 });
     await answerPause(reg, "escalate");
     await run;
     const done = sent.at(-1) as Extract<ServerMessage, { type: "orchestrator:complete" }>;
@@ -66,8 +66,44 @@ describe("streamStubbedOrchestrator (E2E engine stub)", () => {
     const { sent, send } = collect();
     const ac = new AbortController();
     ac.abort();
-    await streamStubbedOrchestrator(ID, send, registryFor(ac), ac.signal, 0);
+    await streamStubbedOrchestrator(ID, send, registryFor(ac), ac.signal, { stepDelayMs: 0 });
     const done = sent.at(-1) as Extract<ServerMessage, { type: "orchestrator:complete" }>;
     expect(done.outcome).toBe("aborted");
+  });
+
+  it("anchors the scripted run to the real service + dependency (coherent demo)", async () => {
+    const { sent, send } = collect();
+    const reg = registryFor(new AbortController());
+    const run = streamStubbedOrchestrator(ID, send, reg, new AbortController().signal, {
+      stepDelayMs: 0, service: "minimax-m25-vllm-bench-2gpu", dependency: "minimax-m25-internal-service",
+    });
+    await answerPause(reg, "continue");
+    await run;
+
+    const done = sent.at(-1) as Extract<ServerMessage, { type: "orchestrator:complete" }>;
+    const chain = done.causalChain ?? [];
+    expect(chain[0]).toMatchObject({ label: "minimax-m25-vllm-bench-2gpu", kind: "incident" });
+    expect(chain.find((l) => l.kind === "followed")?.label).toBe("minimax-m25-internal-service");
+    const root = chain.find((l) => l.kind === "root-cause");
+    expect(root?.label).toContain("minimax-m25-internal-service connection pool starvation");
+    expect(root?.provenance?.args).toContain("minimax-m25-internal-service");
+    expect(done.stats?.depth).toBe(1);
+    // No hardcoded impala anywhere.
+    expect(JSON.stringify(sent)).not.toContain("impala");
+  });
+
+  it("with no dependency, confirms on the incident service itself at depth 0", async () => {
+    const { sent, send } = collect();
+    const reg = registryFor(new AbortController());
+    const run = streamStubbedOrchestrator(ID, send, reg, new AbortController().signal, { stepDelayMs: 0, service: "minimax-m25-vllm-bench-2gpu" });
+    await answerPause(reg, "continue");
+    await run;
+
+    const done = sent.at(-1) as Extract<ServerMessage, { type: "orchestrator:complete" }>;
+    const chain = done.causalChain ?? [];
+    expect(chain.some((l) => l.kind === "followed")).toBe(false);
+    expect(chain.find((l) => l.kind === "root-cause")?.label).toContain("minimax-m25-vllm-bench-2gpu connection pool starvation");
+    expect(done.stats?.depth).toBe(0);
+    expect(done.traceSummary).toContain("depth 0");
   });
 });

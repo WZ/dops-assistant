@@ -91,6 +91,24 @@ describe("runOrchestrator — DECISION 1: hybrid stop never trusts self-confiden
     expect(result.confirmed).toBeUndefined();
     expect(result.hypotheses[0].standing).toBe("ruled-out");
   });
+
+  it("an ABSENT verdict marks the hypothesis inconclusive, NOT ruled-out (absence ≠ refutation)", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("0 desired replicas") },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          null,
+        ]),
+        evaluate: () => "absent", // no evidence gathered either way
+      }),
+    );
+    // The cause may still be real — it was never refuted, just unverifiable.
+    expect(result.hypotheses[0].standing).toBe("inconclusive");
+    expect(result.hypotheses[0].standing).not.toBe("ruled-out");
+    expect(result.hypotheses[0].lastVerdict).toBe("absent");
+  });
 });
 
 describe("runOrchestrator — DECISION 2: safety harness", () => {

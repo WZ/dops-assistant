@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 /**
- * T11 regression (IRON RULE) — after lifting orchestrator + deep-mode run state
- * into the run registry (OrchestratorRunContext), InvestigationPane must still
- * render the run by reading from the registry rather than its own WS handler.
+ * PR-6 (Console-only) — the deep run no longer renders in InvestigationPane;
+ * it streams in the Console (InlineRunRegion), the single home for a deep run.
+ * These regressions pin that the pane mounts the report normally but does NOT
+ * resurrect the old in-pane orchestrator cards, even with a live run in the
+ * registry. (Supersedes the T11 "pane renders the run from the registry" rule.)
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, cleanup } from "@testing-library/react";
@@ -70,7 +72,7 @@ function renderPane(runMessages: ServerMessage[]) {
   );
 }
 
-describe("InvestigationPane — reads orchestrator run from the registry (T11)", () => {
+describe("InvestigationPane — deep run is Console-only (PR-6)", () => {
   beforeEach(() => {
     cleanup();
     globalThis.fetch = mockFetch() as unknown as typeof fetch;
@@ -79,9 +81,7 @@ describe("InvestigationPane — reads orchestrator run from the registry (T11)",
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it("renders a confirmed orchestrator run that lives in the registry", async () => {
-    // The run state comes ONLY from the registry (these messages reach the
-    // provider, not the pane's own handler, which no longer processes them).
+  it("mounts the report but does NOT render the in-pane orchestrator card for a confirmed run", async () => {
     const messages: ServerMessage[] = [
       { type: "orchestrator:started", investigationId: ID },
       { type: "orchestrator:step", investigationId: ID, event: { seq: 0, verb: "root cause:", target: "statestore pool starvation", status: "strong" } },
@@ -96,19 +96,22 @@ describe("InvestigationPane — reads orchestrator run from the registry (T11)",
     ];
     renderPane(messages);
 
-    // The pane mounts the report, then the OrchestratorStream (fed by the
-    // registry) shows the confirmed outcome banner + trace summary.
-    expect(await screen.findByText(/Confirmed a root cause/i)).toBeTruthy();
-    expect(screen.getByText(/confirmed at depth 1/i)).toBeTruthy();
+    // The report still mounts...
+    expect(await screen.findByText(/Prometheus scrape target for impala is unreachable/i)).toBeTruthy();
+    // ...but the old in-pane orchestrator card (confirmed banner + trace) is gone:
+    // the run now streams only in the Console (InlineRunRegion).
+    expect(screen.queryByText(/Confirmed a root cause/i)).toBeNull();
+    expect(screen.queryByText(/confirmed at depth 1/i)).toBeNull();
   });
 
-  it("renders a paused orchestrator run from the registry", async () => {
+  it("does NOT render an in-pane operator-pause card for a paused run", async () => {
     const messages: ServerMessage[] = [
       { type: "orchestrator:started", investigationId: ID },
       { type: "orchestrator:operator_pause", investigationId: ID, strikes: 3, hypothesesTried: ["a", "b", "c"] },
     ];
     renderPane(messages);
-    // The operator-pause card renders from the registry's pause state.
-    expect(await screen.findByText(/needs your call|Paused/i)).toBeTruthy();
+    // Report mounts; the pause is handled by the Console pause bar, not the pane.
+    expect(await screen.findByText(/Prometheus scrape target for impala is unreachable/i)).toBeTruthy();
+    expect(screen.queryByText(/needs your call|Paused/i)).toBeNull();
   });
 });

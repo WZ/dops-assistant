@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, cleanup, within } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, within, act } from "@testing-library/react";
 import { useEffect, type ReactNode } from "react";
 import type { ServerMessage, ClientMessage, AgentStreamEvent } from "../../types/ws-types.js";
 import { OrchestratorRunProvider, useOrchestratorRunActions } from "../contexts/OrchestratorRunContext";
@@ -60,6 +60,10 @@ describe("InlineRunRegion", () => {
     const send = vi.fn();
     renderRegion(startedRunning, send);
     expect(screen.getByText(/Deep Investigation · impala/)).toBeTruthy();
+    // LIVE LOG is the default view — the RESULT-only headline isn't shown until
+    // you click RESULT (PR-6).
+    expect(screen.queryByText(/Working theory/i)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "RESULT" }));
     expect(screen.getByText(/Working theory/i)).toBeTruthy();
     // The "this run stops if you reload" warning is gone — PR-2c makes runs durable.
     expect(screen.queryByText(/this run stops if you reload/i)).toBeNull();
@@ -75,8 +79,11 @@ describe("InlineRunRegion", () => {
     expect(screen.queryByRole("button", { name: /stop the deep investigation/i })).toBeNull();
   });
 
-  it("confirmed run: result-first view shows the root cause headline + causal chain + trace", () => {
+  it("confirmed run: defaults to LIVE LOG; RESULT shows the conclusion + causal chain + trace", () => {
     renderRegion(confirmed);
+    // Default view is LIVE LOG — the conclusion isn't shown until RESULT (PR-6).
+    expect(screen.queryByText("Current conclusion")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "RESULT" }));
     expect(screen.getByText("Current conclusion")).toBeTruthy();
     // headline drops the "root cause:" prefix; the chain keeps it — assert both.
     expect(screen.getByText("statestore pool starvation")).toBeTruthy();
@@ -88,6 +95,7 @@ describe("InlineRunRegion", () => {
 
   it("collapse toggle hides the body (DZ2)", () => {
     renderRegion(confirmed);
+    fireEvent.click(screen.getByRole("button", { name: "RESULT" }));
     expect(screen.getByText("statestore pool starvation")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /click to collapse/i }));
     expect(screen.queryByText("statestore pool starvation")).toBeNull();
@@ -117,11 +125,83 @@ describe("InlineRunRegion", () => {
     expect(screen.getByText(/needs your call/i)).toBeTruthy();
   });
 
+  it("the live timer is anchored to the run's start and survives a Console remount (PR-6)", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-08T12:00:00.000Z"));
+    // The provider holds the run (with startedAt); only InlineRunRegion toggles,
+    // standing in for the operator navigating away from the Console and back.
+    const Harness = ({ show }: { show: boolean }) => (
+      <OrchestratorRunProvider wsMessages={startedRunning} wsSend={vi.fn()} connectionStatus="connected">
+        {show ? <InlineRunRegion investigationId={ID} service="impala" /> : <div />}
+      </OrchestratorRunProvider>
+    );
+    const { rerender } = render(<Harness show={true} />);
+
+    // 30s pass (advanceTimersByTime moves the mocked clock + fires the 1s tick).
+    // Both timers (strip "· 30s" + live header "· live · 30s") read 30s.
+    act(() => { vi.advanceTimersByTime(30_000); });
+    expect(screen.getAllByText(/30s/).length).toBeGreaterThan(0);
+
+    // "Click out" (unmount the region) then back — the timers must NOT reset to 0.
+    rerender(<Harness show={false} />);
+    rerender(<Harness show={true} />);
+    expect(screen.getAllByText(/30s/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/· 0s/)).toBeNull();
+    expect(screen.queryByText(/live · 0s/)).toBeNull();
+    vi.useRealTimers();
+  });
+
   it("exposes a scoped assertive live region announcing the pause (DZ4)", () => {
     const { container } = renderRegion(paused);
     const live = container.querySelector('[aria-live="assertive"]');
     expect(live).toBeTruthy();
     expect(live!.textContent).toMatch(/your decision is needed/i);
+  });
+
+  // ── PR-6b: Apply to report ──────────────────────────────────────────────
+  it("confirmed orchestrator run: shows Apply to report; click sends orchestrator_accept", () => {
+    const send = vi.fn();
+    renderRegion(confirmed, send);
+    const apply = screen.getByRole("button", { name: /apply this confirmed deep-investigation/i });
+    fireEvent.click(apply);
+    expect(send).toHaveBeenCalledWith({ type: "orchestrator_accept", investigationId: ID });
+  });
+
+  it("Apply flips to a '✓ applied to report' confirmation after orchestrator:accepted", () => {
+    renderRegion([...confirmed, { type: "orchestrator:accepted", investigationId: ID, report: {} }]);
+    expect(screen.getByText(/applied to report/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /apply this confirmed deep-investigation/i })).toBeNull();
+  });
+
+  it("surfaces an accept rejection notice and keeps the Apply button for a retry", () => {
+    renderRegion([
+      ...confirmed,
+      { type: "orchestrator:accept_rejected", investigationId: ID, message: "Investigation report not found." },
+    ]);
+    expect(screen.getByText(/Investigation report not found/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /apply this confirmed deep-investigation/i })).toBeTruthy();
+  });
+
+  it("no Apply button while the orchestrator run is still running", () => {
+    renderRegion(startedRunning);
+    expect(screen.queryByRole("button", { name: /apply this confirmed deep-investigation/i })).toBeNull();
+  });
+
+  it("no Apply button when the run is NOT confirmed", () => {
+    renderRegion([
+      ...startedRunning,
+      { type: "orchestrator:complete", investigationId: ID, outcome: "inconclusive",
+        stats: { moves: 1, toolCalls: 0, subagents: 0, tokensSpent: 1, strikes: 0, depth: 0, durationMs: 100 } },
+    ]);
+    expect(screen.queryByRole("button", { name: /apply this confirmed deep-investigation/i })).toBeNull();
+  });
+
+  it("no Apply button for a deep-mode (Challenge) run, even when complete", () => {
+    renderRegion([
+      { type: "deep_mode:started", investigationId: ID },
+      { type: "deep_mode:complete", investigationId: ID, report: { rootCause: "x" } },
+    ]);
+    expect(screen.queryByRole("button", { name: /apply this confirmed deep-investigation/i })).toBeNull();
   });
 });
 
@@ -173,12 +253,15 @@ function renderHydrated(rows: Row[]) {
 describe("InlineRunRegion — hydrated/interrupted (PR-2 T7)", () => {
   it("a mid-flight hydrated run renders INTERRUPTED: notice shown, no Stop, no ephemerality warning", () => {
     renderHydrated(MIDFLIGHT_ROWS);
-    expect(screen.getByText("Interrupted")).toBeTruthy(); // the kicker (exact)
-    expect(screen.getByText(/interrupted while investigating: impala-statestore/i)).toBeTruthy();
-    expect(screen.getByText(/steps above are what completed/i)).toBeTruthy(); // the visible notice
+    // The interrupted notice shows regardless of view (it's not the RESULT body).
+    expect(screen.getByText(/steps above are what completed/i)).toBeTruthy();
     // no live affordances — the server lost this run on reload
     expect(screen.queryByRole("button", { name: /stop the deep investigation/i })).toBeNull();
     expect(screen.queryByText(/this run stops if you reload/i)).toBeNull();
+    // The "Interrupted" headline carries in the RESULT view (default is LIVE).
+    fireEvent.click(screen.getByRole("button", { name: "RESULT" }));
+    expect(screen.getByText("Interrupted")).toBeTruthy(); // the kicker (exact)
+    expect(screen.getByText(/interrupted while investigating: impala-statestore/i)).toBeTruthy();
   });
 
   it("announces the interruption on the scoped live region (DZ4)", () => {
@@ -187,12 +270,28 @@ describe("InlineRunRegion — hydrated/interrupted (PR-2 T7)", () => {
     expect(live!.textContent).toMatch(/interrupted when the page reloaded/i);
   });
 
+  it("an interrupted run offers a RE-RUN button that relaunches the run (PR-6)", () => {
+    const send = vi.fn();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <OrchestratorRunProvider wsMessages={[]} wsSend={send} connectionStatus="connected">
+        {children}
+      </OrchestratorRunProvider>
+    );
+    render(<HydrateThenRender rows={MIDFLIGHT_ROWS} />, { wrapper });
+    fireEvent.click(screen.getByRole("button", { name: /re-run this deep investigation/i }));
+    // An orchestrator (Full) run relaunches via orchestrator_investigate.
+    expect(send).toHaveBeenCalledWith({ type: "orchestrator_investigate", investigationId: ID });
+  });
+
   it("a COMPLETED hydrated run renders as a normal finished result (NOT interrupted)", () => {
     renderHydrated(COMPLETED_ROWS);
-    expect(screen.getByText("statestore pool starvation")).toBeTruthy();
-    expect(screen.getByText(/confirmed at depth 2/)).toBeTruthy();
+    // Not interrupted — true regardless of view.
     expect(screen.queryByText(/interrupted when the page reloaded/i)).toBeNull();
     expect(screen.queryByText(/^Interrupted$/)).toBeNull();
+    // The conclusion lives in RESULT (default is LIVE).
+    fireEvent.click(screen.getByRole("button", { name: "RESULT" }));
+    expect(screen.getByText("statestore pool starvation")).toBeTruthy();
+    expect(screen.getByText(/confirmed at depth 2/)).toBeTruthy();
   });
 
   it("an interrupted run that was paused does NOT show actionable decision buttons", () => {
@@ -213,16 +312,22 @@ describe("InlineRunRegion — parked (PR-2c)", () => {
 
   it("a parked run renders the Parked state: kicker + resume notice, no Stop control", () => {
     renderRegion(parked);
-    expect(screen.getByText("Parked")).toBeTruthy(); // kicker (exact)
+    // The resume notice shows regardless of view.
     expect(screen.getByText(/parked itself while no one was watching/i)).toBeTruthy();
     // not a live affordance and not "interrupted"
     expect(screen.queryByRole("button", { name: /stop the deep investigation/i })).toBeNull();
     expect(screen.queryByText(/can't be resumed here/i)).toBeNull();
+    // The "Parked" headline carries in RESULT (default is LIVE).
+    fireEvent.click(screen.getByRole("button", { name: "RESULT" }));
+    expect(screen.getByText("Parked")).toBeTruthy(); // kicker (exact)
   });
 
   it("a live step after parking clears the Parked state (resumed)", () => {
     renderRegion([...parked, { type: "orchestrator:step", investigationId: ID, event: step(1, "checking pool") }]);
-    expect(screen.queryByText("Parked")).toBeNull();
+    // The parked notice is gone — the run resumed.
+    expect(screen.queryByText(/parked itself while no one was watching/i)).toBeNull();
+    // Back to a live working theory (visible in RESULT; default view is LIVE).
+    fireEvent.click(screen.getByRole("button", { name: "RESULT" }));
     expect(screen.getByText(/Working theory/i)).toBeTruthy();
   });
 });

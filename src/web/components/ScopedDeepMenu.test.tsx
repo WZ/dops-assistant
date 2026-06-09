@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import type { ServerMessage, ClientMessage } from "../../types/ws-types.js";
-import { OrchestratorRunProvider } from "../contexts/OrchestratorRunContext";
+import { OrchestratorRunProvider, useOrchestratorRunActions } from "../contexts/OrchestratorRunContext";
 import { ScopedDeepMenu } from "./ScopedDeepMenu";
 
 const ID = "inv_menu";
@@ -29,8 +29,8 @@ beforeEach(() => {
   Element.prototype.setPointerCapture = vi.fn();
   Element.prototype.releasePointerCapture = vi.fn();
   Element.prototype.scrollIntoView = vi.fn();
-  (window as unknown as Record<string, unknown>).__ORCHESTRATOR_ENABLED__ = true;
-  (window as unknown as Record<string, unknown>).__DEEP_MODE_ENABLED__ = true;
+  (window as unknown as Record<string, unknown>).__AUTONOMOUS__ = true;
+  (window as unknown as Record<string, unknown>).__CHALLENGE__ = true;
 });
 
 /** Radix DropdownMenu opens on pointerDown, not click (mirrors ScanRunDetail.test). */
@@ -38,15 +38,39 @@ function openMenu() {
   fireEvent.pointerDown(screen.getByRole("button", { name: /Investigate deeply/i }));
 }
 afterEach(() => {
-  (window as unknown as Record<string, unknown>).__ORCHESTRATOR_ENABLED__ = undefined;
-  (window as unknown as Record<string, unknown>).__DEEP_MODE_ENABLED__ = undefined;
+  (window as unknown as Record<string, unknown>).__AUTONOMOUS__ = undefined;
+  (window as unknown as Record<string, unknown>).__CHALLENGE__ = undefined;
   vi.useRealTimers();
 });
 
+/** Hydrate an interrupted (mid-flight) run into the registry, then render the menu. */
+const envRow = (message: unknown) => ({ event_type: (message as { type: string }).type, payload: JSON.stringify({ schemaVersion: 1, message }) });
+const INTERRUPTED_ROWS = [
+  envRow({ type: "orchestrator:started", investigationId: ID }),
+  envRow({ type: "orchestrator:step", investigationId: ID, event: { seq: 0, verb: "testing", target: "x", status: "running" } }),
+];
+function HydrateThenMenu() {
+  const { hydrate } = useOrchestratorRunActions();
+  useEffect(() => { hydrate(ID, INTERRUPTED_ROWS); }, [hydrate]);
+  return <ScopedDeepMenu investigationId={ID} canChallenge />;
+}
+
 describe("ScopedDeepMenu", () => {
+  it("an interrupted (hydrated) run does NOT lock the launch button — re-run is allowed (PR-6)", () => {
+    // A hydrated run reports running=true but is dead server-side; the trigger
+    // must stay enabled and labelled "Investigate deeply" (not "Investigating…").
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <OrchestratorRunProvider wsMessages={[]} wsSend={vi.fn()} connectionStatus="connected">{children}</OrchestratorRunProvider>
+    );
+    render(<HydrateThenMenu />, { wrapper });
+    const trigger = screen.getByRole("button", { name: /Investigate deeply/i });
+    expect((trigger as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText(/Investigating…/)).toBeNull();
+  });
+
   it("renders nothing when neither scope is enabled", () => {
-    (window as unknown as Record<string, unknown>).__ORCHESTRATOR_ENABLED__ = false;
-    (window as unknown as Record<string, unknown>).__DEEP_MODE_ENABLED__ = false;
+    (window as unknown as Record<string, unknown>).__AUTONOMOUS__ = false;
+    (window as unknown as Record<string, unknown>).__CHALLENGE__ = false;
     const { container } = renderMenu();
     expect(container.firstChild).toBeNull();
   });
@@ -81,20 +105,19 @@ describe("ScopedDeepMenu", () => {
     expect(send).toHaveBeenCalledWith({ type: "orchestrator_investigate", investigationId: ID });
   });
 
-  it("calls onFullStart after the Full run dispatches (auto-nav to the /deep panel, PR-2d)", async () => {
+  it("dispatches the Full run with no navigation callback — it streams in the Console (PR-6: /deep panel removed)", async () => {
     vi.useFakeTimers();
-    const onFullStart = vi.fn();
-    const wrapper = ({ children }: { children: ReactNode }) => (
-      <OrchestratorRunProvider wsMessages={[]} wsSend={vi.fn()} connectionStatus="connected">{children}</OrchestratorRunProvider>
-    );
-    render(<ScopedDeepMenu investigationId={ID} canChallenge onFullStart={onFullStart} />, { wrapper });
+    const send = vi.fn();
+    renderMenu({ send });
     openMenu();
     fireEvent.click(screen.getByRole("menuitem", { name: /Full deep investigation/i }));
-    expect(onFullStart).not.toHaveBeenCalled(); // not until the countdown dispatches
+    expect(send).not.toHaveBeenCalled(); // not until the countdown dispatches
     for (let i = 0; i < 4; i++) {
       await act(async () => { await vi.advanceTimersByTimeAsync(900); });
     }
-    expect(onFullStart).toHaveBeenCalledWith(ID);
+    // The run launches via the registry's start → orchestrator_investigate, and
+    // now renders inline in the Console; there is no auto-nav side channel.
+    expect(send).toHaveBeenCalledWith({ type: "orchestrator_investigate", investigationId: ID });
   });
 
   it("Full countdown can be cancelled before dispatch", () => {

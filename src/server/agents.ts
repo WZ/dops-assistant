@@ -49,6 +49,7 @@ import { LlmUnavailableError } from "../agents/shared/llm-errors.js";
 import { runAutonomousOrchestrator } from "../agents/orchestrator-llm.js";
 import { traceEntryToStreamEvent } from "../agents/orchestrator-stream.js";
 import type { OrchestratorGuards, OrchestratorResult, OrchestratorState } from "../agents/orchestrator.js";
+import { refineReportFromDeepRun, type RefineInput, type RefinedNarrative } from "../agents/orchestrator-refine.js";
 import type { CorroborationContext, NormalizedObservation } from "../workflows/steps/corroboration.js";
 
 /** Conservative default safety harness for the autonomous orchestrator. The
@@ -804,5 +805,19 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
     });
   }
 
-  return { chatAgent, investigationAgent, discoverAgent, deepModeReexamine, orchestrate };
+  /**
+   * Re-synthesis for operator-accept (PR-6b): regenerate an RCA report's narrative
+   * to fit a confirmed autonomous cause, reusing the investigation model. Returns
+   * the new prose fields, or null on any LLM failure (caller falls back to the
+   * field-merge so Apply never breaks).
+   */
+  async function refineReport(report: RcaReport, input: RefineInput): Promise<RefinedNarrative | null> {
+    return refineReportFromDeepRun(report, input, {
+      model: investigationModel,
+      llmRetry: config.llm.retry,
+      llmCallMs: config.timeouts?.llmCallMs,
+    });
+  }
+
+  return { chatAgent, investigationAgent, discoverAgent, deepModeReexamine, orchestrate, refineReport };
 }

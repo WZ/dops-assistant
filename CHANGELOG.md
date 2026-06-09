@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.11.2] - 2026-06-08
+
+### Changed
+- **A Deep Investigation now lives in one place — the Console — and can refine the report (gated off, PR-6 of a sequence).** Running a deeper investigation used to render in three spots at once (a card on the report, the Console strip, and a separate wide panel that was mostly empty), and it never wrote its conclusion back anywhere. Now the run streams only in the Console: one home, no redundant card, no switching to a sparse view. The **"Investigate deeply"** menu moved off the report into the Console too (below the suggestion chips), and the run view opens on the **live move log** instead of a static result summary. When a full autonomous run confirms a root cause, an **"Apply to report"** action appears; clicking it writes the confirmed conclusion into the RCA report and adds a "Refined by deep investigation · was: …" banner that preserves the original cause, so the change is visible and reversible. The write-back is operator-gated (never silent) and server-authoritative (the conclusion comes from the persisted run, not the browser).
+
+### Removed
+- **The standalone `/deep` Deep Investigation panel.** The dedicated wide route is gone; old `…/investigations/:id/deep` links now open the investigation in the Console instead of 404ing.
+
 ## [0.4.11.1] - 2026-06-08
 
 ### Changed

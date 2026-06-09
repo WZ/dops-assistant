@@ -157,10 +157,16 @@ export function traceEntryToStreamEvent(e: TraceEntry): Omit<AgentStreamEvent, "
       if (e.verdict === "satisfied") {
         return { verb: "evidence backs", target: e.detail, status: "strong" };
       }
+      // `absent` is NOT a rule-out — it means no evidence was gathered either way
+      // (data source unavailable / nothing matched). Surface it as "couldn't
+      // verify" so a true cause isn't falsely reported as refuted.
+      if (e.verdict === "absent") {
+        return { verb: "couldn't verify", target: e.detail, detail: "(no evidence gathered)", status: "inconclusive" };
+      }
       return {
         verb: "ruled out",
         target: e.detail,
-        detail: e.verdict ? `(${e.verdict === "absent" ? "no supporting evidence" : "evidence contradicts it"})` : undefined,
+        detail: "(evidence contradicts it)",
         status: "rejected",
       };
     }

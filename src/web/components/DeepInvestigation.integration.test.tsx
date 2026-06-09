@@ -26,13 +26,13 @@ beforeEach(() => {
   Element.prototype.hasPointerCapture = vi.fn(() => false);
   Element.prototype.setPointerCapture = vi.fn();
   Element.prototype.scrollIntoView = vi.fn();
-  (window as unknown as Record<string, unknown>).__ORCHESTRATOR_ENABLED__ = true;
-  (window as unknown as Record<string, unknown>).__DEEP_MODE_ENABLED__ = true;
+  (window as unknown as Record<string, unknown>).__AUTONOMOUS__ = true;
+  (window as unknown as Record<string, unknown>).__CHALLENGE__ = true;
   vi.useFakeTimers();
 });
 afterEach(() => {
-  (window as unknown as Record<string, unknown>).__ORCHESTRATOR_ENABLED__ = undefined;
-  (window as unknown as Record<string, unknown>).__DEEP_MODE_ENABLED__ = undefined;
+  (window as unknown as Record<string, unknown>).__AUTONOMOUS__ = undefined;
+  (window as unknown as Record<string, unknown>).__CHALLENGE__ = undefined;
   vi.useRealTimers();
 });
 
@@ -91,14 +91,18 @@ describe("Deep Investigation — investigation→Console flow (T9)", () => {
       causalChain: [{ label: "impala", kind: "incident" }, { label: "root cause: statestore pool starvation", kind: "root-cause" }],
       traceSummary: "6 moves · confirmed at depth 1",
     });
+    // LIVE LOG is the default view (PR-6) — the conclusion lives in RESULT.
+    expect(screen.getByText(/Root cause confirmed/i)).toBeTruthy(); // completion toast (view-independent)
+    fireEvent.click(screen.getByRole("button", { name: "RESULT" }));
     expect(screen.getByText("statestore pool starvation")).toBeTruthy();
-    expect(screen.getByText(/Root cause confirmed/i)).toBeTruthy(); // completion toast
 
     // 6. Navigate away from the Console (unmount the region), then back — the run
     //    is still there because it lives in the registry, not the component.
     act(() => { showRegion = false; sync(); });
     expect(screen.queryByText("statestore pool starvation")).toBeNull();
     act(() => { showRegion = true; sync(); });
+    // Remount resets the view to the LIVE LOG default — click RESULT for the conclusion.
+    fireEvent.click(screen.getByRole("button", { name: "RESULT" }));
     expect(screen.getByText("statestore pool starvation")).toBeTruthy();
   });
 });

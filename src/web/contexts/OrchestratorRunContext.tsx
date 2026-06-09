@@ -56,6 +56,11 @@ export interface DeepRunState {
   readonly kind: DeepRunKind;
   readonly running: boolean;
   readonly steps: AgentStreamEvent[];
+  /** Epoch ms when the run started, stamped on the `*:started` message. The
+   *  elapsed timers anchor to this (not to component mount) so they keep counting
+   *  correctly when the operator navigates away from the Console and back — the
+   *  run lives in the registry, so this survives the inline region unmounting. */
+  readonly startedAt?: number;
   /** Shared: an engine/LLM/MCP error message (run stopped), else null. */
   readonly error: string | null;
   /** UI: whether the inline region is collapsed to its one-line summary (DZ2). */
@@ -90,6 +95,15 @@ export interface DeepRunState {
    *  set locally on submit and from the persisted/replayed decision_locked event.
    *  Shown read-only on the pause bar ("steered with: …"). */
   readonly operatorContext?: string;
+  /** PR-6b: true once the operator applied this confirmed run's conclusion back
+   *  into the RCA report (server `orchestrator:accepted`). Flips the Console's
+   *  "Apply to report" action to a "✓ applied" confirmation. */
+  readonly accepted?: boolean;
+  /** PR-6b: true while the server is re-synthesizing the report after an apply
+   *  (the seconds-long LLM pass). Drives the "Re-synthesizing report…" state. */
+  readonly refining?: boolean;
+  /** PR-6b: a friendly reason the last apply attempt was rejected, else null. */
+  readonly acceptError?: string | null;
 
   // ── deep-mode-only ─────────────────────────────────────────────────
   readonly report?: unknown;
@@ -106,6 +120,10 @@ interface OrchestratorRunContextValue {
   decide: (investigationId: string, decision: OperatorDecision, context?: string) => void;
   /** Stop an in-flight run (server aborts it → outcome "aborted"). */
   stop: (investigationId: string) => void;
+  /** PR-6b: apply a confirmed orchestrator run's conclusion back into the RCA
+   *  report. The server reads the authoritative result from the persisted
+   *  complete-event; this only carries the id. */
+  accept: (investigationId: string) => void;
   /** Toggle the inline region's collapsed state (DZ2). */
   setCollapsed: (investigationId: string, collapsed: boolean) => void;
   /** Reconstruct a run from persisted events on cold load (PR-2). Hydrate-if-
@@ -122,9 +140,10 @@ interface OrchestratorRunContextValue {
 
 const OrchestratorRunContext = createContext<OrchestratorRunContextValue | null>(null);
 
-/** A fresh run record for a `*:started` message of the given kind. */
+/** A fresh run record for a `*:started` message of the given kind. `startedAt`
+ *  anchors the elapsed timers so they survive the inline region unmounting. */
 function freshRun(kind: DeepRunKind): DeepRunState {
-  return { kind, running: true, steps: [], error: null, collapsed: false };
+  return { kind, running: true, steps: [], error: null, collapsed: false, startedAt: Date.now() };
 }
 
 /** Reconstruct one run by replaying its persisted event envelopes through the
@@ -260,6 +279,20 @@ export function applyMessage(
       if (!prev) return runs;
       return set({ ...prev, running: false, pause: null, error: typeof msg.message === "string" ? msg.message : "The orchestrator hit an error." });
 
+    // PR-6b: report re-synthesis is in flight after an apply.
+    case "orchestrator:refining":
+      if (!prev) return runs;
+      return set({ ...prev, refining: true, acceptError: null });
+    // PR-6b: the operator applied this confirmed run to the report. Mark accepted
+    // (clear refining + any prior reject error) so the Console flips to "✓ applied".
+    case "orchestrator:accepted":
+      if (!prev) return runs;
+      return set({ ...prev, accepted: true, refining: false, acceptError: null });
+    // PR-6b: the apply was rejected — surface the reason on the run for the strip.
+    case "orchestrator:accept_rejected":
+      if (!prev) return runs;
+      return set({ ...prev, refining: false, acceptError: typeof msg.message === "string" ? msg.message : "Couldn't apply to the report." });
+
     default:
       return runs;
   }
@@ -362,6 +395,24 @@ export function OrchestratorRunProvider({
     [wsSend],
   );
 
+  const accept = useCallback(
+    (investigationId: string) => {
+      // Id-only: the server merges the authoritative result from the persisted
+      // complete-event. Optimistically flip to "refining" (clearing any prior
+      // reject error) so the Apply control shows "Re-synthesizing…" instantly,
+      // before the server's orchestrator:refining round-trips back.
+      setRuns((prev) => {
+        const cur = prev.get(investigationId);
+        if (!cur || cur.accepted || cur.refining) return prev;
+        const m = new Map(prev);
+        m.set(investigationId, { ...cur, refining: true, acceptError: null });
+        return m;
+      });
+      wsSend({ type: "orchestrator_accept", investigationId });
+    },
+    [wsSend],
+  );
+
   const setCollapsed = useCallback((investigationId: string, collapsed: boolean) => {
     setRuns((prev) => {
       const run = prev.get(investigationId);
@@ -398,8 +449,8 @@ export function OrchestratorRunProvider({
   const getRun = useCallback((investigationId: string) => runs.get(investigationId), [runs]);
 
   const value = useMemo<OrchestratorRunContextValue>(
-    () => ({ runs, getRun, start, decide, stop, setCollapsed, hydrate, subscribe, unsubscribe, connectionStatus }),
-    [runs, getRun, start, decide, stop, setCollapsed, hydrate, subscribe, unsubscribe, connectionStatus],
+    () => ({ runs, getRun, start, decide, stop, accept, setCollapsed, hydrate, subscribe, unsubscribe, connectionStatus }),
+    [runs, getRun, start, decide, stop, accept, setCollapsed, hydrate, subscribe, unsubscribe, connectionStatus],
   );
 
   return <OrchestratorRunContext.Provider value={value}>{children}</OrchestratorRunContext.Provider>;
@@ -425,8 +476,8 @@ export function useOrchestratorRuns(): ReadonlyMap<string, DeepRunState> {
 /** The command helpers + connection status (no per-run subscription). */
 export function useOrchestratorRunActions(): Pick<
   OrchestratorRunContextValue,
-  "start" | "decide" | "stop" | "setCollapsed" | "hydrate" | "subscribe" | "unsubscribe" | "connectionStatus"
+  "start" | "decide" | "stop" | "accept" | "setCollapsed" | "hydrate" | "subscribe" | "unsubscribe" | "connectionStatus"
 > {
-  const { start, decide, stop, setCollapsed, hydrate, subscribe, unsubscribe, connectionStatus } = useOrchestratorRunContext();
-  return { start, decide, stop, setCollapsed, hydrate, subscribe, unsubscribe, connectionStatus };
+  const { start, decide, stop, accept, setCollapsed, hydrate, subscribe, unsubscribe, connectionStatus } = useOrchestratorRunContext();
+  return { start, decide, stop, accept, setCollapsed, hydrate, subscribe, unsubscribe, connectionStatus };
 }

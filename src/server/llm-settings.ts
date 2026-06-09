@@ -35,13 +35,6 @@ export interface StackLlmSettingsView {
     investigation?: ReasoningEffort;
     discovery?: ReasoningEffort;
   };
-  /** Synthesis hypothesis-loop rounds (config.agent.synthesisLoopRounds).
-   *  1 = single-pass (loop off); >1 = the rank→test→rule-out loop is on.
-   *  Read-only: this is file/Helm config, not a per-stack GUI setting. */
-  synthesisLoopRounds: number;
-  /** Deep mode (Step 3) "from start" — auto-chains deep re-examination after
-   *  interactive investigations (config.agent.deepModeOnComplete). Read-only. */
-  deepModeOnComplete: boolean;
 }
 
 const BUCKETS: ReasoningBucket[] = ["chat", "investigation", "discovery"];
@@ -89,7 +82,5 @@ export function getStackLlmSettingsView(
       investigation: cfg.investigation,
       discovery: cfg.discovery,
     },
-    synthesisLoopRounds: config.agent?.synthesisLoopRounds ?? 1,
-    deepModeOnComplete: config.agent?.deepModeOnComplete ?? false,
   };
 }

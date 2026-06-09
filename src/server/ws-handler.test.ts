@@ -29,6 +29,8 @@ vi.mock("./agents.js", () => ({
       }),
     },
     discoverAgent: undefined,
+    // PR-6b re-synthesis: default to null → accept falls back to the field-merge.
+    refineReport: vi.fn().mockResolvedValue(null),
   }),
 }));
 
@@ -81,6 +83,7 @@ function mockDeps(): WsDeps {
       updatePhase: vi.fn(),
       createMessage: vi.fn(),
       createEvent: vi.fn(),
+      getEvents: vi.fn(() => []),
       getInvestigation: vi.fn(),
       getPhases: vi.fn(() => []),
       listRecentMessages: vi.fn(() => []),
@@ -515,6 +518,56 @@ describe("handleClientMessage", () => {
     expect(messages.some((m) => m.type === "investigation:started")).toBe(false);
     expect(deps.db.createInvestigation).not.toHaveBeenCalled();
   });
+
+  it("demo-mode orchestrator_accept sends a run-scoped rejection so the client clears Apply state", async () => {
+    const oldDemo = process.env["DEMO_MODE"];
+    process.env["DEMO_MODE"] = "true";
+    const deps = mockDeps();
+    const server = createServer();
+    let client: WebSocket | undefined;
+    try {
+      setupWebSocket(server, deps);
+      await new Promise<void>((resolve) => server.listen(0, resolve));
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("test server did not bind to a port");
+
+      client = new WebSocket(`ws://127.0.0.1:${address.port}/ws?stackId=${S}`);
+      const messages: ServerMessage[] = [];
+      client.on("message", (raw) => {
+        messages.push(JSON.parse(raw.toString()) as ServerMessage);
+      });
+
+      await new Promise<void>((resolve) => client.on("open", resolve));
+      client.send(JSON.stringify({ type: "orchestrator_accept", investigationId: "inv_demo" }));
+
+      await new Promise<void>((resolve) => {
+        const timeout = setTimeout(() => {
+          resolve();
+        }, 500);
+        const check = () => {
+          if (messages.some((m) => m.type === "orchestrator:accept_rejected")) {
+            clearTimeout(timeout);
+            resolve();
+          }
+          else setTimeout(check, 5);
+        };
+        check();
+      });
+
+      const rejected = messages.find((m) => m.type === "orchestrator:accept_rejected");
+      expect(rejected).toMatchObject({
+        type: "orchestrator:accept_rejected",
+        investigationId: "inv_demo",
+      });
+      expect(messages.some((m) => m.type === "chat:stream_end")).toBe(false);
+    } finally {
+      client?.close();
+      if (oldDemo === undefined) delete process.env["DEMO_MODE"];
+      else process.env["DEMO_MODE"] = oldDemo;
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
 });
 
 describe("handleClientMessage — new_session", () => {
@@ -585,7 +638,7 @@ describe("handleClientMessage — orchestrator_investigate", () => {
   it("rejects when the orchestrator gate is disabled", async () => {
     const deps = mockDeps();
     const ctx = mockCtx();
-    // Default mockDeps config has no agent.orchestratorEnabled flag.
+    // Default mockDeps config has no agent.autonomousInvestigationEnabled flag.
     const sent: ServerMessage[] = [];
     const send = (m: ServerMessage) => sent.push(m);
 
@@ -602,7 +655,7 @@ describe("handleClientMessage — orchestrator_investigate", () => {
 
   it("returns error for a non-existent investigation when gated on", async () => {
     const deps = mockDeps();
-    (deps.config as any).agent.orchestratorEnabled = true;
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
     const ctx = mockCtx();
     (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
 
@@ -621,7 +674,7 @@ describe("handleClientMessage — orchestrator_investigate", () => {
 
   it("rejects a still-running investigation — no autonomous run without a completed report", async () => {
     const deps = mockDeps();
-    (deps.config as any).agent.orchestratorEnabled = true;
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
     const ctx = mockCtx();
     (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
       id: "inv_running", service: "payments-api", query: "orig", status: "running", report: null,
@@ -642,7 +695,7 @@ describe("handleClientMessage — orchestrator_investigate", () => {
 
   it("rejects a completed-but-report-less investigation", async () => {
     const deps = mockDeps();
-    (deps.config as any).agent.orchestratorEnabled = true;
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
     const ctx = mockCtx();
     (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
       id: "inv_noreport", service: "payments-api", query: "orig", status: "complete", report: null,
@@ -659,6 +712,329 @@ describe("handleClientMessage — orchestrator_investigate", () => {
     const err = sent.find((m) => m.type === "orchestrator:error");
     expect(err).toBeDefined();
     expect((err as any).message).toContain("completed investigation");
+  });
+});
+
+describe("handleClientMessage — orchestrator_accept (PR-6b)", () => {
+  // Build a persisted orchestrator event row as getEvents would return it.
+  let evtSeq = 0;
+  const completeEvent = (outcome: string, causalChain?: unknown[], id?: string) => ({
+    id: id ?? `evt_complete_${evtSeq++}`,
+    investigation_id: "inv_1",
+    event_type: "orchestrator:complete",
+    created_at: "2026-06-08T00:00:00Z",
+    payload: JSON.stringify({
+      schemaVersion: DEEP_INVESTIGATION_EVENT_SCHEMA,
+      message: { type: "orchestrator:complete", investigationId: "inv_1", outcome, causalChain },
+    }),
+  });
+  const confirmedChain = [
+    { label: "payments-api", kind: "incident" },
+    { label: "payments-db", kind: "followed", evidence: "connection saturation" },
+    { label: "root cause: connection pool exhaustion", kind: "root-cause", evidence: "pool_used = 100%" },
+  ];
+  const baseReport = {
+    service: "payments-api", rootCause: "timeout in payments-api",
+    confidence: "medium", confidenceScore: 0.5,
+  };
+
+  it("rejects when the orchestrator gate is disabled", async () => {
+    const deps = mockDeps();
+    const sent: ServerMessage[] = [];
+    await callHandler({ type: "orchestrator_accept", investigationId: "inv_1" }, (m) => sent.push(m), deps);
+    const rej = sent.find((m) => m.type === "orchestrator:accept_rejected");
+    expect(rej).toBeDefined();
+    expect((rej as any).message).toContain("not enabled");
+    expect(deps.db.getInvestigation).not.toHaveBeenCalled();
+  });
+
+  it("merges the confirmed root cause into the report, preserves the original, and persists", async () => {
+    const deps = mockDeps();
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
+    (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
+      id: "inv_1", service: "payments-api", status: "complete", report: JSON.stringify(baseReport),
+    });
+    (deps.db.getEvents as ReturnType<typeof vi.fn>).mockReturnValue([completeEvent("confirmed", confirmedChain)]);
+
+    const sent: ServerMessage[] = [];
+    await callHandler({ type: "orchestrator_accept", investigationId: "inv_1" }, (m) => sent.push(m), deps);
+
+    // Persisted refined report
+    expect(deps.db.updateInvestigation).toHaveBeenCalledTimes(1);
+    const writeArg = (deps.db.updateInvestigation as ReturnType<typeof vi.fn>).mock.calls[0]![1];
+    const persisted = JSON.parse(writeArg.report);
+    expect(persisted.rootCause).toBe("connection pool exhaustion"); // stripped "root cause: " prefix
+    expect(persisted.confidence).toBe("high");
+    expect(persisted.orchestratorRefined.originalRootCause).toBe("timeout in payments-api");
+    expect(persisted.orchestratorRefined.outcome).toBe("confirmed");
+    expect(persisted.orchestratorRefined.causalChain).toHaveLength(3);
+
+    // Echoed back to the client
+    const acc = sent.find((m) => m.type === "orchestrator:accepted");
+    expect(acc).toBeDefined();
+    expect((acc as any).report.rootCause).toBe("connection pool exhaustion");
+  });
+
+  it("re-synthesizes the report narrative on apply, emitting orchestrator:refining (PR-6b)", async () => {
+    const deps = mockDeps();
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
+    (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
+      id: "inv_1", service: "payments-api", status: "complete", report: JSON.stringify(baseReport),
+    });
+    (deps.db.getEvents as ReturnType<typeof vi.fn>).mockReturnValue([completeEvent("confirmed", confirmedChain)]);
+    // Force a fresh agents build so the refineReport override is used, then restore.
+    clearStackCaches(S);
+    (createMastraAdapters as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      chatAgent: {}, investigationAgent: {}, discoverAgent: undefined,
+      refineReport: vi.fn().mockResolvedValue({
+        summary: "Refined: the connection pool drained to zero during the window.",
+        trigger: "pool drained",
+        impact: { duration: "8h", description: "backend had no endpoints" },
+        timeline: [{ time: "t0", event: "pool exhausted" }],
+        contributingFactors: ["no circuit breaker on the proxy"],
+        recommendedActions: ["raise the pool size", "add a circuit breaker"],
+      }),
+    });
+
+    const sent: ServerMessage[] = [];
+    await callHandler({ type: "orchestrator_accept", investigationId: "inv_1" }, (m) => sent.push(m), deps);
+    clearStackCaches(S); // restore default mock for later tests
+
+    expect(sent.some((m) => m.type === "orchestrator:refining")).toBe(true);
+    const writeArg = (deps.db.updateInvestigation as ReturnType<typeof vi.fn>).mock.calls[0]![1];
+    const persisted = JSON.parse(writeArg.report);
+    // Narrative regenerated to fit the confirmed cause…
+    expect(persisted.summary).toContain("connection pool drained");
+    expect(persisted.recommendedActions).toContain("raise the pool size");
+    // …with the confirmed cause + audit marker, flagged as resynthesized.
+    expect(persisted.rootCause).toBe("connection pool exhaustion");
+    expect(persisted.orchestratorRefined.resynthesized).toBe(true);
+    expect((sent.find((m) => m.type === "orchestrator:accepted") as any).report.summary).toContain("connection pool drained");
+  });
+
+  it("carries the operator's pause steer onto the refinement marker", async () => {
+    const deps = mockDeps();
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
+    (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
+      id: "inv_1", service: "payments-api", status: "complete", report: JSON.stringify(baseReport),
+    });
+    (deps.db.getEvents as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "evt_lock_1", investigation_id: "inv_1", created_at: "2026-06-08T00:00:00Z",
+        event_type: "orchestrator:decision_locked", payload: JSON.stringify({
+        schemaVersion: DEEP_INVESTIGATION_EVENT_SCHEMA,
+        message: { type: "orchestrator:decision_locked", investigationId: "inv_1", context: "check the DB pool config" },
+      }) },
+      completeEvent("confirmed", confirmedChain),
+    ]);
+
+    const sent: ServerMessage[] = [];
+    await callHandler({ type: "orchestrator_accept", investigationId: "inv_1" }, (m) => sent.push(m), deps);
+    const writeArg = (deps.db.updateInvestigation as ReturnType<typeof vi.fn>).mock.calls[0]![1];
+    expect(JSON.parse(writeArg.report).orchestratorRefined.operatorNotes).toBe("check the DB pool config");
+  });
+
+  it("does NOT attribute a steer from an earlier run that locked then errored without completing", async () => {
+    const deps = mockDeps();
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
+    (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
+      id: "inv_1", service: "payments-api", status: "complete", report: JSON.stringify(baseReport),
+    });
+    const row = (event_type: string, message: unknown, idn: number) => ({
+      id: `evt_${idn}`, investigation_id: "inv_1", created_at: "2026-06-08T00:00:00Z",
+      event_type, payload: JSON.stringify({ schemaVersion: DEEP_INVESTIGATION_EVENT_SCHEMA, message }),
+    });
+    (deps.db.getEvents as ReturnType<typeof vi.fn>).mockReturnValue([
+      // Run A: started → operator steered → errored (NO complete).
+      row("orchestrator:started", { type: "orchestrator:started", investigationId: "inv_1" }, 1),
+      row("orchestrator:decision_locked", { type: "orchestrator:decision_locked", investigationId: "inv_1", context: "run A steer — must NOT leak" }, 2),
+      row("orchestrator:error", { type: "orchestrator:error", investigationId: "inv_1", message: "boom" }, 3),
+      // Run B: started → completed confirmed, with no steer of its own.
+      row("orchestrator:started", { type: "orchestrator:started", investigationId: "inv_1" }, 4),
+      completeEvent("confirmed", confirmedChain, "evt_runB"),
+    ]);
+
+    await callHandler({ type: "orchestrator_accept", investigationId: "inv_1" }, vi.fn(), deps);
+    const persisted = JSON.parse((deps.db.updateInvestigation as ReturnType<typeof vi.fn>).mock.calls[0]![1].report);
+    expect(persisted.orchestratorRefined.operatorNotes).toBeUndefined();
+  });
+
+  it("rejects while a deep run is still live (don't apply a soon-to-be-superseded result)", async () => {
+    const deps = mockDeps();
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
+    const registry = new OrchestratorRunRegistry();
+    vi.spyOn(registry, "isLive").mockReturnValue(true);
+
+    const sent: ServerMessage[] = [];
+    await handleClientMessage(
+      { type: "orchestrator_accept", investigationId: "inv_1" },
+      (m) => sent.push(m), deps, `stack_${S}_web_test`, S, mockCtx(),
+      () => null, () => {}, () => {},
+      new Map(), { current: null }, registry,
+    );
+
+    expect(deps.db.getInvestigation).not.toHaveBeenCalled();
+    expect(deps.db.updateInvestigation).not.toHaveBeenCalled();
+    const rej = sent.find((m) => m.type === "orchestrator:accept_rejected");
+    expect((rej as any).message).toContain("still running");
+  });
+
+  it("rejects when there is no completed orchestrator event", async () => {
+    const deps = mockDeps();
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
+    (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
+      id: "inv_1", service: "payments-api", status: "complete", report: JSON.stringify(baseReport),
+    });
+    (deps.db.getEvents as ReturnType<typeof vi.fn>).mockReturnValue([]); // no complete event
+
+    const sent: ServerMessage[] = [];
+    await callHandler({ type: "orchestrator_accept", investigationId: "inv_1" }, (m) => sent.push(m), deps);
+    expect(deps.db.updateInvestigation).not.toHaveBeenCalled();
+    expect(sent.find((m) => m.type === "orchestrator:accept_rejected")).toBeDefined();
+  });
+
+  it("rejects when the run outcome is not confirmed", async () => {
+    const deps = mockDeps();
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
+    (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
+      id: "inv_1", service: "payments-api", status: "complete", report: JSON.stringify(baseReport),
+    });
+    (deps.db.getEvents as ReturnType<typeof vi.fn>).mockReturnValue([completeEvent("inconclusive", confirmedChain)]);
+
+    const sent: ServerMessage[] = [];
+    await callHandler({ type: "orchestrator_accept", investigationId: "inv_1" }, (m) => sent.push(m), deps);
+    expect(deps.db.updateInvestigation).not.toHaveBeenCalled();
+    const rej = sent.find((m) => m.type === "orchestrator:accept_rejected");
+    expect((rej as any).message).toContain("didn't confirm");
+  });
+
+  it("rejects when the report is missing", async () => {
+    const deps = mockDeps();
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
+    (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
+      id: "inv_1", service: "payments-api", status: "complete", report: null,
+    });
+
+    const sent: ServerMessage[] = [];
+    await callHandler({ type: "orchestrator_accept", investigationId: "inv_1" }, (m) => sent.push(m), deps);
+    expect(deps.db.updateInvestigation).not.toHaveBeenCalled();
+    expect(sent.find((m) => m.type === "orchestrator:accept_rejected")).toBeDefined();
+  });
+
+  it("rejects a malformed report JSON", async () => {
+    const deps = mockDeps();
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
+    (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
+      id: "inv_1", service: "payments-api", status: "complete", report: "{not json",
+    });
+
+    const sent: ServerMessage[] = [];
+    await callHandler({ type: "orchestrator_accept", investigationId: "inv_1" }, (m) => sent.push(m), deps);
+    expect(deps.db.updateInvestigation).not.toHaveBeenCalled();
+    const rej = sent.find((m) => m.type === "orchestrator:accept_rejected");
+    expect((rej as any).message).toContain("parse");
+  });
+
+  it("rejects when the confirmed chain has no root-cause link", async () => {
+    const deps = mockDeps();
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
+    (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
+      id: "inv_1", service: "payments-api", status: "complete", report: JSON.stringify(baseReport),
+    });
+    (deps.db.getEvents as ReturnType<typeof vi.fn>).mockReturnValue([
+      completeEvent("confirmed", [{ label: "payments-api", kind: "incident" }]),
+    ]);
+
+    const sent: ServerMessage[] = [];
+    await callHandler({ type: "orchestrator_accept", investigationId: "inv_1" }, (m) => sent.push(m), deps);
+    expect(deps.db.updateInvestigation).not.toHaveBeenCalled();
+    const rej = sent.find((m) => m.type === "orchestrator:accept_rejected");
+    expect((rej as any).message).toContain("root cause");
+  });
+
+  it("uses the LATEST complete event when several are persisted", async () => {
+    const deps = mockDeps();
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
+    (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
+      id: "inv_1", service: "payments-api", status: "complete", report: JSON.stringify(baseReport),
+    });
+    const olderChain = [{ label: "root cause: stale conclusion", kind: "root-cause" }];
+    (deps.db.getEvents as ReturnType<typeof vi.fn>).mockReturnValue([
+      completeEvent("confirmed", olderChain),
+      completeEvent("confirmed", confirmedChain),
+    ]);
+
+    const sent: ServerMessage[] = [];
+    await callHandler({ type: "orchestrator_accept", investigationId: "inv_1" }, (m) => sent.push(m), deps);
+    const writeArg = (deps.db.updateInvestigation as ReturnType<typeof vi.fn>).mock.calls[0]![1];
+    expect(JSON.parse(writeArg.report).rootCause).toBe("connection pool exhaustion");
+  });
+
+  it("re-applying the SAME complete event preserves the TRUE original (idempotent audit trail)", async () => {
+    const deps = mockDeps();
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
+    // Already refined from event "evt_runA"; rootCause is that refined value.
+    const alreadyRefined = {
+      ...baseReport,
+      rootCause: "connection pool exhaustion",
+      orchestratorRefined: { outcome: "confirmed", causalChain: [], refinedAt: "2026-06-08T00:00:00Z", originalRootCause: "timeout in payments-api", appliedCompleteEventId: "evt_runA" },
+    };
+    (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
+      id: "inv_1", service: "payments-api", status: "complete", report: JSON.stringify(alreadyRefined),
+    });
+    // Re-applying the SAME run (same event id) — idempotent retry.
+    (deps.db.getEvents as ReturnType<typeof vi.fn>).mockReturnValue([completeEvent("confirmed", confirmedChain, "evt_runA")]);
+
+    const sent: ServerMessage[] = [];
+    await callHandler({ type: "orchestrator_accept", investigationId: "inv_1" }, (m) => sent.push(m), deps);
+    const writeArg = (deps.db.updateInvestigation as ReturnType<typeof vi.fn>).mock.calls[0]![1];
+    // NOT clobbered with the already-refined rootCause — the real original survives.
+    expect(JSON.parse(writeArg.report).orchestratorRefined.originalRootCause).toBe("timeout in payments-api");
+  });
+
+  it("applying a NEW deep run uses the report's CURRENT root cause as the 'was' (audit trail advances)", async () => {
+    const deps = mockDeps();
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
+    // Already refined from run A → rootCause is causeA.
+    const refinedFromA = {
+      ...baseReport,
+      rootCause: "connection pool exhaustion",
+      orchestratorRefined: { outcome: "confirmed", causalChain: [], refinedAt: "2026-06-08T00:00:00Z", originalRootCause: "timeout in payments-api", appliedCompleteEventId: "evt_runA" },
+    };
+    (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
+      id: "inv_1", service: "payments-api", status: "complete", report: JSON.stringify(refinedFromA),
+    });
+    // A genuinely NEW deep run (evt_runB) confirmed a DIFFERENT cause.
+    const runBChain = [
+      { label: "payments-api", kind: "incident" },
+      { label: "root cause: disk saturation on payments-db", kind: "root-cause" },
+    ];
+    (deps.db.getEvents as ReturnType<typeof vi.fn>).mockReturnValue([
+      completeEvent("confirmed", confirmedChain, "evt_runA"),
+      completeEvent("confirmed", runBChain, "evt_runB"),
+    ]);
+
+    const sent: ServerMessage[] = [];
+    await callHandler({ type: "orchestrator_accept", investigationId: "inv_1" }, (m) => sent.push(m), deps);
+    const persisted = JSON.parse((deps.db.updateInvestigation as ReturnType<typeof vi.fn>).mock.calls[0]![1].report);
+    expect(persisted.rootCause).toBe("disk saturation on payments-db");
+    // "was" is what the report said right before THIS apply (causeA), not the first original.
+    expect(persisted.orchestratorRefined.originalRootCause).toBe("connection pool exhaustion");
+    expect(persisted.orchestratorRefined.appliedCompleteEventId).toBe("evt_runB");
+  });
+
+  it("persists the orchestrator:accepted event so cold clients converge", async () => {
+    const deps = mockDeps();
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
+    (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
+      id: "inv_1", service: "payments-api", status: "complete", report: JSON.stringify(baseReport),
+    });
+    (deps.db.getEvents as ReturnType<typeof vi.fn>).mockReturnValue([completeEvent("confirmed", confirmedChain)]);
+
+    await callHandler({ type: "orchestrator_accept", investigationId: "inv_1" }, vi.fn(), deps);
+    const acceptedPersist = (deps.db.createEvent as ReturnType<typeof vi.fn>).mock.calls
+      .map((c) => c[0])
+      .find((e: any) => e.eventType === "orchestrator:accepted");
+    expect(acceptedPersist).toBeDefined();
   });
 });
 

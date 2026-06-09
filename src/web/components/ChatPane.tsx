@@ -12,6 +12,7 @@ import { formatTimestamp } from "../lib/formatTimestamp";
 import { MetricChart, type TimeSeriesData } from "./MetricChart";
 import { useStackContext } from "../contexts/StackContext";
 import { InlineRunRegion } from "./InlineRunRegion";
+import { ScopedDeepMenu } from "./ScopedDeepMenu";
 import { safeGetItem, safeSetItem } from "../lib/utils";
 import { ConfirmActionDialog } from "./ConfirmActionDialog";
 import type { useWebSocket } from "../hooks/useWebSocket";
@@ -143,6 +144,10 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [deepMessages, setDeepMessages] = useState<ChatMessage[]>([]);
   const [deepLoading, setDeepLoading] = useState(false);
+  // PR-6: the "Investigate deeply" menu now lives in the Console (below the
+  // shortcut chips). Its "Challenge this RCA" item only applies when the report
+  // ran the hypothesis loop, so we fetch the active investigation's loopOutcome.
+  const [canChallenge, setCanChallenge] = useState(false);
   const [chatLoading, setChatLoading] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [clearHistoryOpen, setClearHistoryOpen] = useState(false);
@@ -369,12 +374,24 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
     setDeepMessages([]);
     setDeepLoading(false);
     setStreamingMessage(null);
+    setCanChallenge(false);
     streamRef.current = { content: "", reasoning: "" };
     if (rafRef.current !== null) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
     if (!activeInvestigationId) return;
+    // Derive canChallenge from the investigation's report (loopOutcome present →
+    // there are ruled-out causes the "Challenge this RCA" deep mode can re-judge).
+    stackFetch(`/api/investigations/${activeInvestigationId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data?.investigation?.report) return;
+        try {
+          setCanChallenge(!!JSON.parse(data.investigation.report)?.loopOutcome);
+        } catch { /* malformed report → leave canChallenge false */ }
+      })
+      .catch(() => {});
     stackFetch(`/api/messages?investigationId=${activeInvestigationId}`)
       .then((r) => r.ok ? r.json() : [])
       .then((msgs: Array<{ role: string; content: string }>) => {
@@ -1102,9 +1119,15 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
         {isDeepMode ? <div className="h-12" /> : <div className="h-3" />}
       </div>
 
-      {/* Deep mode shortcut chips -- always visible */}
+      {/* Deep mode shortcut chips -- always visible. The "Investigate deeply"
+          entry (PR-6) leads the row as a same-size chip, ahead of the suggested
+          questions. It self-gates on the deep/orchestrator window flags and
+          renders null when neither is enabled. */}
       {isDeepMode && (
         <div className="px-3 pt-2 flex flex-wrap gap-1.5">
+          {activeInvestigationId && (
+            <ScopedDeepMenu investigationId={activeInvestigationId} canChallenge={canChallenge} />
+          )}
           {DEEP_DIVE_PROMPTS.map((prompt, i) => (
             <button
               key={prompt}

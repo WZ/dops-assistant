@@ -46,7 +46,12 @@ export type OrchestratorMove =
   /** Follow the cause into a dependent service (increment 4 — deferred). */
   | { type: "follow-cause"; service: string };
 
-export type HypothesisStanding = "open" | "confirmed" | "ruled-out";
+/** A hypothesis's standing. `inconclusive` = tested but no evidence was gathered
+ *  either way (the keystone returned `absent`) — distinct from `ruled-out`, which
+ *  means evidence actively CONTRADICTED it. Absence of evidence is not refutation:
+ *  an `inconclusive` cause may still be the real one (the data source was just
+ *  unavailable), so it's never reported as "ruled out". */
+export type HypothesisStanding = "open" | "confirmed" | "ruled-out" | "inconclusive";
 
 export interface TrackedHypothesis {
   hypothesis: RankedHypothesis;
@@ -377,8 +382,16 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
         if (verdict === "satisfied") {
           h.standing = "confirmed";
           strikes = 0;
-        } else {
+        } else if (verdict === "contradicted") {
+          // Evidence actively refutes it → genuinely ruled out.
           h.standing = "ruled-out";
+          strikes++;
+        } else {
+          // `absent`: no evidence either way (e.g. the data source was
+          // unreachable, or nothing matched the prediction). Absence of evidence
+          // is NOT refutation — keep it as a live-but-unverified candidate, never
+          // "ruled out". Still counts a strike so the loop is bounded.
+          h.standing = "inconclusive";
           strikes++;
         }
         record({ move: "test", detail: h.hypothesis.hypothesis, verdict });

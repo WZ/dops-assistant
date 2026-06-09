@@ -16,7 +16,7 @@ export type ClientMessage =
   | { type: "deep_mode_investigate"; investigationId: string }
   // Autonomous orchestrator (Approach D): run the unbounded read-only move-loop
   // seeded from a completed investigation's context. Heavier opt-in than deep
-  // mode; gated behind config.agent.orchestratorEnabled.
+  // mode; gated behind config.agent.autonomousInvestigationEnabled.
   | { type: "orchestrator_investigate"; investigationId: string }
   // Operator's reply to an `orchestrator:operator_pause` prompt (increment 5):
   // "continue" resets strikes and resumes the move-loop; "escalate"/"wait" stop
@@ -37,6 +37,13 @@ export type ClientMessage =
   // Detach this connection from a run (e.g. navigating to another investigation
   // on the same socket). A WS close detaches implicitly.
   | { type: "orchestrator_unsubscribe"; investigationId: string }
+  // Operator accepts a confirmed orchestrator run's conclusion → write it back
+  // into the investigation's RCA report (PR-6b). Carries ONLY the id: the server
+  // reads the authoritative result from the persisted `orchestrator:complete`
+  // event, so the client can't fabricate a root cause. Rejected server-side if
+  // no complete event exists, its outcome isn't "confirmed", or the report is
+  // missing/malformed.
+  | { type: "orchestrator_accept"; investigationId: string }
   | { type: "rerun"; investigationId: string; template?: "quick" | "standard" | "full" }
   | { type: "new_session" }
   | { type: "discover" }
@@ -82,8 +89,9 @@ export type AgentStreamEvent = {
   targetKind?: "query" | "plain";
   /** Trailing muted detail (e.g. "→ climbs sawtooth", "(contradicted)"). */
   detail?: string;
-  /** Drives the icon + verb color: running ◉ · done ✓ · rejected ✗ · strong ✓(green). */
-  status: "running" | "done" | "rejected" | "strong";
+  /** Drives the icon + verb color: running ◉ · done ✓ · rejected ✗ · strong ✓(green)
+   *  · inconclusive ?(amber, "couldn't verify — no evidence gathered"). */
+  status: "running" | "done" | "rejected" | "strong" | "inconclusive";
   /** Nesting level for grouped sub-steps (0 = top level). */
   indent?: number;
 };
@@ -189,6 +197,18 @@ export type ServerMessage =
   // `context` (PR-4): the free-text lead the operator steered with, if any —
   // persisted so a reattaching tab and a cold replay can show it read-only.
   | { type: "orchestrator:decision_locked"; investigationId: string; context?: string }
+  // Operator-accept is in flight (PR-6b re-synthesis): the report is being
+  // regenerated from the confirmed cause via an LLM pass. Lets the Console show
+  // "Re-synthesizing report…" while the (seconds-long) refine runs.
+  | { type: "orchestrator:refining"; investigationId: string }
+  // Operator-accept write-back succeeded (PR-6b): the confirmed orchestrator
+  // conclusion was merged into the investigation's RCA report. Carries the
+  // refined report so every attached tab updates in place, and the id so the
+  // run's status strip can flip to "✓ applied to report".
+  | { type: "orchestrator:accepted"; investigationId: string; report: unknown }
+  // Operator-accept was rejected (PR-6b): no confirmed complete event, or the
+  // report was missing/malformed. Friendly message for the status strip.
+  | { type: "orchestrator:accept_rejected"; investigationId: string; message: string }
   | { type: "session_cleared" }
   | { type: "context_switch"; previousService: string; newService: string }
   | { type: "services:health"; data: unknown[] }

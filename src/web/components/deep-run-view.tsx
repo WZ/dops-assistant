@@ -1,14 +1,15 @@
 /**
  * deep-run-view (PR-2d, T2) — the shared, presentational projection of a
- * `DeepRunState`, extracted from `InlineRunRegion` so BOTH the inline Console
- * strip and the wide `DeepInvestigationPanel` render from one source (DRY — no
- * divergent copy of the conclusion/causal-chain/move-log logic).
+ * `DeepRunState`, extracted from `InlineRunRegion` so the conclusion /
+ * causal-chain / move-log rendering lives in one place (DRY). PR-6 made the
+ * inline Console strip the single home for a deep run (the wide `/deep` panel
+ * was removed), so these pieces are now composed only by the Console surface.
  *
  * Everything here is pure given a `DeepRunState` (+ an explicit `live` flag for
- * the stream) — no run-registry subscription. The two surfaces own their outer
- * chrome (status strip vs panel header, collapse) and compose these pieces. The
- * one stateful piece is `OperatorPauseBar` (PR-4), which owns its lead textarea
- * locally — extracted here so the inline strip and the wide panel share one bar.
+ * the stream) — no run-registry subscription. The consuming surface owns its
+ * outer chrome (status strip, collapse) and composes these pieces. The one
+ * stateful piece is `OperatorPauseBar` (PR-4), which owns its lead textarea
+ * locally.
  */
 import { useState } from "react";
 import { AgentStream, type AgentStreamFooterItem } from "./AgentStream";
@@ -290,7 +291,7 @@ export function ResultView({
  *  (no trailing spinner) via the explicit `live` flag. */
 export function LiveView({ run, live }: { run: DeepRunState; live: boolean }) {
   if (run.kind === "deep-mode") {
-    return <DeepModeStream events={run.steps} stats={run.deepStats} running={live} />;
+    return <DeepModeStream events={run.steps} stats={run.deepStats} running={live} startedAt={run.startedAt} />;
   }
   const s = run.orchStats;
   const footer: AgentStreamFooterItem[] | undefined = s
@@ -302,7 +303,7 @@ export function LiveView({ run, live }: { run: DeepRunState; live: boolean }) {
         { label: "tokens", value: s.tokensSpent },
       ]
     : undefined;
-  return <AgentStream label="Deep Investigation" events={run.steps} footer={footer} running={live} />;
+  return <AgentStream label="Deep Investigation" events={run.steps} footer={footer} running={live} startedAt={run.startedAt} />;
 }
 
 /**

@@ -12,8 +12,8 @@
  * confirm-dispatch countdown (DT2); Challenge launches immediately. Full is
  * disabled while the socket is reconnecting (D6/T6) and while a run is active.
  *
- * Gating mirrors the legacy buttons: Challenge needs `__DEEP_MODE_ENABLED__` and a
- * report with a `loopOutcome` to re-examine; Full needs `__ORCHESTRATOR_ENABLED__`.
+ * Gating mirrors the legacy buttons: Challenge needs `__CHALLENGE__` and a
+ * report with a `loopOutcome` to re-examine; Full needs `__AUTONOMOUS__`.
  */
 import { useEffect, useState } from "react";
 import { Compass, X } from "lucide-react";
@@ -30,15 +30,10 @@ const COUNTDOWN_FROM = 3;
 export function ScopedDeepMenu({
   investigationId,
   canChallenge,
-  onFullStart,
 }: {
   investigationId: string;
   /** The report has a loop outcome — deep mode has ruled-out causes to re-judge. */
   canChallenge: boolean;
-  /** Called when a Full run is dispatched (after the countdown). The Console
-   *  uses it to auto-navigate to the wide /deep panel (PR-2d, D2). Optional —
-   *  the panel's own empty-state menu omits it (already on /deep). */
-  onFullStart?: (investigationId: string) => void;
 }) {
   const { start, connectionStatus } = useOrchestratorRunActions();
   const run = useOrchestratorRun(investigationId);
@@ -48,35 +43,39 @@ export function ScopedDeepMenu({
   // Tick the countdown; at zero, dispatch the Full run.
   useEffect(() => {
     if (countdown === null) return;
-    // A run started elsewhere (e.g. the coexisting legacy button) while we were
-    // counting down — abort the countdown so we don't dispatch a duplicate that
-    // the server rejects and the registry would apply to the live run.
-    if (run?.running) {
+    // A live run started elsewhere while we were counting down — abort so we
+    // don't dispatch a duplicate the server rejects. A hydrated (interrupted) run
+    // reports running=true but is dead server-side, so it does NOT block a launch.
+    if (run?.running && !run.hydrated) {
       setCountdown(null);
       return;
     }
     if (countdown <= 0) {
       setCountdown(null);
+      // The Full run streams in the Console (InlineRunRegion) — the single home
+      // for a deep run (PR-6). No navigation; the operator stays on the report.
       start(investigationId, "full");
-      onFullStart?.(investigationId); // auto-nav to the wide /deep panel (D2)
       return;
     }
     const t = setTimeout(() => setCountdown((c) => (c === null ? null : c - 1)), 900);
     return () => clearTimeout(t);
-  }, [countdown, investigationId, start, run?.running, onFullStart]);
+  }, [countdown, investigationId, start, run?.running]);
 
-  const deepEnabled = typeof window !== "undefined" && !!window.__DEEP_MODE_ENABLED__ && canChallenge;
-  const fullEnabled = typeof window !== "undefined" && !!window.__ORCHESTRATOR_ENABLED__;
+  const deepEnabled = typeof window !== "undefined" && !!window.__CHALLENGE__ && canChallenge;
+  const fullEnabled = typeof window !== "undefined" && !!window.__AUTONOMOUS__;
   if (!deepEnabled && !fullEnabled) return null;
 
-  const running = !!run?.running;
+  // A hydrated (interrupted) run reports running=true but is dead server-side —
+  // it must not lock the launch button, or the operator can't re-run after a
+  // server restart. Only a genuinely live (or parked, resumable) run blocks.
+  const running = !!run?.running && !run?.hydrated;
   const offline = connectionStatus !== "connected";
 
   // Confirm-dispatch countdown (DT2) — replaces the trigger while counting down.
   if (countdown !== null) {
     return (
       <div
-        className="flex items-center gap-2 h-9 px-3 rounded-lg border border-accent/40 bg-accent/8 font-mono text-[11px]"
+        className="inline-flex items-center gap-2 py-1 px-2.5 rounded-full border border-accent/40 bg-accent/8 font-mono text-[10px]"
         role="status"
         aria-live="polite"
       >
@@ -85,10 +84,10 @@ export function ScopedDeepMenu({
         <button
           type="button"
           onClick={() => setCountdown(null)}
-          className="ml-1 inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
+          className="ml-0.5 inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
           aria-label="Cancel the deep investigation"
         >
-          <X size={11} className="!size-auto" /> cancel
+          <X size={10} className="!size-auto" /> cancel
         </button>
       </div>
     );
@@ -101,9 +100,9 @@ export function ScopedDeepMenu({
           type="button"
           disabled={running}
           title="Run a deeper investigation — challenge the RCA, or hunt for the real cause"
-          className="h-9 px-4 text-[12px] font-mono inline-flex items-center gap-1.5 rounded-lg border border-primary/30 text-primary/80 hover:bg-primary/8 hover:text-primary disabled:opacity-40 disabled:cursor-not-allowed"
+          className="px-2.5 py-1 text-[10px] font-mono inline-flex items-center gap-1.5 rounded-full border border-primary/40 text-primary/80 hover:bg-primary/8 hover:text-primary disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          <Compass size={12} className="!size-auto" />
+          <Compass size={11} className="!size-auto" />
           {running ? "Investigating…" : "Investigate deeply"}
           <span className="text-[9px] opacity-60" aria-hidden>▾</span>
         </button>

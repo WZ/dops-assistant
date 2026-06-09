@@ -3,19 +3,22 @@ import type { AgentStreamEvent } from "../../types/ws-types.js";
 
 /** Ticking "Ns" since the run went live — proves the agent is alive between
  *  steps (decideMove thinking, a long query, a running subagent), so the stream
- *  never looks hung. Resets each time `running` flips true. */
-function useElapsedSeconds(running: boolean): number {
-  const [elapsed, setElapsed] = useState(0);
+ *  never looks hung. Anchored to `startedAt` (the run's start, from the registry)
+ *  when supplied, so the count survives this component remounting (e.g. the
+ *  operator navigates away from the Console and back); falls back to mount time. */
+function useElapsedSeconds(running: boolean, startedAt?: number): number {
+  const since = (anchor: number) => Math.max(0, Math.floor((Date.now() - anchor) / 1000));
+  const [elapsed, setElapsed] = useState(() => (startedAt != null ? since(startedAt) : 0));
   useEffect(() => {
     if (!running) {
       setElapsed(0);
       return;
     }
-    const start = Date.now();
-    setElapsed(0);
-    const id = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000);
+    const start = startedAt ?? Date.now();
+    setElapsed(since(start));
+    const id = setInterval(() => setElapsed(since(start)), 1000);
     return () => clearInterval(id);
-  }, [running]);
+  }, [running, startedAt]);
   return elapsed;
 }
 
@@ -44,6 +47,7 @@ const STATUS_ICON: Record<AgentStreamEvent["status"], string> = {
   done: "✓",
   rejected: "✗",
   strong: "✓",
+  inconclusive: "?", // couldn't verify — no evidence gathered (not a refutation)
 };
 
 // Icon color by status; verbs reuse the same intent so the eye groups by outcome.
@@ -52,6 +56,7 @@ function statusClass(status: AgentStreamEvent["status"]): string {
     case "running": return "text-primary";
     case "strong": return "text-success";
     case "rejected": return "text-destructive";
+    case "inconclusive": return "text-warning";
     default: return "text-muted-foreground";
   }
 }
@@ -59,6 +64,7 @@ function verbClass(status: AgentStreamEvent["status"]): string {
   switch (status) {
     case "strong": return "text-success";
     case "rejected": return "text-destructive";
+    case "inconclusive": return "text-warning";
     default: return "text-accent/90"; // coral for actions, matching the design
   }
 }
@@ -82,14 +88,17 @@ export function AgentStream({
   footer,
   banner,
   running,
+  startedAt,
 }: {
   label: string;
   events: AgentStreamEvent[];
   footer?: AgentStreamFooterItem[];
   banner?: AgentStreamBanner;
   running: boolean;
+  /** Run start (epoch ms) so the live timer survives a remount. */
+  startedAt?: number;
 }) {
-  const elapsed = useElapsedSeconds(running);
+  const elapsed = useElapsedSeconds(running, startedAt);
   if (events.length === 0 && !running) return null;
   return (
     <section className="rounded-lg border border-accent/30 bg-card overflow-hidden animate-fade-up">
