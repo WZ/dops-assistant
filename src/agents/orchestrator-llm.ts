@@ -18,6 +18,7 @@ import { generateText, type LanguageModel } from "ai";
 import { z } from "zod";
 import {
   runOrchestrator,
+  mentionsService,
   type OrchestratorMove,
   type OrchestratorState,
   type OrchestratorGuards,
@@ -205,6 +206,22 @@ export function buildStatePrompt(focus: string, state: OrchestratorState, guards
     });
   }
   lines.push("");
+
+  // Follow-through nudge (inc-7 #4): a dependency was followed but no hypothesis
+  // names it yet. The findings it surfaced are the live lead — steer the next move
+  // toward turning them into a tested hypothesis about THAT service, so the run
+  // can't conclude on a shallow local cause while the followed dependency's failure
+  // sits un-pursued. Advisory only (a hint, not a SYSTEM rule); fires solely after a
+  // follow has happened, so it can never make a valid local-cause run worse.
+  const unpursued = (state.followedServices ?? []).filter(
+    (svc) => !state.hypotheses.some((h) => mentionsService(h.hypothesis.hypothesis, svc)),
+  );
+  if (unpursued.length > 0) {
+    lines.push(
+      `Followed but not yet pursued: ${unpursued.join(", ")}. You followed-cause into ${unpursued.length > 1 ? "these dependencies" : "this dependency"} — turn ${unpursued.length > 1 ? "their" : "its"} findings into a hypothesis NAMING ${unpursued.length > 1 ? "each service" : "the service"} (with a checkable prediction) and TEST it before you conclude. Don't conclude on a local cause while a followed dependency's failure is unconfirmed.`,
+    );
+    lines.push("");
+  }
 
   if (state.evidence.length === 0) {
     lines.push("Evidence gathered: (none yet)");

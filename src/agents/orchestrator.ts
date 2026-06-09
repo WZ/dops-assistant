@@ -89,6 +89,12 @@ export interface OrchestratorState {
    *  standing until the run ends or a later pause replaces it. Rendered into the
    *  decide-move prompt as human guidance. Absent until the operator steers. */
   readonly operatorContext?: string;
+  /** Services the agent has actually followed-cause / spawned into so far. Used by
+   *  the per-turn prompt's follow-through nudge (inc-7 #4): once a dependency has
+   *  been followed, the agent must turn its findings into a tested hypothesis NAMING
+   *  that service before concluding — never confirm a shallow local cause on top of
+   *  an un-pursued follow. Absent on legacy callers → no nudge. */
+  readonly followedServices?: ReadonlyArray<string>;
 }
 
 export type OrchestratorOutcome =
@@ -214,7 +220,7 @@ export interface OrchestratorResult {
 }
 
 /** Case-insensitive whole-token-ish mention of a service name in free text. */
-function mentionsService(text: string, service: string): boolean {
+export function mentionsService(text: string, service: string): boolean {
   const needle = service.trim().toLowerCase();
   if (!needle) return false;
   const haystack = text.toLowerCase();
@@ -346,7 +352,7 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
       // loop alive indefinitely.
       if (deps.onOperatorPause && operatorContinues < MAX_OPERATOR_CONTINUES) {
         const pauseState: OrchestratorState = {
-          hypotheses, evidence, dependencies, depth, subagents, strikes, tokensSpent, toolCalls, elapsedMs: elapsed(), trace, operatorContext,
+          hypotheses, evidence, dependencies, depth, subagents, strikes, tokensSpent, toolCalls, elapsedMs: elapsed(), trace, operatorContext, followedServices: [...followedServices],
         };
         const { decision, context } = await deps.onOperatorPause(pauseState);
         if (decision === "continue") {
@@ -377,6 +383,7 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
       elapsedMs: elapsed(),
       trace,
       operatorContext,
+      followedServices: [...followedServices],
     };
 
     // Watchdog the brain too — not just evidence gathers. Under contention (the
