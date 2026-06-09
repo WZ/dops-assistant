@@ -86,6 +86,8 @@ describe("InlineRunRegion", () => {
     // the band stamp flips to "Confirmed"; no Stop once finished
     expect(screen.getByText("Confirmed")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /stop the deep/i })).toBeNull();
+    // the move log is NOT hidden after finishing — the explored steps stay.
+    expect(screen.getByText(/impala-statestore/)).toBeTruthy();
   });
 
   it("paused run: docked pause bar, decision routes through the registry and locks (D7)", () => {

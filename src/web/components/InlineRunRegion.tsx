@@ -67,8 +67,10 @@ export function InlineRunRegion({
   const liveElapsed = run.startedAt != null ? Math.max(0, Math.floor((Date.now() - run.startedAt) / 1000)) : 0;
   const elapsedLabel = liveRunning ? fmtSeconds(liveElapsed) : finalSeconds != null ? fmtSeconds(finalSeconds) : "";
 
-  // Body: the live move stream while running / interrupted; the conclusion +
-  // causal chain + provenance once a finished run has an outcome to show.
+  // The move log stays visible at every stage — even after the run finishes, the
+  // "what it explored" progress is kept (not swapped out), like a terminal
+  // transcript. A finished run with an outcome appends the conclusion + causal
+  // chain + provenance below the moves.
   const showResult = !running && !!run.outcome && !interrupted && !parked;
 
   return (
@@ -82,9 +84,13 @@ export function InlineRunRegion({
 
       <BandRule run={run} elapsedLabel={elapsedLabel} />
 
-      {showResult
-        ? <ResultView run={run} providers={providers} inline />
-        : <LiveView run={run} live={liveRunning} inline />}
+      <LiveView run={run} live={liveRunning} inline />
+
+      {showResult && (
+        <div className="mt-2.5 pt-2.5 border-t border-border/40">
+          <ResultView run={run} providers={providers} inline />
+        </div>
+      )}
 
       {/* Action row — right-aligned, below the run it controls. */}
       {(liveRunning && run.kind === "orchestrator") || canApply ? (

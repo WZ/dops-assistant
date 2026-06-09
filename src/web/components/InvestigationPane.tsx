@@ -688,6 +688,30 @@ export function InvestigationPane({
               </section>
             ) : report ? (
               <section ref={reportRef} className="animate-fade-up">
+                {/* Re-synthesis progress (PR-6b) — after the operator clicks Apply,
+                    the server regenerates the report narrative from the deep run's
+                    confirmed cause. Show an indeterminate bar above the report so
+                    it's clear the report is being rewritten in place, not stalled. */}
+                {run?.refining && (
+                  <div
+                    className="mb-3 rounded-md border border-primary/30 bg-primary/[0.06] px-3 py-2.5"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className="w-2 h-2 rounded-full bg-primary animate-status-pulse shrink-0" aria-hidden />
+                      <span className="font-mono text-[10px] tracking-[0.12em] uppercase text-primary/85">
+                        Re-synthesizing report…
+                      </span>
+                    </div>
+                    <div className="h-1 w-full rounded-full bg-secondary/60 overflow-hidden">
+                      <div className="h-full w-full bg-gradient-to-r from-transparent via-primary to-transparent bg-[length:200%_100%] animate-[shimmer_1.15s_ease-in-out_infinite]" />
+                    </div>
+                    <p className="mt-1.5 text-[10.5px] text-muted-foreground/70 leading-snug">
+                      Regenerating the narrative from the deep investigation's confirmed cause — the report updates in place.
+                    </p>
+                  </div>
+                )}
                 {/* Refined-by-deep-investigation banner (PR-6b) — shown only after
                     the operator applied a confirmed deep run; the preserved original
                     root cause makes the change visible/reversible. */}
