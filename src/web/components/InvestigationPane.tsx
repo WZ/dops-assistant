@@ -169,12 +169,9 @@ export function InvestigationPane({
   const run = useOrchestratorRun(investigationId);
   // GET + legacy-redirect + hydrate + subscribe now live in the shared hook
   // (PR-2d, T3) so this pane and the wide Deep panel reattach identically.
-  const deepRun = run?.kind === "deep-mode" ? run : undefined;
-  const orchRun = run?.kind === "orchestrator" ? run : undefined;
-  // The deep/orchestrator run now renders solely in the Console (InlineRunRegion);
-  // this pane keeps only the run's error to surface a failure banner below the report.
-  const deepModeError = deepRun?.error ?? null;
-  const orchError = orchRun?.error ?? null;
+  // The deep/orchestrator run (and its errors) now render solely in the Console
+  // (ChatPane / InlineRunRegion); this pane only reads `run` for the re-synthesis
+  // progress bar above the report.
   const [service, setService] = useState("");
   const [query, setQuery] = useState("");
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
@@ -196,6 +193,13 @@ export function InvestigationPane({
       reportRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }, [report]);
+
+  // When the operator applies a deep run and re-synthesis kicks off, scroll the
+  // report to the TOP so the "re-synthesizing…" bar and the resulting "Refined by
+  // deep investigation" banner (both at the top of the report section) are in view.
+  useEffect(() => {
+    if (run?.refining) reportRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [run?.refining]);
 
   // Mark this investigation as viewed for the unread-tracking system. Fires on
   // mount and again whenever the status transitions to a terminal state — that
@@ -569,12 +573,8 @@ export function InvestigationPane({
               lives on the report header. */}
         </div>
       </div>
-      {deepModeError && (
-        <div className="px-1 pb-2 text-[11px] font-mono text-destructive/80">{deepModeError}</div>
-      )}
-      {orchError && (
-        <div className="px-1 pb-2 text-[11px] font-mono text-destructive/80">{orchError}</div>
-      )}
+      {/* Deep/orchestrator run errors are surfaced in the deep Console (ChatPane),
+          next to where the operator triggered the run — not on the report header. */}
 
       {/* Progress bar — visible while running */}
       {isRunning && (

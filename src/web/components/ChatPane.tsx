@@ -220,6 +220,11 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
   // viewport without follow-up scroll updates.
   const streamingContentLen = streamingMessage?.content.length ?? 0;
   const streamingReasoningLen = streamingMessage?.reasoning.length ?? 0;
+  // Read the active deep run up here so its streaming move-log growth feeds the
+  // auto-scroll deps below. The inline band lives in the stream but updates via the
+  // run registry (not the message arrays), so without these deps the Console
+  // wouldn't follow the deep investigation as moves arrive (QA: no auto-scroll).
+  const activeRun = useOrchestratorRun(activeInvestigationId);
   const scrollRef = useAutoScroll([
     chatMessages,
     deepMessages,
@@ -232,6 +237,10 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
     // appears we want the same scroll-to-bottom behavior as a new message,
     // so the [Cancel] pill is reachable without scrolling.
     pendingConfirm?.id,
+    // Deep run progress — the inline band grows as moves stream in.
+    activeRun?.steps.length,
+    activeRun?.running,
+    activeRun?.refining,
   ]);
   const processedCount = useRef(0);
   const historyLoaded = useRef(false);
@@ -245,7 +254,7 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
   const isLoading = isDeepMode ? deepLoading : chatLoading;
   // While a deep run is live, the shortcut row is dimmed + inert (not hidden) —
   // no composer reflow, and it doubles as a busy cue alongside the run's shimmer.
-  const activeRun = useOrchestratorRun(activeInvestigationId);
+  // (activeRun is read above, for the auto-scroll deps.)
   const chipsBusy = deepLoading || !!activeRun?.running;
 
   // First-load migration toast: show once to teach the new chat-default + /investigate UX
@@ -1174,6 +1183,15 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
           <span>{formatTokens(sessionTokens.inputTokens + sessionTokens.outputTokens)} tokens</span>
           <span>·</span>
           <span>{sessionTokens.messageCount} messages</span>
+        </div>
+      )}
+
+      {/* Deep run error / rejection — surfaced HERE in the Console, next to where
+          the operator launched the run (not on the report header). Transient: a
+          "already running" rejection clears on the run's next streamed step. */}
+      {isDeepMode && activeRun?.error && (
+        <div className="mx-3 mt-2 rounded-md border border-destructive/30 bg-destructive/8 px-2.5 py-1.5 text-[11px] font-mono text-destructive/85" role="alert">
+          {activeRun.error}
         </div>
       )}
 

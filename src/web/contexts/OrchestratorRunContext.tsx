@@ -224,6 +224,7 @@ export function applyMessage(
         pause: null,
         decisionSubmitted: false,
         parked: false,
+        error: null, // a new move means the run is progressing — clear any transient error
         lastSeq: typeof seq === "number" ? seq : prev.lastSeq,
       });
     }
@@ -275,9 +276,15 @@ export function applyMessage(
         causalChain: msg.causalChain,
         traceSummary: msg.traceSummary,
       });
-    case "orchestrator:error":
+    case "orchestrator:error": {
       if (!prev) return runs;
-      return set({ ...prev, running: false, pause: null, error: typeof msg.message === "string" ? msg.message : "The orchestrator hit an error." });
+      const message = typeof msg.message === "string" ? msg.message : "The orchestrator hit an error.";
+      // A duplicate-launch rejection ("already running for this report") must NOT
+      // kill the live run — surface the message as a transient notice but keep the
+      // run running; it clears on the next streamed step.
+      if (/already running/i.test(message) && prev.running) return set({ ...prev, error: message });
+      return set({ ...prev, running: false, pause: null, error: message });
+    }
 
     // PR-6b: report re-synthesis is in flight after an apply.
     case "orchestrator:refining":

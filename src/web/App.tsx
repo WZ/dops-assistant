@@ -169,7 +169,11 @@ export function App() {
 
   const { stage: setupStage, loading: setupLoading, refreshSetupStage } = useSetupStage(activeStackId);
   const [setupDismissed, setSetupDismissed] = useState(() => !!safeGetItem(`dops:setup_dismissed:${activeStackId}`));
-  const showStepper = setupStage !== null && setupStage !== "complete" && !setupDismissed && !setupLoading;
+  // The onboarding stepper is for the desk/services/dashboard. Suppress it on
+  // detail views (an investigation or pattern) where it reads as out-of-place
+  // noise above the content the operator opened (QA F3).
+  const onDetailPane = leftPane.type === "investigation" || leftPane.type === "pattern";
+  const showStepper = setupStage !== null && setupStage !== "complete" && !setupDismissed && !setupLoading && !onDetailPane;
 
   const handleSkipSetup = useCallback(() => {
     safeSetItem(`dops:setup_dismissed:${activeStackId}`, "true");
