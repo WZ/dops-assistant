@@ -23,7 +23,8 @@ AI-powered incident response for DevOps teams. Connects to your monitoring stack
 
 ## Features
 
-- **Automated RCA pipeline** — 6-phase investigation: prefetch → anomaly detection → planning → parallel evidence gathering (metrics + logs + infra + changes) → synthesis → report
+- **Context-enriched alerts, automatically** — every alert, scan hit, or health transition fires a bounded 6-phase RCA pipeline (prefetch → anomaly detection → planning → parallel evidence: metrics + logs + infra + changes → synthesis → report). Your page arrives *already investigated* — root cause, timeline, evidence, and next steps — in ~2 minutes, with no human in the loop
+- **Deep Investigation — an autonomous root-cause agent** — when one pass isn't enough, point it at an incident and it runs an unbounded, read-only reason→act loop: forms hypotheses, gathers evidence, tests each against a deterministic check, and *follows the cause across service boundaries* until it confirms a real root cause — or pauses and hands an ambiguous call back to you. Streams live, survives reloads, and writes its conclusion back to the report. (Ships gated off.)
 - **Proactive scanning** — cron-driven probe evaluates PromQL and LogQL rules across every configured service and kicks off headless investigations when thresholds trip. Four-track evaluator covers availability, pod-restart storms, log-error bursts, and custom rules
 - **AI service discovery** — guided setup wizard walks your Prometheus and Loki stack, with live progress (discover → validate → review) and a one-click **Accept** to populate the service catalog with canonical metrics, log labels, and per-service + stack-wide probe rules. Headless `npm run discover` available for CI
 - **MCP-agnostic providers** — pluggable architecture. Wire in Grafana, Kubernetes, GitLab, Coroot, or any MCP-compatible backend and assign roles (metrics, logs, infrastructure, changes, dependencies) in config
@@ -51,19 +52,64 @@ For the full configuration reference (providers, scan rules, webhooks, notificat
 
 ## How It Works
 
-User messages are classified by an intent router. Questions go to a chat agent; incident reports trigger the investigation workflow.
+dops-assistant gives you two ways to investigate, and they're built for different jobs:
+
+| | **Investigation Pipeline** | **Deep Investigation** |
+|---|---|---|
+| What it is | Automatic first responder | Autonomous root-cause agent |
+| Trigger | Every alert / scan / health transition | You point it at an incident |
+| Shape | Fixed 6-phase pass, runs once | Unbounded reason→act loop |
+| Goal | *What's wrong* — context-enriched alert | *What's the real cause* — across services |
+| Cost | ~1× (~2 min) | 3–10× (guarded) |
 
 <p align="center">
   <img src="docs/img/system-overview.svg" alt="System Overview" width="800"/>
 </p>
 
-### Investigation Pipeline
+### Investigation Pipeline — your automatic first responder
 
-Six phases. Evidence gathering (metrics, logs, infra, changes) runs in parallel for speed. Each agent gets only the MCP tools relevant to its role, so the metrics agent never sees log query tools and vice versa.
+The pipeline is what turns a raw alert into an answer. All four trigger sources (below) converge on the same bounded, 6-phase workflow, so an alert, scan hit, or health transition becomes an evidence-backed RCA report — root cause, timeline, evidence, recommended actions — with **no human in the loop**. Evidence gathering (metrics, logs, infra, changes) runs in parallel for speed; each agent gets only the MCP tools relevant to its role, so the metrics agent never sees log query tools and vice versa. One pass, ~2–3 minutes. By the time you open the page, the alert is already investigated.
 
 <p align="center">
   <img src="docs/img/investigation-flow.svg" alt="Investigation Flow" width="800"/>
 </p>
+
+## Deep Investigation — an autonomous root-cause agent
+
+The pipeline tells you *what's wrong* on every alert. **Deep Investigation** answers the harder question — *what's the real, underlying cause* — for the incidents that don't yield to a single pass.
+
+It's an autonomous orchestrator. Instead of running a fixed sequence, it decides its **next move** every turn and keeps going until it earns a conclusion:
+
+> **hypothesize → query evidence → test → follow the cause across services → conclude**
+
+Open any finished investigation and pick **Investigate deeply**:
+
+- **Challenge this RCA** — a fast re-judge of the causes the pipeline ruled out.
+- **Full deep investigation** — the unbounded hunt. It forms candidate causes, gathers read-only evidence for each, scores them against a deterministic test, and — crucially — **follows the cause across service boundaries** along your dependency graph. A degraded `checkout` that's really a starved `payments` connection pool gets traced *to* `payments`, not blamed on the symptom.
+
+<p align="center">
+  <img src="docs/img/deep-investigation-flow.svg" alt="Deep Investigation — the autonomous move-loop" width="800"/>
+</p>
+
+**It stops honestly.** A conclusion only sticks when the leading hypothesis is *deterministically confirmed* by evidence — the model's own confidence is never the gate. When it rules out every idea it had without finding the cause, it doesn't guess: it **pauses and asks you** — continue, escalate to on-call, or instrument & wait. Every other exit is a hard guard (token budget, wall-clock, query cap, consecutive strikes), because an autonomous run costs 3–10× a normal one.
+
+<p align="center">
+  <img src="docs/img/screenshots/11-deep-investigation-running.png" alt="Deep Investigation streaming live in the Console — move log, live progress, and the moves/queries/tokens footer" width="900"/>
+</p>
+
+<p align="center"><em>A Full deep investigation streaming live in the Console — each move (hypothesize → query → test) lands in real time, with a live progress indicator and the moves · queries · subagents · strikes · tokens footer.</em></p>
+
+**It shows its work.** A confirmed run produces a **causal chain** — incident → each followed dependency (with the finding that pointed there) → root cause (with a Grafana deep-link to the exact panel that confirmed it) — plus a one-line trace summary like `12 moves · 5 queries · 2 subagents · confirmed at depth 1`.
+
+<p align="center">
+  <img src="docs/img/screenshots/12-deep-investigation-causal-chain.png" alt="A confirmed Deep Investigation — outcome banner, causal chain with source attribution, and trace summary" width="900"/>
+</p>
+
+<p align="center"><em>A confirmed run: the outcome banner, the cross-service causal chain with source attribution, and the trace summary.</em></p>
+
+Runs are **durable** — they survive a reload, reattach live across tabs, and auto-park when nobody's watching so they don't burn tokens headless. When it confirms a cause, one click **applies it back to the RCA report** — operator-gated and reversible, with a banner preserving the original cause.
+
+> Deep Investigation ships **gated off** (`agent.autonomousInvestigationEnabled: false`) while it finishes live validation. The full move-loop design — every guard, the operator-pause sequence, the false-confirm cross-service guard — is in [**Autonomous Orchestrator — the Agentic Loop**](docs/orchestrator-agentic-loop.md).
 
 ## Triggers
 
@@ -178,7 +224,7 @@ The default landing page is a live SOC-style console: health strip, service cata
 
 ## Try It
 
-**Live demo: [wz.github.io/dops-assistant](https://wz.github.io/dops-assistant/)** — fully interactive, hosted on GitHub Pages, no signup. Click into any investigation, browse the service catalog, drill into a scan run. Mutations are disabled (it's static), but every read path is real.
+**Live demo: [wz.github.io/dops-assistant](https://wz.github.io/dops-assistant/)** — fully interactive, hosted on GitHub Pages, no signup. Click into any investigation, browse the service catalog, drill into a scan run. Open the **checkout-api** incident to watch a completed **Deep Investigation** replay its move log and cross-service causal chain. Mutations are disabled (it's static), but every read path is real.
 
 Want to run the same thing yourself?
 
@@ -208,6 +254,7 @@ The static build is what the `deploy-demo` GitHub Actions workflow ships to Page
 ## Documentation
 
 - **[Architecture Overview](docs/architecture-overview.md)** — system design, component details, data flow, design decisions
+- **[Autonomous Orchestrator — the Agentic Loop](docs/orchestrator-agentic-loop.md)** — Deep Investigation's move-loop design: guards, the hybrid-stop keystone, operator-pause protocol, cross-service guard
 - **[Ops Runbook](docs/runbook.md)** — MCP setup, full config reference, tuning, troubleshooting
 - **[Email Notifications Setup](docs/email-notifications-setup.md)** — SMTP, Teams tenant rules, GUI walkthrough
 - **[Provider YAML Spec](docs/provider-yaml-spec.md)** — writing custom MCP providers

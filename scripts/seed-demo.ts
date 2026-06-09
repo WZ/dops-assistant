@@ -590,6 +590,55 @@ function main() {
     );
   }
 
+  // ── Deep Investigation (autonomous orchestrator) run on checkout-api ──────
+  // A finished, confirmed deep run, persisted as the same `orchestrator:*`
+  // investigation_events that ws-handler's persistOrchestratorEvent writes live,
+  // so the static demo replays it cold (move log + causal chain + stats footer)
+  // with no live WebSocket and no backend. The run *deepens* the checkout-api RCA:
+  // it confirms the report's downstream payments-worker lead and traces it to the
+  // real keystone — the payments DB connection pool.
+  const checkoutInv = invs.find((i) => i.service === "checkout-api")!;
+  const deepEnvelope = (message: Record<string, unknown>): string =>
+    JSON.stringify({ schemaVersion: 1, message: { ...message, investigationId: checkoutInv.id } });
+  const deepStep = (seq: number, verb: string, extra: Record<string, unknown>): string =>
+    deepEnvelope({ type: "orchestrator:step", event: { seq, verb, ...extra } });
+  const deepEvents: Array<{ type: string; payload: string }> = [
+    { type: "orchestrator:started", payload: deepEnvelope({ type: "orchestrator:started" }) },
+    { type: "orchestrator:step", payload: deepStep(0, "Hypothesized", { target: "checkout-api's own request handling is the bottleneck", status: "done" }) },
+    { type: "orchestrator:step", payload: deepStep(1, "queried", { target: 'histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{service="checkout-api"}[5m]))', targetKind: "query", status: "done", detail: "→ p95 1.4s, but internal spans (auth, cart) flat" }) },
+    { type: "orchestrator:step", payload: deepStep(2, "Tested", { target: "checkout-api self-induced latency", status: "rejected", detail: "(internal spans normal — contradicted)" }) },
+    { type: "orchestrator:step", payload: deepStep(3, "Hypothesized", { target: "synchronous call to payments-worker is blocking", status: "done" }) },
+    { type: "orchestrator:step", payload: deepStep(4, "Followed the cause to", { target: "payments-worker", status: "done", detail: "(dependency neighbor)" }) },
+    { type: "orchestrator:step", payload: deepStep(5, "queried", { target: "payments_db_pool_in_use / payments_db_pool_max", targetKind: "query", status: "done", detail: "→ pool at 100% for ~6m" }) },
+    { type: "orchestrator:step", payload: deepStep(6, "Tested", { target: "payments DB connection-pool exhaustion", status: "strong", detail: "(prediction satisfied)" }) },
+    { type: "orchestrator:step", payload: deepStep(7, "Concluded", { target: "root cause confirmed", status: "strong" }) },
+    { type: "orchestrator:complete", payload: deepEnvelope({
+      type: "orchestrator:complete",
+      outcome: "confirmed",
+      stats: { moves: 8, toolCalls: 3, subagents: 1, tokensSpent: 71_540, strikes: 1, depth: 1, durationMs: 96_000 },
+      traceSummary: "8 moves · 3 queries · 1 subagent · confirmed at depth 1",
+      causalChain: [
+        { label: "checkout-api", kind: "incident", evidence: "p95 latency 1.4s (7.8× baseline) since 14:05; internal spans flat" },
+        { label: "payments-worker", kind: "followed", evidence: "synchronous pool-acquire on payments climbs in lockstep with checkout latency" },
+        {
+          label: "root cause: payments DB connection pool exhausted",
+          kind: "root-cause",
+          evidence: "payments_db_pool_in_use == pool_max (100%) for ~6m — every checkout blocks waiting on a pool slot",
+          provenance: {
+            tool: "query_prometheus",
+            args: JSON.stringify({ expr: "payments_db_pool_in_use / payments_db_pool_max", datasource: "prometheus" }),
+            from: agoIso(2 * HOUR + 45 * MINUTE),
+            to: agoIso(2 * HOUR + 40 * MINUTE),
+          },
+        },
+      ],
+    }) },
+  ];
+  for (const ev of deepEvents) {
+    db.createEvent({ id: `evt_${ulid()}`, investigationId: checkoutInv.id, eventType: ev.type, payload: ev.payload });
+  }
+  console.log(`[seed] inserted ${deepEvents.length} deep-investigation events on checkout-api`);
+
   // ── Scan runs ───────────────────────────────────────────────────────────
   // Run 1: clean tick from ~1 hour ago. No hits.
   const cleanRunId = `sr_${ulid()}`;

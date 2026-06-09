@@ -5,6 +5,14 @@ Everything needed to stand up a public read-only demo of dops-assistant on
 fixture data — no server, no LLM calls, no MCP providers, nothing a
 visitor can break.
 
+The seed includes a completed **Deep Investigation** (autonomous orchestrator)
+run on the `checkout-api` investigation: open it and the Console replays the move
+log, the cross-service causal chain (`checkout-api → payments-worker → DB
+connection pool`), and the run stats — cold, from a static snapshot, with no live
+WebSocket. It's the one surface that streams over WS in production, so it's
+persisted as `orchestrator:*` investigation events the SPA hydrates the same way a
+live reload would (see the deep-run block in `scripts/seed-demo.ts`).
+
 ## How the demo works
 
 Two independent mechanisms cover two different scenarios:
