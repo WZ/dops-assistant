@@ -641,7 +641,7 @@ async function handleOrchestratorInvestigate(
       await runOrchestratorStreamed(
         msg.investigationId,
         focus,
-        { timeRange, ctx: { incidentTime: timeRange?.from }, dependencies, incidentService: investigation.service, signal: abort.signal, lead },
+        { timeRange, ctx: { incidentTime: timeRange?.from }, dependencies, incidentService: investigation.service, knownServices: allServices.map((s) => s.name), signal: abort.signal, lead },
         agents.orchestrate,
         persistingSend,
         registry,
@@ -903,7 +903,7 @@ async function handleOrchestratorAccept(
 async function runOrchestratorStreamed(
   investigationId: string,
   focus: string,
-  opts: { timeRange?: { from: string; to: string }; ctx?: { incidentTime?: string }; dependencies?: string[]; incidentService?: string; signal?: AbortSignal; lead?: string },
+  opts: { timeRange?: { from: string; to: string }; ctx?: { incidentTime?: string }; dependencies?: string[]; incidentService?: string; knownServices?: string[]; signal?: AbortSignal; lead?: string },
   orchestrate: StackAgents["orchestrate"],
   send: (m: ServerMessage) => void,
   registry: OrchestratorRunRegistry,
@@ -917,6 +917,7 @@ async function runOrchestratorStreamed(
       ctx: opts.ctx,
       dependencies: opts.dependencies,
       incidentService: opts.incidentService,
+      knownServices: opts.knownServices,
       signal: opts.signal,
       lead: opts.lead,
       onStep: (ev) => send({ type: "orchestrator:step", investigationId, event: { ...ev, seq: seq++ } }),

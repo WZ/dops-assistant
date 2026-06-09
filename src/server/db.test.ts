@@ -776,6 +776,24 @@ describe("Database", () => {
       expect(db.getPhases("inv_c1")).toHaveLength(0);
       expect(db.getEvents("inv_c1")).toHaveLength(0);
     });
+
+    it("purgeInvestigationEventsOlderThan prunes the orchestrator replay log by age (inc-7 GC)", () => {
+      const stackId = "stk_gc";
+      db.createStack({ id: stackId, name: "GC Test", slug: "gc-test", config: '{"providers":[]}' });
+      db.createInvestigation(stackId, { id: "inv_gc1", service: "svc", query: "q", status: "complete" });
+      db.createEvent({ id: "ev_g1", investigationId: "inv_gc1", eventType: "orchestrator:started", payload: "{}" });
+      db.createEvent({ id: "ev_g2", investigationId: "inv_gc1", eventType: "orchestrator:step", payload: "{}" });
+      expect(db.getEvents("inv_gc1")).toHaveLength(2);
+
+      // A cutoff in the past (epoch 0) keeps everything — the events are recent.
+      expect(db.purgeInvestigationEventsOlderThan(0)).toBe(0);
+      expect(db.getEvents("inv_gc1")).toHaveLength(2);
+
+      // A cutoff in the future prunes the whole (now-old-relative-to-cutoff) log.
+      const removed = db.purgeInvestigationEventsOlderThan(Date.now() + 60_000);
+      expect(removed).toBe(2);
+      expect(db.getEvents("inv_gc1")).toHaveLength(0);
+    });
   });
 
   // ── Stack TTL columns + reaper (B-2) ──────────────────────────────────
