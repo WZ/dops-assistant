@@ -144,6 +144,20 @@ function UnreadMarker() {
   );
 }
 
+function StartHereCue({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Focus the chat input"
+      className="mt-3 flex flex-col items-center gap-1 group cursor-pointer rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+    >
+      <ChevronDown size={18} strokeWidth={2.25} className="!size-auto text-primary/55 group-hover:text-primary group-hover:translate-y-0.5 animate-pulse transition-all" />
+      <span className="font-mono text-[11px] font-semibold uppercase tracking-[0.14em] text-primary/70 group-hover:text-primary px-2.5 py-1 rounded-md group-hover:bg-primary/10 transition-all">Start here</span>
+    </button>
+  );
+}
+
 export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, activeInvestigationId, serviceContext }: ChatPaneProps) {
   const { stackFetch, activeStackId } = useStackContext();
   const { status, messages: wsMessages, send } = ws;
@@ -1051,21 +1065,16 @@ export function ChatPane({ ws, onInvestigationStarted, onViewInvestigation, acti
               <p className="text-[11px] text-muted-foreground/50 mt-1 font-body">
                 Ask anything below — services, health, or run an investigation
               </p>
-              <button
-                type="button"
-                onClick={focusInput}
-                aria-label="Focus the chat input"
-                className="mt-3 flex flex-col items-center gap-0.5 group focus:outline-none"
-              >
-                <ChevronDown size={16} strokeWidth={2} className="!size-auto text-primary/45 group-hover:text-primary/70 animate-pulse transition-colors" />
-                <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-primary/55 group-hover:text-primary/80 transition-colors">Start here</span>
-              </button>
+              <StartHereCue onClick={focusInput} />
             </div>
           )}
           {messages.length === 0 && isDeepMode && (
-            <p className="text-sm text-muted-foreground/50 font-body text-center mb-2 animate-fade-in">
-              Drill deeper into the investigation results
-            </p>
+            <div className="flex flex-col items-center text-center mb-2 animate-fade-in">
+              <p className="text-sm text-muted-foreground/50 font-body">
+                Drill deeper into the investigation results
+              </p>
+              <StartHereCue onClick={focusInput} />
+            </div>
           )}
           {!historyLoading && renderMessages()}
           {/* Pre-dispatch confirmation banner — chat-originated investigations
