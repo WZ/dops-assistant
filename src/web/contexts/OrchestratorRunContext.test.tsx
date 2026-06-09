@@ -371,6 +371,25 @@ describe("applyMessage — PR-2c reattach transitions", () => {
     expect(m.get(ID)!.operatorContext).toBe("check the DB pool");
   });
 
+  it("orchestrator:accept_rejected clears a pending optimistic apply state", () => {
+    let m = applyMessage(empty(), { type: "orchestrator:started", investigationId: ID });
+    m = applyMessage(m, {
+      type: "orchestrator:complete",
+      investigationId: ID,
+      outcome: "confirmed",
+    });
+    m = applyMessage(m, { type: "orchestrator:refining", investigationId: ID });
+    expect(m.get(ID)!.refining).toBe(true);
+
+    m = applyMessage(m, {
+      type: "orchestrator:accept_rejected",
+      investigationId: ID,
+      message: "Editing reports is disabled.",
+    });
+    expect(m.get(ID)!.refining).toBe(false);
+    expect(m.get(ID)!.acceptError).toBe("Editing reports is disabled.");
+  });
+
   it("orchestrator:replay reconstructs a LIVE run (clears hydrated/parked, seeds lastSeq)", () => {
     const events = [
       row("orchestrator:started", { type: "orchestrator:started", investigationId: ID }),

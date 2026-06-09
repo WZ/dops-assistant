@@ -518,6 +518,56 @@ describe("handleClientMessage", () => {
     expect(messages.some((m) => m.type === "investigation:started")).toBe(false);
     expect(deps.db.createInvestigation).not.toHaveBeenCalled();
   });
+
+  it("demo-mode orchestrator_accept sends a run-scoped rejection so the client clears Apply state", async () => {
+    const oldDemo = process.env["DEMO_MODE"];
+    process.env["DEMO_MODE"] = "true";
+    const deps = mockDeps();
+    const server = createServer();
+    let client: WebSocket | undefined;
+    try {
+      setupWebSocket(server, deps);
+      await new Promise<void>((resolve) => server.listen(0, resolve));
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("test server did not bind to a port");
+
+      client = new WebSocket(`ws://127.0.0.1:${address.port}/ws?stackId=${S}`);
+      const messages: ServerMessage[] = [];
+      client.on("message", (raw) => {
+        messages.push(JSON.parse(raw.toString()) as ServerMessage);
+      });
+
+      await new Promise<void>((resolve) => client.on("open", resolve));
+      client.send(JSON.stringify({ type: "orchestrator_accept", investigationId: "inv_demo" }));
+
+      await new Promise<void>((resolve) => {
+        const timeout = setTimeout(() => {
+          resolve();
+        }, 500);
+        const check = () => {
+          if (messages.some((m) => m.type === "orchestrator:accept_rejected")) {
+            clearTimeout(timeout);
+            resolve();
+          }
+          else setTimeout(check, 5);
+        };
+        check();
+      });
+
+      const rejected = messages.find((m) => m.type === "orchestrator:accept_rejected");
+      expect(rejected).toMatchObject({
+        type: "orchestrator:accept_rejected",
+        investigationId: "inv_demo",
+      });
+      expect(messages.some((m) => m.type === "chat:stream_end")).toBe(false);
+    } finally {
+      client?.close();
+      if (oldDemo === undefined) delete process.env["DEMO_MODE"];
+      else process.env["DEMO_MODE"] = oldDemo;
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
 });
 
 describe("handleClientMessage — new_session", () => {

@@ -294,6 +294,10 @@ describe("classifyWsMessage", () => {
     expect(classifyWsMessage("orchestrator_investigate")).toBe("investigation");
   });
 
+  it("classifies orchestrator_accept as investigation because it runs report re-synthesis", () => {
+    expect(classifyWsMessage("orchestrator_accept")).toBe("investigation");
+  });
+
   it("classifies other message types as general", () => {
     expect(classifyWsMessage("new_session")).toBe("general");
     expect(classifyWsMessage("discover")).toBe("general");

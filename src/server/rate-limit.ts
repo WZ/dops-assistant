@@ -147,6 +147,7 @@ export class WsRateLimiter {
  *   - "deep_investigate" messages
  *   - "deep_mode_investigate" messages (re-examines a completed report)
  *   - "orchestrator_investigate" messages (autonomous read-only move-loop)
+ *   - "orchestrator_accept" messages (LLM-backed report re-synthesis)
  *
  * All of these route through the stricter `investigation` bucket so a direct
  * WS client can't bypass the investigation cap via the looser general limit.
@@ -157,7 +158,8 @@ export function classifyWsMessage(msgType: string): WsMessageCategory {
     msgType === "chat" ||
     msgType === "deep_investigate" ||
     msgType === "deep_mode_investigate" ||
-    msgType === "orchestrator_investigate"
+    msgType === "orchestrator_investigate" ||
+    msgType === "orchestrator_accept"
   ) {
     return "investigation";
   }

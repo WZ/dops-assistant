@@ -390,12 +390,23 @@ export function setupWebSocket(server: Server, deps: WsDeps): void {
           if (parsed && typeof parsed === "object" && "type" in parsed && blockedTypes.has(parsed.type as string)) {
             const t = parsed.type as string;
             const friendly = (t === "chat" || t === "deep_investigate" || t === "rerun")
-              ? "Investigations are disabled on the demo site — LLM calls cost money and we can't let random visitors spend it. Click into a pre-recorded investigation to see a real RCA report, or clone the repo to try it yourself."
+                ? "Investigations are disabled on the demo site — LLM calls cost money and we can't let random visitors spend it. Click into a pre-recorded investigation to see a real RCA report, or clone the repo to try it yourself."
               : t === "scan:trigger"
                 ? "Scans are disabled on the demo site — they would query stub MCP providers and dispatch real investigations. Clone the repo and point it at your own stack."
                 : t === "orchestrator_accept"
                   ? "Editing investigation reports is disabled on the demo site. Clone the repo to try the deep-investigation refinement flow against your own stack."
                   : "Discovery is disabled on the demo site — it would call the LLM and run against stub MCP providers. Clone the repo and point it at your own stack.";
+            if (t === "orchestrator_accept") {
+              const investigationId = typeof (parsed as { investigationId?: unknown }).investigationId === "string"
+                ? (parsed as { investigationId: string }).investigationId
+                : "";
+              if (investigationId) {
+                send({ type: "orchestrator:accept_rejected", investigationId, message: friendly });
+              } else {
+                send({ type: "error", message: friendly });
+              }
+              return;
+            }
             send({ type: "chat:stream_end", content: friendly });
             return;
           }

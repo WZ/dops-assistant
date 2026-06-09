@@ -86,18 +86,19 @@ test("deep investigation: report → Investigate deeply → Full → streams →
   // Pick the Full scope from the scoped menu.
   await page.getByRole("menuitem", { name: /Full deep investigation/i }).click();
 
-  // Confirm-dispatch countdown, then the run starts and streams. The run renders
-  // in BOTH the Console region and the legacy investigation card (both read the
-  // one registry), so match the first occurrence.
+  // Confirm-dispatch countdown, then the run starts and streams in the Console.
+  // The fixture config intentionally has no service dependency graph, so the
+  // deterministic stub first emits a stable generic ruling-out step before it
+  // confirms on the incident service itself.
   await expect(page.getByText(/Starting Full Deep Investigation/i)).toBeVisible();
-  await expect(page.getByText(/impala-statestore/i).first()).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/memory exhaustion/i).first()).toBeVisible({ timeout: 15_000 });
 
   // The operator-pause prompt appears; steer it with "continue".
   await expect(page.getByText(/needs your call/i).first()).toBeVisible({ timeout: 15_000 });
   await page.getByRole("button", { name: /continue/i }).first().click();
 
   // The stubbed run confirms a root cause — the result-first conclusion shows.
-  await expect(page.getByText(/statestore connection pool starvation/i).first()).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/connection pool starvation/i).first()).toBeVisible({ timeout: 15_000 });
 });
 
 test("deep investigation: a mid-flight run survives a reload — reattaches LIVE and resumes (PR-2c)", async ({ page }) => {
@@ -116,7 +117,7 @@ test("deep investigation: a mid-flight run survives a reload — reattaches LIVE
 
   // Let the run stream up to the operator-pause — it is now blocked server-side
   // awaiting a decision (live in the registry, no terminal event yet).
-  await expect(page.getByText(/impala-statestore/i).first()).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/memory exhaustion/i).first()).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText(/needs your call/i).first()).toBeVisible({ timeout: 15_000 });
 
   // Reload. The WS drops, but PR-2c keeps the run alive server-side (close just
@@ -125,29 +126,22 @@ test("deep investigation: a mid-flight run survives a reload — reattaches LIVE
   // again, and it is NOT shown as interrupted.
   await page.reload();
   await expect(page.getByText(/Root Cause/i).first()).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText(/impala-statestore/i).first()).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/memory exhaustion/i).first()).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText(/needs your call/i).first()).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText(/can't be resumed here/i)).toHaveCount(0); // not interrupted — it's live
 
   // Continue the reattached, still-live run → it resumes and confirms a cause.
   await page.getByRole("button", { name: /continue/i }).first().click();
-  await expect(page.getByText(/statestore connection pool starvation/i).first()).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/connection pool starvation/i).first()).toBeVisible({ timeout: 15_000 });
 });
 
-test("deep panel: direct deep-link renders the wide panel; no run → empty state with Start menu", async ({ page }) => {
+test("legacy deep panel link redirects to the plain investigation pane", async ({ page }) => {
   test.skip(!seeded || !stackId, "Could not seed a completed investigation (stacks table empty?) — skipping.");
 
-  // Direct hit on the PR-2d route (no run started) → the wide panel cold-loads
-  // the investigation and shows its empty state.
+  // Direct hit on the removed PR-2d route should gracefully open the normal
+  // investigation pane where the Console hosts any deep run.
   await page.goto(`/stacks/${stackId}/investigations/${INV_ID}/deep`);
 
-  // The panel header always renders (the route resolves the stack + GETs the run).
-  await expect(page.getByRole("heading", { name: /Deep Investigation/ })).toBeVisible({ timeout: 15_000 });
-
-  // No deep run exists for this freshly-seeded investigation → empty state.
-  await expect(page.getByText(/No deep investigation yet/i)).toBeVisible({ timeout: 15_000 });
-
-  // Back returns to the detail page.
-  await page.getByRole("button", { name: /back to investigation/i }).click();
   await expect(page.getByText(/Root Cause/i).first()).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("heading", { name: /Deep Investigation/ })).toHaveCount(0);
 });
