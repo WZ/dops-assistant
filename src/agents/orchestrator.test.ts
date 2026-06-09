@@ -575,6 +575,24 @@ describe("runOrchestrator — cross-service confirm guard", () => {
     expect(result.trace.some((t) => t.move === "conclude" && /payment-service.*never followed-cause/.test(t.detail))).toBe(true);
   });
 
+  it("does not block a confirm when a known service name is only a substring", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        dependencies: [],
+        incidentService: "checkout",
+        knownServices: ["pay"],
+        evaluate: () => "satisfied",
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("checkout payment queue backed up inside checkout") },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          { type: "conclude", leading: 0, confidence: 0.9, rationale: "local queue evidence" },
+        ]),
+      }),
+    );
+    expect(result.outcome).toBe("confirmed");
+  });
+
   it("allows the confirm once the implicated dependency was followed", async () => {
     const result = await runOrchestrator(
       makeDeps({

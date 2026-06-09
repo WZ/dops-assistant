@@ -215,7 +215,20 @@ export interface OrchestratorResult {
 
 /** Case-insensitive whole-token-ish mention of a service name in free text. */
 function mentionsService(text: string, service: string): boolean {
-  return text.toLowerCase().includes(service.toLowerCase());
+  const needle = service.trim().toLowerCase();
+  if (!needle) return false;
+  const haystack = text.toLowerCase();
+  const isServiceNameChar = (ch: string | undefined): boolean => !!ch && /[a-z0-9._-]/i.test(ch);
+  let from = 0;
+  while (from < haystack.length) {
+    const idx = haystack.indexOf(needle, from);
+    if (idx === -1) return false;
+    const before = haystack[idx - 1];
+    const after = haystack[idx + needle.length];
+    if (!isServiceNameChar(before) && !isServiceNameChar(after)) return true;
+    from = idx + 1;
+  }
+  return false;
 }
 
 /** Absolute backstop on move count — far above any real run; catches a runaway decide-fn. */

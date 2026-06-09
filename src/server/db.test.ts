@@ -794,6 +794,13 @@ describe("Database", () => {
       expect(removed).toBe(2);
       expect(db.getEvents("inv_gc1")).toHaveLength(0);
     });
+
+    it("indexes investigation_events created_at for retention sweeps", () => {
+      const idx = db.raw().prepare(
+        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='investigation_events'",
+      ).all() as Array<{ name: string }>;
+      expect(idx.map((i) => i.name)).toContain("idx_investigation_events_created_at");
+    });
   });
 
   // ── Stack TTL columns + reaper (B-2) ──────────────────────────────────

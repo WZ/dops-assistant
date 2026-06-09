@@ -634,6 +634,7 @@ export class Database {
         payload           TEXT NOT NULL,
         created_at        TEXT NOT NULL DEFAULT (datetime('now'))
       );
+      CREATE INDEX IF NOT EXISTS idx_investigation_events_created_at ON investigation_events (created_at);
       CREATE TABLE IF NOT EXISTS investigation_feedback (
         id                TEXT PRIMARY KEY,
         investigation_id  TEXT NOT NULL REFERENCES investigations(id),
