@@ -774,3 +774,46 @@ describe("runOrchestrator — onMoveBoundary park hook (PR-2c)", () => {
     expect(result.outcome).toBe("aborted");
   });
 });
+
+describe("runOrchestrator — Consul category-error guard", () => {
+  it("rejects a 'not deployed in the cluster' confirm when the run gathered consul_health evidence", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        incidentService: "bd-management",
+        gatherEvidence: async () => [{ phase: "metrics", subject: "consul_health_service_status{service_name=\"bd-management\"}", value: 0 }],
+        evaluate: () => "satisfied",
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("bd-management is not deployed in the cluster (no k8s pod exists)") },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          { type: "conclude", leading: 0, confidence: 0.9, rationale: "no pod" },
+          null,
+        ]),
+      }),
+    );
+    // True-but-wrong: the service IS Consul (we saw consul_health), so "no k8s pod"
+    // is not the root cause — the confirm is blocked and the run exhausts.
+    expect(result.outcome).toBe("exhausted");
+    expect(result.confirmed).toBeUndefined();
+    expect(result.trace.some((t) => t.move === "conclude" && /bare-metal Consul service/.test(t.detail))).toBe(true);
+  });
+
+  it("ALLOWS a 'deployment not present' confirm for a genuine k8s service (no consul evidence — agw-admin-ui)", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        incidentService: "agw-admin-ui",
+        gatherEvidence: async () => [{ phase: "infra", subject: "agw-admin-ui namespace", text: "namespace not found" }],
+        evaluate: () => "satisfied",
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("agw-admin-ui namespace deleted, deployment not present in the cluster") },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          { type: "conclude", leading: 0, confidence: 0.9, rationale: "namespace gone" },
+        ]),
+      }),
+    );
+    // Genuine k8s absence — no consul_health evidence → guard does NOT fire.
+    expect(result.outcome).toBe("confirmed");
+    expect(result.confirmed?.hypothesis).toContain("namespace deleted");
+  });
+});

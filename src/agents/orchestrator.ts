@@ -487,6 +487,24 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
             stall++;
             break;
           }
+          // CONSUL CATEGORY-ERROR GUARD: "not deployed in k8s / no pod / deployment
+          // missing" is a TRUE-but-WRONG cause for a bare-metal Consul service — it
+          // has no k8s objects by design, so the missing deployment isn't the root
+          // cause. If the run gathered any consul_health evidence, the service is
+          // Consul-tracked: reject the k8s-absence conclusion and make the agent
+          // confirm via the Consul health signal instead. Genuine k8s incidents
+          // (e.g. a deleted namespace) gather no consul_health evidence, so this
+          // never fires for them.
+          const sawConsulEvidence = evidence.some((o) => /consul_health_service_status/i.test(o.subject));
+          const claimsK8sAbsence = /\b(not deployed|no k8s pod|no pod exists|deployment (is )?missing|deployment does not exist|not present in (the )?cluster)\b/i.test(lead.hypothesis.hypothesis);
+          if (sawConsulEvidence && claimsK8sAbsence) {
+            record({
+              move: "conclude",
+              detail: `not confirmed — "${lead.hypothesis.hypothesis}" claims a missing k8s deployment, but consul_health evidence shows this is a bare-metal Consul service (no k8s object by design). Confirm via its consul_health_service_status signal instead.`,
+            });
+            stall++;
+            break;
+          }
           record({ move: "conclude", detail: `confirmed: ${lead.hypothesis.hypothesis}` });
           return finish("confirmed", lead.hypothesis);
         }
