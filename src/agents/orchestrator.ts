@@ -505,6 +505,23 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
             stall++;
             break;
           }
+          // OBSERVABILITY-ARTIFACT GUARD: a cause that blames the monitoring/query
+          // tooling itself — a Grafana datasource missing/misconfigured, a
+          // "datasource not found" error — is almost always a query-layer artifact
+          // (the agent's own failed log/metric queries leaking into evidence as
+          // "404 / datasource not found"), NOT why the incident service is
+          // unhealthy. Reject it, unless the incident service IS an observability
+          // component (then it's legitimately about that stack).
+          const incidentIsObservability = /grafana|loki|prometheus|datasource|mimir|thanos|alertmanager/i.test(deps.incidentService ?? "");
+          const claimsObservabilityArtifact = /\b(datasource|grafana)\b/i.test(lead.hypothesis.hypothesis);
+          if (!incidentIsObservability && claimsObservabilityArtifact) {
+            record({
+              move: "conclude",
+              detail: `not confirmed — "${lead.hypothesis.hypothesis}" blames the observability tooling (Grafana/datasource config), which is a query-layer artifact (often the agent's own failed queries), not why ${deps.incidentService ?? "the service"} is unhealthy. Investigate the service's own signals instead.`,
+            });
+            stall++;
+            break;
+          }
           record({ move: "conclude", detail: `confirmed: ${lead.hypothesis.hypothesis}` });
           return finish("confirmed", lead.hypothesis);
         }

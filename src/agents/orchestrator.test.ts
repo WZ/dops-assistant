@@ -817,3 +817,41 @@ describe("runOrchestrator — Consul category-error guard", () => {
     expect(result.confirmed?.hypothesis).toContain("namespace deleted");
   });
 });
+
+describe("runOrchestrator — observability-artifact guard", () => {
+  it("rejects a confirm that blames the observability tooling (Grafana/datasource) for a service incident", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        incidentService: "minimax-m25-metrics-proxy",
+        evaluate: () => "satisfied",
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("Grafana datasource for Loki is misconfigured — datasource not found") },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          { type: "conclude", leading: 0, confidence: 0.9, rationale: "datasource not found in logs" },
+          null,
+        ]),
+      }),
+    );
+    // Query-layer artifact, not a service root cause → blocked → exhausts.
+    expect(result.outcome).toBe("exhausted");
+    expect(result.confirmed).toBeUndefined();
+    expect(result.trace.some((t) => t.move === "conclude" && /observability tooling/.test(t.detail))).toBe(true);
+  });
+
+  it("ALLOWS a datasource/Grafana cause when the incident service IS an observability component", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        incidentService: "grafana",
+        evaluate: () => "satisfied",
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("grafana datasource provisioning failed on restart") },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          { type: "conclude", leading: 0, confidence: 0.9, rationale: "provisioning error" },
+        ]),
+      }),
+    );
+    expect(result.outcome).toBe("confirmed"); // grafana itself — legitimately about the observability stack
+  });
+});
