@@ -41,6 +41,25 @@ describe("evaluatePrediction", () => {
     expect(evaluatePrediction({ kind: "metric-threshold", metric: "payments p99", op: ">", value: 5 }, obs)).toBe("absent");
   });
 
+  // The Consul-confirmable-hypothesis contract: a down bare-metal service's
+  // prescribed prediction (consul_health_service_status < 1) CONFIRMS when the
+  // gather reports the metric at 0, and is "absent" (couldn't verify) for a
+  // vague hypothesis that never carries that metric — the exact gap that left
+  // impala runs wall-clocking before the skill prescribed this prediction.
+  it("metric-threshold: consul_health_service_status < 1 → satisfied when the service reports 0 (down)", () => {
+    const obs: NormalizedObservation[] = [
+      { phase: "metrics", subject: "consul_health_service_status{service_name=\"impala-statestore\",status=\"passing\"}", value: 0 },
+    ];
+    expect(evaluatePrediction({ kind: "metric-threshold", metric: "consul_health_service_status", op: "<", value: 1 }, obs)).toBe("satisfied");
+  });
+
+  it("metric-threshold: consul_health_service_status < 1 → contradicted when the service reports 1 (healthy)", () => {
+    const obs: NormalizedObservation[] = [
+      { phase: "metrics", subject: "consul_health_service_status{service_name=\"impala-statestore\",status=\"passing\"}", value: 1 },
+    ];
+    expect(evaluatePrediction({ kind: "metric-threshold", metric: "consul_health_service_status", op: "<", value: 1 }, obs)).toBe("contradicted");
+  });
+
   it("log-pattern present: satisfied when the pattern appears in subject or sample text", () => {
     const obs: NormalizedObservation[] = [
       { phase: "logs", subject: "connection pool exhausted", text: "FATAL: connection pool exhausted" },
