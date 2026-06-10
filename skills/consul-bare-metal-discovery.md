@@ -22,6 +22,13 @@ max by (service_name) (consul_health_service_status{service_name="<name>",status
 ```
 A value of `0` (or no row) means the bare-metal service is failing its Consul health check — that is the real signal to investigate (check the host process, its logs via the bare-metal logLabels, and any upstream it depends on). Only conclude a k8s cause for services that actually have k8s objects.
 
+### To CONFIRM it (so the test actually verifies, not "absent")
+When you hypothesize that a bare-metal service is unhealthy, attach this EXACT checkable prediction — the keystone matches the metric name literally, so use it verbatim:
+```json
+{"kind":"metric-threshold","metric":"consul_health_service_status","op":"<","value":1}
+```
+Then `query` it: the evidence gather runs that metric for the service and reports its value. If the passing-status value is `< 1` (i.e. 0), the `test` move returns **satisfied** → you can `conclude`. A vague hypothesis with no `consul_health_service_status` metric-threshold prediction will always come back "couldn't verify" (absent), so the run stalls — always make the prediction this exact metric.
+
 ## Discovery strategy
 
 ### Step 1: Find all Consul-registered services
