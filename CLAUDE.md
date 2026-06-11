@@ -28,6 +28,10 @@ npm run test:discover-eval            # Score discovery output quality (gates at
 npx tsx src/eval/rca-eval.ts          # Score RCA report quality
 npx tsx src/eval/rca-eval.ts --save   # Score + save baseline
 npx tsx src/eval/rca-eval.ts --compare src/eval/baselines/2026-03-22.json  # Compare to baseline
+# Deep-investigation (autonomous orchestrator) quality: run a batch live, then score it
+node src/eval/deep-investigation-run.mjs <incidents.json> /tmp/runs.json     # live batch (server on :3000)
+npx tsx src/eval/deep-eval.ts --results /tmp/runs.json                        # score: correct / confident-wrong / category-error rates
+npx tsx src/eval/deep-eval.ts --results /tmp/runs.json --compare src/eval/baselines/deep-2026-06-11.json --max-confident-wrong 0
 npx vitest run           # Run all tests
 npx vitest run src/path  # Run a single test file
 npx tsc --noEmit         # Type check
@@ -71,6 +75,7 @@ npx tsc --noEmit         # Type check
 | Shared PromQL parser | `src/lib/prom-metric.ts` — `extractMetricExpression()`, imported by both server metric extraction and the web MetricsPanel empty-card titles |
 | Investigation export helpers | `src/web/lib/exportInvestigation.ts` — `downloadPng` (html-to-image + font preload), `downloadMarkdown`, `copyMarkdown` |
 | RCA eval harness | `src/eval/rca-eval.ts` — scores RCA reports on 5 quality dimensions, baselines in `src/eval/baselines/` |
+| Deep-investigation eval | `src/eval/deep-eval.ts` (scorer: correct / confident-wrong / category-error rates) + `src/eval/deep-investigation-run.mjs` (live batch runner). Labels: `src/eval/fixtures/deep-investigation-labels.json`. The orchestrator is non-deterministic — this turns a manual batch into objective rates |
 | LLM quirk workarounds | `src/agents/shared/prepare-step.ts` (`prepareStep` hook) |
 | LLM retry & graceful failure | `src/agents/shared/llm-retry.ts` (`withLlmRetry`, `safeAgentRetryConfig`), `src/agents/shared/llm-errors.ts` (`LlmUnavailableError`, `isLlmUnavailable`). Tool-using agent paths only retry when `readOnlyTools: true` to avoid replaying write tool calls |
 | Shared types | `src/types/` — RCA report, agent interfaces, LLM types, WebSocket protocol |
