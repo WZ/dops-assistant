@@ -487,6 +487,46 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
             stall++;
             break;
           }
+          // CONSUL CATEGORY-ERROR GUARD: "not deployed in k8s / no pod / deployment
+          // missing" is a TRUE-but-WRONG cause for a bare-metal Consul service — it
+          // has no k8s objects by design, so the missing deployment isn't the root
+          // cause. If the run gathered any consul_health evidence, the service is
+          // Consul-tracked: reject the k8s-absence conclusion and make the agent
+          // confirm via the Consul health signal instead. Genuine k8s incidents
+          // (e.g. a deleted namespace) gather no consul_health evidence, so this
+          // never fires for them.
+          const sawConsulEvidence = evidence.some((o) => /consul_health_service_status/i.test(o.subject));
+          // ...but NOT if the run also saw real k8s deployment evidence — then the
+          // service IS a k8s Deployment (e.g. scaled to 0 replicas), so a k8s-absence
+          // cause is legitimate. Only services with consul_health AND no kube_deployment
+          // evidence are the bare-metal Consul ones the guard targets.
+          const sawK8sDeploymentEvidence = evidence.some((o) => /kube_deployment|kube_pod|kube_replicaset|kube_statefulset/i.test(o.subject));
+          const claimsK8sAbsence = /\b(not deployed|no k8s pod|no pod exists|deployment (is )?missing|deployment does not exist|not present in (the )?cluster)\b/i.test(lead.hypothesis.hypothesis);
+          if (sawConsulEvidence && !sawK8sDeploymentEvidence && claimsK8sAbsence) {
+            record({
+              move: "conclude",
+              detail: `not confirmed — "${lead.hypothesis.hypothesis}" claims a missing k8s deployment, but consul_health evidence shows this is a bare-metal Consul service (no k8s object by design). Confirm via its consul_health_service_status signal instead.`,
+            });
+            stall++;
+            break;
+          }
+          // OBSERVABILITY-ARTIFACT GUARD: a cause that blames the monitoring/query
+          // tooling itself — a Grafana datasource missing/misconfigured, a
+          // "datasource not found" error — is almost always a query-layer artifact
+          // (the agent's own failed log/metric queries leaking into evidence as
+          // "404 / datasource not found"), NOT why the incident service is
+          // unhealthy. Reject it, unless the incident service IS an observability
+          // component (then it's legitimately about that stack).
+          const incidentIsObservability = /grafana|loki|prometheus|datasource|mimir|thanos|alertmanager/i.test(deps.incidentService ?? "");
+          const claimsObservabilityArtifact = /\b(datasource|grafana)\b/i.test(lead.hypothesis.hypothesis);
+          if (!incidentIsObservability && claimsObservabilityArtifact) {
+            record({
+              move: "conclude",
+              detail: `not confirmed — "${lead.hypothesis.hypothesis}" blames the observability tooling (Grafana/datasource config), which is a query-layer artifact (often the agent's own failed queries), not why ${deps.incidentService ?? "the service"} is unhealthy. Investigate the service's own signals instead.`,
+            });
+            stall++;
+            break;
+          }
           record({ move: "conclude", detail: `confirmed: ${lead.hypothesis.hypothesis}` });
           return finish("confirmed", lead.hypothesis);
         }

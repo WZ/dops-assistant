@@ -774,3 +774,110 @@ describe("runOrchestrator — onMoveBoundary park hook (PR-2c)", () => {
     expect(result.outcome).toBe("aborted");
   });
 });
+
+describe("runOrchestrator — Consul category-error guard", () => {
+  it("rejects a 'not deployed in the cluster' confirm when the run gathered consul_health evidence", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        incidentService: "bd-management",
+        gatherEvidence: async () => [{ phase: "metrics", subject: "consul_health_service_status{service_name=\"bd-management\"}", value: 0 }],
+        evaluate: () => "satisfied",
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("bd-management is not deployed in the cluster (no k8s pod exists)") },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          { type: "conclude", leading: 0, confidence: 0.9, rationale: "no pod" },
+          null,
+        ]),
+      }),
+    );
+    // True-but-wrong: the service IS Consul (we saw consul_health), so "no k8s pod"
+    // is not the root cause — the confirm is blocked and the run exhausts.
+    expect(result.outcome).toBe("exhausted");
+    expect(result.confirmed).toBeUndefined();
+    expect(result.trace.some((t) => t.move === "conclude" && /bare-metal Consul service/.test(t.detail))).toBe(true);
+  });
+
+  it("ALLOWS a 'deployment not present' confirm for a genuine k8s service (no consul evidence — agw-admin-ui)", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        incidentService: "agw-admin-ui",
+        gatherEvidence: async () => [{ phase: "infra", subject: "agw-admin-ui namespace", text: "namespace not found" }],
+        evaluate: () => "satisfied",
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("agw-admin-ui namespace deleted, deployment not present in the cluster") },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          { type: "conclude", leading: 0, confidence: 0.9, rationale: "namespace gone" },
+        ]),
+      }),
+    );
+    // Genuine k8s absence — no consul_health evidence → guard does NOT fire.
+    expect(result.outcome).toBe("confirmed");
+    expect(result.confirmed?.hypothesis).toContain("namespace deleted");
+  });
+});
+
+describe("runOrchestrator — observability-artifact guard", () => {
+  it("rejects a confirm that blames the observability tooling (Grafana/datasource) for a service incident", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        incidentService: "minimax-m25-metrics-proxy",
+        evaluate: () => "satisfied",
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("Grafana datasource for Loki is misconfigured — datasource not found") },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          { type: "conclude", leading: 0, confidence: 0.9, rationale: "datasource not found in logs" },
+          null,
+        ]),
+      }),
+    );
+    // Query-layer artifact, not a service root cause → blocked → exhausts.
+    expect(result.outcome).toBe("exhausted");
+    expect(result.confirmed).toBeUndefined();
+    expect(result.trace.some((t) => t.move === "conclude" && /observability tooling/.test(t.detail))).toBe(true);
+  });
+
+  it("ALLOWS a datasource/Grafana cause when the incident service IS an observability component", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        incidentService: "grafana",
+        evaluate: () => "satisfied",
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("grafana datasource provisioning failed on restart") },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          { type: "conclude", leading: 0, confidence: 0.9, rationale: "provisioning error" },
+        ]),
+      }),
+    );
+    expect(result.outcome).toBe("confirmed"); // grafana itself — legitimately about the observability stack
+  });
+});
+
+describe("runOrchestrator — Consul guard does not block genuine k8s services", () => {
+  it("ALLOWS a 'not deployed' confirm when the run ALSO saw kube_deployment evidence (real k8s scaled to 0)", async () => {
+    let i = 0;
+    const result = await runOrchestrator(
+      makeDeps({
+        incidentService: "minimax-m25-vllm-bench-4gpu",
+        // The run gathered BOTH a (no-data) consul probe AND real kube_deployment
+        // evidence → it IS a k8s Deployment, so a k8s-absence cause is legitimate.
+        gatherEvidence: async () => (i++ === 0
+          ? [{ phase: "metrics", subject: "consul_health_service_status{service_name=\"x\"}", value: 0 }]
+          : [{ phase: "metrics", subject: "kube_deployment_spec_replicas{deployment=\"minimax-m25-vllm-bench-4gpu\"}", value: 0 }]),
+        evaluate: () => "satisfied",
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("minimax-m25-vllm-bench-4gpu deployment is not deployed (scaled to 0, no pod exists)") },
+          { type: "query", target: 0 },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          { type: "conclude", leading: 0, confidence: 0.9, rationale: "spec replicas 0" },
+        ]),
+      }),
+    );
+    // kube_deployment evidence present → guard does NOT fire → confirmed.
+    expect(result.outcome).toBe("confirmed");
+  });
+});
