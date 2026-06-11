@@ -20,6 +20,11 @@ export interface SkillMetadata {
   alerts: string[];
   tags: string[];
   scope: SkillScope[];
+  /** Optional generic targeting: this skill is only eligible for a service
+   *  whose discovered metric queries contain this substring (case-insensitive).
+   *  Keeps infra-type knowledge (e.g. a Consul health metric) in the skill,
+   *  not hardcoded in the engine. Untargeted skills (undefined) are always eligible. */
+  appliesToServiceMetric?: string;
   filePath: string;
 }
 
@@ -129,6 +134,9 @@ export class SkillStore {
           alerts: Array.isArray(data.alerts) ? data.alerts.map(String) : [],
           tags: Array.isArray(data.tags) ? data.tags.map(String) : [],
           scope,
+          appliesToServiceMetric: typeof data.appliesToServiceMetric === "string" && data.appliesToServiceMetric.trim()
+            ? data.appliesToServiceMetric.trim()
+            : undefined,
           filePath,
           body: content.trim(),
         });
@@ -226,7 +234,7 @@ export class SkillStore {
   /** Save a skill (create or update). Returns the saved skill. */
   async save(
     id: string | undefined,
-    frontmatter: { title: string; services: string[]; alerts: string[]; tags: string[]; scope?: SkillScope[] },
+    frontmatter: { title: string; services: string[]; alerts: string[]; tags: string[]; scope?: SkillScope[]; appliesToServiceMetric?: string },
     body: string,
   ): Promise<Skill> {
     const skillId = id
@@ -245,6 +253,7 @@ export class SkillStore {
       alerts: frontmatter.alerts,
       tags: frontmatter.tags,
       scope,
+      ...(frontmatter.appliesToServiceMetric ? { appliesToServiceMetric: frontmatter.appliesToServiceMetric } : {}),
     });
 
     await writeFile(filePath, content, "utf-8");
@@ -256,6 +265,7 @@ export class SkillStore {
       alerts: frontmatter.alerts,
       tags: frontmatter.tags,
       scope,
+      appliesToServiceMetric: frontmatter.appliesToServiceMetric?.trim() || undefined,
       filePath,
       body,
     };

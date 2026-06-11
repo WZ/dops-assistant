@@ -192,6 +192,33 @@ Steps here`,
 
       expect(store.getAll()).toHaveLength(0);
     });
+
+    it("round-trips appliesToServiceMetric through save", async () => {
+      await store.save("targeted", {
+        title: "Targeted Skill",
+        services: [],
+        alerts: [],
+        tags: [],
+        appliesToServiceMetric: "consul_health_service_status",
+      }, "body");
+      expect(store.getById("targeted")!.appliesToServiceMetric).toBe("consul_health_service_status");
+    });
+  });
+
+  describe("appliesToServiceMetric", () => {
+    it("parses the field from frontmatter, defaulting to undefined when absent", async () => {
+      await writeFile(
+        join(dir, "targeted.md"),
+        `---\ntitle: Targeted\nservices: []\nalerts: []\ntags: []\nappliesToServiceMetric: consul_health_service_status\n---\nBody`,
+      );
+      await writeFile(
+        join(dir, "untargeted.md"),
+        `---\ntitle: Untargeted\nservices: []\nalerts: []\ntags: []\n---\nBody`,
+      );
+      await store.loadAll();
+      expect(store.getById("targeted")!.appliesToServiceMetric).toBe("consul_health_service_status");
+      expect(store.getById("untargeted")!.appliesToServiceMetric).toBeUndefined();
+    });
   });
 
   describe("delete", () => {

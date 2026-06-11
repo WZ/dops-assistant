@@ -2,6 +2,7 @@
 title: Consul Bare-Metal Service Discovery
 services: []
 alerts: []
+appliesToServiceMetric: consul_health_service_status
 tags:
   - discovery
   - consul

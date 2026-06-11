@@ -612,21 +612,24 @@ async function handleOrchestratorInvestigate(
 
   // Stack-level team knowledge for the decide-move brain. The orchestrator
   // explores freely, so inject the enabled investigation-scoped skills as
-  // always-on context — EXCEPT infrastructure-type-specific runbooks that don't
-  // apply to this service. The bare-metal/Consul runbook in particular must NOT
-  // reach a Kubernetes service: it steers the agent into Consul hypotheses and a
-  // plain k8s incident (e.g. a Deployment scaled to 0) never gets diagnosed.
-  // A service is Consul-tracked iff discovery recorded a consul_health_service_status
-  // metric for it; otherwise it's k8s and the Consul runbook is dropped.
+  // always-on context.
+  // Generic skill targeting: a skill that declares `appliesToServiceMetric` is
+  // only eligible when the incident service's discovered metric queries contain
+  // that substring. This keeps infra-type knowledge (e.g. the Consul health
+  // metric) in the skill's frontmatter, not hardcoded in the engine. Untargeted
+  // skills are always eligible.
   const incidentEntry = allServices.find((s) => s.name === investigation.service);
-  const incidentIsConsul = (incidentEntry?.metrics ?? []).some((mtr) => /consul_health_service_status/i.test(mtr.query ?? ""));
+  const incidentMetricQueries = (incidentEntry?.metrics ?? []).map((mtr) => (mtr.query ?? "").toLowerCase());
   let skillContext: string | undefined;
   let investigationSkills: Skill[] | undefined;
   if (deps.skillStore) {
-    let skills = deps.skillStore.getAllForScopeEnabled("investigation", deps.db.getDisabledSkills(stackId));
-    if (!incidentIsConsul) {
-      skills = skills.filter((skill) => !(skill.tags ?? []).some((tag) => /^(consul|bare-metal)$/i.test(tag)));
-    }
+    const skills = deps.skillStore
+      .getAllForScopeEnabled("investigation", deps.db.getDisabledSkills(stackId))
+      .filter((skill) => {
+        if (!skill.appliesToServiceMetric) return true;
+        const needle = skill.appliesToServiceMetric.toLowerCase();
+        return incidentMetricQueries.some((q) => q.includes(needle));
+      });
     if (skills.length > 0) {
       skillContext = deps.skillStore.formatForPrompt(skills);
       investigationSkills = skills;

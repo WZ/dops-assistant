@@ -718,8 +718,8 @@ describe("handleClientMessage — orchestrator_investigate", () => {
     clearStackCaches(S);
     const deps = mockDeps();
     (deps.config as any).agent.autonomousInvestigationEnabled = true;
-    // Consul-tracked service (discovery recorded a consul_health metric) → the
-    // bare-metal/Consul runbook IS relevant and gets injected.
+    // The Consul runbook declares `appliesToServiceMetric: consul_health_service_status`.
+    // This service's discovered metric matches → the runbook IS relevant and gets injected.
     (deps.config as any).services = [{ name: "payments-api", metrics: [{ query: 'consul_health_service_status{service_name="payments-api"}', description: "consul health" }], logLabels: {} }];
     const ctx = mockCtx();
     const skill = {
@@ -729,6 +729,7 @@ describe("handleClientMessage — orchestrator_investigate", () => {
       alerts: [],
       tags: ["consul"],
       scope: ["investigation"],
+      appliesToServiceMetric: "consul_health_service_status",
       filePath: "skills/consul.md",
       body: "Bare-metal Consul services have no k8s Deployment.",
     };
@@ -780,10 +781,11 @@ describe("handleClientMessage — orchestrator_investigate", () => {
     clearStackCaches(S);
     const deps = mockDeps();
     (deps.config as any).agent.autonomousInvestigationEnabled = true;
-    // k8s service — its discovered metric is kube_deployment, not consul_health.
+    // k8s service — its discovered metric is kube_deployment, not consul_health,
+    // so the runbook's `appliesToServiceMetric` does NOT match → it is filtered out.
     (deps.config as any).services = [{ name: "web-frontend", metrics: [{ query: 'kube_deployment_status_replicas{deployment="web-frontend"}', description: "replicas" }], logLabels: {} }];
     const ctx = mockCtx();
-    const consulSkill = { id: "consul", title: "Consul Bare Metal", services: [], alerts: [], tags: ["consul", "bare-metal"], scope: ["investigation"], filePath: "skills/consul.md", body: "Bare-metal Consul services..." };
+    const consulSkill = { id: "consul", title: "Consul Bare Metal", services: [], alerts: [], tags: ["consul", "bare-metal"], scope: ["investigation"], appliesToServiceMetric: "consul_health_service_status", filePath: "skills/consul.md", body: "Bare-metal Consul services..." };
     deps.skillStore = {
       getAllForScopeEnabled: vi.fn(() => [consulSkill]),
       formatForPrompt: vi.fn(() => "## Team Knowledge (Skills)\n..."),

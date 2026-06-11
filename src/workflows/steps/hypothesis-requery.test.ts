@@ -97,19 +97,20 @@ describe("planPredictionQuery", () => {
     expect(plan!.prompt).toContain("T2");
   });
 
-  it("adds the Consul aggregation hint for consul_health_service_status so the gather gets a usable value", () => {
+  it("adds a generic aggregation hint for a bare metric selector so the gather gets a usable value", () => {
     const plan = planPredictionQuery(
       hyp({ kind: "metric-threshold", metric: "consul_health_service_status", op: "<", value: 1 }),
     );
     expect(plan!.role).toBe("metrics");
-    expect(plan!.prompt).toContain("max by (service_name)");
-    expect(plan!.prompt).toContain("status=\"passing\"");
-    expect(plan!.prompt).toMatch(/Consul bare-metal health metric/i);
+    expect(plan!.prompt).toMatch(/bare metric selector/i);
+    expect(plan!.prompt).toMatch(/aggregate it to the one series/i);
   });
 
-  it("does NOT add the Consul hint for ordinary metrics (no false positives)", () => {
-    const plan = planPredictionQuery(hyp({ kind: "metric-threshold", metric: "http_p99", op: ">", value: 5 }));
-    expect(plan!.prompt).not.toContain("max by (service_name)");
+  it("does NOT add the aggregation hint when the metric is already aggregated", () => {
+    const plan = planPredictionQuery(
+      hyp({ kind: "metric-threshold", metric: 'max by (service_name) (consul_health_service_status{status="passing"})', op: "<", value: 1 }),
+    );
+    expect(plan!.prompt).not.toMatch(/bare metric selector/i);
   });
 
   it("maps log-pattern to the logs role and reflects present/absent", () => {

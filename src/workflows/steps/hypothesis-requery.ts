@@ -93,19 +93,20 @@ export function planPredictionQuery(
 
   switch (p.kind) {
     case "metric-threshold": {
-      // Consul health is multi-row by nature: `consul_health_service_status`
-      // returns one series per (node × status), so querying the BARE metric
-      // yields mixed 0/1 rows the extractor can't reduce to a value → the gather
-      // comes back with zero usable observations and the keystone can never
-      // verify the hypothesis. Tell the gather to aggregate it for the affected
-      // service (the service named in the hypothesis) so it gets one clean value.
-      const consulHint = /consul_health_service_status/i.test(p.metric)
-        ? `\nNOTE: this is a Consul bare-metal health metric — querying it bare returns many rows (per node × status) with no usable value. Query it AGGREGATED for the service named in the hypothesis: max by (service_name) (consul_health_service_status{service_name="<that service>",status="passing"}). Report that single value (1 = passing, 0 = failing).`
+      // A bare metric selector with no aggregation function can return many
+      // series (one per label combination), which the extractor can't reduce to
+      // a single value → the gather comes back with no usable observation and the
+      // keystone can never verify the hypothesis. If the prediction's metric has
+      // no aggregation operator, tell the gather to aggregate it down to the one
+      // series for the affected service so it gets a clean value.
+      const hasAggregation = /\b(sum|max|min|avg|count|quantile|topk|bottomk|group|stddev|stdvar)\b/i.test(p.metric);
+      const aggregateHint = !hasAggregation
+        ? `\nNOTE: "${p.metric}" looks like a bare metric selector — querying it directly may return many series (one per label combination) with no single usable value. If so, aggregate it to the one series for the service named in the hypothesis (e.g. max by (<the service's identity label>) (<metric>{<service selector>})) and report that single value.`
         : "";
       return {
         role: "metrics",
         phase: "metrics",
-        prompt: `${preamble}\nPrediction to test: metric "${p.metric}" is ${p.op} ${p.value} during the incident.${window}\nRun ONE or TWO targeted queries for that exact metric over the window and report its actual value(s). Do not query unrelated metrics.${consulHint}\n${ret("metrics")}`,
+        prompt: `${preamble}\nPrediction to test: metric "${p.metric}" is ${p.op} ${p.value} during the incident.${window}\nRun ONE or TWO targeted queries for that exact metric over the window and report its actual value(s). Do not query unrelated metrics.${aggregateHint}\n${ret("metrics")}`,
       };
     }
     case "log-pattern": {
