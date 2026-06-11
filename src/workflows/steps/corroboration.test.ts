@@ -84,6 +84,26 @@ describe("evaluatePrediction", () => {
     expect(evaluatePrediction({ kind: "infra-status", resource: "payments", status: "OOMKilled" }, obs)).toBe("absent");
   });
 
+  it("infra-status present:false: confirms an absence (scaled to zero) only when infra evidence exists", () => {
+    // We gathered infra evidence for the deployment and it is NOT "running"
+    // (0 replicas) → the predicted absence is confirmed.
+    const scaledToZero: NormalizedObservation[] = [
+      { phase: "infra", subject: "vllm-bench deployment", text: "spec.replicas=0, available=0, no pods scheduled" },
+    ];
+    expect(evaluatePrediction({ kind: "infra-status", resource: "vllm-bench", status: "running", present: false }, scaledToZero)).toBe("satisfied");
+
+    // The resource IS running → the predicted absence is contradicted.
+    const running: NormalizedObservation[] = [
+      { phase: "infra", subject: "vllm-bench deployment", text: "2/2 replicas running" },
+    ];
+    expect(evaluatePrediction({ kind: "infra-status", resource: "vllm-bench", status: "running", present: false }, running)).toBe("contradicted");
+
+    // No infra evidence gathered at all → unknown, not a confirmation (mirrors
+    // log-pattern present:false; never confirm an absence on a query that may
+    // simply not have run).
+    expect(evaluatePrediction({ kind: "infra-status", resource: "vllm-bench", status: "running", present: false }, [])).toBe("absent");
+  });
+
   it("change-in-window: satisfied when a change lands within the window before the incident", () => {
     const obs: NormalizedObservation[] = [
       { phase: "changes", subject: "MR #4412 shrink db pool", timestamp: "2026-04-02T13:55:00Z" },

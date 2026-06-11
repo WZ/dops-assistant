@@ -117,12 +117,18 @@ export function planPredictionQuery(
         prompt: `${preamble}\nPrediction to test: log pattern "${p.pattern}" is ${expectPresent ? "PRESENT" : "ABSENT"} during the incident.${window}\nSearch the logs for that exact pattern and report matching lines (or confirm none found). One or two targeted queries only.\n${ret("logs")}`,
       };
     }
-    case "infra-status":
+    case "infra-status": {
+      const expectPresent = p.present !== false;
+      const resource = p.resource ?? "(the affected resource)";
+      const ask = expectPresent
+        ? `resource "${resource}" has status "${p.status}".${window}\nQuery infrastructure/Kubernetes for that resource's status and report it.`
+        : `resource "${resource}" is ABSENT — not "${p.status}" (e.g. scaled to zero, no ready pods, or deleted).${window}\nQuery infrastructure/Kubernetes for that resource and report its actual state — explicitly report if it has zero replicas, no running pods, or does not exist.`;
       return {
         role: "infrastructure",
         phase: "infra",
-        prompt: `${preamble}\nPrediction to test: resource "${p.resource ?? "(the affected resource)"}" has status "${p.status}".${window}\nQuery infrastructure/Kubernetes for that resource's status and report it. One or two targeted queries only.\n${ret("infra")}`,
+        prompt: `${preamble}\nPrediction to test: ${ask} One or two targeted queries only.\n${ret("infra")}`,
       };
+    }
     case "change-in-window":
       return {
         role: "changes",

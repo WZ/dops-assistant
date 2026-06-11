@@ -148,7 +148,7 @@ Moves — emit EXACTLY ONE as a single JSON object (no prose, no code fence):
     add a candidate cause with a CHECKABLE prediction. PREDICTION is one of:
       {"kind":"metric-threshold","metric":"<name>","op":">"|"<"|">="|"<=","value":<number>}
       {"kind":"log-pattern","pattern":"<substring>","present":true|false}
-      {"kind":"infra-status","resource":"<name>","status":"<e.g. OOMKilled|FailedScheduling>"}
+      {"kind":"infra-status","resource":"<name>","status":"<e.g. OOMKilled|FailedScheduling|running>","present":true|false}
       {"kind":"change-in-window","withinMinutesBefore":<number>}
 - {"move":"query","target":<hypothesis index>}   gather read-only evidence for that hypothesis's prediction.
 - {"move":"test","target":<hypothesis index>}     score that hypothesis against gathered evidence.
@@ -170,6 +170,7 @@ Rules:
 - CROSS-SERVICE CAUSES NEED A FOLLOW-CAUSE: observing that a dependency is unhealthy is only CORRELATIONAL. To conclude that a dependency caused this incident you MUST follow-cause into it first and establish the failure there — you cannot confirm "caused by <other service>" from the incident service's metrics alone.
 - GROUND EVERY CLAIM IN OBSERVED EVIDENCE: a hypothesis/rationale may only state metric values, replica counts, pod statuses, or service names you ACTUALLY saw in gathered evidence. Never invent specifics — do NOT write "1/2 replicas ready", "OOMKilled", or name a service you did not observe in the evidence. If you didn't query it, you can't claim it. A plausible-sounding story with numbers you didn't measure is a FALSE confirmation, not a root cause.
 - DON'T ASSUME KUBERNETES: a service may run outside k8s (Consul-registered, a VM, an external endpoint). The absence of a k8s Deployment/Pod for a service is NOT automatically the root cause — only conclude "not deployed / deployment missing" if the evidence shows the service IS a k8s workload whose Deployment genuinely vanished (e.g. kube_deployment_* metrics existed before and are now gone). If a service has no k8s objects but is monitored elsewhere (Consul/up{}/health checks), investigate THAT health signal instead of reporting "not deployed".
+- VERIFYING AN ABSENCE (scaled to zero / no replicas / not running / deleted): the confirming signal here is the ABSENCE of something, which a normal threshold over a runtime metric CANNOT catch — that metric vanishes when the resource is at zero, so the gather returns no data and the cause can NEVER be confirmed. Predict it one of two verifiable ways instead: (a) over a STATE metric that still reports a value at zero — e.g. {"kind":"metric-threshold","metric":"kube_deployment_status_replicas","op":"<","value":1} reads 0 and confirms "scaled to zero"; or (b) assert the absence explicitly with present:false — e.g. {"kind":"infra-status","resource":"<svc>","status":"running","present":false}. NEVER predict "scaled to zero" over a pod-runtime metric (kube_pod_*, vllm:*, request rates) — those disappear at zero replicas and leave the hypothesis unverifiable.
 - Be decisive — your budget is limited. Prefer the most likely cause first.
 Output ONLY the JSON object for your chosen move.`;
 

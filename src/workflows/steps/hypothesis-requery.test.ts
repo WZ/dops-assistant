@@ -132,6 +132,13 @@ describe("planPredictionQuery", () => {
     expect(plan!.prompt).toContain("CrashLoopBackOff");
   });
 
+  it("infra-status present:false asks the gather to confirm an absence (scaled to zero / deleted)", () => {
+    const plan = planPredictionQuery(hyp({ kind: "infra-status", resource: "vllm-bench", status: "running", present: false }));
+    expect(plan!.role).toBe("infrastructure");
+    expect(plan!.prompt).toMatch(/ABSENT/);
+    expect(plan!.prompt).toMatch(/zero replicas|no running pods|does not exist/i);
+  });
+
   it("maps change-in-window to the changes role and includes incident onset", () => {
     const plan = planPredictionQuery(
       hyp({ kind: "change-in-window", withinMinutesBefore: 30 }),
