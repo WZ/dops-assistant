@@ -543,6 +543,30 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
             stall++;
             break;
           }
+          // GROUNDING GATE: a confirm that blames a pod-RUNTIME failure (GPU/CUDA
+          // exhaustion, OOM, readiness/liveness, crash-loop, CPU throttling) is
+          // impossible when the gathered evidence shows the workload has zero
+          // running pods (scaled to zero). With no pods, there is nothing to
+          // exhaust a GPU or fail a readiness probe — such a cause is a
+          // fabrication/misattribution (e.g. cluster-wide GPU usage pinned on a
+          // service that has no pods). Only fires when an observation actually
+          // establishes zero replicas/pods, so it's grounded in real evidence.
+          const sawZeroReplicas = evidence.some((o) => {
+            const subj = (o.subject ?? "").toLowerCase();
+            const txt = (o.text ?? "").toLowerCase();
+            const isReplicaSignal = /replica|kube_deployment|kube_pod|\bpods?\b/.test(subj);
+            if (isReplicaSignal && o.value === 0) return true;
+            return /\b(0 replicas|zero replicas|scaled to zero|scaled to 0|no (running |ready )?pods|no pods (running|scheduled|exist))\b/.test(`${subj} ${txt}`);
+          });
+          const claimsPodRuntime = /\b(gpu|cuda|oom|out of memory|readiness|liveness|crash[- ]?loop|cpu throttl)\b/i.test(lead.hypothesis.hypothesis);
+          if (sawZeroReplicas && claimsPodRuntime) {
+            record({
+              move: "conclude",
+              detail: `not confirmed — "${lead.hypothesis.hypothesis}" blames a pod-runtime failure, but the gathered evidence shows ${deps.incidentService ?? "this workload"} has zero running pods (scaled to zero). With no pods there is no GPU/OOM/readiness failure to have — the cause is the scaled-to-zero state itself, not a runtime fault.`,
+            });
+            stall++;
+            break;
+          }
           record({ move: "conclude", detail: `confirmed: ${lead.hypothesis.hypothesis}` });
           return finish("confirmed", lead.hypothesis);
         }

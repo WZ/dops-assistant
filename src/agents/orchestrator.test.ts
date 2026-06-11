@@ -875,3 +875,51 @@ describe("runOrchestrator — service-type consistency guard", () => {
     expect(result.outcome).toBe("confirmed");
   });
 });
+
+describe("runOrchestrator — grounding gate (pod-runtime cause vs zero pods)", () => {
+  const concludeOn = (hyp_: string) => ({
+    evaluate: () => "satisfied" as const,
+    decideMove: scripted([
+      { type: "hypothesize", hypothesis: h(hyp_) },
+      { type: "query", target: 0 },
+      { type: "test", target: 0 },
+      { type: "conclude", leading: 0, confidence: 0.95, rationale: "evidence backs it" },
+      null,
+    ]),
+  });
+
+  it("rejects a GPU/pod-runtime confirm when evidence shows zero replicas (the fabrication)", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        incidentService: "vllm-bench",
+        gatherEvidence: async () => [{ phase: "metrics", subject: "kube_deployment_status_replicas{deployment=\"vllm-bench\"}", value: 0 }],
+        ...concludeOn("GPU resource exhaustion or CUDA error causing service degradation"),
+      }),
+    );
+    expect(result.outcome).toBe("exhausted");
+    expect(result.confirmed).toBeUndefined();
+    expect(result.trace.some((t) => t.move === "conclude" && /zero running pods/.test(t.detail))).toBe(true);
+  });
+
+  it("ALLOWS the scaled-to-zero cause itself with the same zero-replica evidence", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        incidentService: "vllm-bench",
+        gatherEvidence: async () => [{ phase: "metrics", subject: "kube_deployment_status_replicas{deployment=\"vllm-bench\"}", value: 0 }],
+        ...concludeOn("deployment is scaled to zero replicas"),
+      }),
+    );
+    expect(result.outcome).toBe("confirmed");
+  });
+
+  it("does NOT fire when no zero-replica evidence was gathered (a real GPU incident can confirm)", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        incidentService: "vllm-bench",
+        gatherEvidence: async () => [{ phase: "metrics", subject: "DCGM_FI_DEV_GPU_UTIL{pod=\"vllm-bench-0\"}", value: 100 }],
+        ...concludeOn("GPU utilization saturated at 100% causing latency"),
+      }),
+    );
+    expect(result.outcome).toBe("confirmed");
+  });
+});

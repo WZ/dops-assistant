@@ -1,8 +1,29 @@
 import { describe, it, expect } from "vitest";
-import { parseMove, classifyMove, buildStatePrompt, createLlmDecideMove } from "./orchestrator-llm.js";
+import { parseMove, classifyMove, buildStatePrompt, createLlmDecideMove, serviceIdentityHint } from "./orchestrator-llm.js";
 import type { OrchestratorState, OrchestratorGuards } from "./orchestrator.js";
 import type { LanguageModel } from "ai";
 import { LlmUnavailableError } from "./shared/llm-errors.js";
+
+describe("serviceIdentityHint", () => {
+  it("steers a Consul-tracked service to its consul_health signal", () => {
+    const hint = serviceIdentityHint("impala", ['consul_health_service_status{service_name="impala"}']);
+    expect(hint).toMatch(/Consul/);
+    expect(hint).toMatch(/consul_health_service_status/);
+    expect(hint).toMatch(/FIRST hypothesis/i);
+  });
+
+  it("steers a k8s workload to establish replica state first", () => {
+    const hint = serviceIdentityHint("vllm-bench", ['kube_deployment_status_replicas{deployment="vllm-bench"}']);
+    expect(hint).toMatch(/Kubernetes workload/);
+    expect(hint).toMatch(/scaled to zero|replica STATE/i);
+  });
+
+  it("returns undefined for an unrecognised metric family (no wrong steer)", () => {
+    expect(serviceIdentityHint("edge", ['up{job="edge"}'])).toBeUndefined();
+    expect(serviceIdentityHint("edge", [])).toBeUndefined();
+    expect(serviceIdentityHint("edge", undefined)).toBeUndefined();
+  });
+});
 
 const guards: OrchestratorGuards = {
   maxTokens: 150_000,

@@ -277,6 +277,31 @@ export interface CreateLlmDecideMoveOptions {
   retryBackoffMs?: number;
   /** Team-knowledge skills (already formatted) appended to the system prompt. */
   skillContext?: string;
+  /** One-line, derived-from-the-registry hint about the incident service's
+   *  infrastructure type and primary health signal — steers the FIRST hypothesis
+   *  to the right signal (e.g. a Consul service's consul_health metric) instead
+   *  of the LLM's default k8s framing or dependency-chasing. See serviceIdentityHint. */
+  identityHint?: string;
+}
+
+/**
+ * Derive a one-line "incident service identity" steer from the service's
+ * discovered identity metric family — the positive mirror of the service-type
+ * consistency guard. For a service we can type, it tells the brain its primary
+ * health signal so the first hypothesis targets it, rather than defaulting to a
+ * k8s framing or wandering into dependencies. Returns undefined for an
+ * unrecognised metric family (no steer rather than a wrong one).
+ */
+export function serviceIdentityHint(service: string | undefined, metrics: string[] | undefined): string | undefined {
+  const svc = service ?? "the incident service";
+  const m = (metrics ?? []).join(" ").toLowerCase();
+  if (/consul_health|consul_catalog/.test(m)) {
+    return `INCIDENT SERVICE IDENTITY: ${svc} is registered in Consul (identity metric consul_health_service_status) — it is NOT a Kubernetes workload and has no Deployment/Pod by design. Its health IS that metric. Your FIRST hypothesis should test whether its Consul health check is failing — predicted as {"kind":"metric-threshold","metric":"consul_health_service_status","op":"<","value":1} for this service — before exploring dependencies or any k8s framing.`;
+  }
+  if (/kube_deployment|kube_pod|kube_statefulset|kube_replicaset|kube_daemonset/.test(m)) {
+    return `INCIDENT SERVICE IDENTITY: ${svc} is a Kubernetes workload (identity metric kube_deployment/replica). FIRST establish its deployment/replica STATE — is it scaled to zero / are any pods running? — via a state metric like kube_deployment_status_replicas, before considering pod-runtime causes (GPU, OOM, readiness). A workload with zero replicas has no running pods, so pod-level failure causes do not apply.`;
+  }
+  return undefined;
 }
 
 /**
@@ -313,9 +338,10 @@ export function createLlmDecideMove(
   const backoffMs = opts.retryBackoffMs ?? 250;
   // Append team-knowledge skills to the system rules so stack-level context (e.g.
   // "these services are bare-metal Consul, not k8s") informs every move choice.
-  const systemPrompt = opts.skillContext
-    ? `${SYSTEM_PROMPT}\n\n${wrapUntrusted("team_skills", opts.skillContext)}`
-    : SYSTEM_PROMPT;
+  let systemPrompt = opts.identityHint ? `${SYSTEM_PROMPT}\n\n${opts.identityHint}` : SYSTEM_PROMPT;
+  if (opts.skillContext) {
+    systemPrompt = `${systemPrompt}\n\n${wrapUntrusted("team_skills", opts.skillContext)}`;
+  }
   return async (state) => {
     const basePrompt = buildStatePrompt(opts.focus, state, opts.guards);
     // Corrective retries on a bad reply. The model runs at temperature 0, so
@@ -437,6 +463,7 @@ export async function runAutonomousOrchestrator(
     llmCallMs: opts.llmCallMs,
     onUsage: addTokens,
     skillContext: opts.skillContext,
+    identityHint: serviceIdentityHint(opts.incidentService, opts.incidentServiceMetrics),
   });
 
   return runOrchestrator({
