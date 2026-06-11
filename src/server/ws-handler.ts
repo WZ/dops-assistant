@@ -610,15 +610,23 @@ async function handleOrchestratorInvestigate(
   neighbors.delete(investigation.service);
   const dependencies = [...neighbors];
 
-  // Stack-level team knowledge for the decide-move brain. Unlike a per-query
-  // investigation, the orchestrator explores freely, so inject ALL enabled
-  // investigation-scoped skills (the discovery-style getAllForScope) rather than
-  // token-matching — e.g. the bare-metal/Consul runbook, so the agent doesn't
-  // mistake a Consul service's missing k8s Deployment for the root cause.
+  // Stack-level team knowledge for the decide-move brain. The orchestrator
+  // explores freely, so inject the enabled investigation-scoped skills as
+  // always-on context — EXCEPT infrastructure-type-specific runbooks that don't
+  // apply to this service. The bare-metal/Consul runbook in particular must NOT
+  // reach a Kubernetes service: it steers the agent into Consul hypotheses and a
+  // plain k8s incident (e.g. a Deployment scaled to 0) never gets diagnosed.
+  // A service is Consul-tracked iff discovery recorded a consul_health_service_status
+  // metric for it; otherwise it's k8s and the Consul runbook is dropped.
+  const incidentEntry = allServices.find((s) => s.name === investigation.service);
+  const incidentIsConsul = (incidentEntry?.metrics ?? []).some((mtr) => /consul_health_service_status/i.test(mtr.query ?? ""));
   let skillContext: string | undefined;
   let investigationSkills: Skill[] | undefined;
   if (deps.skillStore) {
-    const skills = deps.skillStore.getAllForScopeEnabled("investigation", deps.db.getDisabledSkills(stackId));
+    let skills = deps.skillStore.getAllForScopeEnabled("investigation", deps.db.getDisabledSkills(stackId));
+    if (!incidentIsConsul) {
+      skills = skills.filter((skill) => !(skill.tags ?? []).some((tag) => /^(consul|bare-metal)$/i.test(tag)));
+    }
     if (skills.length > 0) {
       skillContext = deps.skillStore.formatForPrompt(skills);
       investigationSkills = skills;
