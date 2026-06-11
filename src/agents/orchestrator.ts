@@ -496,8 +496,13 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
           // (e.g. a deleted namespace) gather no consul_health evidence, so this
           // never fires for them.
           const sawConsulEvidence = evidence.some((o) => /consul_health_service_status/i.test(o.subject));
+          // ...but NOT if the run also saw real k8s deployment evidence — then the
+          // service IS a k8s Deployment (e.g. scaled to 0 replicas), so a k8s-absence
+          // cause is legitimate. Only services with consul_health AND no kube_deployment
+          // evidence are the bare-metal Consul ones the guard targets.
+          const sawK8sDeploymentEvidence = evidence.some((o) => /kube_deployment|kube_pod|kube_replicaset|kube_statefulset/i.test(o.subject));
           const claimsK8sAbsence = /\b(not deployed|no k8s pod|no pod exists|deployment (is )?missing|deployment does not exist|not present in (the )?cluster)\b/i.test(lead.hypothesis.hypothesis);
-          if (sawConsulEvidence && claimsK8sAbsence) {
+          if (sawConsulEvidence && !sawK8sDeploymentEvidence && claimsK8sAbsence) {
             record({
               move: "conclude",
               detail: `not confirmed — "${lead.hypothesis.hypothesis}" claims a missing k8s deployment, but consul_health evidence shows this is a bare-metal Consul service (no k8s object by design). Confirm via its consul_health_service_status signal instead.`,

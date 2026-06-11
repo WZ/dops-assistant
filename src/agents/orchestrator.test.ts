@@ -855,3 +855,29 @@ describe("runOrchestrator — observability-artifact guard", () => {
     expect(result.outcome).toBe("confirmed"); // grafana itself — legitimately about the observability stack
   });
 });
+
+describe("runOrchestrator — Consul guard does not block genuine k8s services", () => {
+  it("ALLOWS a 'not deployed' confirm when the run ALSO saw kube_deployment evidence (real k8s scaled to 0)", async () => {
+    let i = 0;
+    const result = await runOrchestrator(
+      makeDeps({
+        incidentService: "minimax-m25-vllm-bench-4gpu",
+        // The run gathered BOTH a (no-data) consul probe AND real kube_deployment
+        // evidence → it IS a k8s Deployment, so a k8s-absence cause is legitimate.
+        gatherEvidence: async () => (i++ === 0
+          ? [{ phase: "metrics", subject: "consul_health_service_status{service_name=\"x\"}", value: 0 }]
+          : [{ phase: "metrics", subject: "kube_deployment_spec_replicas{deployment=\"minimax-m25-vllm-bench-4gpu\"}", value: 0 }]),
+        evaluate: () => "satisfied",
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("minimax-m25-vllm-bench-4gpu deployment is not deployed (scaled to 0, no pod exists)") },
+          { type: "query", target: 0 },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          { type: "conclude", leading: 0, confidence: 0.9, rationale: "spec replicas 0" },
+        ]),
+      }),
+    );
+    // kube_deployment evidence present → guard does NOT fire → confirmed.
+    expect(result.outcome).toBe("confirmed");
+  });
+});

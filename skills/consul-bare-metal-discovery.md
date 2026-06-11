@@ -16,11 +16,26 @@ scope:
 This stack runs services on bare-metal hosts (not K8s). They are registered in Consul and export health status via the `consul_health_service_status` metric.
 
 ## When investigating a root cause (read this first)
-If a service appears down but has **no Kubernetes Deployment / Pod**, that is EXPECTED here — it is a bare-metal Consul service, not a k8s workload. Do NOT report "deployment missing" or "not deployed in the cluster" as the root cause. Its health signal is the Consul metric:
+**FIRST determine the service type — do NOT assume Consul.** This stack runs BOTH
+k8s Deployments and bare-metal Consul services, so check which one this is before
+forming Consul hypotheses. Query the k8s deployment metric for the service:
+```
+kube_deployment_status_replicas{deployment="<service>"}   (or kube_deployment_spec_replicas)
+```
+- **If that metric RETURNS DATA, the service IS a Kubernetes Deployment** → investigate
+  k8s causes, NOT Consul. A spec/available value of **0 means the deployment is scaled
+  to 0 replicas**, which is itself a complete, valid root cause for unavailability —
+  conclude that and stop. Do not pivot to Consul hypotheses for a k8s service.
+- **ONLY if there is NO `kube_deployment_*` metric for the service** is it a bare-metal
+  Consul service. Then do NOT report "deployment missing / not deployed in the cluster"
+  (it has no k8s objects by design) — its health signal is the Consul metric:
 ```
 max by (service_name) (consul_health_service_status{service_name="<name>",status="passing"})
 ```
-A value of `0` (or no row) means the bare-metal service is failing its Consul health check — that is the real signal to investigate (check the host process, its logs via the bare-metal logLabels, and any upstream it depends on). Only conclude a k8s cause for services that actually have k8s objects.
+A value of `0` (or no row) means the bare-metal Consul service is failing its health
+check — investigate the host process, its logs via the bare-metal logLabels, and any
+upstream it depends on. Don't keep proposing Consul hypotheses for a service that
+returned no `consul_health_service_status` data — it isn't a Consul service.
 
 ### To CONFIRM it (so the test actually verifies, not "absent")
 When you hypothesize that a bare-metal service is unhealthy, attach this EXACT checkable prediction — the keystone matches the metric name literally, so use it verbatim:
