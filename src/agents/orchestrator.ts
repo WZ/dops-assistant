@@ -158,6 +158,14 @@ export interface OrchestratorDeps {
    *  another service is caught even when the dependency graph is empty/missing
    *  (inc-7 #3 — the keystone can be independently true but not causally linked). */
   knownServices?: string[];
+  /** The incident service's discovered identity metric queries (e.g. the
+   *  registry's PromQL). Used by the service-type consistency guard to reject a
+   *  conclusion whose infrastructure framing contradicts the service's actual
+   *  type — e.g. naming a "k8s Deployment scaled to zero" cause for a service
+   *  whose identity metric is consul_health (Consul-registered, not k8s), or a
+   *  "Consul" cause for a kube_deployment-tracked workload. Generic: the type is
+   *  read from the metric family, not from any hardcoded service list. */
+  incidentServiceMetrics?: string[];
   /**
    * Strikes-limit hook: instead of silently stopping at the strike limit, ask a
    * human. "continue" resets the strike counter and resumes the loop (the other
@@ -500,6 +508,37 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
             record({
               move: "conclude",
               detail: `not confirmed — "${lead.hypothesis.hypothesis}" blames the observability tooling (Grafana/datasource config), which is a query-layer artifact (often the agent's own failed queries), not why ${deps.incidentService ?? "the service"} is unhealthy. Investigate the service's own signals instead.`,
+            });
+            stall++;
+            break;
+          }
+          // SERVICE-TYPE CONSISTENCY GUARD: a conclusion must not claim an
+          // infrastructure type that contradicts the service's discovered
+          // identity. A service whose identity metric is consul_health is
+          // Consul-registered (no k8s Deployment by design), so a "k8s Deployment
+          // scaled to zero / not deployed" cause is a category error — and vice
+          // versa, a kube_deployment-tracked workload has no Consul registry, so a
+          // "Consul" cause is wrong. The type is read from the metric FAMILY, so
+          // this is generic, not a hardcoded per-service or Consul-only rule. When
+          // the identity is unknown (no recognised family) the guard stays silent.
+          const idMetrics = (deps.incidentServiceMetrics ?? []).join(" ").toLowerCase();
+          const svcIsK8s = /kube_deployment|kube_pod|kube_statefulset|kube_replicaset|kube_daemonset/.test(idMetrics);
+          const svcIsConsul = /consul_health|consul_catalog/.test(idMetrics);
+          const hyp = lead.hypothesis.hypothesis.toLowerCase();
+          const claimsK8s = /\b(kubernetes|k8s|kube_|replicaset|deployment|namespace|scaled to (zero|0)|replicas?)\b/.test(hyp);
+          const claimsConsul = /\bconsul\b/.test(hyp);
+          if (svcIsConsul && !svcIsK8s && claimsK8s) {
+            record({
+              move: "conclude",
+              detail: `not confirmed — "${lead.hypothesis.hypothesis}" names a Kubernetes cause, but ${deps.incidentService ?? "this service"}'s identity metric is consul_health — it is Consul-registered (no k8s Deployment by design). Investigate its Consul health signal (consul_health_service_status) instead of a k8s deployment/replica state.`,
+            });
+            stall++;
+            break;
+          }
+          if (svcIsK8s && !svcIsConsul && claimsConsul) {
+            record({
+              move: "conclude",
+              detail: `not confirmed — "${lead.hypothesis.hypothesis}" names a Consul cause, but ${deps.incidentService ?? "this service"} is a Kubernetes workload (kube_deployment identity metric) with no Consul registry. Investigate its k8s deployment/pod state instead.`,
             });
             stall++;
             break;

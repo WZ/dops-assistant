@@ -747,6 +747,10 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       incidentService?: string;
       /** All known service names — the cross-service guard checks these too. */
       knownServices?: string[];
+      /** The incident service's discovered identity metric queries — feeds the
+       *  service-type consistency guard (reject a k8s cause for a Consul service
+       *  and vice versa, by metric family). */
+      incidentServiceMetrics?: string[];
       /** Interactive operator-pause hook (increment 5). Wired by the WS layer to
        *  the pause card; absent → the strike limit stops directly. PR-4: resolves
        *  to `{ decision, context? }` where `context` is the operator's free-text lead. */
@@ -809,6 +813,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       dependencies: opts?.dependencies,
       incidentService: opts?.incidentService,
       knownServices: opts?.knownServices,
+      incidentServiceMetrics: opts?.incidentServiceMetrics,
       onOperatorPause: opts?.onOperatorPause,
       signal: opts?.signal,
       onMoveBoundary: opts?.onMoveBoundary,

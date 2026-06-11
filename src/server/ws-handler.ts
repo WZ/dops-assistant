@@ -667,7 +667,7 @@ async function handleOrchestratorInvestigate(
       await runOrchestratorStreamed(
         msg.investigationId,
         focus,
-        { timeRange, ctx: { incidentTime: timeRange?.from }, dependencies, incidentService: investigation.service, knownServices: allServices.map((s) => s.name), signal: abort.signal, lead, skillContext, skills: investigationSkills },
+        { timeRange, ctx: { incidentTime: timeRange?.from }, dependencies, incidentService: investigation.service, knownServices: allServices.map((s) => s.name), incidentServiceMetrics: incidentMetricQueries, signal: abort.signal, lead, skillContext, skills: investigationSkills },
         agents.orchestrate,
         persistingSend,
         registry,
@@ -929,7 +929,7 @@ async function handleOrchestratorAccept(
 async function runOrchestratorStreamed(
   investigationId: string,
   focus: string,
-  opts: { timeRange?: { from: string; to: string }; ctx?: { incidentTime?: string }; dependencies?: string[]; incidentService?: string; knownServices?: string[]; signal?: AbortSignal; lead?: string; skillContext?: string; skills?: Skill[] },
+  opts: { timeRange?: { from: string; to: string }; ctx?: { incidentTime?: string }; dependencies?: string[]; incidentService?: string; knownServices?: string[]; incidentServiceMetrics?: string[]; signal?: AbortSignal; lead?: string; skillContext?: string; skills?: Skill[] },
   orchestrate: StackAgents["orchestrate"],
   send: (m: ServerMessage) => void,
   registry: OrchestratorRunRegistry,
@@ -944,6 +944,7 @@ async function runOrchestratorStreamed(
       dependencies: opts.dependencies,
       incidentService: opts.incidentService,
       knownServices: opts.knownServices,
+      incidentServiceMetrics: opts.incidentServiceMetrics,
       signal: opts.signal,
       lead: opts.lead,
       skillContext: opts.skillContext,

@@ -385,6 +385,9 @@ export interface RunAutonomousOrchestratorOptions {
   /** All known service names — the cross-service guard checks these too, so a
    *  false-confirm blaming another service is caught even with an empty dep graph. */
   knownServices?: string[];
+  /** The incident service's discovered identity metric queries — feeds the
+   *  service-type consistency guard (metric family → infra type). */
+  incidentServiceMetrics?: string[];
   /** Interactive strike-limit hook (increment 5). Absent → the strike limit
    *  stops directly. Wired by the orchestrate adapter to the WS pause card. */
   onOperatorPause?: (
@@ -448,6 +451,7 @@ export async function runAutonomousOrchestrator(
     dependencies: opts.dependencies,
     incidentService: opts.incidentService,
     knownServices: opts.knownServices,
+    incidentServiceMetrics: opts.incidentServiceMetrics,
     onOperatorPause: opts.onOperatorPause,
     signal: opts.signal,
     onMoveBoundary: opts.onMoveBoundary,
