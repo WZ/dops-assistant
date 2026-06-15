@@ -1,5 +1,5 @@
 {
-  "description": "Labeled incidents for the deep-investigation (autonomous orchestrator) eval. Each label says what infrastructure type the service is, which cause keywords are CORRECT, and which patterns are a clearly-WRONG confirm (a cross-type category error or a fabrication). acceptableInconclusive lists the non-confirmed outcomes that are honest (not a failure) for that incident.",
+  "description": "Labeled incidents for the deep-investigation (autonomous orchestrator) eval. Keyed by service name, which is shared across the live bigdata-cluster stacks. Each label states the service's infrastructure type, which cause keywords are CORRECT, and which patterns are a clearly-WRONG confirm (a cross-type category error or a fabrication). acceptableInconclusive lists the non-confirmed outcomes that are honest (not a failure) for that incident.",
   "labels": [
     {
       "service": "impala",
@@ -12,17 +12,41 @@
     {
       "service": "bd-management-task-management",
       "infraType": "consul",
-      "summary": "Bare-metal Consul-registered service. Correct cause is its Consul health check failing (or a shared dependency).",
+      "summary": "Bare-metal Consul-registered service. Correct cause is its Consul health check failing (or a shared dependency). Note: distinct from the k8s service 'bd-management-task'.",
       "expectedCauseKeywords": ["consul", "health check", "health status", "failing health", "shared db", "database"],
       "wrongCausePatterns": ["kubernetes", "k8s deployment", "scaled to zero", "scaled to 0", "zero replicas", "0 replicas", "namespace"],
       "acceptableInconclusive": ["wall-clock", "operator-pause", "inconclusive", "exhausted"]
     },
     {
-      "service": "minimax-m25-vllm-bench-4gpu",
+      "service": "kudu",
+      "infraType": "consul",
+      "summary": "Bare-metal Consul-registered service (Apache Kudu master). Correct cause is its Consul health check failing.",
+      "expectedCauseKeywords": ["consul", "health check", "health status", "failing health"],
+      "wrongCausePatterns": ["kubernetes", "k8s deployment", "scaled to zero", "scaled to 0", "zero replicas", "0 replicas", "namespace"],
+      "acceptableInconclusive": ["wall-clock", "operator-pause", "inconclusive", "exhausted"]
+    },
+    {
+      "service": "hdfs-namenode",
+      "infraType": "consul",
+      "summary": "Bare-metal Consul-registered service (HDFS NameNode). Correct cause is its Consul health check failing.",
+      "expectedCauseKeywords": ["consul", "health check", "health status", "failing health"],
+      "wrongCausePatterns": ["kubernetes", "k8s deployment", "scaled to zero", "scaled to 0", "zero replicas", "0 replicas", "namespace"],
+      "acceptableInconclusive": ["wall-clock", "operator-pause", "inconclusive", "exhausted"]
+    },
+    {
+      "service": "ingestion-server",
       "infraType": "k8s",
-      "summary": "Kubernetes Deployment scaled to 0 replicas (kube_deployment identity metric). The correct cause is that it is scaled to zero / not running. Pod-level causes (GPU/readiness/OOM) are fabrications because no pods exist at 0 replicas.",
-      "expectedCauseKeywords": ["scaled to zero", "scaled to 0", "zero replicas", "0 replicas", "not deployed", "deleted", "not running", "removed", "never created", "cleaned up", "no pods", "no replicas"],
-      "wrongCausePatterns": ["consul", "gpu", "cuda", "readiness probe", "crashing", "oomkill", "out of memory", "resource exhaustion"],
+      "summary": "Kubernetes workload (kube_deployment identity metric). A correct cause is a deployment/pod/replica-level fault; a Consul-health cause is a category error here.",
+      "expectedCauseKeywords": ["deployment", "replica", "pod", "scaled to zero", "0 replicas", "crashloop", "oomkill", "out of memory", "image pull", "container", "not deployed", "not ready"],
+      "wrongCausePatterns": ["consul", "consul_health", "bare-metal consul"],
+      "acceptableInconclusive": ["wall-clock", "operator-pause", "inconclusive", "exhausted"]
+    },
+    {
+      "service": "bd-management-task",
+      "infraType": "k8s",
+      "summary": "Kubernetes workload (kube_deployment). Distinct from the Consul service 'bd-management-task-management' — a good category-error test: its correct cause is k8s-shaped, and a Consul cause is wrong.",
+      "expectedCauseKeywords": ["deployment", "replica", "pod", "scaled to zero", "0 replicas", "crashloop", "oomkill", "out of memory", "image pull", "container", "not deployed", "not ready"],
+      "wrongCausePatterns": ["consul", "consul_health", "bare-metal consul"],
       "acceptableInconclusive": ["wall-clock", "operator-pause", "inconclusive", "exhausted"]
     }
   ]
