@@ -1,0 +1,40 @@
+{
+  "correctRate": 38,
+  "confidentWrongRate": 0,
+  "correct": 3,
+  "confidentWrong": 0,
+  "categoryError": 0,
+  "labeled": 8,
+  "perService": {
+    "impala": {
+      "runs": 2,
+      "correct": 1,
+      "confidentWrong": 0
+    },
+    "kudu": {
+      "runs": 1,
+      "correct": 0,
+      "confidentWrong": 0
+    },
+    "ingestion-server": {
+      "runs": 2,
+      "correct": 1,
+      "confidentWrong": 0
+    },
+    "bd-management-task": {
+      "runs": 1,
+      "correct": 0,
+      "confidentWrong": 0
+    },
+    "bd-management-task-management": {
+      "runs": 1,
+      "correct": 1,
+      "confidentWrong": 0
+    },
+    "hdfs-namenode": {
+      "runs": 1,
+      "correct": 0,
+      "confidentWrong": 0
+    }
+  }
+}
