@@ -342,6 +342,17 @@ export function createLlmDecideMove(
   if (opts.skillContext) {
     systemPrompt = `${systemPrompt}\n\n${wrapUntrusted("team_skills", opts.skillContext)}`;
   }
+  logger.debug(
+    {
+      hasIdentityHint: !!opts.identityHint,
+      hasSkillContext: !!opts.skillContext,
+      skillContextChars: opts.skillContext?.length ?? 0,
+      // skill section headers present in the injected context (e.g. "### Skill: Consul Bare-Metal Service Investigation")
+      skillTitles: (opts.skillContext?.match(/### Skill: [^\n]+/g) ?? []),
+      systemPromptChars: systemPrompt.length,
+    },
+    "decide-move: system prompt assembled",
+  );
   return async (state) => {
     const basePrompt = buildStatePrompt(opts.focus, state, opts.guards);
     // Corrective retries on a bad reply. The model runs at temperature 0, so

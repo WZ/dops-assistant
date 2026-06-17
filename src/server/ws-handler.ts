@@ -634,6 +634,16 @@ async function handleOrchestratorInvestigate(
       skillContext = deps.skillStore.formatForPrompt(skills);
       investigationSkills = skills;
     }
+    logger.debug(
+      {
+        stackId,
+        service: investigation.service,
+        incidentMetricQueries,
+        matchedSkills: skills.map((s) => ({ id: s.id, applies: s.appliesToServiceMetric ?? null })),
+        skillContextChars: skillContext?.length ?? 0,
+      },
+      "orchestrator: investigation skill injection",
+    );
   }
 
   const abort = new AbortController();
