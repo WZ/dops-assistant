@@ -34,6 +34,15 @@ export interface SkillMetadata {
    *  - incompatibleClaims: a regex of conclusion text that contradicts this
    *    service's infra type (the service-type guard rejects a confirm matching it). */
   healthySignal?: string;
+  /** PromQL that returns ≥1 when the service is DEFINITELY failing on its primary
+   *  signal (e.g. consul status="critical", replicas unavailable). The deterministic
+   *  failure-floor: if the run would otherwise give up without a confirm while this
+   *  fires, the engine confirms the primary-signal failure — so a genuinely-broken
+   *  service is never missed to LLM variance. $service substituted. */
+  failureSignal?: string;
+  /** Human-readable root cause to report when failureSignal fires (the floor's
+   *  confirmed cause). $service substituted. Keeps the infra wording in the skill. */
+  failureCause?: string;
   identityHint?: string;
   incompatibleClaims?: string;
   filePath: string;
@@ -152,6 +161,8 @@ export class SkillStore {
           scope,
           appliesToServiceMetric: optStr(data.appliesToServiceMetric),
           healthySignal: optStr(data.healthySignal),
+          failureSignal: optStr(data.failureSignal),
+          failureCause: optStr(data.failureCause),
           identityHint: optStr(data.identityHint),
           incompatibleClaims: optStr(data.incompatibleClaims),
           filePath,
@@ -252,7 +263,7 @@ export class SkillStore {
   /** Save a skill (create or update). Returns the saved skill. */
   async save(
     id: string | undefined,
-    frontmatter: { title: string; services: string[]; alerts: string[]; tags: string[]; scope?: SkillScope[]; appliesToServiceMetric?: string; healthySignal?: string; identityHint?: string; incompatibleClaims?: string },
+    frontmatter: { title: string; services: string[]; alerts: string[]; tags: string[]; scope?: SkillScope[]; appliesToServiceMetric?: string; healthySignal?: string; failureSignal?: string; failureCause?: string; identityHint?: string; incompatibleClaims?: string },
     body: string,
   ): Promise<Skill> {
     const skillId = id
@@ -273,6 +284,8 @@ export class SkillStore {
       scope,
       ...(frontmatter.appliesToServiceMetric ? { appliesToServiceMetric: frontmatter.appliesToServiceMetric } : {}),
       ...(frontmatter.healthySignal ? { healthySignal: frontmatter.healthySignal } : {}),
+      ...(frontmatter.failureSignal ? { failureSignal: frontmatter.failureSignal } : {}),
+      ...(frontmatter.failureCause ? { failureCause: frontmatter.failureCause } : {}),
       ...(frontmatter.identityHint ? { identityHint: frontmatter.identityHint } : {}),
       ...(frontmatter.incompatibleClaims ? { incompatibleClaims: frontmatter.incompatibleClaims } : {}),
     });
@@ -288,6 +301,8 @@ export class SkillStore {
       scope,
       appliesToServiceMetric: frontmatter.appliesToServiceMetric?.trim() || undefined,
       healthySignal: frontmatter.healthySignal?.trim() || undefined,
+      failureSignal: frontmatter.failureSignal?.trim() || undefined,
+      failureCause: frontmatter.failureCause?.trim() || undefined,
       identityHint: frontmatter.identityHint?.trim() || undefined,
       incompatibleClaims: frontmatter.incompatibleClaims?.trim() || undefined,
       filePath,

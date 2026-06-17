@@ -413,6 +413,8 @@ export interface RunAutonomousOrchestratorOptions {
   /** Confirm-gate: returns true when the service reads healthy on its primary
    *  signal (from the matched skill's healthySignal). Adapter-wired query. */
   checkHealthy?: () => Promise<boolean | null>;
+  /** Failure-floor: grounded failure-cause text when the service is definitely failing. */
+  checkFailing?: () => Promise<string | null>;
   /** Interactive strike-limit hook (increment 5). Absent → the strike limit
    *  stops directly. Wired by the orchestrate adapter to the WS pause card. */
   onOperatorPause?: (
@@ -479,6 +481,7 @@ export async function runAutonomousOrchestrator(
     incidentServiceMetrics: opts.incidentServiceMetrics,
     incompatibleClaims: opts.incompatibleClaims,
     checkHealthy: opts.checkHealthy,
+    checkFailing: opts.checkFailing,
     onOperatorPause: opts.onOperatorPause,
     signal: opts.signal,
     onMoveBoundary: opts.onMoveBoundary,

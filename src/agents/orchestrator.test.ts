@@ -903,6 +903,44 @@ describe("runOrchestrator — health-gate (skill-declared healthySignal)", () =>
   });
 });
 
+describe("runOrchestrator — failure floor (checkFailing)", () => {
+  it("confirms the primary-signal failure when the run gives up while failureSignal fires", async () => {
+    const result = await runOrchestrator(makeDeps({
+      incidentService: "bd",
+      checkFailing: async () => "bd is failing its Consul health check (status=critical)",
+      decideMove: scripted([null]), // immediate give-up → would be exhausted
+    }));
+    expect(result.outcome).toBe("confirmed");
+    expect(result.confirmed?.hypothesis).toMatch(/failing its Consul health check/);
+    expect(result.trace.some((t) => /primary-signal floor/.test(t.detail))).toBe(true);
+  });
+
+  it("leaves the give-up outcome when checkFailing returns null (service not definitely failing)", async () => {
+    const result = await runOrchestrator(makeDeps({
+      incidentService: "x",
+      checkFailing: async () => null,
+      decideMove: scripted([null]),
+    }));
+    expect(result.outcome).toBe("exhausted");
+  });
+
+  it("does not override an explicit confirm", async () => {
+    const result = await runOrchestrator(makeDeps({
+      incidentService: "bd",
+      checkFailing: async () => "floor cause",
+      evaluate: () => "satisfied",
+      decideMove: scripted([
+        { type: "hypothesize", hypothesis: h("real cause") },
+        { type: "query", target: 0 },
+        { type: "test", target: 0 },
+        { type: "conclude", leading: 0, confidence: 0.9, rationale: "x" },
+      ]),
+    }));
+    expect(result.outcome).toBe("confirmed");
+    expect(result.confirmed?.hypothesis).toBe("real cause"); // the agent's confirm, not the floor
+  });
+});
+
 describe("runOrchestrator — grounding gate (pod-runtime cause vs zero pods)", () => {
   const concludeOn = (hyp_: string) => ({
     evaluate: () => "satisfied" as const,

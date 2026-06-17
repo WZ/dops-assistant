@@ -4,6 +4,8 @@ services: []
 alerts: []
 appliesToServiceMetric: consul_health_service_status
 healthySignal: 'max by (service_name) (consul_health_service_status{service_name="$service",status="passing"})'
+failureSignal: 'max by (service_name) (consul_health_service_status{service_name="$service",status="critical"})'
+failureCause: '$service is failing its Consul health check (status=critical) — the bare-metal host process is down or unhealthy.'
 identityHint: '$service is registered in Consul (identity metric consul_health_service_status) — it has NO Kubernetes Deployment by design. Investigate its Consul health (status="critical") and host process FIRST; do not form k8s hypotheses for it.'
 incompatibleClaims: 'kubernetes|k8s deployment|scaled to zero|scaled to 0|zero replicas|0 replicas|namespace'
 tags:

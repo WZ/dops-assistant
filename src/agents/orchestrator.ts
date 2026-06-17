@@ -172,6 +172,11 @@ export interface OrchestratorDeps {
    *  by the adapter to a PromQL query of the skill-declared signal — no infra
    *  literals in the engine. */
   checkHealthy?: () => Promise<boolean | null>;
+  /** Failure-floor (from the matched skill's failureSignal + failureCause):
+   *  returns the grounded failure-cause text when the service is DEFINITELY
+   *  failing on its primary signal, else null. Used so a broken service is never
+   *  missed when the run would otherwise give up. No infra literals in the engine. */
+  checkFailing?: () => Promise<string | null>;
   /**
    * Strikes-limit hook: instead of silently stopping at the strike limit, ask a
    * human. "continue" resets the strike counter and resumes the loop (the other
@@ -341,6 +346,24 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
     stats: { moves, toolCalls, tokensSpent, strikes, depth, subagents, elapsedMs: elapsed() },
   });
 
+  // FAILURE FLOOR (deterministic primary-signal catch): when the run is about to
+  // give up WITHOUT a confirmed cause, but the matched skill's failureSignal shows
+  // the service is definitely failing on its primary signal, confirm that grounded
+  // failure instead of missing a genuinely-broken service to LLM variance. Skill-
+  // declared (failureSignal + failureCause); the engine just evaluates + reports.
+  const giveUp = async (outcome: OrchestratorOutcome): Promise<OrchestratorResult> => {
+    if (deps.checkFailing) {
+      try {
+        const cause = await deps.checkFailing();
+        if (cause) {
+          record({ move: "conclude", detail: `confirmed (primary-signal floor): ${cause}` });
+          return finish("confirmed", { hypothesis: cause, prediction: { kind: "metric-threshold", metric: "primary-signal", op: ">", value: 0 } });
+        }
+      } catch { /* undeterminable → fall through to the original outcome */ }
+    }
+    return finish(outcome);
+  };
+
   while (moves < MAX_MOVES) {
     // Guards are checked BEFORE spending the next move so a tripped limit never
     // does "one more" expensive thing.
@@ -352,9 +375,9 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
       await deps.onMoveBoundary();
       if (deps.signal?.aborted) return finish("aborted");
     }
-    if (tokensSpent >= deps.guards.maxTokens) return finish("budget-exhausted");
-    if (toolCalls >= deps.guards.maxToolCalls) return finish("tool-cap");
-    if (elapsed() >= deps.guards.wallClockMs) return finish("wall-clock");
+    if (tokensSpent >= deps.guards.maxTokens) return await giveUp("budget-exhausted");
+    if (toolCalls >= deps.guards.maxToolCalls) return await giveUp("tool-cap");
+    if (elapsed() >= deps.guards.wallClockMs) return await giveUp("wall-clock");
     // strikes → operator pause: the design's headline safety feature. The signal
     // is ambiguous (N hypotheses failed, nothing discriminating emerged); rather
     // than guess, hand the call to a human (if wired) — who can resume the run
@@ -378,12 +401,12 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
           continue;
         }
       }
-      return finish("operator-pause");
+      return await giveUp("operator-pause");
     }
-    if (stall >= MAX_STALL) return finish("inconclusive");
+    if (stall >= MAX_STALL) return await giveUp("inconclusive");
     // Fast no-evidence bail: several queries in and nothing surfaced anywhere →
     // the service is quiet. Stop now rather than burning the full run (inc-7 #5).
-    if (toolCalls >= NO_EVIDENCE_BAIL_QUERIES && evidence.length === 0) return finish("inconclusive");
+    if (toolCalls >= NO_EVIDENCE_BAIL_QUERIES && evidence.length === 0) return await giveUp("inconclusive");
 
     const state: OrchestratorState = {
       hypotheses,
@@ -413,7 +436,7 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
       stall++;
       continue;
     }
-    if (move === null) return finish("exhausted");
+    if (move === null) return await giveUp("exhausted");
     moves++;
     tokensSpent += Math.max(0, estimate(move));
 
@@ -666,5 +689,5 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
     }
   }
 
-  return finish("inconclusive");
+  return await giveUp("inconclusive");
 }

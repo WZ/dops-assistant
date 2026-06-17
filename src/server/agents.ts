@@ -826,6 +826,23 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
           return anyKnown ? false : null;
         }
       : undefined;
+    // Failure-floor: if a matched skill's failureSignal fires (service definitely
+    // failing on its primary signal), return its failureCause so the engine can
+    // confirm the grounded failure instead of missing a broken service.
+    const failureChecks = matchedSkills
+      .filter((s) => s.failureSignal && s.failureCause)
+      .map((s) => ({ signal: sub(s.failureSignal)!, cause: sub(s.failureCause)! }));
+    const checkFailing = failureChecks.length > 0
+      ? async (): Promise<string | null> => {
+          for (const { signal, cause } of failureChecks) {
+            try {
+              const v = await queryInstantValue(providers, signal);
+              if (v !== null && v >= 1) return cause;
+            } catch { /* undeterminable */ }
+          }
+          return null;
+        }
+      : undefined;
 
     return runAutonomousOrchestrator({
       focus,
@@ -845,6 +862,7 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       identityHint,
       incompatibleClaims,
       checkHealthy,
+      checkFailing,
       onOperatorPause: opts?.onOperatorPause,
       signal: opts?.signal,
       onMoveBoundary: opts?.onMoveBoundary,
