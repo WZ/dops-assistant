@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { scoreRun, scoreRuns, type IncidentLabel } from "./deep-eval.js";
+import { scoreRun, scoreRuns, scoreRunGroundTruth, scoreRunsGroundTruth, type IncidentLabel } from "./deep-eval.js";
 
 const consulLabel: IncidentLabel = {
   service: "impala",
@@ -92,5 +92,39 @@ describe("scoreRuns aggregate", () => {
     expect(card.labeled).toBe(0);
     expect(card.correctRate).toBe(0);
     expect(card.confidentWrongRate).toBe(0);
+  });
+});
+
+describe("ground-truth-anchored scoring (F2)", () => {
+  it("confirm on a HEALTHY service = false-confirm (the false-PASS the keyword scorer missed)", () => {
+    expect(scoreRunGroundTruth({ service: "impala", outcome: "confirmed", rootCause: "data plane failure" }, "healthy").verdict).toBe("false-confirm");
+  });
+  it("confirm on an UNHEALTHY service = correct-confirm", () => {
+    expect(scoreRunGroundTruth({ service: "bd", outcome: "confirmed", rootCause: "consul critical" }, "unhealthy").verdict).toBe("correct-confirm");
+  });
+  it("decline on a HEALTHY service = correct-decline", () => {
+    expect(scoreRunGroundTruth({ service: "kudu", outcome: "wall-clock", rootCause: null }, "healthy").verdict).toBe("correct-decline");
+  });
+  it("decline on an UNHEALTHY service = missed-incident", () => {
+    expect(scoreRunGroundTruth({ service: "bd", outcome: "wall-clock", rootCause: null }, "unhealthy").verdict).toBe("missed-incident");
+  });
+  it("unknown ground truth = unknown (not scored either way)", () => {
+    expect(scoreRunGroundTruth({ service: "x", outcome: "confirmed", rootCause: "y" }, "unknown").verdict).toBe("unknown");
+  });
+
+  it("aggregate flags false-confirms and missed-incidents (would have caught the false PASS)", () => {
+    // Mirrors the real 8-run finding: confirms on healthy services + a missed real incident.
+    const runs = [
+      { service: "impala", outcome: "confirmed", rootCause: "daemon failing" },        // healthy → false-confirm
+      { service: "ingestion", outcome: "confirmed", rootCause: "cpu throttling" },      // healthy → false-confirm
+      { service: "bd", outcome: "wall-clock", rootCause: null },                        // unhealthy → missed
+      { service: "kudu", outcome: "wall-clock", rootCause: null },                      // healthy → correct-decline
+    ];
+    const gt = { impala: "healthy", ingestion: "healthy", bd: "unhealthy", kudu: "healthy" } as const;
+    const g = scoreRunsGroundTruth(runs, gt);
+    expect(g.falseConfirm).toBe(2);
+    expect(g.missedIncident).toBe(1);
+    expect(g.correctDecline).toBe(1);
+    expect(g.correctConfirm).toBe(0);
   });
 });

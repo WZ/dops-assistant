@@ -170,6 +170,67 @@ export function scoreRuns(runs: DeepRun[], labels: IncidentLabel[]): Scorecard {
   return card;
 }
 
+// ── Ground-truth-anchored scoring (F2) ───────────────────────────────────────
+//
+// Keyword scoring can't tell a grounded-SOUNDING false-confirm from a real cause
+// — it gave a false PASS. This scores each run against the service's ACTUAL
+// health (queried live, e.g. by deep-investigation-groundtruth.mjs): a confirm
+// on a healthy service is a FALSE-CONFIRM; a decline on a broken service is a
+// MISSED-INCIDENT. These are the rates that actually track quality.
+
+export type GroundTruthState = "healthy" | "unhealthy" | "unknown";
+
+export type GtVerdict =
+  | "false-confirm" // confirmed a cause on a service that is actually healthy
+  | "correct-confirm" // confirmed on a genuinely-unhealthy service
+  | "correct-decline" // declined on a healthy service (right call)
+  | "missed-incident" // declined on a genuinely-unhealthy service
+  | "unknown"; // ground truth undeterminable for this service
+
+export interface GtRunScore {
+  service: string;
+  outcome: string;
+  state: GroundTruthState;
+  verdict: GtVerdict;
+}
+
+export interface GtScorecard {
+  total: number;
+  judged: number; // ground truth known
+  falseConfirm: number; // ← target 0
+  missedIncident: number; // ← target 0
+  correctConfirm: number;
+  correctDecline: number;
+  unknown: number;
+  runs: GtRunScore[];
+}
+
+/** Score one run against its service's ground-truth health state. */
+export function scoreRunGroundTruth(run: DeepRun, state: GroundTruthState): GtRunScore {
+  const outcome = (run.outcome ?? "").toLowerCase() || "unknown";
+  const confirmed = outcome === "confirmed";
+  let verdict: GtVerdict;
+  if (state === "unknown") verdict = "unknown";
+  else if (confirmed) verdict = state === "healthy" ? "false-confirm" : "correct-confirm";
+  else verdict = state === "healthy" ? "correct-decline" : "missed-incident";
+  return { service: run.service, outcome, state, verdict };
+}
+
+/** Aggregate runs against a ground-truth map (service → state). */
+export function scoreRunsGroundTruth(runs: DeepRun[], groundTruth: Record<string, GroundTruthState>): GtScorecard {
+  const scored = runs.map((r) => scoreRunGroundTruth(r, groundTruth[r.service] ?? "unknown"));
+  return {
+    total: scored.length,
+    judged: scored.filter((s) => s.verdict !== "unknown").length,
+    falseConfirm: scored.filter((s) => s.verdict === "false-confirm").length,
+    missedIncident: scored.filter((s) => s.verdict === "missed-incident").length,
+    correctConfirm: scored.filter((s) => s.verdict === "correct-confirm").length,
+    correctDecline: scored.filter((s) => s.verdict === "correct-decline").length,
+    unknown: scored.filter((s) => s.verdict === "unknown").length,
+    runs: scored,
+  };
+}
+
 // ── CLI ──────────────────────────────────────────────────────────────────────
 
 function loadLabels(): IncidentLabel[] {
@@ -220,6 +281,29 @@ function main(): void {
   const card = scoreRuns(runs, labels);
   printCard(card);
 
+  // F2: ground-truth-anchored scoring (the real quality metric). Pass a map of
+  // service → "healthy"|"unhealthy"|"unknown" (produce it live with
+  // deep-investigation-groundtruth.mjs).
+  let gtFailed = false;
+  const gtPath = getFlag("--ground-truth");
+  if (gtPath) {
+    const gt = JSON.parse(readFileSync(resolve(gtPath), "utf-8")) as Record<string, GroundTruthState>;
+    const g = scoreRunsGroundTruth(runs, gt);
+    console.log("\n=== Ground-truth-anchored (vs actual service health) ===");
+    console.log(`judged: ${g.judged}/${g.total}  (unknown ground truth: ${g.unknown})`);
+    console.log(`  ✗ false-confirm    ${String(g.falseConfirm).padStart(3)}   (confirmed a cause on a HEALTHY service)  ← target 0`);
+    console.log(`  ✗ missed-incident  ${String(g.missedIncident).padStart(3)}   (declined on a BROKEN service)  ← target 0`);
+    console.log(`  ✓ correct-confirm  ${String(g.correctConfirm).padStart(3)}`);
+    console.log(`  ✓ correct-decline  ${String(g.correctDecline).padStart(3)}`);
+    for (const r of g.runs.filter((x) => x.verdict === "false-confirm" || x.verdict === "missed-incident")) {
+      console.log(`    ${r.verdict === "false-confirm" ? "✗ false-confirm" : "✗ missed"}: ${r.service} (actually ${r.state}, run ${r.outcome})`);
+    }
+    const maxFC = getFlag("--max-false-confirm");
+    if (maxFC !== undefined && g.falseConfirm > Number(maxFC)) { console.error(`\nGATE FAIL: false-confirm ${g.falseConfirm} > ${maxFC}`); gtFailed = true; }
+    const maxMI = getFlag("--max-missed");
+    if (maxMI !== undefined && g.missedIncident > Number(maxMI)) { console.error(`GATE FAIL: missed-incident ${g.missedIncident} > ${maxMI}`); gtFailed = true; }
+  }
+
   if (process.argv.includes("--save")) {
     const here = dirname(fileURLToPath(import.meta.url));
     const dir = resolve(here, "baselines");
@@ -264,7 +348,7 @@ function main(): void {
     console.error(`GATE FAIL: correctRate ${card.correctRate}% < ${minCorrect}%`);
     failed = true;
   }
-  process.exit(failed ? 1 : 0);
+  process.exit(failed || gtFailed ? 1 : 0);
 }
 
 // Only run main() as a CLI, not when imported by tests.
