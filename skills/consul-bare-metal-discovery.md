@@ -2,7 +2,6 @@
 title: Consul Bare-Metal Service Discovery
 services: []
 alerts: []
-appliesToServiceMetric: consul_health_service_status
 tags:
   - discovery
   - consul
@@ -11,39 +10,9 @@ tags:
   - bigdata
 scope:
   - discovery
-  - investigation
 ---
 ## When to use
-This stack runs services on bare-metal hosts (not K8s). They are registered in Consul and export health status via the `consul_health_service_status` metric.
-
-## When investigating a root cause (read this first)
-**FIRST determine the service type — do NOT assume Consul.** This stack runs BOTH
-k8s Deployments and bare-metal Consul services, so check which one this is before
-forming Consul hypotheses. Query the k8s deployment metric for the service:
-```
-kube_deployment_status_replicas{deployment="<service>"}   (or kube_deployment_spec_replicas)
-```
-- **If that metric RETURNS DATA, the service IS a Kubernetes Deployment** → investigate
-  k8s causes, NOT Consul. A spec/available value of **0 means the deployment is scaled
-  to 0 replicas**, which is itself a complete, valid root cause for unavailability —
-  conclude that and stop. Do not pivot to Consul hypotheses for a k8s service.
-- **ONLY if there is NO `kube_deployment_*` metric for the service** is it a bare-metal
-  Consul service. Then do NOT report "deployment missing / not deployed in the cluster"
-  (it has no k8s objects by design) — its health signal is the Consul metric:
-```
-max by (service_name) (consul_health_service_status{service_name="<name>",status="passing"})
-```
-A value of `0` (or no row) means the bare-metal Consul service is failing its health
-check — investigate the host process, its logs via the bare-metal logLabels, and any
-upstream it depends on. Don't keep proposing Consul hypotheses for a service that
-returned no `consul_health_service_status` data — it isn't a Consul service.
-
-### To CONFIRM it (so the test actually verifies, not "absent")
-When you hypothesize that a bare-metal service is unhealthy, attach this EXACT checkable prediction — the keystone matches the metric name literally, so use it verbatim:
-```json
-{"kind":"metric-threshold","metric":"consul_health_service_status","op":"<","value":1}
-```
-Then `query` it: the evidence gather runs that metric for the service and reports its value. If the passing-status value is `< 1` (i.e. 0), the `test` move returns **satisfied** → you can `conclude`. A vague hypothesis with no `consul_health_service_status` metric-threshold prediction will always come back "couldn't verify" (absent), so the run stalls — always make the prediction this exact metric.
+This stack runs services on bare-metal hosts (not K8s). They are registered in Consul and export health status via the `consul_health_service_status` metric. This runbook is for the **discovery agent** — finding those services and writing their registry entries. (Investigating a Consul service incident is a separate skill: "Consul Bare-Metal Service Investigation".)
 
 ## Discovery strategy
 
