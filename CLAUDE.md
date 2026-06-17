@@ -32,7 +32,10 @@ npx tsx src/eval/rca-eval.ts --compare src/eval/baselines/2026-03-22.json  # Com
 node src/eval/deep-investigation-run.mjs <incidents.json> /tmp/runs.json     # live batch (server on :3000)
 npx tsx src/eval/deep-eval.ts --results /tmp/runs.json                        # score: correct / confident-wrong / category-error rates
 npx tsx src/eval/deep-eval.ts --results /tmp/runs.json --save                # writes baselines/deep-latest.json
-npx tsx src/eval/deep-eval.ts --results /tmp/runs.json --max-confident-wrong 0 --max-category-error 0   # CI gate
+npx tsx src/eval/deep-eval.ts --results /tmp/runs.json --max-confident-wrong 0 --max-category-error 0   # CI gate (keyword)
+# Ground-truth-anchored (the metric that actually tracks quality — confirm-on-healthy = false-confirm):
+npx tsx src/eval/deep-investigation-groundtruth.mts <stackDir> > /tmp/gt.json   # fetch real health via grafana-mcp
+npx tsx src/eval/deep-eval.ts --results /tmp/runs.json --ground-truth /tmp/gt.json --max-false-confirm 0 --max-missed 0
 npx vitest run           # Run all tests
 npx vitest run src/path  # Run a single test file
 npx tsc --noEmit         # Type check
