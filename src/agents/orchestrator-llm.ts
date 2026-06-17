@@ -169,8 +169,8 @@ Rules:
 - After a follow-cause or subagent returns findings, those findings are your BEST lead. Immediately hypothesize the specific cause they point to (with a checkable prediction) and test it — never stop right after following without turning the finding into a tested hypothesis.
 - CROSS-SERVICE CAUSES NEED A FOLLOW-CAUSE: observing that a dependency is unhealthy is only CORRELATIONAL. To conclude that a dependency caused this incident you MUST follow-cause into it first and establish the failure there — you cannot confirm "caused by <other service>" from the incident service's metrics alone.
 - GROUND EVERY CLAIM IN OBSERVED EVIDENCE: a hypothesis/rationale may only state metric values, replica counts, pod statuses, or service names you ACTUALLY saw in gathered evidence. Never invent specifics — do NOT write "1/2 replicas ready", "OOMKilled", or name a service you did not observe in the evidence. If you didn't query it, you can't claim it. A plausible-sounding story with numbers you didn't measure is a FALSE confirmation, not a root cause.
-- DON'T ASSUME KUBERNETES: a service may run outside k8s (Consul-registered, a VM, an external endpoint). The absence of a k8s Deployment/Pod for a service is NOT automatically the root cause — only conclude "not deployed / deployment missing" if the evidence shows the service IS a k8s workload whose Deployment genuinely vanished (e.g. kube_deployment_* metrics existed before and are now gone). If a service has no k8s objects but is monitored elsewhere (Consul/up{}/health checks), investigate THAT health signal instead of reporting "not deployed".
-- VERIFYING AN ABSENCE (scaled to zero / no replicas / not running / deleted): the confirming signal here is the ABSENCE of something, which a normal threshold over a runtime metric CANNOT catch — that metric vanishes when the resource is at zero, so the gather returns no data and the cause can NEVER be confirmed. Predict it one of two verifiable ways instead: (a) over a STATE metric that still reports a value at zero — e.g. {"kind":"metric-threshold","metric":"kube_deployment_status_replicas","op":"<","value":1} reads 0 and confirms "scaled to zero"; or (b) assert the absence explicitly with present:false — e.g. {"kind":"infra-status","resource":"<svc>","status":"running","present":false}. NEVER predict "scaled to zero" over a pod-runtime metric (kube_pod_*, vllm:*, request rates) — those disappear at zero replicas and leave the hypothesis unverifiable.
+- DON'T ASSUME A DEPLOYMENT PLATFORM: a service may run on any of several platforms (a container orchestrator, a registered bare-metal/VM process, an external endpoint). Determine the service's actual identity and primary health signal from the gathered evidence and the injected team-knowledge (Skills) BEFORE forming hypotheses. Do NOT conclude "not deployed / missing" just because one platform's objects are absent — the service may be monitored via a different signal; investigate THAT signal. The injected Skills tell you which signal applies to this service.
+- VERIFYING AN ABSENCE (scaled to zero / no replicas / not running / deleted): the confirming signal is the ABSENCE of something, which a threshold over a RUNTIME metric cannot catch — that metric vanishes when the resource is at zero, so the gather returns no data and the cause can never be confirmed. Predict it a verifiable way instead: (a) over a STATE metric that still reports a value at zero (predict it < 1); or (b) assert the absence explicitly with present:false — e.g. {"kind":"infra-status","resource":"<svc>","status":"running","present":false}. Never predict an absence over a runtime metric that disappears at zero. The injected Skills give the exact state metric for this service's platform.
 - Be decisive — your budget is limited. Prefer the most likely cause first.
 Output ONLY the JSON object for your chosen move.`;
 
@@ -277,31 +277,11 @@ export interface CreateLlmDecideMoveOptions {
   retryBackoffMs?: number;
   /** Team-knowledge skills (already formatted) appended to the system prompt. */
   skillContext?: string;
-  /** One-line, derived-from-the-registry hint about the incident service's
-   *  infrastructure type and primary health signal — steers the FIRST hypothesis
-   *  to the right signal (e.g. a Consul service's consul_health metric) instead
-   *  of the LLM's default k8s framing or dependency-chasing. See serviceIdentityHint. */
+  /** One-line incident-service identity steer prepended to the decide-move
+   *  prompt. Supplied by the adapter from the matched investigation skill's
+   *  declared `identityHint` ($service already substituted) — the engine holds
+   *  no infra literals. Undefined when no matched skill declared one. */
   identityHint?: string;
-}
-
-/**
- * Derive a one-line "incident service identity" steer from the service's
- * discovered identity metric family — the positive mirror of the service-type
- * consistency guard. For a service we can type, it tells the brain its primary
- * health signal so the first hypothesis targets it, rather than defaulting to a
- * k8s framing or wandering into dependencies. Returns undefined for an
- * unrecognised metric family (no steer rather than a wrong one).
- */
-export function serviceIdentityHint(service: string | undefined, metrics: string[] | undefined): string | undefined {
-  const svc = service ?? "the incident service";
-  const m = (metrics ?? []).join(" ").toLowerCase();
-  if (/consul_health|consul_catalog/.test(m)) {
-    return `INCIDENT SERVICE IDENTITY: ${svc} is registered in Consul (identity metric consul_health_service_status) — it is NOT a Kubernetes workload and has no Deployment/Pod by design. Its health IS that metric. Your FIRST hypothesis should test whether its Consul health check is failing — predicted as {"kind":"metric-threshold","metric":"consul_health_service_status","op":"<","value":1} for this service — before exploring dependencies or any k8s framing.`;
-  }
-  if (/kube_deployment|kube_pod|kube_statefulset|kube_replicaset|kube_daemonset/.test(m)) {
-    return `INCIDENT SERVICE IDENTITY: ${svc} is a Kubernetes workload (identity metric kube_deployment/replica). FIRST establish its deployment/replica STATE — is it scaled to zero / are any pods running? — via a state metric like kube_deployment_status_replicas, before considering pod-runtime causes (GPU, OOM, readiness). A workload with zero replicas has no running pods, so pod-level failure causes do not apply.`;
-  }
-  return undefined;
 }
 
 /**
@@ -336,8 +316,8 @@ export function createLlmDecideMove(
     });
 
   const backoffMs = opts.retryBackoffMs ?? 250;
-  // Append team-knowledge skills to the system rules so stack-level context (e.g.
-  // "these services are bare-metal Consul, not k8s") informs every move choice.
+  // Append team-knowledge skills to the system rules so stack-level, infra-type
+  // context (declared in the skills) informs every move choice.
   let systemPrompt = opts.identityHint ? `${SYSTEM_PROMPT}\n\n${opts.identityHint}` : SYSTEM_PROMPT;
   if (opts.skillContext) {
     systemPrompt = `${systemPrompt}\n\n${wrapUntrusted("team_skills", opts.skillContext)}`;
@@ -422,9 +402,17 @@ export interface RunAutonomousOrchestratorOptions {
   /** All known service names — the cross-service guard checks these too, so a
    *  false-confirm blaming another service is caught even with an empty dep graph. */
   knownServices?: string[];
-  /** The incident service's discovered identity metric queries — feeds the
-   *  service-type consistency guard (metric family → infra type). */
+  /** The incident service's discovered identity metric queries (context only). */
   incidentServiceMetrics?: string[];
+  /** Identity steer for the decide-move prompt (from the matched skill's
+   *  identityHint, $service substituted). */
+  identityHint?: string;
+  /** incompatibleClaims regexes from the matched investigation skills — the
+   *  service-type guard rejects a confirm matching any. */
+  incompatibleClaims?: string[];
+  /** Confirm-gate: returns true when the service reads healthy on its primary
+   *  signal (from the matched skill's healthySignal). Adapter-wired query. */
+  checkHealthy?: () => Promise<boolean | null>;
   /** Interactive strike-limit hook (increment 5). Absent → the strike limit
    *  stops directly. Wired by the orchestrate adapter to the WS pause card. */
   onOperatorPause?: (
@@ -437,9 +425,8 @@ export interface RunAutonomousOrchestratorOptions {
   /** Follow a lead: an optional operator hunch that seeds the run from move 1. */
   initialLead?: string;
   /** Team-knowledge skills (already formatted) injected into the decide-move
-   *  system prompt so the agent has stack-level runbook context — e.g. that
-   *  certain services are bare-metal Consul services with no k8s Deployment, so
-   *  "deployment missing" is the wrong conclusion for them. */
+   *  system prompt so the agent has stack-level, infra-type runbook context —
+   *  the skills declare the right framing for each service's platform. */
   skillContext?: string;
 }
 
@@ -474,7 +461,7 @@ export async function runAutonomousOrchestrator(
     llmCallMs: opts.llmCallMs,
     onUsage: addTokens,
     skillContext: opts.skillContext,
-    identityHint: serviceIdentityHint(opts.incidentService, opts.incidentServiceMetrics),
+    identityHint: opts.identityHint,
   });
 
   return runOrchestrator({
@@ -490,6 +477,8 @@ export async function runAutonomousOrchestrator(
     incidentService: opts.incidentService,
     knownServices: opts.knownServices,
     incidentServiceMetrics: opts.incidentServiceMetrics,
+    incompatibleClaims: opts.incompatibleClaims,
+    checkHealthy: opts.checkHealthy,
     onOperatorPause: opts.onOperatorPause,
     signal: opts.signal,
     onMoveBoundary: opts.onMoveBoundary,

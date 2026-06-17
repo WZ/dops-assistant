@@ -813,8 +813,8 @@ describe("runOrchestrator — observability-artifact guard", () => {
   });
 });
 
-describe("runOrchestrator — service-type consistency guard", () => {
-  const k8sConclude = (hyp_: string) => ({
+describe("runOrchestrator — service-type consistency guard (incompatibleClaims)", () => {
+  const scriptConclude = (hyp_: string) => ({
     evaluate: () => "satisfied" as const,
     decideMove: scripted([
       { type: "hypothesize", hypothesis: h(hyp_) },
@@ -825,53 +825,80 @@ describe("runOrchestrator — service-type consistency guard", () => {
     ]),
   });
 
-  it("rejects a k8s 'scaled to zero' confirm for a Consul-registered service (category error)", async () => {
-    const result = await runOrchestrator(
-      makeDeps({
-        incidentService: "impala",
-        incidentServiceMetrics: ['consul_health_service_status{service_name="impala"}'],
-        ...k8sConclude("impala is a Kubernetes Deployment scaled to zero replicas"),
-      }),
-    );
-    // impala's identity metric is consul_health → a k8s-deployment cause is a
-    // category error; the confirm is blocked and the run exhausts.
+  it("rejects a confirm matching a matched skill's incompatibleClaims pattern", async () => {
+    const result = await runOrchestrator(makeDeps({
+      incidentService: "impala",
+      incompatibleClaims: ["kubernetes|k8s deployment|scaled to zero"],
+      ...scriptConclude("impala is a Kubernetes Deployment scaled to zero replicas"),
+    }));
     expect(result.outcome).toBe("exhausted");
     expect(result.confirmed).toBeUndefined();
-    expect(result.trace.some((t) => t.move === "conclude" && /Consul-registered|consul_health/.test(t.detail))).toBe(true);
+    expect(result.trace.some((t) => t.move === "conclude" && /contradicts/.test(t.detail))).toBe(true);
   });
 
-  it("ALLOWS a k8s 'scaled to zero' confirm for a genuine k8s service (the minimax case)", async () => {
-    const result = await runOrchestrator(
-      makeDeps({
-        incidentService: "minimax-m25-vllm-bench-4gpu",
-        incidentServiceMetrics: ['kube_deployment_status_replicas{deployment="minimax-m25-vllm-bench-4gpu"}'],
-        ...k8sConclude("deployment is scaled to zero replicas"),
-      }),
-    );
+  it("allows a confirm that does NOT match the incompatibleClaims pattern", async () => {
+    const result = await runOrchestrator(makeDeps({
+      incidentService: "vllm",
+      incompatibleClaims: ["\\bconsul\\b"], // k8s service: a consul cause is incompatible
+      ...scriptConclude("deployment is scaled to zero replicas"),
+    }));
     expect(result.outcome).toBe("confirmed");
   });
 
-  it("rejects a Consul cause for a k8s workload (reverse category error / hallucinated registry)", async () => {
-    const result = await runOrchestrator(
-      makeDeps({
-        incidentService: "minimax-m25-vllm-bench-4gpu",
-        incidentServiceMetrics: ['kube_deployment_status_replicas{deployment="minimax-m25-vllm-bench-4gpu"}'],
-        ...k8sConclude("service was removed from k8s but still has active consul registration"),
-      }),
-    );
+  it("rejects the reverse — a Consul cause for a k8s workload", async () => {
+    const result = await runOrchestrator(makeDeps({
+      incidentService: "vllm",
+      incompatibleClaims: ["\\bconsul\\b|consul_health"],
+      ...scriptConclude("service removed from k8s but still has active consul registration"),
+    }));
     expect(result.outcome).toBe("exhausted");
-    expect(result.trace.some((t) => t.move === "conclude" && /Consul cause|no Consul registry/.test(t.detail))).toBe(true);
   });
 
-  it("stays silent when the service's identity metric family is unknown (no false rejection)", async () => {
-    const result = await runOrchestrator(
-      makeDeps({
-        incidentService: "edge-proxy",
-        incidentServiceMetrics: ['up{job="edge-proxy"}'],
-        ...k8sConclude("edge-proxy deployment scaled to zero"),
-      }),
-    );
-    // No recognised k8s/consul identity → the guard can't judge → it doesn't fire.
+  it("stays silent when no incompatibleClaims are declared", async () => {
+    const result = await runOrchestrator(makeDeps({
+      incidentService: "edge",
+      incompatibleClaims: [],
+      ...scriptConclude("deployment scaled to zero"),
+    }));
+    expect(result.outcome).toBe("confirmed");
+  });
+});
+
+describe("runOrchestrator — health-gate (skill-declared healthySignal)", () => {
+  const scriptConclude = () => ({
+    evaluate: () => "satisfied" as const,
+    decideMove: scripted([
+      { type: "hypothesize", hypothesis: h("something is broken") },
+      { type: "query", target: 0 },
+      { type: "test", target: 0 },
+      { type: "conclude", leading: 0, confidence: 0.9, rationale: "evidence backs it" },
+      null,
+    ]),
+  });
+
+  it("blocks a confirm when checkHealthy reports the service is HEALTHY", async () => {
+    const result = await runOrchestrator(makeDeps({
+      incidentService: "impala",
+      checkHealthy: async () => true,
+      ...scriptConclude(),
+    }));
+    expect(result.outcome).toBe("exhausted");
+    expect(result.confirmed).toBeUndefined();
+    expect(result.trace.some((t) => t.move === "conclude" && /reads HEALTHY/.test(t.detail))).toBe(true);
+  });
+
+  it("allows a confirm when checkHealthy reports NOT healthy (false)", async () => {
+    const result = await runOrchestrator(makeDeps({ incidentService: "bd", checkHealthy: async () => false, ...scriptConclude() }));
+    expect(result.outcome).toBe("confirmed");
+  });
+
+  it("allows a confirm when health is undeterminable (null)", async () => {
+    const result = await runOrchestrator(makeDeps({ incidentService: "x", checkHealthy: async () => null, ...scriptConclude() }));
+    expect(result.outcome).toBe("confirmed");
+  });
+
+  it("confirms normally when no checkHealthy is wired", async () => {
+    const result = await runOrchestrator(makeDeps({ incidentService: "x", ...scriptConclude() }));
     expect(result.outcome).toBe("confirmed");
   });
 });

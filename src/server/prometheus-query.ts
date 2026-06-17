@@ -329,3 +329,23 @@ export async function queryServiceMetrics(
 
   return results;
 }
+
+/**
+ * Run a single PromQL instant query and return the current value, or null when
+ * the query returned no series (so callers can distinguish "absent/unknown" from
+ * a real "0"). Used by the orchestrator's confirm-gate to evaluate a skill's
+ * declared `healthySignal` — keeping infra knowledge in the skill, not the engine.
+ */
+export async function queryInstantValue(providers: MastraProvider[], expr: string): Promise<number | null> {
+  let tools: Record<string, unknown>;
+  try {
+    tools = (await getToolsByRole(providers, "metrics")) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const queryTool = findMetricQueryTool(tools);
+  if (!queryTool) return null;
+  const datasourceUid = await findPrometheusDatasourceUid(tools);
+  const { values, current } = await executeQuery(queryTool, expr, 300, datasourceUid);
+  return values.length > 0 ? current : null;
+}

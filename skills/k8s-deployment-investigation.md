@@ -3,6 +3,9 @@ title: Kubernetes Workload Investigation
 services: []
 alerts: []
 appliesToServiceMetric: kube_
+healthySignal: '(kube_deployment_status_replicas_available{deployment="$service"} == kube_deployment_spec_replicas{deployment="$service"}) and (kube_deployment_spec_replicas{deployment="$service"} > 0)'
+identityHint: '$service is a Kubernetes workload (kube_deployment). Check its replica STATE first (available vs spec). A fully-available deployment is healthy — do not confirm CPU/OOM/readiness/pod faults without gathering the metric that shows the fault. spec==0 means scaled to zero (a valid root cause).'
+incompatibleClaims: '\bconsul\b|consul_health|bare-metal consul'
 tags:
   - investigation
   - rca

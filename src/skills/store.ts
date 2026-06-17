@@ -25,6 +25,17 @@ export interface SkillMetadata {
    *  Keeps infra-type knowledge (e.g. a Consul health metric) in the skill,
    *  not hardcoded in the engine. Untargeted skills (undefined) are always eligible. */
   appliesToServiceMetric?: string;
+  /** Optional infra-agnostic engine metadata (read by the orchestrator so it
+   *  carries NO infra literals). All are scoped to a matched investigation skill;
+   *  `$service` is substituted with the incident service name.
+   *  - healthySignal: a PromQL that returns ≥1 when the service is HEALTHY on its
+   *    primary signal. The confirm-gate evaluates it; healthy → force inconclusive.
+   *  - identityHint: one-line steer prepended to the decide-move prompt.
+   *  - incompatibleClaims: a regex of conclusion text that contradicts this
+   *    service's infra type (the service-type guard rejects a confirm matching it). */
+  healthySignal?: string;
+  identityHint?: string;
+  incompatibleClaims?: string;
   filePath: string;
 }
 
@@ -55,6 +66,11 @@ export interface SkillStoreConfig {
 /** Derive a URL-safe id from a filename (strip extension, lowercase). */
 function filenameToId(filename: string): string {
   return basename(filename, extname(filename)).toLowerCase().replace(/[^a-z0-9-]/g, "-");
+}
+
+/** Trimmed non-empty string, else undefined — for optional frontmatter fields. */
+function optStr(x: unknown): string | undefined {
+  return typeof x === "string" && x.trim() ? x.trim() : undefined;
 }
 
 /** Validate and normalize explicit skill ids before deriving on-disk paths. */
@@ -134,9 +150,10 @@ export class SkillStore {
           alerts: Array.isArray(data.alerts) ? data.alerts.map(String) : [],
           tags: Array.isArray(data.tags) ? data.tags.map(String) : [],
           scope,
-          appliesToServiceMetric: typeof data.appliesToServiceMetric === "string" && data.appliesToServiceMetric.trim()
-            ? data.appliesToServiceMetric.trim()
-            : undefined,
+          appliesToServiceMetric: optStr(data.appliesToServiceMetric),
+          healthySignal: optStr(data.healthySignal),
+          identityHint: optStr(data.identityHint),
+          incompatibleClaims: optStr(data.incompatibleClaims),
           filePath,
           body: content.trim(),
         });
@@ -234,7 +251,7 @@ export class SkillStore {
   /** Save a skill (create or update). Returns the saved skill. */
   async save(
     id: string | undefined,
-    frontmatter: { title: string; services: string[]; alerts: string[]; tags: string[]; scope?: SkillScope[]; appliesToServiceMetric?: string },
+    frontmatter: { title: string; services: string[]; alerts: string[]; tags: string[]; scope?: SkillScope[]; appliesToServiceMetric?: string; healthySignal?: string; identityHint?: string; incompatibleClaims?: string },
     body: string,
   ): Promise<Skill> {
     const skillId = id
@@ -254,6 +271,9 @@ export class SkillStore {
       tags: frontmatter.tags,
       scope,
       ...(frontmatter.appliesToServiceMetric ? { appliesToServiceMetric: frontmatter.appliesToServiceMetric } : {}),
+      ...(frontmatter.healthySignal ? { healthySignal: frontmatter.healthySignal } : {}),
+      ...(frontmatter.identityHint ? { identityHint: frontmatter.identityHint } : {}),
+      ...(frontmatter.incompatibleClaims ? { incompatibleClaims: frontmatter.incompatibleClaims } : {}),
     });
 
     await writeFile(filePath, content, "utf-8");
@@ -266,6 +286,9 @@ export class SkillStore {
       tags: frontmatter.tags,
       scope,
       appliesToServiceMetric: frontmatter.appliesToServiceMetric?.trim() || undefined,
+      healthySignal: frontmatter.healthySignal?.trim() || undefined,
+      identityHint: frontmatter.identityHint?.trim() || undefined,
+      incompatibleClaims: frontmatter.incompatibleClaims?.trim() || undefined,
       filePath,
       body,
     };

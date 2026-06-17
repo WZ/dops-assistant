@@ -158,14 +158,20 @@ export interface OrchestratorDeps {
    *  another service is caught even when the dependency graph is empty/missing
    *  (inc-7 #3 — the keystone can be independently true but not causally linked). */
   knownServices?: string[];
-  /** The incident service's discovered identity metric queries (e.g. the
-   *  registry's PromQL). Used by the service-type consistency guard to reject a
-   *  conclusion whose infrastructure framing contradicts the service's actual
-   *  type — e.g. naming a "k8s Deployment scaled to zero" cause for a service
-   *  whose identity metric is consul_health (Consul-registered, not k8s), or a
-   *  "Consul" cause for a kube_deployment-tracked workload. Generic: the type is
-   *  read from the metric family, not from any hardcoded service list. */
+  /** The incident service's discovered identity metric queries — passed through
+   *  for context; the engine no longer hardcodes any infra-type detection on it. */
   incidentServiceMetrics?: string[];
+  /** Regex patterns (from the matched investigation skills' `incompatibleClaims`)
+   *  describing conclusion text that contradicts this service's infra type. The
+   *  service-type guard rejects a confirm matching any of them. Infra knowledge
+   *  lives in the skill, not here — the engine just applies the declared pattern. */
+  incompatibleClaims?: string[];
+  /** Confirm-gate (from the matched skill's `healthySignal`): returns true when
+   *  the incident service reads HEALTHY on its primary signal (→ block the confirm,
+   *  force inconclusive), false when not-healthy, null when undeterminable. Wired
+   *  by the adapter to a PromQL query of the skill-declared signal — no infra
+   *  literals in the engine. */
+  checkHealthy?: () => Promise<boolean | null>;
   /**
    * Strikes-limit hook: instead of silently stopping at the strike limit, ask a
    * human. "continue" resets the strike counter and resumes the loop (the other
@@ -512,33 +518,18 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
             stall++;
             break;
           }
-          // SERVICE-TYPE CONSISTENCY GUARD: a conclusion must not claim an
-          // infrastructure type that contradicts the service's discovered
-          // identity. A service whose identity metric is consul_health is
-          // Consul-registered (no k8s Deployment by design), so a "k8s Deployment
-          // scaled to zero / not deployed" cause is a category error — and vice
-          // versa, a kube_deployment-tracked workload has no Consul registry, so a
-          // "Consul" cause is wrong. The type is read from the metric FAMILY, so
-          // this is generic, not a hardcoded per-service or Consul-only rule. When
-          // the identity is unknown (no recognised family) the guard stays silent.
-          const idMetrics = (deps.incidentServiceMetrics ?? []).join(" ").toLowerCase();
-          const svcIsK8s = /kube_deployment|kube_pod|kube_statefulset|kube_replicaset|kube_daemonset/.test(idMetrics);
-          const svcIsConsul = /consul_health|consul_catalog/.test(idMetrics);
-          const hyp = lead.hypothesis.hypothesis.toLowerCase();
-          const claimsK8s = /\b(kubernetes|k8s|kube_|replicaset|deployment|namespace|scaled to (zero|0)|replicas?)\b/.test(hyp);
-          const claimsConsul = /\bconsul\b/.test(hyp);
-          if (svcIsConsul && !svcIsK8s && claimsK8s) {
+          // SERVICE-TYPE CONSISTENCY GUARD: reject a confirm whose text matches an
+          // `incompatibleClaims` pattern declared by a matched investigation skill —
+          // a cause that contradicts this service's infrastructure type. The
+          // patterns come from the enabled, metric-matched skill, so the engine
+          // holds NO infra literals; if no skill declared any, the guard is silent.
+          const incompatible = (deps.incompatibleClaims ?? []).find((p) => {
+            try { return new RegExp(p, "i").test(lead.hypothesis.hypothesis); } catch { return false; }
+          });
+          if (incompatible) {
             record({
               move: "conclude",
-              detail: `not confirmed — "${lead.hypothesis.hypothesis}" names a Kubernetes cause, but ${deps.incidentService ?? "this service"}'s identity metric is consul_health — it is Consul-registered (no k8s Deployment by design). Investigate its Consul health signal (consul_health_service_status) instead of a k8s deployment/replica state.`,
-            });
-            stall++;
-            break;
-          }
-          if (svcIsK8s && !svcIsConsul && claimsConsul) {
-            record({
-              move: "conclude",
-              detail: `not confirmed — "${lead.hypothesis.hypothesis}" names a Consul cause, but ${deps.incidentService ?? "this service"} is a Kubernetes workload (kube_deployment identity metric) with no Consul registry. Investigate its k8s deployment/pod state instead.`,
+              detail: `not confirmed — "${lead.hypothesis.hypothesis}" contradicts ${deps.incidentService ?? "this service"}'s known infrastructure type (it matched a team-knowledge skill's incompatible-cause pattern). Investigate a cause consistent with the service's actual type.`,
             });
             stall++;
             break;
@@ -566,6 +557,22 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
             });
             stall++;
             break;
+          }
+          // HEALTH-GATE: if a matched skill declared a healthySignal and it reads
+          // HEALTHY, the service has no incident to explain — never confirm a
+          // manufactured cause; conclude inconclusive. Skill-declared PromQL; the
+          // engine only evaluates it (no infra literals). The deterministic backstop
+          // for the over-confirm that prompt guidance alone could not stop.
+          if (deps.checkHealthy) {
+            const healthy = await deps.checkHealthy();
+            if (healthy === true) {
+              record({
+                move: "conclude",
+                detail: `not confirmed — ${deps.incidentService ?? "this service"} reads HEALTHY on its primary signal (the matched skill's healthySignal). A healthy service has no incident to confirm; concluding inconclusive rather than manufacturing a cause.`,
+              });
+              stall++;
+              break;
+            }
           }
           record({ move: "conclude", detail: `confirmed: ${lead.hypothesis.hypothesis}` });
           return finish("confirmed", lead.hypothesis);
