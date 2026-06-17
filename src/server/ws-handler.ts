@@ -623,13 +623,20 @@ async function handleOrchestratorInvestigate(
   let skillContext: string | undefined;
   let investigationSkills: Skill[] | undefined;
   if (deps.skillStore) {
-    const skills = deps.skillStore
+    // Relevance-filter the full scoped set BEFORE capping: a skill that declares
+    // appliesToServiceMetric is kept only when the incident service's metrics
+    // match it. Then cap to maxPerQuery, but order service-targeted skills FIRST
+    // so the cap can never drop a matched infra skill (the bug that hid the k8s
+    // health-gate from ingestion-server).
+    const relevant = deps.skillStore
       .getAllForScopeEnabled("investigation", deps.db.getDisabledSkills(stackId))
       .filter((skill) => {
         if (!skill.appliesToServiceMetric) return true;
         const needle = skill.appliesToServiceMetric.toLowerCase();
         return incidentMetricQueries.some((q) => q.includes(needle));
       });
+    relevant.sort((a, b) => Number(!!b.appliesToServiceMetric) - Number(!!a.appliesToServiceMetric));
+    const skills = relevant.slice(0, deps.skillStore.maxPerQuery);
     if (skills.length > 0) {
       skillContext = deps.skillStore.formatForPrompt(skills);
       investigationSkills = skills;

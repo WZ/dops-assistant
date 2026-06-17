@@ -378,12 +378,16 @@ Body`,
       expect(inv[0]!.title).toBe("Investigation Only");
     });
 
-    it("getAllForScope respects maxPerQuery cap", async () => {
+    it("getAllForScope returns ALL scoped skills uncapped (callers cap after relevance-filtering)", async () => {
+      // Regression: previously getAllForScope sliced to maxPerQuery by title BEFORE
+      // the caller's appliesToServiceMetric filter, which silently dropped a
+      // service-targeted skill (the k8s investigation skill never reached
+      // ingestion-server). The cap now lives in the caller, after filtering.
       const smallStore = new SkillStore({ dir, maxPerQuery: 1, maxCharsPerSkill: 2000 });
       await writeFile(join(dir, "d1.md"), `---\ntitle: D1\nservices: []\nalerts: []\ntags: []\nscope: [discovery]\n---\nBody`);
       await writeFile(join(dir, "d2.md"), `---\ntitle: D2\nservices: []\nalerts: []\ntags: []\nscope: [discovery]\n---\nBody`);
       await smallStore.loadAll();
-      expect(smallStore.getAllForScope("discovery")).toHaveLength(1);
+      expect(smallStore.getAllForScope("discovery")).toHaveLength(2);
     });
 
     it("search with scope filters before relevance cap", async () => {

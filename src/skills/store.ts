@@ -217,15 +217,16 @@ export class SkillStore {
     return scored.slice(0, this.maxPerQuery).map((s) => s.skill);
   }
 
-  /** Return all skills whose scope includes the given target.
-   *  Unlike search(), this does NOT require service/alert/tag matching —
-   *  it returns every skill scoped to the target. Used by discovery
-   *  when there's no specific service/alert context to match against.
-   *  Results are sorted by title for deterministic ordering, capped by maxPerQuery. */
+  /** Return ALL skills whose scope includes the given target, sorted by title.
+   *  Unlike search(), this does NOT require service/alert/tag matching.
+   *  NOTE: intentionally NOT capped by maxPerQuery — capping here (by title sort)
+   *  would drop service-targeted skills before the caller's appliesToServiceMetric
+   *  relevance filter runs. Callers narrow (by appliesToServiceMetric) and then
+   *  cap themselves, keeping targeted skills (see ws-handler). */
   getAllForScope(target: SkillScope): Skill[] {
     const matching = filterSkillsByScope([...this.skills.values()], target);
     matching.sort((a, b) => a.title.localeCompare(b.title));
-    return matching.slice(0, this.maxPerQuery);
+    return matching;
   }
 
   /** Like search() but excludes disabled skills. Used in per-stack contexts. */
