@@ -40,9 +40,12 @@ const logger = createLogger();
  * ~80s of dead air behind the UI's "Importing…" spinner.
  *
  * Capping each probe lets a dead server fail fast: the provider is still
- * persisted (status "error") and the periodic reconnect ticker heals it once
- * the upstream is back. A healthy server connects and lists tools well within
- * this bound. The probe promise we lose the race to is abandoned, not awaited.
+ * persisted (status "error"), and a later `reconnectTick` retries it (best-effort
+ * — that path runs the full `test()` and is NOT bounded by this constant, so a
+ * still-dead upstream costs the usual cascade there; it heals on whichever tick
+ * the upstream is reachable). A healthy server connects and lists tools well
+ * within this bound. The probe promise we lose the race to is abandoned, not
+ * awaited (Promise.race marks the loser handled, so a late rejection is silent).
  */
 export const PROBE_TIMEOUT_MS = 5_000;
 
