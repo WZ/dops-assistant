@@ -10,24 +10,9 @@ tags:
   - bigdata
 scope:
   - discovery
-  - investigation
 ---
 ## When to use
-This stack runs services on bare-metal hosts (not K8s). They are registered in Consul and export health status via the `consul_health_service_status` metric.
-
-## When investigating a root cause (read this first)
-If a service appears down but has **no Kubernetes Deployment / Pod**, that is EXPECTED here — it is a bare-metal Consul service, not a k8s workload. Do NOT report "deployment missing" or "not deployed in the cluster" as the root cause. Its health signal is the Consul metric:
-```
-max by (service_name) (consul_health_service_status{service_name="<name>",status="passing"})
-```
-A value of `0` (or no row) means the bare-metal service is failing its Consul health check — that is the real signal to investigate (check the host process, its logs via the bare-metal logLabels, and any upstream it depends on). Only conclude a k8s cause for services that actually have k8s objects.
-
-### To CONFIRM it (so the test actually verifies, not "absent")
-When you hypothesize that a bare-metal service is unhealthy, attach this EXACT checkable prediction — the keystone matches the metric name literally, so use it verbatim:
-```json
-{"kind":"metric-threshold","metric":"consul_health_service_status","op":"<","value":1}
-```
-Then `query` it: the evidence gather runs that metric for the service and reports its value. If the passing-status value is `< 1` (i.e. 0), the `test` move returns **satisfied** → you can `conclude`. A vague hypothesis with no `consul_health_service_status` metric-threshold prediction will always come back "couldn't verify" (absent), so the run stalls — always make the prediction this exact metric.
+This stack runs services on bare-metal hosts (not K8s). They are registered in Consul and export health status via the `consul_health_service_status` metric. This runbook is for the **discovery agent** — finding those services and writing their registry entries. (Investigating a Consul service incident is a separate skill: "Consul Bare-Metal Service Investigation".)
 
 ## Discovery strategy
 

@@ -774,3 +774,217 @@ describe("runOrchestrator — onMoveBoundary park hook (PR-2c)", () => {
     expect(result.outcome).toBe("aborted");
   });
 });
+
+describe("runOrchestrator — observability-artifact guard", () => {
+  it("rejects a confirm that blames the observability tooling (Grafana/datasource) for a service incident", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        incidentService: "minimax-m25-metrics-proxy",
+        evaluate: () => "satisfied",
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("Grafana datasource for Loki is misconfigured — datasource not found") },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          { type: "conclude", leading: 0, confidence: 0.9, rationale: "datasource not found in logs" },
+          null,
+        ]),
+      }),
+    );
+    // Query-layer artifact, not a service root cause → blocked → exhausts.
+    expect(result.outcome).toBe("exhausted");
+    expect(result.confirmed).toBeUndefined();
+    expect(result.trace.some((t) => t.move === "conclude" && /observability tooling/.test(t.detail))).toBe(true);
+  });
+
+  it("ALLOWS a datasource/Grafana cause when the incident service IS an observability component", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        incidentService: "grafana",
+        evaluate: () => "satisfied",
+        decideMove: scripted([
+          { type: "hypothesize", hypothesis: h("grafana datasource provisioning failed on restart") },
+          { type: "query", target: 0 },
+          { type: "test", target: 0 },
+          { type: "conclude", leading: 0, confidence: 0.9, rationale: "provisioning error" },
+        ]),
+      }),
+    );
+    expect(result.outcome).toBe("confirmed"); // grafana itself — legitimately about the observability stack
+  });
+});
+
+describe("runOrchestrator — service-type consistency guard (incompatibleClaims)", () => {
+  const scriptConclude = (hyp_: string) => ({
+    evaluate: () => "satisfied" as const,
+    decideMove: scripted([
+      { type: "hypothesize", hypothesis: h(hyp_) },
+      { type: "query", target: 0 },
+      { type: "test", target: 0 },
+      { type: "conclude", leading: 0, confidence: 0.9, rationale: "evidence backs it" },
+      null,
+    ]),
+  });
+
+  it("rejects a confirm matching a matched skill's incompatibleClaims pattern", async () => {
+    const result = await runOrchestrator(makeDeps({
+      incidentService: "impala",
+      incompatibleClaims: ["kubernetes|k8s deployment|scaled to zero"],
+      ...scriptConclude("impala is a Kubernetes Deployment scaled to zero replicas"),
+    }));
+    expect(result.outcome).toBe("exhausted");
+    expect(result.confirmed).toBeUndefined();
+    expect(result.trace.some((t) => t.move === "conclude" && /contradicts/.test(t.detail))).toBe(true);
+  });
+
+  it("allows a confirm that does NOT match the incompatibleClaims pattern", async () => {
+    const result = await runOrchestrator(makeDeps({
+      incidentService: "vllm",
+      incompatibleClaims: ["\\bconsul\\b"], // k8s service: a consul cause is incompatible
+      ...scriptConclude("deployment is scaled to zero replicas"),
+    }));
+    expect(result.outcome).toBe("confirmed");
+  });
+
+  it("rejects the reverse — a Consul cause for a k8s workload", async () => {
+    const result = await runOrchestrator(makeDeps({
+      incidentService: "vllm",
+      incompatibleClaims: ["\\bconsul\\b|consul_health"],
+      ...scriptConclude("service removed from k8s but still has active consul registration"),
+    }));
+    expect(result.outcome).toBe("exhausted");
+  });
+
+  it("stays silent when no incompatibleClaims are declared", async () => {
+    const result = await runOrchestrator(makeDeps({
+      incidentService: "edge",
+      incompatibleClaims: [],
+      ...scriptConclude("deployment scaled to zero"),
+    }));
+    expect(result.outcome).toBe("confirmed");
+  });
+});
+
+describe("runOrchestrator — health-gate (skill-declared healthySignal)", () => {
+  const scriptConclude = () => ({
+    evaluate: () => "satisfied" as const,
+    decideMove: scripted([
+      { type: "hypothesize", hypothesis: h("something is broken") },
+      { type: "query", target: 0 },
+      { type: "test", target: 0 },
+      { type: "conclude", leading: 0, confidence: 0.9, rationale: "evidence backs it" },
+      null,
+    ]),
+  });
+
+  it("blocks a confirm when checkHealthy reports the service is HEALTHY", async () => {
+    const result = await runOrchestrator(makeDeps({
+      incidentService: "impala",
+      checkHealthy: async () => true,
+      ...scriptConclude(),
+    }));
+    expect(result.outcome).toBe("exhausted");
+    expect(result.confirmed).toBeUndefined();
+    expect(result.trace.some((t) => t.move === "conclude" && /reads HEALTHY/.test(t.detail))).toBe(true);
+  });
+
+  it("allows a confirm when checkHealthy reports NOT healthy (false)", async () => {
+    const result = await runOrchestrator(makeDeps({ incidentService: "bd", checkHealthy: async () => false, ...scriptConclude() }));
+    expect(result.outcome).toBe("confirmed");
+  });
+
+  it("allows a confirm when health is undeterminable (null)", async () => {
+    const result = await runOrchestrator(makeDeps({ incidentService: "x", checkHealthy: async () => null, ...scriptConclude() }));
+    expect(result.outcome).toBe("confirmed");
+  });
+
+  it("confirms normally when no checkHealthy is wired", async () => {
+    const result = await runOrchestrator(makeDeps({ incidentService: "x", ...scriptConclude() }));
+    expect(result.outcome).toBe("confirmed");
+  });
+});
+
+describe("runOrchestrator — failure floor (checkFailing)", () => {
+  it("confirms the primary-signal failure when the run gives up while failureSignal fires", async () => {
+    const result = await runOrchestrator(makeDeps({
+      incidentService: "bd",
+      checkFailing: async () => "bd is failing its Consul health check (status=critical)",
+      decideMove: scripted([null]), // immediate give-up → would be exhausted
+    }));
+    expect(result.outcome).toBe("confirmed");
+    expect(result.confirmed?.hypothesis).toMatch(/failing its Consul health check/);
+    expect(result.trace.some((t) => /primary-signal floor/.test(t.detail))).toBe(true);
+  });
+
+  it("leaves the give-up outcome when checkFailing returns null (service not definitely failing)", async () => {
+    const result = await runOrchestrator(makeDeps({
+      incidentService: "x",
+      checkFailing: async () => null,
+      decideMove: scripted([null]),
+    }));
+    expect(result.outcome).toBe("exhausted");
+  });
+
+  it("does not override an explicit confirm", async () => {
+    const result = await runOrchestrator(makeDeps({
+      incidentService: "bd",
+      checkFailing: async () => "floor cause",
+      evaluate: () => "satisfied",
+      decideMove: scripted([
+        { type: "hypothesize", hypothesis: h("real cause") },
+        { type: "query", target: 0 },
+        { type: "test", target: 0 },
+        { type: "conclude", leading: 0, confidence: 0.9, rationale: "x" },
+      ]),
+    }));
+    expect(result.outcome).toBe("confirmed");
+    expect(result.confirmed?.hypothesis).toBe("real cause"); // the agent's confirm, not the floor
+  });
+});
+
+describe("runOrchestrator — grounding gate (pod-runtime cause vs zero pods)", () => {
+  const concludeOn = (hyp_: string) => ({
+    evaluate: () => "satisfied" as const,
+    decideMove: scripted([
+      { type: "hypothesize", hypothesis: h(hyp_) },
+      { type: "query", target: 0 },
+      { type: "test", target: 0 },
+      { type: "conclude", leading: 0, confidence: 0.95, rationale: "evidence backs it" },
+      null,
+    ]),
+  });
+
+  it("rejects a GPU/pod-runtime confirm when evidence shows zero replicas (the fabrication)", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        incidentService: "vllm-bench",
+        gatherEvidence: async () => [{ phase: "metrics", subject: "kube_deployment_status_replicas{deployment=\"vllm-bench\"}", value: 0 }],
+        ...concludeOn("GPU resource exhaustion or CUDA error causing service degradation"),
+      }),
+    );
+    expect(result.outcome).toBe("exhausted");
+    expect(result.confirmed).toBeUndefined();
+    expect(result.trace.some((t) => t.move === "conclude" && /zero running pods/.test(t.detail))).toBe(true);
+  });
+
+  it("ALLOWS the scaled-to-zero cause itself with the same zero-replica evidence", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        incidentService: "vllm-bench",
+        gatherEvidence: async () => [{ phase: "metrics", subject: "kube_deployment_status_replicas{deployment=\"vllm-bench\"}", value: 0 }],
+        ...concludeOn("deployment is scaled to zero replicas"),
+      }),
+    );
+    expect(result.outcome).toBe("confirmed");
+  });
+
+  it("does NOT fire when no zero-replica evidence was gathered (a real GPU incident can confirm)", async () => {
+    const result = await runOrchestrator(
+      makeDeps({
+        incidentService: "vllm-bench",
+        gatherEvidence: async () => [{ phase: "metrics", subject: "DCGM_FI_DEV_GPU_UTIL{pod=\"vllm-bench-0\"}", value: 100 }],
+        ...concludeOn("GPU utilization saturated at 100% causing latency"),
+      }),
+    );
+    expect(result.outcome).toBe("confirmed");
+  });
+});

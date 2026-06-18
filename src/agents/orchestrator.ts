@@ -158,6 +158,25 @@ export interface OrchestratorDeps {
    *  another service is caught even when the dependency graph is empty/missing
    *  (inc-7 #3 — the keystone can be independently true but not causally linked). */
   knownServices?: string[];
+  /** The incident service's discovered identity metric queries — passed through
+   *  for context; the engine no longer hardcodes any infra-type detection on it. */
+  incidentServiceMetrics?: string[];
+  /** Regex patterns (from the matched investigation skills' `incompatibleClaims`)
+   *  describing conclusion text that contradicts this service's infra type. The
+   *  service-type guard rejects a confirm matching any of them. Infra knowledge
+   *  lives in the skill, not here — the engine just applies the declared pattern. */
+  incompatibleClaims?: string[];
+  /** Confirm-gate (from the matched skill's `healthySignal`): returns true when
+   *  the incident service reads HEALTHY on its primary signal (→ block the confirm,
+   *  force inconclusive), false when not-healthy, null when undeterminable. Wired
+   *  by the adapter to a PromQL query of the skill-declared signal — no infra
+   *  literals in the engine. */
+  checkHealthy?: () => Promise<boolean | null>;
+  /** Failure-floor (from the matched skill's failureSignal + failureCause):
+   *  returns the grounded failure-cause text when the service is DEFINITELY
+   *  failing on its primary signal, else null. Used so a broken service is never
+   *  missed when the run would otherwise give up. No infra literals in the engine. */
+  checkFailing?: () => Promise<string | null>;
   /**
    * Strikes-limit hook: instead of silently stopping at the strike limit, ask a
    * human. "continue" resets the strike counter and resumes the loop (the other
@@ -327,6 +346,24 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
     stats: { moves, toolCalls, tokensSpent, strikes, depth, subagents, elapsedMs: elapsed() },
   });
 
+  // FAILURE FLOOR (deterministic primary-signal catch): when the run is about to
+  // give up WITHOUT a confirmed cause, but the matched skill's failureSignal shows
+  // the service is definitely failing on its primary signal, confirm that grounded
+  // failure instead of missing a genuinely-broken service to LLM variance. Skill-
+  // declared (failureSignal + failureCause); the engine just evaluates + reports.
+  const giveUp = async (outcome: OrchestratorOutcome): Promise<OrchestratorResult> => {
+    if (deps.checkFailing) {
+      try {
+        const cause = await deps.checkFailing();
+        if (cause) {
+          record({ move: "conclude", detail: `confirmed (primary-signal floor): ${cause}` });
+          return finish("confirmed", { hypothesis: cause, prediction: { kind: "metric-threshold", metric: "primary-signal", op: ">", value: 0 } });
+        }
+      } catch { /* undeterminable → fall through to the original outcome */ }
+    }
+    return finish(outcome);
+  };
+
   while (moves < MAX_MOVES) {
     // Guards are checked BEFORE spending the next move so a tripped limit never
     // does "one more" expensive thing.
@@ -338,9 +375,9 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
       await deps.onMoveBoundary();
       if (deps.signal?.aborted) return finish("aborted");
     }
-    if (tokensSpent >= deps.guards.maxTokens) return finish("budget-exhausted");
-    if (toolCalls >= deps.guards.maxToolCalls) return finish("tool-cap");
-    if (elapsed() >= deps.guards.wallClockMs) return finish("wall-clock");
+    if (tokensSpent >= deps.guards.maxTokens) return await giveUp("budget-exhausted");
+    if (toolCalls >= deps.guards.maxToolCalls) return await giveUp("tool-cap");
+    if (elapsed() >= deps.guards.wallClockMs) return await giveUp("wall-clock");
     // strikes → operator pause: the design's headline safety feature. The signal
     // is ambiguous (N hypotheses failed, nothing discriminating emerged); rather
     // than guess, hand the call to a human (if wired) — who can resume the run
@@ -364,12 +401,12 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
           continue;
         }
       }
-      return finish("operator-pause");
+      return await giveUp("operator-pause");
     }
-    if (stall >= MAX_STALL) return finish("inconclusive");
+    if (stall >= MAX_STALL) return await giveUp("inconclusive");
     // Fast no-evidence bail: several queries in and nothing surfaced anywhere →
     // the service is quiet. Stop now rather than burning the full run (inc-7 #5).
-    if (toolCalls >= NO_EVIDENCE_BAIL_QUERIES && evidence.length === 0) return finish("inconclusive");
+    if (toolCalls >= NO_EVIDENCE_BAIL_QUERIES && evidence.length === 0) return await giveUp("inconclusive");
 
     const state: OrchestratorState = {
       hypotheses,
@@ -399,7 +436,7 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
       stall++;
       continue;
     }
-    if (move === null) return finish("exhausted");
+    if (move === null) return await giveUp("exhausted");
     moves++;
     tokensSpent += Math.max(0, estimate(move));
 
@@ -486,6 +523,79 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
             });
             stall++;
             break;
+          }
+          // OBSERVABILITY-ARTIFACT GUARD: a cause that blames the monitoring/query
+          // tooling itself — a Grafana datasource missing/misconfigured, a
+          // "datasource not found" error — is almost always a query-layer artifact
+          // (the agent's own failed log/metric queries leaking into evidence as
+          // "404 / datasource not found"), NOT why the incident service is
+          // unhealthy. Reject it, unless the incident service IS an observability
+          // component (then it's legitimately about that stack).
+          const incidentIsObservability = /grafana|loki|prometheus|datasource|mimir|thanos|alertmanager/i.test(deps.incidentService ?? "");
+          const claimsObservabilityArtifact = /\b(datasource|grafana)\b/i.test(lead.hypothesis.hypothesis);
+          if (!incidentIsObservability && claimsObservabilityArtifact) {
+            record({
+              move: "conclude",
+              detail: `not confirmed — "${lead.hypothesis.hypothesis}" blames the observability tooling (Grafana/datasource config), which is a query-layer artifact (often the agent's own failed queries), not why ${deps.incidentService ?? "the service"} is unhealthy. Investigate the service's own signals instead.`,
+            });
+            stall++;
+            break;
+          }
+          // SERVICE-TYPE CONSISTENCY GUARD: reject a confirm whose text matches an
+          // `incompatibleClaims` pattern declared by a matched investigation skill —
+          // a cause that contradicts this service's infrastructure type. The
+          // patterns come from the enabled, metric-matched skill, so the engine
+          // holds NO infra literals; if no skill declared any, the guard is silent.
+          const incompatible = (deps.incompatibleClaims ?? []).find((p) => {
+            try { return new RegExp(p, "i").test(lead.hypothesis.hypothesis); } catch { return false; }
+          });
+          if (incompatible) {
+            record({
+              move: "conclude",
+              detail: `not confirmed — "${lead.hypothesis.hypothesis}" contradicts ${deps.incidentService ?? "this service"}'s known infrastructure type (it matched a team-knowledge skill's incompatible-cause pattern). Investigate a cause consistent with the service's actual type.`,
+            });
+            stall++;
+            break;
+          }
+          // GROUNDING GATE: a confirm that blames a pod-RUNTIME failure (GPU/CUDA
+          // exhaustion, OOM, readiness/liveness, crash-loop, CPU throttling) is
+          // impossible when the gathered evidence shows the workload has zero
+          // running pods (scaled to zero). With no pods, there is nothing to
+          // exhaust a GPU or fail a readiness probe — such a cause is a
+          // fabrication/misattribution (e.g. cluster-wide GPU usage pinned on a
+          // service that has no pods). Only fires when an observation actually
+          // establishes zero replicas/pods, so it's grounded in real evidence.
+          const sawZeroReplicas = evidence.some((o) => {
+            const subj = (o.subject ?? "").toLowerCase();
+            const txt = (o.text ?? "").toLowerCase();
+            const isReplicaSignal = /replica|kube_deployment|kube_pod|\bpods?\b/.test(subj);
+            if (isReplicaSignal && o.value === 0) return true;
+            return /\b(0 replicas|zero replicas|scaled to zero|scaled to 0|no (running |ready )?pods|no pods (running|scheduled|exist))\b/.test(`${subj} ${txt}`);
+          });
+          const claimsPodRuntime = /\b(gpu|cuda|oom|out of memory|readiness|liveness|crash[- ]?loop|cpu throttl)\b/i.test(lead.hypothesis.hypothesis);
+          if (sawZeroReplicas && claimsPodRuntime) {
+            record({
+              move: "conclude",
+              detail: `not confirmed — "${lead.hypothesis.hypothesis}" blames a pod-runtime failure, but the gathered evidence shows ${deps.incidentService ?? "this workload"} has zero running pods (scaled to zero). With no pods there is no GPU/OOM/readiness failure to have — the cause is the scaled-to-zero state itself, not a runtime fault.`,
+            });
+            stall++;
+            break;
+          }
+          // HEALTH-GATE: if a matched skill declared a healthySignal and it reads
+          // HEALTHY, the service has no incident to explain — never confirm a
+          // manufactured cause; conclude inconclusive. Skill-declared PromQL; the
+          // engine only evaluates it (no infra literals). The deterministic backstop
+          // for the over-confirm that prompt guidance alone could not stop.
+          if (deps.checkHealthy) {
+            const healthy = await deps.checkHealthy();
+            if (healthy === true) {
+              record({
+                move: "conclude",
+                detail: `not confirmed — ${deps.incidentService ?? "this service"} reads HEALTHY on its primary signal (the matched skill's healthySignal). A healthy service has no incident to confirm; concluding inconclusive rather than manufacturing a cause.`,
+              });
+              stall++;
+              break;
+            }
           }
           record({ move: "conclude", detail: `confirmed: ${lead.hypothesis.hypothesis}` });
           return finish("confirmed", lead.hypothesis);
@@ -579,5 +689,5 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
     }
   }
 
-  return finish("inconclusive");
+  return await giveUp("inconclusive");
 }

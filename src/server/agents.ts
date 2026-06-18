@@ -52,6 +52,7 @@ import type { OrchestratorGuards, OrchestratorResult, OrchestratorState } from "
 import { refineReportFromDeepRun, type RefineInput, type RefinedNarrative } from "../agents/orchestrator-refine.js";
 import type { CorroborationContext, NormalizedObservation } from "../workflows/steps/corroboration.js";
 import type { Skill } from "../skills/store.js";
+import { queryInstantValue } from "./prometheus-query.js";
 
 /** Conservative default safety harness for the autonomous orchestrator. The
  *  budget guard is the cost backstop; defaults stay low because an autonomous
@@ -747,6 +748,10 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       incidentService?: string;
       /** All known service names — the cross-service guard checks these too. */
       knownServices?: string[];
+      /** The incident service's discovered identity metric queries — feeds the
+       *  service-type consistency guard (reject a k8s cause for a Consul service
+       *  and vice versa, by metric family). */
+      incidentServiceMetrics?: string[];
       /** Interactive operator-pause hook (increment 5). Wired by the WS layer to
        *  the pause card; absent → the strike limit stops directly. PR-4: resolves
        *  to `{ decision, context? }` where `context` is the operator's free-text lead. */
@@ -795,6 +800,50 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
         return [];
       }
     };
+    // Derive the engine's infra-agnostic inputs from the matched investigation
+    // skills — identity steer, incompatible-claim patterns, and a health-check
+    // closure that queries the skill-declared healthySignal. Keeps ALL infra
+    // knowledge (Consul/k8s/etc.) in the skills; the engine holds no literals.
+    // `$service` is substituted with the incident service name.
+    const svc = opts?.incidentService ?? "";
+    const sub = (t?: string): string | undefined => (t ? t.replaceAll("$service", svc) : undefined);
+    const matchedSkills = opts?.skills ?? [];
+    const identityHint = matchedSkills.map((s) => sub(s.identityHint)).filter(Boolean).join("\n\n") || undefined;
+    const incompatibleClaims = matchedSkills.map((s) => s.incompatibleClaims).filter((p): p is string => !!p);
+    const healthSignals = matchedSkills.map((s) => sub(s.healthySignal)).filter((q): q is string => !!q);
+    const checkHealthy = healthSignals.length > 0
+      ? async (): Promise<boolean | null> => {
+          let anyKnown = false;
+          for (const expr of healthSignals) {
+            try {
+              const v = await queryInstantValue(providers, expr);
+              if (v !== null) {
+                anyKnown = true;
+                if (v >= 1) return true; // healthy on its primary signal
+              }
+            } catch { /* ignore — treat as undeterminable */ }
+          }
+          return anyKnown ? false : null;
+        }
+      : undefined;
+    // Failure-floor: if a matched skill's failureSignal fires (service definitely
+    // failing on its primary signal), return its failureCause so the engine can
+    // confirm the grounded failure instead of missing a broken service.
+    const failureChecks = matchedSkills
+      .filter((s) => s.failureSignal && s.failureCause)
+      .map((s) => ({ signal: sub(s.failureSignal)!, cause: sub(s.failureCause)! }));
+    const checkFailing = failureChecks.length > 0
+      ? async (): Promise<string | null> => {
+          for (const { signal, cause } of failureChecks) {
+            try {
+              const v = await queryInstantValue(providers, signal);
+              if (v !== null && v >= 1) return cause;
+            } catch { /* undeterminable */ }
+          }
+          return null;
+        }
+      : undefined;
+
     return runAutonomousOrchestrator({
       focus,
       model: investigationModel,
@@ -809,6 +858,11 @@ export async function createMastraAdapters(deps: MastraAdapterDeps) {
       dependencies: opts?.dependencies,
       incidentService: opts?.incidentService,
       knownServices: opts?.knownServices,
+      incidentServiceMetrics: opts?.incidentServiceMetrics,
+      identityHint,
+      incompatibleClaims,
+      checkHealthy,
+      checkFailing,
       onOperatorPause: opts?.onOperatorPause,
       signal: opts?.signal,
       onMoveBoundary: opts?.onMoveBoundary,

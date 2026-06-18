@@ -188,6 +188,27 @@ export function coerceLokiArgs(args: Record<string, unknown>): Record<string, un
     quirkHit("loki-coerce:limit-bumped", { from: limit });
     coerced.limit = 50;
   }
+  // INVALID-LogQL repair: gpt-oss frequently emits an OR-chain of repeated line
+  // filters — `{sel} |= "a" or {sel} |= "b" or {sel} |= "c"` — to search several
+  // terms. That is NOT valid LogQL (`or` only joins label-filter expressions, not
+  // `{sel} |=` line-filter pipelines), so Loki rejects it with HTTP 400
+  // ("unexpected {") and the gather comes back with ZERO log observations →
+  // "no evidence gathered" for every log-based hypothesis. Collapse the chain into
+  // a single regex line filter `{sel} |~ "a|b|c"`, which is the correct equivalent.
+  const logql = typeof coerced.logql === "string" ? coerced.logql.trim() : "";
+  const orChain = /^(\{[^}]*\})\s*\|=\s*"([^"]*)"((?:\s+or\s+\{[^}]*\}\s*\|=\s*"[^"]*")+)$/;
+  const m = logql.match(orChain);
+  if (m) {
+    const selector = m[1];
+    const terms = [m[2], ...[...m[3].matchAll(/\|=\s*"([^"]*)"/g)].map((x) => x[1])];
+    const pattern = [...new Set(terms.filter(Boolean))]
+      .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join("|");
+    if (pattern) {
+      coerced.logql = `${selector} |~ "${pattern}"`;
+      quirkHit("loki-coerce:or-chain-to-regex", { terms: terms.length });
+    }
+  }
   return coerced;
 }
 

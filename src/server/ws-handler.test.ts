@@ -718,6 +718,9 @@ describe("handleClientMessage — orchestrator_investigate", () => {
     clearStackCaches(S);
     const deps = mockDeps();
     (deps.config as any).agent.autonomousInvestigationEnabled = true;
+    // The Consul runbook declares `appliesToServiceMetric: consul_health_service_status`.
+    // This service's discovered metric matches → the runbook IS relevant and gets injected.
+    (deps.config as any).services = [{ name: "payments-api", metrics: [{ query: 'consul_health_service_status{service_name="payments-api"}', description: "consul health" }], logLabels: {} }];
     const ctx = mockCtx();
     const skill = {
       id: "consul",
@@ -726,6 +729,7 @@ describe("handleClientMessage — orchestrator_investigate", () => {
       alerts: [],
       tags: ["consul"],
       scope: ["investigation"],
+      appliesToServiceMetric: "consul_health_service_status",
       filePath: "skills/consul.md",
       body: "Bare-metal Consul services have no k8s Deployment.",
     };
@@ -770,6 +774,37 @@ describe("handleClientMessage — orchestrator_investigate", () => {
         skillContext,
         skills: [skill],
       }),
+    );
+  });
+
+  it("does NOT inject the Consul runbook for a k8s service (no consul_health metric)", async () => {
+    clearStackCaches(S);
+    const deps = mockDeps();
+    (deps.config as any).agent.autonomousInvestigationEnabled = true;
+    // k8s service — its discovered metric is kube_deployment, not consul_health,
+    // so the runbook's `appliesToServiceMetric` does NOT match → it is filtered out.
+    (deps.config as any).services = [{ name: "web-frontend", metrics: [{ query: 'kube_deployment_status_replicas{deployment="web-frontend"}', description: "replicas" }], logLabels: {} }];
+    const ctx = mockCtx();
+    const consulSkill = { id: "consul", title: "Consul Bare Metal", services: [], alerts: [], tags: ["consul", "bare-metal"], scope: ["investigation"], appliesToServiceMetric: "consul_health_service_status", filePath: "skills/consul.md", body: "Bare-metal Consul services..." };
+    deps.skillStore = {
+      getAllForScopeEnabled: vi.fn(() => [consulSkill]),
+      formatForPrompt: vi.fn(() => "## Team Knowledge (Skills)\n..."),
+    } as any;
+    (deps.db.getInvestigation as ReturnType<typeof vi.fn>).mockReturnValue({
+      id: "inv_k8s", service: "web-frontend", query: "web-frontend down", status: "complete",
+      report: JSON.stringify({ summary: "web-frontend down", timeRange: { from: "2026-06-09T00:00:00Z", to: "2026-06-09T01:00:00Z" } }),
+    });
+    const orchestrate = vi.fn().mockResolvedValue({ outcome: "exhausted", hypotheses: [], evidence: [], trace: [], stats: { moves: 0, toolCalls: 0, tokensSpent: 0, strikes: 0, depth: 0, subagents: 0, elapsedMs: 0 } });
+    (createMastraAdapters as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      chatAgent: { chat: vi.fn() }, investigationAgent: { investigate: vi.fn() }, discoverAgent: undefined, orchestrate, refineReport: vi.fn().mockResolvedValue(null),
+    });
+
+    await callHandler({ type: "orchestrator_investigate", investigationId: "inv_k8s" }, vi.fn(), deps, ctx);
+
+    // The only skill (Consul) is filtered out for a k8s service → no skillContext.
+    expect(orchestrate).toHaveBeenCalledWith(
+      "web-frontend down",
+      expect.objectContaining({ skillContext: undefined, skills: undefined }),
     );
   });
 });

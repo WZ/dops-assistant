@@ -88,7 +88,7 @@ export const ParallelEvidenceSchema = z.object({
 export const HypothesisPredictionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("metric-threshold"), metric: z.string(), op: z.enum([">", "<", ">=", "<="]), value: z.number() }),
   z.object({ kind: z.literal("log-pattern"), pattern: z.string(), present: z.boolean().optional() }),
-  z.object({ kind: z.literal("infra-status"), resource: z.string().optional(), status: z.string() }),
+  z.object({ kind: z.literal("infra-status"), resource: z.string().optional(), status: z.string(), present: z.boolean().optional() }),
   z.object({ kind: z.literal("change-in-window"), withinMinutesBefore: z.number() }),
 ]);
 

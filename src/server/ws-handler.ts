@@ -610,19 +610,47 @@ async function handleOrchestratorInvestigate(
   neighbors.delete(investigation.service);
   const dependencies = [...neighbors];
 
-  // Stack-level team knowledge for the decide-move brain. Unlike a per-query
-  // investigation, the orchestrator explores freely, so inject ALL enabled
-  // investigation-scoped skills (the discovery-style getAllForScope) rather than
-  // token-matching — e.g. the bare-metal/Consul runbook, so the agent doesn't
-  // mistake a Consul service's missing k8s Deployment for the root cause.
+  // Stack-level team knowledge for the decide-move brain. The orchestrator
+  // explores freely, so inject the enabled investigation-scoped skills as
+  // always-on context.
+  // Generic skill targeting: a skill that declares `appliesToServiceMetric` is
+  // only eligible when the incident service's discovered metric queries contain
+  // that substring. This keeps infra-type knowledge (e.g. the Consul health
+  // metric) in the skill's frontmatter, not hardcoded in the engine. Untargeted
+  // skills are always eligible.
+  const incidentEntry = allServices.find((s) => s.name === investigation.service);
+  const incidentMetricQueries = (incidentEntry?.metrics ?? []).map((mtr) => (mtr.query ?? "").toLowerCase());
   let skillContext: string | undefined;
   let investigationSkills: Skill[] | undefined;
   if (deps.skillStore) {
-    const skills = deps.skillStore.getAllForScopeEnabled("investigation", deps.db.getDisabledSkills(stackId));
+    // Relevance-filter the full scoped set BEFORE capping: a skill that declares
+    // appliesToServiceMetric is kept only when the incident service's metrics
+    // match it. Then cap to maxPerQuery, but order service-targeted skills FIRST
+    // so the cap can never drop a matched infra skill (the bug that hid the k8s
+    // health-gate from ingestion-server).
+    const relevant = deps.skillStore
+      .getAllForScopeEnabled("investigation", deps.db.getDisabledSkills(stackId))
+      .filter((skill) => {
+        if (!skill.appliesToServiceMetric) return true;
+        const needle = skill.appliesToServiceMetric.toLowerCase();
+        return incidentMetricQueries.some((q) => q.includes(needle));
+      });
+    relevant.sort((a, b) => Number(!!b.appliesToServiceMetric) - Number(!!a.appliesToServiceMetric));
+    const skills = relevant.slice(0, deps.skillStore.maxPerQuery);
     if (skills.length > 0) {
       skillContext = deps.skillStore.formatForPrompt(skills);
       investigationSkills = skills;
     }
+    logger.debug(
+      {
+        stackId,
+        service: investigation.service,
+        incidentMetricQueries,
+        matchedSkills: skills.map((s) => ({ id: s.id, applies: s.appliesToServiceMetric ?? null })),
+        skillContextChars: skillContext?.length ?? 0,
+      },
+      "orchestrator: investigation skill injection",
+    );
   }
 
   const abort = new AbortController();
@@ -656,7 +684,7 @@ async function handleOrchestratorInvestigate(
       await runOrchestratorStreamed(
         msg.investigationId,
         focus,
-        { timeRange, ctx: { incidentTime: timeRange?.from }, dependencies, incidentService: investigation.service, knownServices: allServices.map((s) => s.name), signal: abort.signal, lead, skillContext, skills: investigationSkills },
+        { timeRange, ctx: { incidentTime: timeRange?.from }, dependencies, incidentService: investigation.service, knownServices: allServices.map((s) => s.name), incidentServiceMetrics: incidentMetricQueries, signal: abort.signal, lead, skillContext, skills: investigationSkills },
         agents.orchestrate,
         persistingSend,
         registry,
@@ -918,7 +946,7 @@ async function handleOrchestratorAccept(
 async function runOrchestratorStreamed(
   investigationId: string,
   focus: string,
-  opts: { timeRange?: { from: string; to: string }; ctx?: { incidentTime?: string }; dependencies?: string[]; incidentService?: string; knownServices?: string[]; signal?: AbortSignal; lead?: string; skillContext?: string; skills?: Skill[] },
+  opts: { timeRange?: { from: string; to: string }; ctx?: { incidentTime?: string }; dependencies?: string[]; incidentService?: string; knownServices?: string[]; incidentServiceMetrics?: string[]; signal?: AbortSignal; lead?: string; skillContext?: string; skills?: Skill[] },
   orchestrate: StackAgents["orchestrate"],
   send: (m: ServerMessage) => void,
   registry: OrchestratorRunRegistry,
@@ -933,6 +961,7 @@ async function runOrchestratorStreamed(
       dependencies: opts.dependencies,
       incidentService: opts.incidentService,
       knownServices: opts.knownServices,
+      incidentServiceMetrics: opts.incidentServiceMetrics,
       signal: opts.signal,
       lead: opts.lead,
       skillContext: opts.skillContext,

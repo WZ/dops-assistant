@@ -80,3 +80,23 @@ describe("coerceLokiArgs — direction/limit", () => {
     expect(out.limit).toBe(100);
   });
 });
+
+describe("coerceLokiArgs — invalid OR-chain LogQL repair", () => {
+  // gpt-oss emits `{sel} |= "a" or {sel} |= "b" or {sel} |= "c"` to search multiple
+  // terms, which is invalid LogQL → Loki HTTP 400 → zero log evidence gathered.
+  // Collapse it into a single regex line filter.
+  it("collapses a repeated-selector OR-chain into one regex line filter", () => {
+    const out = coerceLokiArgs({
+      direction: "backward",
+      limit: 50,
+      logql: '{container_name="svc"} |= "replicas" or {container_name="svc"} |= "scale" or {container_name="svc"} |= "deployment"',
+    });
+    expect(out.logql).toBe('{container_name="svc"} |~ "replicas|scale|deployment"');
+  });
+
+  it("dedupes repeated terms and preserves a single valid line filter untouched", () => {
+    expect(coerceLokiArgs({ logql: '{app="x"} |= "err" or {app="x"} |= "err"' }).logql).toBe('{app="x"} |~ "err"');
+    expect(coerceLokiArgs({ logql: '{app="x"} |= "error"' }).logql).toBe('{app="x"} |= "error"'); // single filter: no rewrite
+    expect(coerceLokiArgs({ logql: '{app="x"} |~ "a|b"' }).logql).toBe('{app="x"} |~ "a|b"'); // already regex: untouched
+  });
+});

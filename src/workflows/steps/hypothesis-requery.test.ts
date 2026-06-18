@@ -97,6 +97,22 @@ describe("planPredictionQuery", () => {
     expect(plan!.prompt).toContain("T2");
   });
 
+  it("adds a generic aggregation hint for a bare metric selector so the gather gets a usable value", () => {
+    const plan = planPredictionQuery(
+      hyp({ kind: "metric-threshold", metric: "consul_health_service_status", op: "<", value: 1 }),
+    );
+    expect(plan!.role).toBe("metrics");
+    expect(plan!.prompt).toMatch(/bare metric selector/i);
+    expect(plan!.prompt).toMatch(/aggregate it to the one series/i);
+  });
+
+  it("does NOT add the aggregation hint when the metric is already aggregated", () => {
+    const plan = planPredictionQuery(
+      hyp({ kind: "metric-threshold", metric: 'max by (service_name) (consul_health_service_status{status="passing"})', op: "<", value: 1 }),
+    );
+    expect(plan!.prompt).not.toMatch(/bare metric selector/i);
+  });
+
   it("maps log-pattern to the logs role and reflects present/absent", () => {
     const present = planPredictionQuery(hyp({ kind: "log-pattern", pattern: "OOMKilled" }));
     expect(present!.role).toBe("logs");
@@ -114,6 +130,13 @@ describe("planPredictionQuery", () => {
     expect(plan!.phase).toBe("infra");
     expect(plan!.prompt).toContain("checkout-api");
     expect(plan!.prompt).toContain("CrashLoopBackOff");
+  });
+
+  it("infra-status present:false asks the gather to confirm an absence (scaled to zero / deleted)", () => {
+    const plan = planPredictionQuery(hyp({ kind: "infra-status", resource: "vllm-bench", status: "running", present: false }));
+    expect(plan!.role).toBe("infrastructure");
+    expect(plan!.prompt).toMatch(/ABSENT/);
+    expect(plan!.prompt).toMatch(/zero replicas|no running pods|does not exist/i);
   });
 
   it("maps change-in-window to the changes role and includes incident onset", () => {

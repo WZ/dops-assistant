@@ -20,6 +20,31 @@ export interface SkillMetadata {
   alerts: string[];
   tags: string[];
   scope: SkillScope[];
+  /** Optional generic targeting: this skill is only eligible for a service
+   *  whose discovered metric queries contain this substring (case-insensitive).
+   *  Keeps infra-type knowledge (e.g. a Consul health metric) in the skill,
+   *  not hardcoded in the engine. Untargeted skills (undefined) are always eligible. */
+  appliesToServiceMetric?: string;
+  /** Optional infra-agnostic engine metadata (read by the orchestrator so it
+   *  carries NO infra literals). All are scoped to a matched investigation skill;
+   *  `$service` is substituted with the incident service name.
+   *  - healthySignal: a PromQL that returns ≥1 when the service is HEALTHY on its
+   *    primary signal. The confirm-gate evaluates it; healthy → force inconclusive.
+   *  - identityHint: one-line steer prepended to the decide-move prompt.
+   *  - incompatibleClaims: a regex of conclusion text that contradicts this
+   *    service's infra type (the service-type guard rejects a confirm matching it). */
+  healthySignal?: string;
+  /** PromQL that returns ≥1 when the service is DEFINITELY failing on its primary
+   *  signal (e.g. consul status="critical", replicas unavailable). The deterministic
+   *  failure-floor: if the run would otherwise give up without a confirm while this
+   *  fires, the engine confirms the primary-signal failure — so a genuinely-broken
+   *  service is never missed to LLM variance. $service substituted. */
+  failureSignal?: string;
+  /** Human-readable root cause to report when failureSignal fires (the floor's
+   *  confirmed cause). $service substituted. Keeps the infra wording in the skill. */
+  failureCause?: string;
+  identityHint?: string;
+  incompatibleClaims?: string;
   filePath: string;
 }
 
@@ -50,6 +75,11 @@ export interface SkillStoreConfig {
 /** Derive a URL-safe id from a filename (strip extension, lowercase). */
 function filenameToId(filename: string): string {
   return basename(filename, extname(filename)).toLowerCase().replace(/[^a-z0-9-]/g, "-");
+}
+
+/** Trimmed non-empty string, else undefined — for optional frontmatter fields. */
+function optStr(x: unknown): string | undefined {
+  return typeof x === "string" && x.trim() ? x.trim() : undefined;
 }
 
 /** Validate and normalize explicit skill ids before deriving on-disk paths. */
@@ -129,6 +159,12 @@ export class SkillStore {
           alerts: Array.isArray(data.alerts) ? data.alerts.map(String) : [],
           tags: Array.isArray(data.tags) ? data.tags.map(String) : [],
           scope,
+          appliesToServiceMetric: optStr(data.appliesToServiceMetric),
+          healthySignal: optStr(data.healthySignal),
+          failureSignal: optStr(data.failureSignal),
+          failureCause: optStr(data.failureCause),
+          identityHint: optStr(data.identityHint),
+          incompatibleClaims: optStr(data.incompatibleClaims),
           filePath,
           body: content.trim(),
         });
@@ -192,15 +228,16 @@ export class SkillStore {
     return scored.slice(0, this.maxPerQuery).map((s) => s.skill);
   }
 
-  /** Return all skills whose scope includes the given target.
-   *  Unlike search(), this does NOT require service/alert/tag matching —
-   *  it returns every skill scoped to the target. Used by discovery
-   *  when there's no specific service/alert context to match against.
-   *  Results are sorted by title for deterministic ordering, capped by maxPerQuery. */
+  /** Return ALL skills whose scope includes the given target, sorted by title.
+   *  Unlike search(), this does NOT require service/alert/tag matching.
+   *  NOTE: intentionally NOT capped by maxPerQuery — capping here (by title sort)
+   *  would drop service-targeted skills before the caller's appliesToServiceMetric
+   *  relevance filter runs. Callers narrow (by appliesToServiceMetric) and then
+   *  cap themselves, keeping targeted skills (see ws-handler). */
   getAllForScope(target: SkillScope): Skill[] {
     const matching = filterSkillsByScope([...this.skills.values()], target);
     matching.sort((a, b) => a.title.localeCompare(b.title));
-    return matching.slice(0, this.maxPerQuery);
+    return matching;
   }
 
   /** Like search() but excludes disabled skills. Used in per-stack contexts. */
@@ -226,7 +263,7 @@ export class SkillStore {
   /** Save a skill (create or update). Returns the saved skill. */
   async save(
     id: string | undefined,
-    frontmatter: { title: string; services: string[]; alerts: string[]; tags: string[]; scope?: SkillScope[] },
+    frontmatter: { title: string; services: string[]; alerts: string[]; tags: string[]; scope?: SkillScope[]; appliesToServiceMetric?: string; healthySignal?: string; failureSignal?: string; failureCause?: string; identityHint?: string; incompatibleClaims?: string },
     body: string,
   ): Promise<Skill> {
     const skillId = id
@@ -245,6 +282,12 @@ export class SkillStore {
       alerts: frontmatter.alerts,
       tags: frontmatter.tags,
       scope,
+      ...(frontmatter.appliesToServiceMetric ? { appliesToServiceMetric: frontmatter.appliesToServiceMetric } : {}),
+      ...(frontmatter.healthySignal ? { healthySignal: frontmatter.healthySignal } : {}),
+      ...(frontmatter.failureSignal ? { failureSignal: frontmatter.failureSignal } : {}),
+      ...(frontmatter.failureCause ? { failureCause: frontmatter.failureCause } : {}),
+      ...(frontmatter.identityHint ? { identityHint: frontmatter.identityHint } : {}),
+      ...(frontmatter.incompatibleClaims ? { incompatibleClaims: frontmatter.incompatibleClaims } : {}),
     });
 
     await writeFile(filePath, content, "utf-8");
@@ -256,6 +299,12 @@ export class SkillStore {
       alerts: frontmatter.alerts,
       tags: frontmatter.tags,
       scope,
+      appliesToServiceMetric: frontmatter.appliesToServiceMetric?.trim() || undefined,
+      healthySignal: frontmatter.healthySignal?.trim() || undefined,
+      failureSignal: frontmatter.failureSignal?.trim() || undefined,
+      failureCause: frontmatter.failureCause?.trim() || undefined,
+      identityHint: frontmatter.identityHint?.trim() || undefined,
+      incompatibleClaims: frontmatter.incompatibleClaims?.trim() || undefined,
       filePath,
       body,
     };

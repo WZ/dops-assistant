@@ -49,8 +49,11 @@ export type HypothesisPrediction =
   | { kind: "metric-threshold"; metric: string; op: ">" | "<" | ">=" | "<="; value: number }
   /** A log pattern is present (or, with present:false, absent). */
   | { kind: "log-pattern"; pattern: string; present?: boolean }
-  /** An infra resource is in a given status, e.g. checkout-api OOMKilled. */
-  | { kind: "infra-status"; resource?: string; status: string }
+  /** An infra resource is in a given status, e.g. checkout-api OOMKilled.
+   *  With present:false the prediction asserts the status/resource is ABSENT —
+   *  e.g. "no running pod / scaled to zero / deleted" — which a normal threshold
+   *  can't confirm (the runtime signal vanishes when the resource is gone). */
+  | { kind: "infra-status"; resource?: string; status: string; present?: boolean }
   /** A change (deploy/MR) landed within N minutes before the incident. */
   | { kind: "change-in-window"; withinMinutesBefore: number };
 
@@ -133,7 +136,15 @@ export function evaluatePrediction(
         if (wantResource && !normalize(o.subject).includes(wantResource)) return false;
         return normalize(o.text ?? "").includes(wantStatus) || normalize(o.subject).includes(wantStatus);
       });
-      return matches.length > 0 ? "satisfied" : "absent";
+      const expectPresent = prediction.present !== false;
+      if (expectPresent) return matches.length > 0 ? "satisfied" : "absent";
+      // present:false → predicting the status/resource is ABSENT (scaled to zero,
+      // no running pod, deleted). Mirror log-pattern: an absence only CONFIRMS if
+      // we actually gathered infra evidence to judge against — with none, the
+      // query may simply not have run, so it's unknown, not confirmed.
+      const haveInfra = observations.some((o) => o.phase === "infra");
+      if (!haveInfra) return "absent";
+      return matches.length > 0 ? "contradicted" : "satisfied";
     }
     case "change-in-window": {
       const changes = observations.filter((o) => o.phase === "changes" && o.timestamp);

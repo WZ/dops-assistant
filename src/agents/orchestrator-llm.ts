@@ -148,7 +148,7 @@ Moves — emit EXACTLY ONE as a single JSON object (no prose, no code fence):
     add a candidate cause with a CHECKABLE prediction. PREDICTION is one of:
       {"kind":"metric-threshold","metric":"<name>","op":">"|"<"|">="|"<=","value":<number>}
       {"kind":"log-pattern","pattern":"<substring>","present":true|false}
-      {"kind":"infra-status","resource":"<name>","status":"<e.g. OOMKilled|FailedScheduling>"}
+      {"kind":"infra-status","resource":"<name>","status":"<e.g. OOMKilled|FailedScheduling|running>","present":true|false}
       {"kind":"change-in-window","withinMinutesBefore":<number>}
 - {"move":"query","target":<hypothesis index>}   gather read-only evidence for that hypothesis's prediction.
 - {"move":"test","target":<hypothesis index>}     score that hypothesis against gathered evidence.
@@ -169,7 +169,9 @@ Rules:
 - After a follow-cause or subagent returns findings, those findings are your BEST lead. Immediately hypothesize the specific cause they point to (with a checkable prediction) and test it — never stop right after following without turning the finding into a tested hypothesis.
 - CROSS-SERVICE CAUSES NEED A FOLLOW-CAUSE: observing that a dependency is unhealthy is only CORRELATIONAL. To conclude that a dependency caused this incident you MUST follow-cause into it first and establish the failure there — you cannot confirm "caused by <other service>" from the incident service's metrics alone.
 - GROUND EVERY CLAIM IN OBSERVED EVIDENCE: a hypothesis/rationale may only state metric values, replica counts, pod statuses, or service names you ACTUALLY saw in gathered evidence. Never invent specifics — do NOT write "1/2 replicas ready", "OOMKilled", or name a service you did not observe in the evidence. If you didn't query it, you can't claim it. A plausible-sounding story with numbers you didn't measure is a FALSE confirmation, not a root cause.
-- DON'T ASSUME KUBERNETES: a service may run outside k8s (Consul-registered, a VM, an external endpoint). The absence of a k8s Deployment/Pod for a service is NOT automatically the root cause — only conclude "not deployed / deployment missing" if the evidence shows the service IS a k8s workload whose Deployment genuinely vanished (e.g. kube_deployment_* metrics existed before and are now gone). If a service has no k8s objects but is monitored elsewhere (Consul/up{}/health checks), investigate THAT health signal instead of reporting "not deployed".
+- DON'T ASSUME A DEPLOYMENT PLATFORM: a service may run on any of several platforms (a container orchestrator, a registered bare-metal/VM process, an external endpoint). Determine the service's actual identity and primary health signal from the gathered evidence and the injected team-knowledge (Skills) BEFORE forming hypotheses. Do NOT conclude "not deployed / missing" just because one platform's objects are absent — the service may be monitored via a different signal; investigate THAT signal. The injected Skills tell you which signal applies to this service.
+- VERIFYING AN ABSENCE (scaled to zero / no replicas / not running / deleted): the confirming signal is the ABSENCE of something, which a threshold over a RUNTIME metric cannot catch — that metric vanishes when the resource is at zero, so the gather returns no data and the cause can never be confirmed. Predict it a verifiable way instead: (a) over a STATE metric that still reports a value at zero (predict it < 1); or (b) assert the absence explicitly with present:false — e.g. {"kind":"infra-status","resource":"<svc>","status":"running","present":false}. Never predict an absence over a runtime metric that disappears at zero. The injected Skills give the exact state metric for this service's platform.
+- IDLE IS NOT FAILING: a rate / ratio / percentage / throughput cause ("0% success rate", "high error rate", "queries returning zero results", "request rate dropped") is only valid if you gathered evidence of NON-ZERO traffic. Zero requests / queries / throughput means the service is IDLE, not broken — an absent denominator is not a failure. If volume is ~0 and no other signal is abnormal, conclude inconclusive rather than confirming a rate-based cause.
 - Be decisive — your budget is limited. Prefer the most likely cause first.
 Output ONLY the JSON object for your chosen move.`;
 
@@ -276,6 +278,11 @@ export interface CreateLlmDecideMoveOptions {
   retryBackoffMs?: number;
   /** Team-knowledge skills (already formatted) appended to the system prompt. */
   skillContext?: string;
+  /** One-line incident-service identity steer prepended to the decide-move
+   *  prompt. Supplied by the adapter from the matched investigation skill's
+   *  declared `identityHint` ($service already substituted) — the engine holds
+   *  no infra literals. Undefined when no matched skill declared one. */
+  identityHint?: string;
 }
 
 /**
@@ -310,11 +317,23 @@ export function createLlmDecideMove(
     });
 
   const backoffMs = opts.retryBackoffMs ?? 250;
-  // Append team-knowledge skills to the system rules so stack-level context (e.g.
-  // "these services are bare-metal Consul, not k8s") informs every move choice.
-  const systemPrompt = opts.skillContext
-    ? `${SYSTEM_PROMPT}\n\n${wrapUntrusted("team_skills", opts.skillContext)}`
-    : SYSTEM_PROMPT;
+  // Append team-knowledge skills to the system rules so stack-level, infra-type
+  // context (declared in the skills) informs every move choice.
+  let systemPrompt = opts.identityHint ? `${SYSTEM_PROMPT}\n\n${opts.identityHint}` : SYSTEM_PROMPT;
+  if (opts.skillContext) {
+    systemPrompt = `${systemPrompt}\n\n${wrapUntrusted("team_skills", opts.skillContext)}`;
+  }
+  logger.debug(
+    {
+      hasIdentityHint: !!opts.identityHint,
+      hasSkillContext: !!opts.skillContext,
+      skillContextChars: opts.skillContext?.length ?? 0,
+      // skill section headers present in the injected context (e.g. "### Skill: Consul Bare-Metal Service Investigation")
+      skillTitles: (opts.skillContext?.match(/### Skill: [^\n]+/g) ?? []),
+      systemPromptChars: systemPrompt.length,
+    },
+    "decide-move: system prompt assembled",
+  );
   return async (state) => {
     const basePrompt = buildStatePrompt(opts.focus, state, opts.guards);
     // Corrective retries on a bad reply. The model runs at temperature 0, so
@@ -384,6 +403,19 @@ export interface RunAutonomousOrchestratorOptions {
   /** All known service names — the cross-service guard checks these too, so a
    *  false-confirm blaming another service is caught even with an empty dep graph. */
   knownServices?: string[];
+  /** The incident service's discovered identity metric queries (context only). */
+  incidentServiceMetrics?: string[];
+  /** Identity steer for the decide-move prompt (from the matched skill's
+   *  identityHint, $service substituted). */
+  identityHint?: string;
+  /** incompatibleClaims regexes from the matched investigation skills — the
+   *  service-type guard rejects a confirm matching any. */
+  incompatibleClaims?: string[];
+  /** Confirm-gate: returns true when the service reads healthy on its primary
+   *  signal (from the matched skill's healthySignal). Adapter-wired query. */
+  checkHealthy?: () => Promise<boolean | null>;
+  /** Failure-floor: grounded failure-cause text when the service is definitely failing. */
+  checkFailing?: () => Promise<string | null>;
   /** Interactive strike-limit hook (increment 5). Absent → the strike limit
    *  stops directly. Wired by the orchestrate adapter to the WS pause card. */
   onOperatorPause?: (
@@ -396,9 +428,8 @@ export interface RunAutonomousOrchestratorOptions {
   /** Follow a lead: an optional operator hunch that seeds the run from move 1. */
   initialLead?: string;
   /** Team-knowledge skills (already formatted) injected into the decide-move
-   *  system prompt so the agent has stack-level runbook context — e.g. that
-   *  certain services are bare-metal Consul services with no k8s Deployment, so
-   *  "deployment missing" is the wrong conclusion for them. */
+   *  system prompt so the agent has stack-level, infra-type runbook context —
+   *  the skills declare the right framing for each service's platform. */
   skillContext?: string;
 }
 
@@ -433,6 +464,7 @@ export async function runAutonomousOrchestrator(
     llmCallMs: opts.llmCallMs,
     onUsage: addTokens,
     skillContext: opts.skillContext,
+    identityHint: opts.identityHint,
   });
 
   return runOrchestrator({
@@ -447,6 +479,10 @@ export async function runAutonomousOrchestrator(
     dependencies: opts.dependencies,
     incidentService: opts.incidentService,
     knownServices: opts.knownServices,
+    incidentServiceMetrics: opts.incidentServiceMetrics,
+    incompatibleClaims: opts.incompatibleClaims,
+    checkHealthy: opts.checkHealthy,
+    checkFailing: opts.checkFailing,
     onOperatorPause: opts.onOperatorPause,
     signal: opts.signal,
     onMoveBoundary: opts.onMoveBoundary,

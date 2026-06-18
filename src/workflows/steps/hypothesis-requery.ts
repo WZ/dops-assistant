@@ -92,12 +92,23 @@ export function planPredictionQuery(
   const ret = (phase: Phase) => `Return ONLY JSON: ${PHASE_META[phase].extractorSchema}`;
 
   switch (p.kind) {
-    case "metric-threshold":
+    case "metric-threshold": {
+      // A bare metric selector with no aggregation function can return many
+      // series (one per label combination), which the extractor can't reduce to
+      // a single value → the gather comes back with no usable observation and the
+      // keystone can never verify the hypothesis. If the prediction's metric has
+      // no aggregation operator, tell the gather to aggregate it down to the one
+      // series for the affected service so it gets a clean value.
+      const hasAggregation = /\b(sum|max|min|avg|count|quantile|topk|bottomk|group|stddev|stdvar)\b/i.test(p.metric);
+      const aggregateHint = !hasAggregation
+        ? `\nNOTE: "${p.metric}" looks like a bare metric selector — querying it directly may return many series (one per label combination) with no single usable value. If so, aggregate it to the one series for the service named in the hypothesis (e.g. max by (<the service's identity label>) (<metric>{<service selector>})) and report that single value.`
+        : "";
       return {
         role: "metrics",
         phase: "metrics",
-        prompt: `${preamble}\nPrediction to test: metric "${p.metric}" is ${p.op} ${p.value} during the incident.${window}\nRun ONE or TWO targeted queries for that exact metric over the window and report its actual value(s). Do not query unrelated metrics.\n${ret("metrics")}`,
+        prompt: `${preamble}\nPrediction to test: metric "${p.metric}" is ${p.op} ${p.value} during the incident.${window}\nRun ONE or TWO targeted queries for that exact metric over the window and report its actual value(s). Do not query unrelated metrics.${aggregateHint}\n${ret("metrics")}`,
       };
+    }
     case "log-pattern": {
       const expectPresent = p.present !== false;
       return {
@@ -106,12 +117,18 @@ export function planPredictionQuery(
         prompt: `${preamble}\nPrediction to test: log pattern "${p.pattern}" is ${expectPresent ? "PRESENT" : "ABSENT"} during the incident.${window}\nSearch the logs for that exact pattern and report matching lines (or confirm none found). One or two targeted queries only.\n${ret("logs")}`,
       };
     }
-    case "infra-status":
+    case "infra-status": {
+      const expectPresent = p.present !== false;
+      const resource = p.resource ?? "(the affected resource)";
+      const ask = expectPresent
+        ? `resource "${resource}" has status "${p.status}".${window}\nQuery infrastructure/Kubernetes for that resource's status and report it.`
+        : `resource "${resource}" is ABSENT — not "${p.status}" (e.g. scaled to zero, no ready pods, or deleted).${window}\nQuery infrastructure/Kubernetes for that resource and report its actual state — explicitly report if it has zero replicas, no running pods, or does not exist.`;
       return {
         role: "infrastructure",
         phase: "infra",
-        prompt: `${preamble}\nPrediction to test: resource "${p.resource ?? "(the affected resource)"}" has status "${p.status}".${window}\nQuery infrastructure/Kubernetes for that resource's status and report it. One or two targeted queries only.\n${ret("infra")}`,
+        prompt: `${preamble}\nPrediction to test: ${ask} One or two targeted queries only.\n${ret("infra")}`,
       };
+    }
     case "change-in-window":
       return {
         role: "changes",

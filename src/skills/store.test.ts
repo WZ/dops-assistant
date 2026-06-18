@@ -192,6 +192,33 @@ Steps here`,
 
       expect(store.getAll()).toHaveLength(0);
     });
+
+    it("round-trips appliesToServiceMetric through save", async () => {
+      await store.save("targeted", {
+        title: "Targeted Skill",
+        services: [],
+        alerts: [],
+        tags: [],
+        appliesToServiceMetric: "consul_health_service_status",
+      }, "body");
+      expect(store.getById("targeted")!.appliesToServiceMetric).toBe("consul_health_service_status");
+    });
+  });
+
+  describe("appliesToServiceMetric", () => {
+    it("parses the field from frontmatter, defaulting to undefined when absent", async () => {
+      await writeFile(
+        join(dir, "targeted.md"),
+        `---\ntitle: Targeted\nservices: []\nalerts: []\ntags: []\nappliesToServiceMetric: consul_health_service_status\n---\nBody`,
+      );
+      await writeFile(
+        join(dir, "untargeted.md"),
+        `---\ntitle: Untargeted\nservices: []\nalerts: []\ntags: []\n---\nBody`,
+      );
+      await store.loadAll();
+      expect(store.getById("targeted")!.appliesToServiceMetric).toBe("consul_health_service_status");
+      expect(store.getById("untargeted")!.appliesToServiceMetric).toBeUndefined();
+    });
   });
 
   describe("delete", () => {
@@ -351,12 +378,16 @@ Body`,
       expect(inv[0]!.title).toBe("Investigation Only");
     });
 
-    it("getAllForScope respects maxPerQuery cap", async () => {
+    it("getAllForScope returns ALL scoped skills uncapped (callers cap after relevance-filtering)", async () => {
+      // Regression: previously getAllForScope sliced to maxPerQuery by title BEFORE
+      // the caller's appliesToServiceMetric filter, which silently dropped a
+      // service-targeted skill (the k8s investigation skill never reached
+      // ingestion-server). The cap now lives in the caller, after filtering.
       const smallStore = new SkillStore({ dir, maxPerQuery: 1, maxCharsPerSkill: 2000 });
       await writeFile(join(dir, "d1.md"), `---\ntitle: D1\nservices: []\nalerts: []\ntags: []\nscope: [discovery]\n---\nBody`);
       await writeFile(join(dir, "d2.md"), `---\ntitle: D2\nservices: []\nalerts: []\ntags: []\nscope: [discovery]\n---\nBody`);
       await smallStore.loadAll();
-      expect(smallStore.getAllForScope("discovery")).toHaveLength(1);
+      expect(smallStore.getAllForScope("discovery")).toHaveLength(2);
     });
 
     it("search with scope filters before relevance cap", async () => {
