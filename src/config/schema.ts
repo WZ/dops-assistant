@@ -183,8 +183,8 @@ const ObservabilitySchema = z.object({
 
 const SkillsSchema = z.object({
   dir: z.string().default("./skills"),
-  maxPerQuery: z.number().default(3),
-  maxCharsPerSkill: z.number().default(2000),
+  maxPerQuery: z.number().int().min(0).default(3),
+  maxCharsPerSkill: z.number().int().min(0).default(2000),
 });
 
 const BrandingSchema = z.object({

@@ -102,6 +102,14 @@ describe("evaluatePrediction", () => {
     // log-pattern present:false; never confirm an absence on a query that may
     // simply not have run).
     expect(evaluatePrediction({ kind: "infra-status", resource: "vllm-bench", status: "running", present: false }, [])).toBe("absent");
+
+    // Infra evidence exists but only about a DIFFERENT resource — the named one was
+    // never observed, so we can't tell "absent" from "the query didn't cover it" →
+    // unknown, NOT a false absence-confirmation.
+    const otherResourceOnly: NormalizedObservation[] = [
+      { phase: "infra", subject: "payments-api deployment", text: "3/3 replicas running" },
+    ];
+    expect(evaluatePrediction({ kind: "infra-status", resource: "vllm-bench", status: "running", present: false }, otherResourceOnly)).toBe("absent");
   });
 
   it("change-in-window: satisfied when a change lands within the window before the incident", () => {

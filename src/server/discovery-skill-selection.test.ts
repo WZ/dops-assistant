@@ -15,9 +15,10 @@ function skill(id: string, scope: Skill["scope"] = ["discovery"]): Skill {
   };
 }
 
-function store(skills: Skill[]): SkillStore {
+function store(skills: Skill[], maxPerQuery = 50): SkillStore {
   const byId = new Map(skills.map((s) => [s.id, s]));
   return {
+    maxPerQuery,
     getById: vi.fn((id: string) => byId.get(id)),
     getAllForScopeEnabled: vi.fn((target: string, disabledIds: Set<string>) =>
       skills.filter((s) => s.scope.includes(target as Skill["scope"][number]) && !disabledIds.has(s.id)),
@@ -52,5 +53,13 @@ describe("discovery skill resolution", () => {
     });
 
     expect(selected).toEqual([]);
+  });
+
+  it("caps the result at maxPerQuery (the discovery path must re-cap; getAllForScope no longer does)", () => {
+    const selected = resolveDiscoverySkills({
+      skillStore: store([skill("a"), skill("b"), skill("c"), skill("d")], 2),
+    });
+
+    expect(selected.map((s) => s.id)).toEqual(["a", "b"]);
   });
 });
