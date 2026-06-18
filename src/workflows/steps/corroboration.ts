@@ -144,7 +144,16 @@ export function evaluatePrediction(
       // query may simply not have run, so it's unknown, not confirmed.
       const haveInfra = observations.some((o) => o.phase === "infra");
       if (!haveInfra) return "absent";
-      return matches.length > 0 ? "contradicted" : "satisfied";
+      if (matches.length > 0) return "contradicted"; // resource IS in that status → absence refuted
+      // No match. Confirm the absence ONLY when the gather actually observed the
+      // named resource (proving the query covered it and it isn't in that status).
+      // If the resource was never mentioned in any infra observation, we can't tell
+      // "genuinely absent" from "the query didn't cover it" → unknown, not confirmed.
+      if (wantResource) {
+        const observedResource = observations.some((o) => o.phase === "infra" && normalize(o.subject).includes(wantResource));
+        return observedResource ? "satisfied" : "absent";
+      }
+      return "satisfied";
     }
     case "change-in-window": {
       const changes = observations.filter((o) => o.phase === "changes" && o.timestamp);

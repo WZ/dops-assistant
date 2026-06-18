@@ -20,5 +20,8 @@ export function resolveDiscoverySkills(input: DiscoverySkillResolutionInput): Sk
   if (!input.skillStore) return [];
 
   const disabledIds = getDisabledSkillIds(input);
-  return input.skillStore.getAllForScopeEnabled("discovery", disabledIds);
+  // Cap to maxPerQuery: getAllForScope no longer caps itself (the investigation
+  // path filters-then-caps), so the discovery path must re-cap here or it would
+  // inject every enabled discovery skill into the prompt (token bloat).
+  return input.skillStore.getAllForScopeEnabled("discovery", disabledIds).slice(0, input.skillStore.maxPerQuery);
 }
