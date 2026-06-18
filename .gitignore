@@ -68,3 +68,7 @@ data-demo/
 # Local scratch / working artifacts (e.g., quirk-snapshot observation files
 # captured by scripts/quirk-tally.sh)
 tmp/
+
+# Local-only ops helper that carries an internal host password — never commit.
+# (Remediate the script itself to read PASSWORD from env / use an SSH key.)
+scripts/enable-debug.sh
