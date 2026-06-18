@@ -229,6 +229,46 @@ describe("ProviderRegistry", () => {
       expect((parsed[0] as { name: string }).name).toBe("new-provider");
     });
 
+    // Regression: a YAML import (or any add) of a provider whose MCP server is
+    // unreachable used to block the request ~80s — each dead upstream waited
+    // out a Streamable-HTTP→SSE transport cascade twice. The filtered probe
+    // already returns the full tool set when enabledTools is undefined, so the
+    // second raw re-probe is pure waste. It must not be issued.
+    it("skips the redundant raw-tool re-probe when enabledTools is undefined", async () => {
+      mockListProviderTools.mockResolvedValue({});
+
+      const registry = new ProviderRegistry([], providersPath);
+      await registry.initialize();
+      mockListAllProviderTools.mockClear();
+
+      const info = await registry.add(makeConfig("no-enabled-tools", ["logs"]));
+
+      expect(mockListAllProviderTools).not.toHaveBeenCalled();
+      expect(info.status).toBe("error");
+      expect(info.toolCount).toBe(0);
+    });
+
+    // Regression: an unreachable upstream whose probe never settles must not
+    // hang the registration (and therefore the import request) forever. The
+    // probe is raced against PROBE_TIMEOUT_MS and the provider is persisted
+    // with an error status that the periodic reconnect ticker later heals.
+    it("bounds a never-settling probe with a timeout instead of hanging", async () => {
+      vi.useFakeTimers();
+      mockListProviderTools.mockReturnValue(new Promise(() => {}));
+
+      const registry = new ProviderRegistry([], providersPath);
+      await registry.initialize();
+
+      const addPromise = registry.add(makeConfig("dead-upstream", ["logs"]));
+      await vi.advanceTimersByTimeAsync(6_000);
+      const info = await addPromise;
+
+      expect(info.status).toBe("error");
+      expect(info.error).toMatch(/timed out/i);
+      expect(info.toolCount).toBe(0);
+      vi.useRealTimers();
+    });
+
     it("throws on duplicate name", async () => {
       const registry = new ProviderRegistry([makeConfig("grafana")], providersPath);
       await registry.initialize();

@@ -30,6 +30,46 @@ export function isMetricQueryToolName(name: string): boolean {
 const logger = createLogger();
 
 /**
+ * Upper bound on a single MCP tool-listing probe during registration.
+ *
+ * `createAndRegister` probes the upstream for its tool list to compute
+ * toolCount/status. When the upstream is unreachable, @mastra/mcp tries
+ * Streamable HTTP then falls back to SSE — each transport waiting out its own
+ * connect timeout — so a dead server can block ~20s per probe. The import
+ * confirm flow registers providers sequentially, so two dead servers stacked
+ * ~80s of dead air behind the UI's "Importing…" spinner.
+ *
+ * Capping each probe lets a dead server fail fast: the provider is still
+ * persisted (status "error"), and a later `reconnectTick` retries it (best-effort
+ * — that path runs the full `test()` and is NOT bounded by this constant, so a
+ * still-dead upstream costs the usual cascade there; it heals on whichever tick
+ * the upstream is reachable). A healthy server connects and lists tools well
+ * within this bound. The probe promise we lose the race to is abandoned, not
+ * awaited (Promise.race marks the loser handled, so a late rejection is silent).
+ */
+export const PROBE_TIMEOUT_MS = 5_000;
+
+/**
+ * Race a probe promise against {@link PROBE_TIMEOUT_MS}. On timeout, reject so
+ * the caller's catch reclassifies the provider as "error" instead of waiting
+ * out the full transport-fallback cascade. The timer is unref'd so it never
+ * keeps the process alive, and cleared when the probe wins.
+ */
+function withProbeTimeout<T>(probe: Promise<T>, name: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`MCP probe for ${name} timed out after ${PROBE_TIMEOUT_MS}ms`)),
+      PROBE_TIMEOUT_MS,
+    );
+    if (typeof (timer as { unref?: () => void }).unref === "function") {
+      (timer as { unref: () => void }).unref();
+    }
+  });
+  return Promise.race([probe, timeout]).finally(() => clearTimeout(timer));
+}
+
+/**
  * Resolve the Prometheus datasource UID from a metrics provider's tool set.
  * Called during initialization when the MCP session is fresh.
  */
@@ -647,12 +687,18 @@ export class ProviderRegistry {
 
     let toolNames: string[] = [];
     try {
-      const tools = await listProviderTools(provider);
+      const tools = await withProbeTimeout(listProviderTools(provider), config.name);
       toolCount = Object.keys(tools).length;
       toolNames = Object.keys(tools);
       status = "connected";
-      if (toolCount === 0 || provider.enabledTools !== undefined) {
-        const rawTools = await listAllProviderTools(provider);
+      // Only re-probe the raw (unfiltered) tool list when the provider has an
+      // explicit enabledTools selection — that's the only case where the
+      // filtered result above can hide tools. When enabledTools is undefined
+      // the filtered list already IS the raw list, so a second connect cycle
+      // is pure waste — and against an unreachable upstream it's a second
+      // ~20s transport-fallback cascade for nothing.
+      if (provider.enabledTools !== undefined) {
+        const rawTools = await withProbeTimeout(listAllProviderTools(provider), config.name);
         const rawToolNames = Object.keys(rawTools);
         toolCount = rawToolNames.length;
         toolNames = enabledToolNamesForProvider(provider, rawToolNames);

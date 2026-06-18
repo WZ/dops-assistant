@@ -21,6 +21,11 @@ interface ConfirmResult {
 
 type Phase = "paste" | "review" | "done";
 
+// Backstop so the import/validate buttons can never spin forever if the server
+// stalls (e.g. probing an unreachable MCP upstream). The server now bounds its
+// own per-provider probes, so this only fires in pathological cases.
+const IMPORT_TIMEOUT_MS = 45_000;
+
 interface YamlImportTabProps {
   onImported: () => void;
   onCancel: () => void;
@@ -69,6 +74,7 @@ export function YamlImportTab({ onImported, onCancel }: YamlImportTabProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ providers }),
+        signal: AbortSignal.timeout(IMPORT_TIMEOUT_MS),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -80,8 +86,12 @@ export function YamlImportTab({ onImported, onCancel }: YamlImportTabProps) {
       setDryRunResults(data.results);
       setOverwriteSet(new Set());
       setPhase("review");
-    } catch {
-      setNetworkError("Failed to reach server. Check your connection.");
+    } catch (err) {
+      setNetworkError(
+        err instanceof DOMException && err.name === "TimeoutError"
+          ? "Validation timed out. The server may be slow to reach a provider."
+          : "Failed to reach server. Check your connection.",
+      );
     } finally {
       setValidating(false);
     }
@@ -98,6 +108,7 @@ export function YamlImportTab({ onImported, onCancel }: YamlImportTabProps) {
           providers: parsedProviders,
           overwrite: Array.from(overwriteSet),
         }),
+        signal: AbortSignal.timeout(IMPORT_TIMEOUT_MS),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -108,8 +119,12 @@ export function YamlImportTab({ onImported, onCancel }: YamlImportTabProps) {
       setConfirmResults(data.results);
       setPhase("done");
       onImported();
-    } catch {
-      setNetworkError("Failed to reach server. Check your connection.");
+    } catch (err) {
+      setNetworkError(
+        err instanceof DOMException && err.name === "TimeoutError"
+          ? "Import timed out. The server may be slow to reach a provider."
+          : "Failed to reach server. Check your connection.",
+      );
     } finally {
       setConfirming(false);
     }
