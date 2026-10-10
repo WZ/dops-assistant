@@ -24,7 +24,7 @@ import { createGatherEvidence } from "../workflows/steps/hypothesis-requery.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("mastra-chat");
-import type { DiscoverOptions, IDiscoverAgent, OnToolCallEnriched, OnIteration } from "../types/agent-interfaces.js";
+import type { DiscoverOptions, IDiscoverAgent, OnToolCallEnriched, OnIteration, InvestigationResult, PhaseFindings } from "../types/agent-interfaces.js";
 import type { InvestigationTemplate } from "../config/schema.js";
 import type { ChatRequest, ChatResponse, ImageAttachment } from "../types/agent-types.js";
 import type { TokenUsage } from "../types/llm-types.js";
@@ -335,6 +335,14 @@ export class MastraChatAgentAdapter {
  * Phase progress callbacks (onPhase, onIteration) emit approximate progress
  * events so the frontend progress UI keeps working.
  */
+// Workflow step id → investigation phase whose findings it produces.
+const EVIDENCE_STEP_PHASES = [
+  ["metrics-evidence", "metrics"],
+  ["logs-evidence", "logs"],
+  ["infra-evidence", "infra"],
+  ["changes-evidence", "changes"],
+] as const;
+
 export class MastraInvestigationAdapter {
   private workflowConfig: WorkflowConfig;
 
@@ -355,7 +363,7 @@ export class MastraInvestigationAdapter {
     template?: InvestigationTemplate,
     readOnlyTools?: boolean,
     skills?: import("../skills/store.js").Skill[],
-  ): Promise<RcaReport> {
+  ): Promise<InvestigationResult> {
     const workflowConfig: WorkflowConfig = {
       ...this.workflowConfig,
       // Put the target service first so the post-synthesis step can reference it
@@ -449,7 +457,14 @@ export class MastraInvestigationAdapter {
       loopOutcome: output?.loopOutcome,
     };
 
-    return report;
+    const steps = (runResult as { steps?: Record<string, { output?: unknown }> }).steps ?? {};
+    const phaseFindings: PhaseFindings = {};
+    for (const [stepId, phase] of EVIDENCE_STEP_PHASES) {
+      const findings = steps[stepId]?.output;
+      if (findings) phaseFindings[phase] = findings;
+    }
+
+    return { ...report, phaseFindings };
   }
 }
 

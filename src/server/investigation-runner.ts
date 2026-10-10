@@ -15,7 +15,7 @@ import { ulid } from "ulid";
 import { createLogger } from "../logger.js";
 import type { Database } from "./db.js";
 import { confidencePercent } from "../lib/confidence.js";
-import type { IInvestigationAgent } from "../types/agent-interfaces.js";
+import type { IInvestigationAgent, PhaseFindings } from "../types/agent-interfaces.js";
 import type { RcaReport } from "../types/rca-types.js";
 import type { ServiceConfig, InvestigationTemplate } from "../config/schema.js";
 import type { SkillStore } from "../skills/store.js";
@@ -42,7 +42,7 @@ export interface InvestigationCallbacks {
   /** Called with total token usage at completion */
   onTotalUsage?(investigationId: string, inputTokens: number, outputTokens: number, durationMs: number): void;
   /** Called when investigation completes successfully */
-  onComplete?(investigationId: string, report: RcaReport): void;
+  onComplete?(investigationId: string, report: RcaReport, phaseFindings?: PhaseFindings): void;
   /** Called when investigation fails */
   onFailed?(investigationId: string, error: string): void;
 }
@@ -218,7 +218,7 @@ export class InvestigationRunner {
 
     try {
       // 4. Run investigation with wired callbacks
-      const report = await this.investigationAgent.investigate(
+      const { phaseFindings, ...report } = await this.investigationAgent.investigate(
         service, undefined, invId, onTokenUsage, message,
         // onToolCall
         (name, args, result, durationMs, error, phase) => {
@@ -314,6 +314,18 @@ export class InvestigationRunner {
         logger.info({ invId, service: service.name }, "Confidence gate: vague rootCause, forcing score to 0.3");
       }
 
+      // 5.6 Persist per-phase findings so a reopened investigation shows its evidence
+      try {
+        for (const [phase, findings] of Object.entries(phaseFindings ?? {})) {
+          const phaseId = `ph_${ulid()}`;
+          const failed = typeof findings === "object" && findings !== null && "error" in findings && !!(findings as { error?: unknown }).error;
+          this.db.createPhase({ id: phaseId, investigationId: invId, phase, status: failed ? "failed" : "complete" });
+          this.db.updatePhase(phaseId, { findings: JSON.stringify(findings), completed_at: new Date().toISOString() });
+        }
+      } catch (err) {
+        logger.warn({ err, invId }, "Failed to persist phase findings");
+      }
+
       // 6. Persist report and token usage
       const totalDurationMs = Date.now() - investigationStartMs;
       this.db.updateInvestigation(invId, { status: "complete", report: JSON.stringify(report) });
@@ -335,7 +347,7 @@ export class InvestigationRunner {
       });
 
       callbacks?.onTotalUsage?.(invId, totalTokens.inputTokens, totalTokens.outputTokens, totalDurationMs);
-      callbacks?.onComplete?.(invId, report);
+      callbacks?.onComplete?.(invId, report, phaseFindings);
 
       // Fire global completion handler (e.g. Slack notifications)
       try {

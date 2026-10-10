@@ -168,7 +168,7 @@ export type ServerMessage =
   | { type: "investigation:progress"; id: string; phase: string; step: string }
   | { type: "investigation:tool_call"; id: string; phase: string; tool: string; args: Record<string, unknown>; status: "calling" | "success" | "error"; result?: string; durationMs?: number }
   | { type: "investigation:iteration"; id: string; phase: string; iteration: number; maxIterations: number; description: string }
-  | { type: "investigation:complete"; id: string; report: unknown }
+  | { type: "investigation:complete"; id: string; report: unknown; phaseFindings?: Record<string, unknown> }
   | { type: "investigation:failed"; id: string; error: string }
   | { type: "deep_investigate:tool_call"; investigationId: string; tool: string; args: Record<string, unknown>; status: "calling" | "success" | "error" }
   // Deep mode (Step 3) lifecycle + a dedicated, structured progress stream

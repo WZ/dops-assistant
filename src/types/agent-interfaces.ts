@@ -31,6 +31,12 @@ export type OnIteration = (
   description: string,
 ) => void;
 
+/** Per-phase evidence-step output, keyed by phase (metrics/logs/infra/changes). */
+export type PhaseFindings = Partial<Record<"metrics" | "logs" | "infra" | "changes", unknown>>;
+
+/** RcaReport plus transient per-phase findings; callers persist them separately. */
+export type InvestigationResult = RcaReport & { phaseFindings?: PhaseFindings };
+
 export interface IInvestigationAgent {
   investigate(
     service: ServiceConfig,
@@ -45,7 +51,7 @@ export interface IInvestigationAgent {
     template?: InvestigationTemplate,
     readOnlyTools?: boolean,
     skills?: Skill[],
-  ): Promise<RcaReport>;
+  ): Promise<InvestigationResult>;
 }
 
 /**

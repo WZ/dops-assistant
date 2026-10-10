@@ -408,6 +408,11 @@ export function InvestigationPane({
       if (msg.type === "investigation:complete" && msg.id === investigationId) {
         setInvestigationStatus("complete");
         setReport(msg.report);
+        // Full per-phase findings win; the report's evidence lists below only fill gaps.
+        if (msg.phaseFindings) {
+          const findings = msg.phaseFindings;
+          setEvidence((prev) => ({ ...prev, ...findings }));
+        }
         const rpt = msg.report as Record<string, unknown> | null;
         if (rpt?.evidence) {
           const ev = rpt.evidence as Record<string, unknown>;

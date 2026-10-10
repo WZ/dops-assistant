@@ -30,6 +30,8 @@ function createMockDb(): Database {
     getInvestigation: vi.fn(),
     createEvent: vi.fn(),
     createMessage: vi.fn(),
+    createPhase: vi.fn(),
+    updatePhase: vi.fn(),
   } as unknown as Database;
 }
 
@@ -68,6 +70,39 @@ describe("InvestigationRunner", () => {
     expect(db.updateInvestigation).toHaveBeenCalledWith("inv_test_1", expect.objectContaining({ status: "complete" }));
   });
 
+  it("persists phase findings, keeps them out of the stored report, and passes them to onComplete", async () => {
+    const phaseFindings = {
+      metrics: { summary: "p99 up", observations: ["latency 900ms"] },
+      logs: { summary: "no logs", error: "loki timeout" },
+    };
+    const onComplete = vi.fn();
+    const runner = new InvestigationRunner({
+      db,
+      investigationAgent: { investigate: vi.fn().mockResolvedValue({ ...MOCK_REPORT, phaseFindings }) },
+    });
+    const report = await runner.run({
+      service: { name: "test-svc", metrics: [], logLabels: {} },
+      message: "test",
+      investigationId: "inv_pf",
+      callbacks: { onComplete },
+      source: "manual",
+    });
+
+    const created = vi.mocked(db.createPhase).mock.calls.map((c) => c[0]);
+    expect(created).toEqual([
+      expect.objectContaining({ investigationId: "inv_pf", phase: "metrics", status: "complete" }),
+      expect.objectContaining({ investigationId: "inv_pf", phase: "logs", status: "failed" }),
+    ]);
+    const updates = vi.mocked(db.updatePhase).mock.calls;
+    expect(updates[0]![0]).toBe(created[0]!.id);
+    expect(JSON.parse(updates[0]![1].findings!)).toEqual(phaseFindings.metrics);
+
+    expect(report).not.toHaveProperty("phaseFindings");
+    const stored = vi.mocked(db.updateInvestigation).mock.calls.find((c) => c[1].report)![1].report!;
+    expect(JSON.parse(stored)).not.toHaveProperty("phaseFindings");
+    expect(onComplete).toHaveBeenCalledWith("inv_pf", expect.not.objectContaining({ phaseFindings }), phaseFindings);
+  });
+
   it("calls onComplete callback on success", async () => {
     const onComplete = vi.fn();
     const runner = new InvestigationRunner({ db, investigationAgent: agent });
@@ -79,7 +114,7 @@ describe("InvestigationRunner", () => {
       source: "manual",
     });
 
-    expect(onComplete).toHaveBeenCalledWith("inv_test_2", expect.objectContaining({ rootCause: "Memory leak" }));
+    expect(onComplete).toHaveBeenCalledWith("inv_test_2", expect.objectContaining({ rootCause: "Memory leak" }), undefined);
   });
 
   it("calls onFailed callback and marks DB as failed on error", async () => {
