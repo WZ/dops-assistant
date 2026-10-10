@@ -44,7 +44,8 @@ export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, er
     return () => clearInterval(interval);
   }, [startTime, lastToolCallAt, error, phaseStatus]);
 
-  const elapsedStr = elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;
+  const fmtSecs = (n: number) => (n < 60 ? `${n}s` : `${Math.floor(n / 60)}m ${n % 60}s`);
+  const elapsedStr = fmtSecs(elapsed);
   const isThinking = phase === "discovery" && toolCalls.length > 0 && secondsSinceToolCall >= 5 && !error;
 
   const toolCallLogRef = useAutoScroll([toolCalls.length, isThinking]);
@@ -152,7 +153,7 @@ export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, er
             {isThinking && (
               <div className="flex items-center gap-2 pt-1.5 text-primary/60">
                 <span className="w-1.5 h-1.5 rounded-full bg-primary/60 animate-status-pulse flex-shrink-0" />
-                LLM is analyzing results and generating service list...
+                LLM is analyzing results and generating service list... {fmtSecs(secondsSinceToolCall)}
               </div>
             )}
           </div>
@@ -160,7 +161,10 @@ export function DiscoveryProgress({ phase, phaseStatus, iteration, toolCalls, er
 
         {/* Empty state — waiting for first tool call */}
         {toolCalls.length === 0 && !error && (
-          <div className="text-xs text-muted-foreground/70">Waiting for agent to start...</div>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground/70">
+            <span className="w-1.5 h-1.5 rounded-full bg-primary/60 animate-status-pulse flex-shrink-0" />
+            Waiting for the model&apos;s first response... {fmtSecs(secondsSinceToolCall)}
+          </div>
         )}
       </div>
 
