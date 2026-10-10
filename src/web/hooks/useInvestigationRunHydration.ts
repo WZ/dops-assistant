@@ -54,16 +54,20 @@ export interface InvestigationRunHydration {
  *   surface).
  * @param opts.onWrongStack called with the owning stackId when the id lives in a
  *   different stack, so the parent can re-route.
+ * @param opts.pollWhileRunningMs re-fetch on this interval until the GET reports a
+ *   finished status (a failed GET also retries). Used when the live stream for a
+ *   still-running investigation was lost.
  */
 export function useInvestigationRunHydration(
   investigationId: string,
-  opts: { active: boolean; onWrongStack?: (correctStackId: string) => void },
+  opts: { active: boolean; onWrongStack?: (correctStackId: string) => void; pollWhileRunningMs?: number },
 ): InvestigationRunHydration {
-  const { active, onWrongStack } = opts;
+  const { active, onWrongStack, pollWhileRunningMs } = opts;
   const { stackFetch, activeStackId } = useStackContext();
   const { hydrate, subscribe, unsubscribe, connectionStatus } = useOrchestratorRunActions();
   const [data, setData] = useState<InvestigationPayload | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [pollTick, setPollTick] = useState(0);
 
   // Cold-load: GET + legacy stack redirect + hydrate. Skipped when a live run is
   // already streaming here (active). Re-runs after a stack switch (activeStackId).
@@ -105,7 +109,14 @@ export function useInvestigationRunHydration(
       })
       .catch(() => { /* silently fail — the surface renders its empty/error state */ });
     return () => { cancelled = true; };
-  }, [investigationId, active, stackFetch, activeStackId, onWrongStack, hydrate]);
+  }, [investigationId, active, stackFetch, activeStackId, onWrongStack, hydrate, pollTick]);
+
+  useEffect(() => {
+    if (active || !pollWhileRunningMs) return;
+    if (data && data.investigation.status !== "running") return;
+    const t = setTimeout(() => setPollTick((n) => n + 1), pollWhileRunningMs);
+    return () => clearTimeout(t);
+  }, [active, pollWhileRunningMs, data, pollTick]);
 
   // Reattach to a live server-side run on (re)connect. Re-runs when
   // connectionStatus flips so a dropped socket reattaches automatically. The
