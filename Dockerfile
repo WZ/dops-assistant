@@ -48,6 +48,9 @@ ENV NODE_ENV=production
 COPY --from=builder /app/package.json /app/package-lock.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
+# Built-in skills: served from here when skills.dir is the default ./skills,
+# and seeded onto the PVC by the Helm init container otherwise.
+COPY skills/ ./skills/
 
 # Config file is expected to be mounted at runtime (see docker-compose.yml)
 # Default path; override with CONFIG_PATH env var
