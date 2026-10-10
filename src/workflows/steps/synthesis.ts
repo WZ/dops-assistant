@@ -18,11 +18,14 @@ import { formatPatterns } from "../../agents/shared/patterns.js";
 import { confidenceFraction } from "../../lib/confidence.js";
 import { withLlmRetry, safeAgentRetryConfig } from "../../agents/shared/llm-retry.js";
 import { LlmUnavailableError } from "../../agents/shared/llm-errors.js";
+import { createLogger } from "../../logger.js";
 import { RankedHypothesisSchema } from "../schemas.js";
 import { runHypothesisLoop } from "./hypothesis-loop.js";
 import { normalizeObservations } from "./observation-normalize.js";
 import { createGatherEvidence } from "./hypothesis-requery.js";
 import type { RankedHypothesis } from "./corroboration.js";
+
+const logger = createLogger("synthesis");
 
 /**
  * Build a synthesis step that combines evidence and runs quality validation.
@@ -170,7 +173,8 @@ export function buildSynthesisStep(config: WorkflowConfig) {
         }
       } catch (err) {
         if (err instanceof LlmUnavailableError) throw err;
-        // Fall through to defaults
+        // Fall through to defaults; without this log an empty report looks like a normal one.
+        logger.warn({ err: err instanceof Error ? err.message : String(err) }, "synthesis LLM call failed; report falls back to defaults");
       }
 
       let severity: "low" | "medium" | "high" | "critical" = "medium";
@@ -228,6 +232,10 @@ export function buildSynthesisStep(config: WorkflowConfig) {
             synthesisParsed = reParsed;
           }
         } catch { /* keep original */ }
+      }
+
+      if (!synthesisParsed) {
+        logger.warn({ chars: synthesisText?.length ?? 0 }, "synthesis produced no parseable JSON; report falls back to defaults");
       }
 
       if (synthesisParsed) {
