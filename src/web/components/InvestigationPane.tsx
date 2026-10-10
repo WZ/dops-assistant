@@ -681,7 +681,7 @@ export function InvestigationPane({
             {!isComplete && (
               <section>
                 <p className="text-[9px] font-mono font-semibold uppercase tracking-[0.14em] text-muted-foreground/70 mb-3">
-                  Investigation in progress
+                  {investigationStatus === "failed" ? "Investigation stopped" : "Investigation in progress"}
                 </p>
                 <PhaseStepper phases={phases} events={timelineEvents} evidence={evidence} isComplete={isComplete} phaseTokens={phaseTokens} />
               </section>
@@ -698,7 +698,7 @@ export function InvestigationPane({
                   <div className="flex-1">
                     <p className="text-sm font-body font-semibold text-destructive mb-1">Investigation could not run</p>
                     <p className="text-[12px] font-body text-destructive/80 leading-relaxed">
-                      {failureMessage ?? "The LLM API was unreachable for this run."}
+                      {failureMessage ?? "This run stopped before producing a report: the server may have restarted, or the model was unreachable."}
                       {" "}No root cause analysis was produced.
                       Check Settings &gt; Health, then click Re-investigate to try again.
                     </p>
