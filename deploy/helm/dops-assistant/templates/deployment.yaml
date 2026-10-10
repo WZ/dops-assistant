@@ -98,6 +98,18 @@ spec:
               else
                 echo "init-config: preserved existing skills directory"
               fi
+              # Seed built-in skills from the image. Never overwrite an existing
+              # file (operator edits win); .seeded records what was copied so a
+              # skill the operator deletes is not re-seeded on the next restart.
+              SKILLS={{ .Values.persistence.mountPath }}/skills
+              touch "$SKILLS/.seeded"
+              for f in /app/skills/*.md; do
+                [ -e "$f" ] || continue
+                n=$(basename "$f")
+                grep -qxF "$n" "$SKILLS/.seeded" && continue
+                [ -e "$SKILLS/$n" ] || { cp "$f" "$SKILLS/$n"; echo "init-config: seeded skill $n"; }
+                echo "$n" >> "$SKILLS/.seeded"
+              done
           volumeMounts:
             - name: config
               mountPath: /config-src
