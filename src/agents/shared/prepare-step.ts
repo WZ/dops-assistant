@@ -76,13 +76,16 @@ export function createQuirkPrepareStep(config: QuirkPrepareStepConfig): PrepareS
       };
     }
 
-    // Midpoint nudge: inject a reminder message AND keep toolChoice as "auto"
+    // Midpoint nudge: append a reminder message AND keep toolChoice as "auto".
+    // Mastra treats a returned `messages` list as the complete list and deletes
+    // every message missing from it, so the existing conversation is passed back.
     if (step === midpointStep) {
       logger.debug({ step }, "midpoint nudge");
       quirkHit("prepareStep:nudge", { step, maxSteps });
       return {
         toolChoice: "auto" as const,
         messages: [
+          ...(args.messages ?? []),
           { role: "user" as const, content: nudgeMessage as any, id: `nudge-${step}`, createdAt: new Date() },
         ],
       };
