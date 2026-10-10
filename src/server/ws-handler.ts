@@ -1397,8 +1397,8 @@ async function handleRerun(
     onTotalUsage: (investigationId, inputTokens, outputTokens, durationMs) => {
       send({ type: "investigation:total_usage", investigationId, inputTokens, outputTokens, durationMs });
     },
-    onComplete: (investigationId, report) => {
-      send({ type: "investigation:complete", id: investigationId, report });
+    onComplete: (investigationId, report, phaseFindings) => {
+      send({ type: "investigation:complete", id: investigationId, report, phaseFindings });
     },
     onFailed: (investigationId, error) => {
       send({ type: "investigation:failed", id: investigationId, error });
@@ -1928,8 +1928,8 @@ export async function handleClientMessage(
       onTotalUsage: (investigationId, inputTokens, outputTokens, durationMs) => {
         send({ type: "investigation:total_usage", investigationId, inputTokens, outputTokens, durationMs });
       },
-      onComplete: (investigationId, report) => {
-        send({ type: "investigation:complete", id: investigationId, report });
+      onComplete: (investigationId, report, phaseFindings) => {
+        send({ type: "investigation:complete", id: investigationId, report, phaseFindings });
         const summary = `**Root Cause:** ${report.rootCause}\n**Confidence:** ${report.confidence}\n**Trigger:** ${report.trigger}`;
         memory.append(threadId, { role: "assistant", content: `Investigation of ${service.name}: ${summary}` });
         send({ type: "chat", role: "assistant", content: summary, investigationId, report });

@@ -22,6 +22,7 @@ import { createLogger } from "../../logger.js";
 import { RankedHypothesisSchema } from "../schemas.js";
 import { runHypothesisLoop } from "./hypothesis-loop.js";
 import { normalizeObservations } from "./observation-normalize.js";
+import { backfillEmptyEvidence } from "./evidence-backfill.js";
 import { createGatherEvidence } from "./hypothesis-requery.js";
 import type { RankedHypothesis } from "./corroboration.js";
 
@@ -256,6 +257,13 @@ export function buildSynthesisStep(config: WorkflowConfig) {
         // (display ×100, the low-confidence gate) assumes 0–1.
         confidenceScore = confidenceFraction(synthesisParsed.confidenceScore ?? confidenceScore);
       }
+
+      evidence = backfillEmptyEvidence(evidence, {
+        metrics: metricsFindings,
+        logs: logsFindings,
+        infra: infraFindings,
+        changes: changesFindings,
+      });
 
       // Deterministic severity validation
       const correctedSeverity = validateSeverity(

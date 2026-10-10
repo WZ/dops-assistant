@@ -269,6 +269,23 @@ describe("MastraChatAgentAdapter", () => {
 });
 
 describe("MastraInvestigationAdapter", () => {
+  it("returns each evidence step's output as phaseFindings", async () => {
+    const metrics = { summary: "p99 up", observations: ["latency 900ms"] };
+    const logs = { summary: "no logs", observations: [], error: "loki timeout" };
+    mockRunStart.mockResolvedValueOnce({
+      status: "success",
+      result: { severity: "low", summary: "s", rootCause: "r", trigger: "t", confidence: "low", confidenceScore: 0.2, savedToHistory: false, investigatedAt: "2026-03-14T12:00:00Z" },
+      steps: {
+        "planning": { status: "success", output: { plan: "x" } },
+        "metrics-evidence": { status: "success", output: metrics },
+        "logs-evidence": { status: "success", output: logs },
+      },
+    });
+    const adapter = new MastraInvestigationAdapter({ model: {} as any, providers: [], services: [], projectRoot: "/tmp/test" });
+    const report = await adapter.investigate({ name: "payments", metrics: [], logLabels: {} }, undefined);
+    expect(report.phaseFindings).toEqual({ metrics, logs });
+  });
+
   it("runs the investigation workflow and returns RcaReport", async () => {
     const config: WorkflowConfig = {
       model: {} as any,
