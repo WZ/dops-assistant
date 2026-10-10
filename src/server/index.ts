@@ -83,9 +83,10 @@ async function main() {
   // (for users with external archival).
   startEventsRetentionTask({ db, retentionDays: config.events.retentionDays });
 
-  // Clean up investigations left in 'running' state from prior crashes
+  // Clean up investigations left in 'running' state by a prior crash or
+  // restart. Runs execute in-process, so at startup none can still be alive.
   try {
-    const staleCount = db.markStaleInvestigations();
+    const staleCount = db.markStaleInvestigations(0);
     if (staleCount > 0) {
       logger.info({ staleCount }, "Marked stale investigations as failed");
     }

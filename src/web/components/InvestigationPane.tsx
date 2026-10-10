@@ -13,7 +13,7 @@ import { PhaseStepper, type PhaseState } from "./PhaseStepper";
 import { EvidenceTimeline } from "./EvidenceTimeline";
 import { RcaReport } from "./RcaReport";
 import { OrchestratorRefinedBanner } from "./OrchestratorRefinedBanner";
-import { useOrchestratorRun } from "../contexts/OrchestratorRunContext";
+import { useOrchestratorRun, useOrchestratorRunActions } from "../contexts/OrchestratorRunContext";
 import { useInvestigationRunHydration } from "../hooks/useInvestigationRunHydration";
 import { InvestigationFeedback } from "./InvestigationFeedback";
 import { useStackContext } from "../contexts/StackContext";
@@ -230,6 +230,19 @@ export function InvestigationPane({
            (m.type === "investigation:complete" && m.id === investigationId),
   );
 
+  // Live progress for a run arrives only on the socket that was open when it
+  // started. If that socket drops before the run finishes, fall back to polling
+  // the REST record until it does.
+  const { connectionStatus } = useOrchestratorRunActions();
+  const finishedLive = wsMessages.some(
+    (m) => (m.type === "investigation:complete" || m.type === "investigation:failed") && m.id === investigationId,
+  );
+  const [liveStreamLost, setLiveStreamLost] = useState(false);
+  useEffect(() => { setLiveStreamLost(false); }, [investigationId]);
+  useEffect(() => {
+    if (isActive && !finishedLive && connectionStatus !== "connected") setLiveStreamLost(true);
+  }, [isActive, finishedLive, connectionStatus]);
+
   // Fetch query from REST when not available from WS (e.g. server predates query field)
   useEffect(() => {
     if (query) return;
@@ -248,8 +261,9 @@ export function InvestigationPane({
   // subscribe — the same path the wide Deep panel uses. Skipped when a live run
   // is streaming here (isActive).
   const { data: hydrationData, notFound } = useInvestigationRunHydration(investigationId, {
-    active: isActive,
+    active: isActive && !liveStreamLost,
     onWrongStack,
+    pollWhileRunningMs: liveStreamLost ? 5000 : undefined,
   });
 
   // Shape this pane's local UI state (phases / evidence / report / timeline) from

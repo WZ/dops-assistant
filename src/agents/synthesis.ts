@@ -1,6 +1,11 @@
 import { Agent } from "@mastra/core/agent";
 import type { LanguageModel } from "ai";
 
+// The model factory caps every call at 4096 output tokens. A reasoning model at
+// medium/high effort can spend that on thinking and return empty text, which
+// leaves the RCA report at its "Unable to determine" defaults.
+export const SYNTHESIS_MAX_OUTPUT_TOKENS = 16_384;
+
 interface SynthesisAgentConfig {
   model: LanguageModel;
   maxSteps?: number;
@@ -66,7 +71,7 @@ You MUST respond with a JSON object matching this exact schema (no trailing text
     tools: {},
     defaultOptions: {
       maxSteps: config.maxSteps ?? 3,
-      modelSettings: { temperature: 0 },
+      modelSettings: { temperature: 0, maxOutputTokens: SYNTHESIS_MAX_OUTPUT_TOKENS },
     },
   });
 }

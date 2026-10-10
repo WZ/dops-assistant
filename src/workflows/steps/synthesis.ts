@@ -12,7 +12,7 @@ import { EvidenceOutputSchema, SynthesisOutputSchema } from "../schemas.js";
 import { buildTimeline, validateSeverity } from "../helpers.js";
 import { debug } from "../tool-utils.js";
 import { safeJsonParse } from "../../agents/shared/processors.js";
-import { createSynthesisAgent } from "../../agents/synthesis.js";
+import { createSynthesisAgent, SYNTHESIS_MAX_OUTPUT_TOKENS } from "../../agents/synthesis.js";
 import { wrapUntrusted } from "../../agents/shared/prompt-helpers.js";
 import { formatPatterns } from "../../agents/shared/patterns.js";
 import { confidenceFraction } from "../../lib/confidence.js";
@@ -207,6 +207,7 @@ export function buildSynthesisStep(config: WorkflowConfig) {
           id: "synthesis-extractor",
           instructions: extractorInstructions,
           model: config.model as any,
+          defaultOptions: { modelSettings: { maxOutputTokens: SYNTHESIS_MAX_OUTPUT_TOKENS } },
         });
         const extraction = await extractor.generate(input);
         return extraction.text ?? "";
