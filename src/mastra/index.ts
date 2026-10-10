@@ -1,6 +1,9 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { wrapLanguageModel } from "ai";
 import type { Config, ReasoningEffort } from "../config/schema.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("model");
 
 export interface CreateModelOptions {
   /**
@@ -47,6 +50,31 @@ export function applyModelMiddleware<
   return next;
 }
 
+/**
+ * A reasoning model at medium/high effort can spend its whole output budget
+ * thinking and return no text (finish reason `length`). Retry once at low
+ * effort rather than hand the caller an empty answer. Covers non-streaming
+ * calls (`generateText`): the orchestrator's move selection and report refine.
+ */
+export async function generateWithEffortFallback<
+  R extends { content: Array<{ type: string; text?: string }>; finishReason: { unified: string } },
+  P extends { providerOptions?: Record<string, Record<string, unknown>> },
+>(
+  doGenerate: () => PromiseLike<R>,
+  retry: (params: P) => PromiseLike<R>,
+  params: P,
+  opts: CreateModelOptions,
+): Promise<R> {
+  const result = await doGenerate();
+  if (!opts.reasoningEffort || opts.reasoningEffort === "low") return result;
+  const hasOutput = result.content.some((c) => c.type === "tool-call" || (c.type === "text" && !!c.text?.trim()));
+  if (hasOutput || result.finishReason.unified !== "length") return result;
+  logger.warn({ effort: opts.reasoningEffort }, "model spent its output budget reasoning; retrying at low effort");
+  const providerOptions = { ...(params.providerOptions ?? {}) };
+  providerOptions["openaiCompatible"] = { ...(providerOptions["openaiCompatible"] ?? {}), reasoningEffort: "low" };
+  return retry({ ...params, providerOptions });
+}
+
 export function createModel(llmConfig: Config["llm"], opts: CreateModelOptions = {}) {
   const provider = createOpenAICompatible({
     name: "openai-compatible",
@@ -69,6 +97,8 @@ export function createModel(llmConfig: Config["llm"], opts: CreateModelOptions =
     middleware: {
       specificationVersion: "v3" as const,
       transformParams: async ({ params }) => applyModelMiddleware(params, opts),
+      wrapGenerate: ({ doGenerate, params, model }) =>
+        generateWithEffortFallback(doGenerate, (p) => model.doGenerate(p), params, opts),
     },
   });
 }
