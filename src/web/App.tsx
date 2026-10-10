@@ -131,6 +131,14 @@ export function autoRouteTargetForSetupStage(
   return null;
 }
 
+/** A running discovery whose socket is not connected can never finish. */
+export function discoveryLostConnection(
+  wsStatus: "connecting" | "connected" | "disconnected",
+  discovery: { status: "running" | "complete"; error: string | null },
+): boolean {
+  return wsStatus !== "connected" && discovery.status === "running" && !discovery.error;
+}
+
 function useTheme() {
   const [dark, setDark] = useState(() => safeGetItem("theme") !== "light");
   useEffect(() => {
@@ -318,6 +326,15 @@ export function App() {
       }
     }
   }, [ws.messages]);
+
+  // Discovery events only arrive on the socket that sent `discover`; once it
+  // drops, the run can never finish here. Fail it so the Retry button shows
+  // instead of a spinner that never stops.
+  useEffect(() => {
+    if (discoveryLostConnection(ws.status, discoveryState)) {
+      setDiscoveryState((prev) => ({ ...prev, error: "Lost connection to the server. Retry once it reconnects." }));
+    }
+  }, [ws.status, discoveryState.status, discoveryState.error]);
 
   // Keep a ref of the current pane so effects can read the latest value
   // without re-running every time the pane changes.

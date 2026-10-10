@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
-import { shouldResetOnStackSwitch, autoRouteTargetForSetupStage } from "./App";
+import { shouldResetOnStackSwitch, autoRouteTargetForSetupStage, discoveryLostConnection } from "./App";
 
 describe("shouldResetOnStackSwitch", () => {
   it("resets when viewing stack-specific panes", () => {
@@ -91,5 +91,23 @@ describe("autoRouteTargetForSetupStage", () => {
 
   it("returns null for unknown stage strings", () => {
     expect(autoRouteTargetForSetupStage({ ...base, setupStage: "some-future-stage" })).toBeNull();
+  });
+});
+
+describe("discoveryLostConnection", () => {
+  const running = { status: "running" as const, error: null };
+
+  it("fails a running discovery when the socket drops or is reconnecting", () => {
+    expect(discoveryLostConnection("disconnected", running)).toBe(true);
+    expect(discoveryLostConnection("connecting", running)).toBe(true);
+  });
+
+  it("leaves a running discovery alone while connected", () => {
+    expect(discoveryLostConnection("connected", running)).toBe(false);
+  });
+
+  it("ignores finished or already-failed discoveries", () => {
+    expect(discoveryLostConnection("disconnected", { status: "complete", error: null })).toBe(false);
+    expect(discoveryLostConnection("disconnected", { status: "running", error: "boom" })).toBe(false);
   });
 });
