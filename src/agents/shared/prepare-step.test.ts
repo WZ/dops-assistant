@@ -152,6 +152,23 @@ describe("createQuirkPrepareStep", () => {
       expect((result as any).messages[0].content).toContain("synthesizing");
     });
 
+    it("midpoint nudge keeps the existing conversation and appends the nudge", () => {
+      // Mastra treats a returned `messages` list as the complete list and deletes
+      // anything missing from it, so the prior turns must be passed back.
+      const prepareStep = createQuirkPrepareStep({ maxSteps: 10 });
+      const midpoint = Math.floor(10 * 0.65);
+      const prior = [
+        { id: "m1", role: "user", content: "Investigate payments" },
+        { id: "m2", role: "assistant", content: "tool result: pods 3/3 ready" },
+      ];
+      const args = { ...makeArgs(midpoint), messages: prior } as unknown as ProcessInputStepArgs;
+      const messages = (prepareStep(args) as { messages: Array<{ id: string; role: string; content: string }> }).messages;
+      expect(messages.map((m) => m.id).slice(0, 2)).toEqual(["m1", "m2"]);
+      expect(messages).toHaveLength(3);
+      expect(messages[2]).toMatchObject({ role: "user" });
+      expect(messages[2]!.content).toContain("synthesizing");
+    });
+
     it("midpoint nudge uses custom message when provided", () => {
       const customMsg = "Wrap it up now.";
       const prepareStep = createQuirkPrepareStep({ maxSteps: 10, nudgeMessage: customMsg });
