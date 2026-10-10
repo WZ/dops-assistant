@@ -3,7 +3,7 @@ import { useStackContext } from "../contexts/StackContext";
 import type { StackSummary } from "../../types/stack-types.js";
 
 type Effort = "low" | "medium" | "high";
-type Bucket = "chat" | "investigation" | "discovery";
+type Bucket = "chat" | "investigation" | "discovery" | "deep";
 type Source = "stack" | "config" | "default" | null;
 
 interface BucketEffective {
@@ -19,6 +19,7 @@ interface StackLlmView {
     chat?: Effort;
     investigation?: Effort;
     discovery?: Effort;
+    deep?: Effort;
   };
 }
 
@@ -32,6 +33,7 @@ const BUCKETS: { key: Bucket; label: string; hint: string }[] = [
   { key: "chat", label: "Chat", hint: "Interactive chat agent + intent classifier" },
   { key: "investigation", label: "Investigation", hint: "Planner, metrics, logs, infra, synthesis" },
   { key: "discovery", label: "Discovery", hint: "AI service discovery + validator" },
+  { key: "deep", label: "Deep investigation", hint: "Investigate deeply (autonomous), deep-mode re-examine, report refine" },
 ];
 
 const SELECT_CLASS =

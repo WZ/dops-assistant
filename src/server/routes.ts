@@ -958,7 +958,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       res.status(400).json({ error: "Body must be an object" });
       return;
     }
-    const update: Partial<Record<"chat" | "investigation" | "discovery", "low" | "medium" | "high" | null>> = {};
+    const update: Partial<Record<"chat" | "investigation" | "discovery" | "deep", "low" | "medium" | "high" | null>> = {};
     for (const [k, v] of Object.entries(body)) {
       const bucket = ReasoningBucketSchema.safeParse(k);
       if (!bucket.success) {
