@@ -134,6 +134,12 @@ export const SkillInputSchema = z.object({
   tags: z.array(boundedString(200)).max(100).optional(),
   scope: z.array(z.enum(["investigation", "discovery", "chat"])).optional(),
   body: boundedString(MAX_SKILL_BODY_LENGTH).optional(),
+  appliesToServiceMetric: boundedString(2000).optional(),
+  healthySignal: boundedString(2000).optional(),
+  failureSignal: boundedString(2000).optional(),
+  failureCause: boundedString(2000).optional(),
+  identityHint: boundedString(2000).optional(),
+  incompatibleClaims: boundedString(2000).optional(),
 });
 
 export type ValidatedSkillInput = z.infer<typeof SkillInputSchema>;

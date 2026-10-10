@@ -1397,6 +1397,12 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
   // ── Skills REST API ─────────────────────────────────────────────────────
   if (skillStore) {
+    // Health/failure gate fields. The GUI editor never sends them, so PUT keeps
+    // the stored value when a field is omitted; an empty string clears it.
+    const SKILL_GATE_KEYS = ["appliesToServiceMetric", "healthySignal", "failureSignal", "failureCause", "identityHint", "incompatibleClaims"] as const;
+    const skillGates = (input: Partial<Record<(typeof SKILL_GATE_KEYS)[number], string>>, existing?: Partial<Record<(typeof SKILL_GATE_KEYS)[number], string>>) =>
+      Object.fromEntries(SKILL_GATE_KEYS.map((k) => [k, input[k] ?? existing?.[k]]));
+
     app.get("/api/skills", (req: Request, res: Response) => {
       const disabledIds = db.getDisabledSkills(req.stackId!);
       res.json(skillStore.getAll().map(s => ({ ...s, enabled: !disabledIds.has(s.id) })));
@@ -1421,7 +1427,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
           return;
         }
         const { title, services: svcs, alerts, tags, scope, body } = parsed.data;
-        const skill = await skillStore.save(undefined, { title, services: svcs ?? [], alerts: alerts ?? [], tags: tags ?? [], scope }, body ?? "");
+        const skill = await skillStore.save(undefined, { title, services: svcs ?? [], alerts: alerts ?? [], tags: tags ?? [], scope, ...skillGates(parsed.data) }, body ?? "");
         res.status(201).json(skill);
       } catch (err) {
         res.status(500).json({ error: err instanceof Error ? err.message : "Failed to create skill" });
@@ -1438,7 +1444,8 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
           return;
         }
         const { title, services: svcs, alerts, tags, scope, body } = parsed.data;
-        const skill = await skillStore.save(id, { title, services: svcs ?? [], alerts: alerts ?? [], tags: tags ?? [], scope }, body ?? "");
+        const gates = skillGates(parsed.data, skillStore.getById(id));
+        const skill = await skillStore.save(id, { title, services: svcs ?? [], alerts: alerts ?? [], tags: tags ?? [], scope, ...gates }, body ?? "");
         res.json(skill);
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to update skill";
