@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.12.0] - 2026-10-10
+
+### Added
+- **Deep Investigation has its own reasoning-effort setting.** Settings → LLM has a new "Deep investigation" row (also `llm.reasoningEffort.deep` in config.yaml). It covers the autonomous orchestrator, deep-mode re-examine and report refine. Sub-investigations a deep run starts keep the Investigation setting, so a deep run stays bounded. Recommended setup: `default: low`, `deep: medium`, which gives deep runs more depth while routine work stays fast. (#269)
+- **Built-in skills ship with the image.** The investigation skills in `skills/` are seeded onto the data volume when the pod starts (Helm chart 0.1.5). Skills that already exist, including edited ones, are never overwritten, and a deleted skill stays deleted. (#265)
+- **Follow a lead.** Start an autonomous Deep Investigation with an optional hunch that seeds it from the first move. (#244)
+- **Deep Investigation lives inline in the console**, in a bottom-anchored band, with a clearer "Start here" cue. (#243, #254)
+- **Discovery shows live wait counters** while the model is thinking, so a long pause no longer looks like a hang. (#266)
+
+### Fixed
+- **Agents no longer lose their memory mid-investigation.** A wrap-up reminder at the midpoint step deleted the agent's whole conversation (the request and every tool result). Agents then reported "no tool calls were executed" and discarded their findings. It hit most often at higher reasoning effort, and in discovery too. (#268)
+- **Investigations keep their per-phase evidence.** Phase findings are saved again (they had not been since an early refactor) and sent to live viewers. Evidence categories the summary leaves empty are filled from that phase's observations. (#267)
+- **No more empty reports at higher reasoning effort.** The RCA summary gets a 16k output budget, and a model call that spends its whole budget thinking without answering is retried once at low effort. An empty summary is now logged instead of silent. (#265, #266, #269)
+- **Open tabs recover from a server restart.** The browser reconnects automatically. A discovery or investigation in flight is marked failed (with Retry) or reloaded from the server instead of spinning forever, and the server marks runs orphaned by a restart as failed. (#264, #266)
+- **Clearer failed-run screen.** It no longer blames the LLM for every failure, and the header reads "Investigation stopped". (#267)
+- **Editing a skill in the GUI keeps its health/failure gates.** The skills API used to drop them. (#265)
+- **Deep Investigation accuracy:** infra-agnostic root-cause analysis with skill-driven health/failure gates, confirmable Consul-service incidents, team-knowledge skills fed to the orchestrator, no fabricated specifics or Kubernetes assumptions, recovery from empty or malformed model replies, and a decide-move watchdog. (#246, #248, #251–#253, #255–#257, #261, #263)
+- **Importing a provider no longer hangs on an unreachable MCP server.** (#262)
+- **Demo/static export waits for data readiness.** (#247, #250)
+
+### Docs
+- Deep Investigation docs, diagram and screenshots; tighter README features list. (#245, #249)
+
 ## [0.4.11.2] - 2026-06-08
 
 ### Changed
