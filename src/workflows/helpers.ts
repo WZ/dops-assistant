@@ -105,12 +105,25 @@ export function validateSeverity(
   return null; // severity is fine
 }
 
-/** Damage = a critical metric, errors in the logs, or infrastructure that isn't healthy. */
+const LATENCY_METRIC = /\b(latency|duration|response[ _]time|e2e|p\d{2,3})\b|_(latency|duration)/i;
+const FAILURE_METRIC = /(error|fail|5xx|restart|oom|evict|replicas?|available|ready|\bup\b|saturation|queue|waiting|dropped)/i;
+
+/**
+ * A latency reading alone is slowness, not damage: when logs are clean and
+ * infra is healthy it is not enough to hold a report at high severity. Any
+ * other critical metric (errors, restarts, availability, saturation) still is.
+ */
+function isDamagingCriticalMetric(o: { metric: string; severity: string }): boolean {
+  if (o.severity !== "critical") return false;
+  return !(LATENCY_METRIC.test(o.metric) && !FAILURE_METRIC.test(o.metric));
+}
+
+/** Damage = a critical non-latency metric, errors in the logs, or infrastructure that isn't healthy. */
 export function hasDamageEvidence(metrics: MetricFindings, logs: LogFindings, infra: InfraFindings): boolean {
   const infraSummaryNormal = NORMAL_PATTERNS.test(infra.summary);
   const infraFailing = /\b(crash\w*|oom\w*|unavailable|not ready|evict\w*|pending|failing|failed|down|restarting|unhealthy)\b/i.test(infra.summary);
   const logsClean = /\bno (errors?|exceptions?|failures?)\b/i.test(logs.summary);
-  const hasCriticalMetric = metrics.observations.some((o) => o.severity === "critical");
+  const hasCriticalMetric = metrics.observations.some(isDamagingCriticalMetric);
   return !(infraSummaryNormal && !infraFailing && logsClean && !hasCriticalMetric);
 }
 

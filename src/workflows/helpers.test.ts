@@ -182,6 +182,27 @@ describe("validateSeverity — impact cap", () => {
     expect(validateSeverity({ ...overcalled, severity: "critical" }, latencyMetrics, cleanLogs, healthyInfra)).toBe("medium");
   });
 
+  it("does not let a latency-only critical metric hold high severity when logs are clean and infra is healthy", () => {
+    // Observed run: p99 up to 425s labelled critical, 200 OK throughout, clean logs, 1/1 replicas.
+    const criticalLatency = {
+      ...latencyMetrics,
+      observations: [
+        { metric: "e2e_request_latency_p99", currentValue: "424.8s", baselineValue: "~108s", timestamp: "16:57", severity: "critical" as const },
+        { metric: "completed_requests", currentValue: "0 req/min", baselineValue: "5-21 req/min", timestamp: "16:57", severity: "high" as any },
+      ],
+    };
+    const observedLogs: LogFindings = { observations: [], summary: "glm53 shows no errors, latency, or resource issues in the last hour: all HTTP requests return 200 OK, request queue is empty." };
+    const observedInfra: InfraFindings = { observations: [], summary: "Service is healthy with no errors, latency, or resource issues: deployment 1/1 ready, 0 restarts, all requests returning 200 OK." };
+    expect(validateSeverity(overcalled, criticalLatency, observedLogs, observedInfra)).toBe("medium");
+  });
+
+  it("still treats a critical error, availability or restart metric as damage", () => {
+    for (const metric of ["error_rate", "deployment_replicas_available", "kube_pod_container_status_restarts_total", "http_5xx_latency_errors"]) {
+      const m = { ...latencyMetrics, observations: [{ metric, currentValue: "x", baselineValue: "y", timestamp: "now", severity: "critical" as const }] };
+      expect(validateSeverity(overcalled, m, cleanLogs, healthyInfra)).toBeNull();
+    }
+  });
+
   it("keeps high when infrastructure shows a failure", () => {
     const failing: InfraFindings = { observations: [], summary: "Node is healthy but 2 of 3 pods are crash-looping." };
     expect(validateSeverity(overcalled, latencyMetrics, cleanLogs, failing)).toBeNull();
