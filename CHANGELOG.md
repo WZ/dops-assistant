@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.12.2] - 2026-10-11
+
+### Fixed
+- **The scan's log-error check works.** It had never queried Loki: the scan was never given a Loki datasource, so every `log_errors` rule read "empty", even on services with hundreds of error lines. Behind that, the query went out under the wrong argument name, Loki's result format couldn't be read, and a Loki error (such as a syntax error) also read "empty". All four are fixed; a broken log rule now shows up as a probe error instead of a quiet service. (#274)
+- **Log rules work on older Loki versions.** The error filter is now `|~ "error|fatal"` instead of backtick strings joined with `or`, which older Loki rejects. (#274)
+- **Discovery checks the rules it writes against real data.** Restart rules that match no pods are rewritten with a pod-name prefix (covering DaemonSets and long Deployment names). Log selectors that match no logs are rebuilt from the labels that stack's Loki actually uses, and a log rule is dropped only when no label carries the service. Run discovery again after upgrading to regenerate existing rules. (#274)
+
 ## [0.4.12.1] - 2026-10-11
 
 ### Changed
