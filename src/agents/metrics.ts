@@ -40,15 +40,20 @@ kube_daemonset_status_desired_number_scheduled) reports a flat value of 0 across
 ENTIRE investigation window with no transitions, the workload is not deployed in this
 environment. That is NOT an anomaly. Report summary: "Workload is not deployed (0
 desired replicas throughout window)" and observations: []. Only report severity >=
-medium when you see a transition from >0 to 0 inside the window, or ready < desired
+warning when you see a transition from >0 to 0 inside the window, or ready < desired
 for a non-zero desired count.
 
-For each observation, provide the EXACT metric queried, current value, baseline value, and timestamp.
+SEVERITY of each observation is exactly one of: "normal", "warning", "critical".
+- "critical": the service is failing: errors or 5xx rates, crash loops or restarts, unavailable or not-ready replicas, resource saturation (OOM, full disk, exhausted pool).
+- "warning": a reading clearly outside the service's normal range that is not itself a failure: latency, throughput, queue depth, tool-call or token rates. Latency alone is never "critical", even when it is far above the baseline.
+- "normal": within the expected range, or context only.
+
+For each observation, provide the EXACT PromQL expression you ran as "metric" (not a descriptive name), current value, baseline value, and timestamp.
 Keep observations concise — max 8 observations. Summary should be 1-3 sentences.
 Be efficient — make at most 3 tool calls per round.
 
 You MUST end your response with a JSON object matching this exact schema (no trailing text after the JSON):
-{"summary": "string", "observations": [{"metric": "string", "currentValue": "string", "baselineValue": "string", "timestamp": "string", "severity": "string"}], "anomalyWindow": "string"}`,
+{"summary": "string", "observations": [{"metric": "string", "currentValue": "string", "baselineValue": "string", "timestamp": "string", "severity": "normal|warning|critical"}], "anomalyWindow": "string"}`,
     model: config.model as any,
     tools: config.tools ?? {},
     defaultOptions: {

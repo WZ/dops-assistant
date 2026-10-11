@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { checkSymptomsAgainstNormalRange, normalRangeNote, symptomDirection } from "./normal-range.js";
+import { checkSymptomsAgainstNormalRange, normalRangeNote, symptomDirection, executedPromQl } from "./normal-range.js";
 
 const LATENCY = "histogram_quantile(0.99, sum by (le)(rate(vllm:e2e_request_latency_seconds_bucket[5m])))";
 const TOOL_CALLS = 'sum(rate(vllm:tool_call_parser_invocations_total{model_name="m"}[5m]))';
@@ -74,6 +74,56 @@ describe("checkSymptomsAgainstNormalRange", () => {
   });
 });
 
+describe("executed queries", () => {
+  it("checks symptom queries the phase ran even when its observations carry only names", async () => {
+    const query = prom({ [LATENCY]: { worst: 193.2, band: 283.7 } });
+    const result = await checkSymptomsAgainstNormalRange(
+      [{ metric: "e2e_request_latency_p99", severity: "warning" }],
+      WINDOW, query, NOW, [LATENCY, TOOL_CALLS, 'kube_pod_info{pod="x"}'],
+    );
+    expect(result?.allWithin).toBe(true);
+    expect(result?.checks.map((c) => c.metric)).toEqual([LATENCY]);
+  });
+
+  it("is not within range when a query the phase ran exceeded its 24h band", async () => {
+    const query = prom({ [LATENCY]: { worst: 193.2, band: 283.7 }, 'rate(http_errors_total[5m])': { worst: 9, band: 0.1 } });
+    const result = await checkSymptomsAgainstNormalRange([], WINDOW, query, NOW, [LATENCY, "rate(http_errors_total[5m])"]);
+    expect(result?.allWithin).toBe(false);
+  });
+
+  it("skips an executed query that has no data but still judges the rest", async () => {
+    const query = prom({ [LATENCY]: { worst: 193.2, band: 283.7 } });
+    const result = await checkSymptomsAgainstNormalRange([], WINDOW, query, NOW, ['rate(http_errors_total{pod="gone"}[5m])', LATENCY]);
+    expect(result?.allWithin).toBe(true);
+    expect(result?.checks.map((c) => c.metric)).toEqual([LATENCY]);
+  });
+
+  it("concludes nothing when every executed query has no data", async () => {
+    expect(await checkSymptomsAgainstNormalRange([], WINDOW, async () => null, NOW, [LATENCY])).toBeNull();
+  });
+
+  it("deduplicates and caps the number of symptom queries", async () => {
+    const queries = Array.from({ length: 10 }, (_, i) => `rate(http_errors_total{pod="p${i}"}[5m])`);
+    const query = vi.fn(async () => 1);
+    const result = await checkSymptomsAgainstNormalRange([{ metric: queries[0]!, severity: "warning" }], WINDOW, query, NOW, queries);
+    expect(result?.checks).toHaveLength(6);
+    expect(query).toHaveBeenCalledTimes(12);
+  });
+});
+
+describe("executedPromQl", () => {
+  it("extracts expr from query_prometheus tool calls only", () => {
+    expect(executedPromQl([
+      { tool: "grafana-mcp_query_prometheus", args: JSON.stringify({ expr: ` ${LATENCY} `, queryType: "range" }) },
+      { tool: "grafana-mcp_query_loki_logs", args: JSON.stringify({ logql: '{app="x"}' }) },
+      { tool: "query_prometheus", args: "not json" },
+      { tool: "query_prometheus", args: JSON.stringify({ expr: "" }) },
+      { tool: "query_prometheus" },
+    ])).toEqual([LATENCY]);
+    expect(executedPromQl(undefined)).toEqual([]);
+  });
+});
+
 describe("symptomDirection", () => {
   it("classifies symptoms and ignores load", () => {
     expect(symptomDirection(LATENCY)).toBe("higher-is-worse");
@@ -82,6 +132,8 @@ describe("symptomDirection", () => {
     expect(symptomDirection(AVAILABLE)).toBe("lower-is-worse");
     expect(symptomDirection('up{job="api"}')).toBe("lower-is-worse");
     expect(symptomDirection(TOOL_CALLS)).toBeNull();
+    expect(symptomDirection('sum(rate(vllm:request_success_total{model_name="m"}[5m]))')).toBeNull();
+    expect(symptomDirection("sum(rate(ok[5m])) / sum(rate(req[5m])) # success_ratio")).toBe("lower-is-worse");
   });
 });
 

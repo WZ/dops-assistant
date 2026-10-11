@@ -15,14 +15,35 @@
 
 type Direction = "higher-is-worse" | "lower-is-worse";
 
+/** Bounds the Prometheus calls (two per symptom) a synthesis step can spend here. */
+const MAX_SYMPTOM_QUERIES = 6;
+
 /** Labels the metrics agent uses for an observation it considers abnormal. */
 const ELEVATED_SEVERITIES = new Set(["medium", "high", "warning", "critical"]);
 
 export function symptomDirection(expr: string): Direction | null {
   const e = expr.toLowerCase();
-  if (/(available|ready|success|(^|[^a-z_])up\{)/.test(e)) return "lower-is-worse";
+  // "success" alone is a throughput counter that dips to 0 when idle; only a ratio is availability.
+  if (/(available|ready|success_(rate|ratio)|success_percent|(^|[^a-z_])up\{)/.test(e)) return "lower-is-worse";
   if (/(latency|duration|error|fail|restart|oom|evict|code=~?"5)/.test(e)) return "higher-is-worse";
   return null;
+}
+
+/**
+ * PromQL the metrics phase actually executed, taken from its tool calls rather
+ * than from the model's description of them (observations often carry a name
+ * like "e2e_request_latency_p99" instead of the query).
+ */
+export function executedPromQl(toolCalls: Array<{ tool?: string; args?: string }> | undefined): string[] {
+  const out: string[] = [];
+  for (const call of toolCalls ?? []) {
+    if (!call.tool?.includes("query_prometheus") || !call.args) continue;
+    try {
+      const expr = (JSON.parse(call.args) as { expr?: unknown }).expr;
+      if (typeof expr === "string" && expr.trim()) out.push(expr.trim());
+    } catch { /* unparsable args: skip */ }
+  }
+  return out;
 }
 
 /** PromQL only — the metrics agent sometimes records a LogQL query as an observation. */
@@ -53,15 +74,23 @@ export async function checkSymptomsAgainstNormalRange(
   window: { from?: string; to?: string } | undefined,
   queryValue: (expr: string) => Promise<number | null>,
   now: number = Date.now(),
+  executedQueries: string[] = [],
 ): Promise<NormalRangeResult | null> {
   const from = Date.parse(window?.from ?? "");
   const to = Date.parse(window?.to ?? "");
   if (Number.isNaN(from) || Number.isNaN(to) || to <= from) return null;
 
-  const symptoms = observations
+  // Elevated observations that are PromQL, plus every symptom query the phase
+  // ran: a healthy one stays inside its band, so including it only matters
+  // when something really is outside its normal range.
+  const flagged = observations
     .filter((o) => ELEVATED_SEVERITIES.has(String(o.severity).toLowerCase()) && isPromQl(o.metric))
-    .map((o) => ({ metric: o.metric.trim(), direction: symptomDirection(o.metric) }))
-    .filter((o): o is { metric: string; direction: Direction } => o.direction !== null);
+    .map((o) => o.metric.trim());
+  const flaggedSet = new Set(flagged);
+  const symptoms = [...new Set([...flagged, ...executedQueries.filter(isPromQl).map((q) => q.trim())])]
+    .map((metric) => ({ metric, direction: symptomDirection(metric), flagged: flaggedSet.has(metric) }))
+    .filter((o): o is { metric: string; direction: Direction; flagged: boolean } => o.direction !== null)
+    .slice(0, MAX_SYMPTOM_QUERIES);
   if (symptoms.length === 0) return null;
 
   const windowSecs = Math.max(60, Math.round((to - from) / 1000));
@@ -71,7 +100,7 @@ export async function checkSymptomsAgainstNormalRange(
   };
 
   const checks: NormalRangeCheck[] = [];
-  for (const { metric, direction } of symptoms) {
+  for (const { metric, direction, flagged: wasFlagged } of symptoms) {
     const higher = direction === "higher-is-worse";
     const worstExpr = higher
       ? `max(max_over_time((${metric})[${windowSecs}s:1m]${offset(to)}))`
@@ -80,9 +109,15 @@ export async function checkSymptomsAgainstNormalRange(
       ? `max(quantile_over_time(0.95, (${metric})[24h:5m]${offset(from)}))`
       : `min(quantile_over_time(0.05, (${metric})[24h:5m]${offset(from)}))`;
     const [worst, band] = await Promise.all([queryValue(worstExpr), queryValue(bandExpr)]);
-    if (worst === null || band === null || !Number.isFinite(worst) || !Number.isFinite(band)) return null;
+    if (worst === null || band === null || !Number.isFinite(worst) || !Number.isFinite(band)) {
+      // A flagged symptom with no data means we cannot vouch for it; a query the
+      // model merely ran, with no series, has nothing to compare and is skipped.
+      if (wasFlagged) return null;
+      continue;
+    }
     checks.push({ metric, direction, worst, band, within: higher ? worst <= band : worst >= band });
   }
+  if (checks.length === 0) return null;
   return { checks, allWithin: checks.every((c) => c.within) };
 }
 
