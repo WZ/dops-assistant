@@ -310,7 +310,7 @@ type Task = {
 
 /**
  * Build the LogQL the probe.logs fallback uses: a basic
- * `count_over_time({labels} |= error|fatal [window])` over the service's
+ * `count_over_time({labels} |~ "error|fatal" [window])` over the service's
  * logLabels. Only called when the service has non-empty logLabels and no
  * per-service log-source rule was written.
  */
@@ -328,7 +328,7 @@ function buildGenericLogQLFromLabels(
       return `${k}="${escaped}"`;
     })
     .join(",");
-  return `sum(count_over_time({${selectors}} |= \`error\` or \`fatal\` [${windowStr}]))`;
+  return `sum(count_over_time({${selectors}} |~ "error|fatal" [${windowStr}]))`;
 }
 
 /** Parse probe.logs.window ("15m", "5m", "1h", "30s", "1d") → minutes. */

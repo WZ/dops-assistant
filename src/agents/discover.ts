@@ -277,7 +277,7 @@ prefix.
 \`\`\`
 {
   "name": "log_errors",
-  "query": "sum(count_over_time({<logLabels>} |= \`error\` or \`fatal\` [15m]))",
+  "query": "sum(count_over_time({<logLabels>} |~ \\"error|fatal\\" [15m]))",
   "threshold": { "op": "gt", "value": 75 },
   "consecutiveTicks": 2,
   "source": "logs"
@@ -288,8 +288,11 @@ Reuse logLabels verbatim. Example — for
 \`logLabels={namespace:"checkout",container:"api"}\`:
 
 \`\`\`
-sum(count_over_time({namespace="checkout",container="api"} |= \`error\` or \`fatal\` [15m]))
+sum(count_over_time({namespace="checkout",container="api"} |~ "error|fatal" [15m]))
 \`\`\`
+
+Write the line filter exactly as \`|~ "error|fatal"\` with double quotes: older Loki
+versions reject backtick strings and \`or\` between line filters.
 
 Threshold 75 is a raw count over the 15m window (≈5 errors/min). The probe
 does NOT divide by window duration. A wrong Loki provider is fine — the probe

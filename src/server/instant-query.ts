@@ -79,15 +79,42 @@ function scalarFromPromResult(raw: unknown): number {
     const parsed = parseFloat(String(first.value[1]));
     return Number.isFinite(parsed) ? parsed : Number.NaN;
   }
-  // Range query shape: { values: [[ts, "v"], ...] } — take the latest sample.
+  // Range query shape — take the latest sample. Prometheus returns
+  // [[ts, "v"], ...]; grafana-mcp returns Loki samples as [{timestamp, value}, ...].
   if (first.values && Array.isArray(first.values) && first.values.length > 0) {
-    const latest = first.values[first.values.length - 1];
-    if (latest && latest.length >= 2) {
-      const parsed = parseFloat(String(latest[1]));
+    const latest: unknown = first.values[first.values.length - 1];
+    const sample = Array.isArray(latest) ? latest[1] : (latest as { value?: unknown } | undefined)?.value;
+    if (sample !== undefined) {
+      const parsed = parseFloat(String(sample));
       return Number.isFinite(parsed) ? parsed : Number.NaN;
     }
   }
   return Number.NaN;
+}
+
+/**
+ * MCP tools report upstream failures (e.g. a Loki 400 parse error) as a
+ * result with `isError: true` rather than throwing. Those must score as
+ * `error`, not `empty`, or a broken rule looks like a quiet service.
+ */
+function toolErrorText(raw: unknown): string | undefined {
+  if (!raw || typeof raw !== "object" || (raw as { isError?: unknown }).isError !== true) return undefined;
+  const content = (raw as { content?: Array<{ text?: unknown }> }).content;
+  const text = Array.isArray(content) ? content[0]?.text : undefined;
+  return typeof text === "string" ? text.slice(0, 300) : "tool returned isError";
+}
+
+function classify(raw: unknown, query: string): InstantResult {
+  if (raw === undefined) return { kind: "error", value: Number.NaN };
+  const errorText = toolErrorText(raw);
+  if (errorText !== undefined) {
+    logger.warn({ query, error: errorText }, "instant-query: tool reported an error, scoring as no-trip");
+    return { kind: "error", value: Number.NaN };
+  }
+  const value = scalarFromPromResult(raw);
+  return Number.isFinite(value)
+    ? { kind: "ok", value }
+    : { kind: "empty", value: Number.NaN };
 }
 
 /**
@@ -112,11 +139,7 @@ export async function executeInstantMetric(
   };
   if (datasourceUid) args.datasourceUid = datasourceUid;
   const raw = await withTimeoutAndAbort(tool, args, signal, queryTimeoutMs);
-  if (raw === undefined) return { kind: "error", value: Number.NaN };
-  const value = scalarFromPromResult(raw);
-  return Number.isFinite(value)
-    ? { kind: "ok", value }
-    : { kind: "empty", value: Number.NaN };
+  return classify(raw, query);
 }
 
 /**
@@ -142,16 +165,12 @@ export async function executeInstantLogs(
   if (!lokiDatasourceUid) return { kind: "empty", value: Number.NaN };
   const now = new Date();
   const args: Record<string, unknown> = {
-    expr: query,
+    logql: query,
     queryType: "metric",
     datasourceUid: lokiDatasourceUid,
     startTime: new Date(now.getTime() - 15 * 60 * 1000).toISOString(),
     endTime: now.toISOString(),
   };
   const raw = await withTimeoutAndAbort(tool, args, signal, queryTimeoutMs);
-  if (raw === undefined) return { kind: "error", value: Number.NaN };
-  const value = scalarFromPromResult(raw);
-  return Number.isFinite(value)
-    ? { kind: "ok", value }
-    : { kind: "empty", value: Number.NaN };
+  return classify(raw, query);
 }

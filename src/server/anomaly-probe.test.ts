@@ -784,9 +784,9 @@ describe("runProbe — four-track evaluator (Slice C)", () => {
     });
 
     // The fallback query was synthesized from logLabels.
-    const logsCall = logsExecute.mock.calls[0]?.[0] as { expr: string };
-    expect(logsCall.expr).toContain('namespace="checkout"');
-    expect(logsCall.expr).toContain('container="api"');
+    const logsCall = logsExecute.mock.calls[0]?.[0] as { logql: string };
+    expect(logsCall.logql).toContain('namespace="checkout"');
+    expect(logsCall.logql).toContain('container="api"');
     const hit = hits.find((h) => h.origin === "logs-fallback");
     expect(hit).toBeDefined();
     expect(hit!.ruleName).toBe("log_errors_fallback");

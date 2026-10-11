@@ -6,7 +6,8 @@ import type { OnToolCallEnriched, OnIteration } from "../../types/agent-interfac
 import type { Tool } from "@mastra/core/tools";
 import { createLogger } from "../../logger.js";
 import { throwIfDiscoveryAborted } from "./discover/index.js";
-import { backfillPodRestarts, backfillLogErrors } from "./discover/parse.js";
+import { backfillPodRestarts, backfillLogErrors, logErrorsQuery, podPrefixRegex, podPrefixRestartQuery } from "./discover/parse.js";
+import { parsePrometheusResult } from "../../server/service-health-poller.js";
 
 const logger = createLogger("validate");
 
@@ -103,11 +104,8 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
     ?? findToolBySuffix(metricsTools, "list_datasources");
   const lokiDsUid = await findLokiDatasourceUid(listDsTool, config);
   // Prometheus UID is required by grafana-mcp `query_prometheus` (alongside
-  // startTime/endTime). Without it Phase 2's metric verification call and the
-  // tryMetricFallback path get an MCP "Tool input validation failed" error
-  // string back; the existing `metricsOk = !resultStr.includes('"result":[]')`
-  // heuristic false-positives that error as a successful query, so the
-  // operator never sees the broken-metric flag and the fallback never runs.
+  // startTime/endTime). Without it every Phase 2 verification call gets an
+  // MCP "Tool input validation failed" error back instead of data.
   const promDsUid = await findPrometheusDatasourceUid(listDsTool, config);
 
   config.onIteration?.("validation", 0, config.services.length, "Enriching log labels from K8s...");
@@ -117,7 +115,8 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
   throwIfDiscoveryAborted(config.abortSignal);
 
   // Phase 1: Enrich remaining empty logLabels by matching service names against Loki label values (fallback)
-  const labelMap = await buildLabelMap(lokiLabelNamesTool, lokiLabelValuesTool, lokiDsUid, config, SERVICE_LABEL_KEYS);
+  const lokiLabelNames = await listLokiLabelNames(lokiLabelNamesTool, lokiDsUid, config);
+  const labelMap = await buildLabelMap(lokiLabelNames, lokiLabelValuesTool, lokiDsUid, config, SERVICE_LABEL_KEYS);
   const enriched = enrichLogLabels(k8sEnriched, labelMap);
   throwIfDiscoveryAborted(config.abortSignal);
 
@@ -154,16 +153,7 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
         const resultStr = typeof result === "string" ? result : JSON.stringify(result);
         config.onToolCall?.(promTool[0], { expr: query }, resultStr, duration, undefined, "validation");
 
-        // Iter-6 added the `"error":true` check. Pre-iter-6, the
-        // `query_prometheus` MCP tool rejected every Phase 2 call with
-        // `{"error":true,"message":"Tool input validation failed..."}`
-        // because the args list omitted `datasourceUid`/`startTime`/`endTime`.
-        // The old `metricsOk = !resultStr.includes('"result":[]')` heuristic
-        // false-positived the error envelope as success and the fallback
-        // path never ran.
-        metricsOk = resultStr.length > 10
-          && !resultStr.includes('"result":[]')
-          && !resultStr.includes('"error":true');
+        metricsOk = classifyQueryResult(result) === "data";
         notes.push(metricsOk ? "metrics \u2713" : "metrics \u2717 no data");
       } catch (err) {
         notes.push("metrics \u2717 query failed");
@@ -190,24 +180,19 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
       notes.push("metrics \u2717 no tool or no query");
     }
 
-    // Check logs (only if we enriched logLabels)
-    if (lokiTool && Object.keys(service.logLabels).length > 0) {
-      try {
-        const labels = Object.entries(service.logLabels)
-          .map(([k, v]) => `${k}="${v}"`)
-          .join(",");
-        const query = `{${labels}}`;
-        const start = Date.now();
-        const result = await lokiTool[1].execute!({ query, limit: 1 }, {} as any);
-        const duration = Date.now() - start;
-        const resultStr = typeof result === "string" ? result : JSON.stringify(result);
-        config.onToolCall?.(lokiTool[0], { query, limit: 1 }, resultStr, duration, undefined, "validation");
+    // Restart rule: verify, else repair (or add) with a pod-name-prefix
+    // selector. An empty result is kept — the workload may be scaled to zero.
+    if (promTool) {
+      notes.push(await verifyRestartRule(service, promTool, promDsUid, config));
+    }
 
-        logsOk = resultStr.length > 10 && !resultStr.includes('"result":[]');
-        notes.push(logsOk ? "logs \u2713" : "logs \u2717 no data");
-      } catch (err) {
-        notes.push("logs \u2717 query failed");
-      }
+    // Log selector: verify it matches any stream, else repair from the labels
+    // this Loki actually has, else drop log_errors — a selector that matches
+    // nothing reads as "no errors" forever.
+    if (lokiTool && lokiDsUid && Object.keys(service.logLabels).length > 0) {
+      const outcome = await verifyLogSelector(service, lokiTool, lokiDsUid, lokiLabelNames, config);
+      logsOk = outcome.ok;
+      notes.push(outcome.note);
     } else {
       notes.push("logs n/a");
     }
@@ -491,6 +476,155 @@ function buildFallbackCandidates(rawServiceName: string): string[] {
  * that returns a non-empty result. Never throws — each attempt is isolated.
  * Caller treats `undefined` as "give up, keep the agent's original".
  */
+type QueryOutcome = "data" | "empty" | "error";
+
+/**
+ * grafana-mcp answers a no-match query with `{"data":[]}` and an upstream
+ * failure (bad query, Loki 400) with `isError: true` plain text.
+ */
+function classifyQueryResult(result: unknown): QueryOutcome {
+  if (result && typeof result === "object" && (result as { isError?: unknown }).isError === true) return "error";
+  const str = typeof result === "string" ? result : JSON.stringify(result);
+  if (str.includes('"error":true')) return "error";
+  return parsePrometheusResult(result).length > 0 ? "data" : "empty";
+}
+
+async function runPromCheck(
+  promTool: [string, Tool],
+  expr: string,
+  promDsUid: string | undefined,
+  config: ValidateStepConfig,
+): Promise<QueryOutcome> {
+  try {
+    const start = Date.now();
+    const result = await promTool[1].execute!(buildPromQueryArgs(expr, promDsUid), {} as any);
+    const resultStr = typeof result === "string" ? result : JSON.stringify(result);
+    config.onToolCall?.(promTool[0], { expr }, resultStr, Date.now() - start, undefined, "validation");
+    return classifyQueryResult(result);
+  } catch (err) {
+    config.onToolCall?.(promTool[0], { expr }, undefined, 0, String(err), "validation");
+    return "error";
+  }
+}
+
+const LOG_STREAM_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+
+async function runLokiStreamCheck(
+  lokiTool: [string, Tool],
+  selectorBody: string,
+  lokiDsUid: string,
+  config: ValidateStepConfig,
+): Promise<QueryOutcome> {
+  const now = Date.now();
+  const args = {
+    datasourceUid: lokiDsUid,
+    logql: `{${selectorBody}}`,
+    limit: 1,
+    startTime: new Date(now - LOG_STREAM_LOOKBACK_MS).toISOString(),
+    endTime: new Date(now).toISOString(),
+  };
+  try {
+    const result = await lokiTool[1].execute!(args, {} as any);
+    const resultStr = typeof result === "string" ? result : JSON.stringify(result);
+    config.onToolCall?.(lokiTool[0], args, resultStr, Date.now() - now, undefined, "validation");
+    return classifyQueryResult(result);
+  } catch (err) {
+    config.onToolCall?.(lokiTool[0], args, undefined, 0, String(err), "validation");
+    return "error";
+  }
+}
+
+function serviceNamespace(service: ServiceConfig): string | undefined {
+  if (service.logLabels?.namespace) return service.logLabels.namespace;
+  const queries = [...(service.probeRules ?? []).map((r) => r.query), ...service.metrics.map((m) => m.query)];
+  for (const q of queries) {
+    const ns = /\bnamespace="([^"\\]+)"/.exec(q)?.[1];
+    if (ns) return ns;
+  }
+  return undefined;
+}
+
+async function verifyRestartRule(
+  service: ServiceConfig,
+  promTool: [string, Tool],
+  promDsUid: string | undefined,
+  config: ValidateStepConfig,
+): Promise<string> {
+  const rules = service.probeRules ?? (service.probeRules = []);
+  const rule = rules.find((r) => r.name === "pod_restarts");
+  if (rule) {
+    const current = await runPromCheck(promTool, rule.query, promDsUid, config);
+    if (current !== "empty") return current === "data" ? "restarts \u2713" : "restarts ? query failed";
+  }
+  const fallback = podPrefixRestartQuery(service.name, serviceNamespace(service));
+  if (fallback !== rule?.query && await runPromCheck(promTool, fallback, promDsUid, config) === "data") {
+    if (rule) {
+      rule.query = fallback;
+      return "restarts \u2713 repaired via pod-name prefix";
+    }
+    rules.push({ name: "pod_restarts", query: fallback, threshold: { op: "gt", value: 0.033 }, consecutiveTicks: 2, source: "metrics" });
+    return "restarts \u2713 added via pod-name prefix";
+  }
+  return rule ? "restarts \u2717 no series (kept; may be scaled to zero)" : "restarts n/a";
+}
+
+function labelSelectorBody(labels: Record<string, string>): string {
+  return Object.entries(labels)
+    .map(([k, v]) => `${k}="${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`)
+    .join(",");
+}
+
+/** Equality label keys tried, in order, when the discovered log selector matches no stream. */
+const LOG_SELECTOR_KEYS = ["app", "service_name", "app_kubernetes_io_name", "container_name", "container"];
+
+async function verifyLogSelector(
+  service: ServiceConfig,
+  lokiTool: [string, Tool],
+  lokiDsUid: string,
+  lokiLabelNames: string[],
+  config: ValidateStepConfig,
+): Promise<{ ok: boolean; note: string }> {
+  const current = await runLokiStreamCheck(lokiTool, labelSelectorBody(service.logLabels), lokiDsUid, config);
+  if (current === "data") return { ok: true, note: "logs \u2713" };
+  if (current === "error") return { ok: false, note: "logs ? query failed (kept)" };
+
+  const names = new Set(lokiLabelNames);
+  const namespace = names.has("namespace") ? serviceNamespace(service) : undefined;
+  const rules = service.probeRules ?? (service.probeRules = []);
+  const setLogRule = (selectorBody: string) => {
+    const existing = rules.find((r) => r.name === "log_errors");
+    if (existing) existing.query = logErrorsQuery(selectorBody);
+    else rules.push({ name: "log_errors", query: logErrorsQuery(selectorBody), threshold: { op: "gt", value: 75 }, consecutiveTicks: 2, source: "logs" });
+  };
+
+  for (const key of LOG_SELECTOR_KEYS.filter((k) => names.has(k))) {
+    const labels: Record<string, string> = namespace ? { namespace, [key]: service.name } : { [key]: service.name };
+    if (await runLokiStreamCheck(lokiTool, labelSelectorBody(labels), lokiDsUid, config) === "data") {
+      service.logLabels = labels;
+      setLogRule(labelSelectorBody(labels));
+      return { ok: true, note: `logs \u2713 repaired via ${key}` };
+    }
+  }
+
+  // logLabels are equality-only, so a pod-regex match updates the probe rule
+  // and narrows logLabels to the namespace.
+  if (names.has("pod")) {
+    const body = [
+      ...(namespace ? [`namespace="${namespace}"`] : []),
+      `pod=~"${podPrefixRegex(service.name).replace(/\\/g, "\\\\")}"`,
+    ].join(",");
+    if (await runLokiStreamCheck(lokiTool, body, lokiDsUid, config) === "data") {
+      service.logLabels = namespace ? { namespace } : {};
+      setLogRule(body);
+      return { ok: true, note: "logs \u2713 repaired via pod-name prefix" };
+    }
+  }
+
+  service.logLabels = {};
+  service.probeRules = rules.filter((r) => r.name !== "log_errors");
+  return { ok: false, note: "logs \u2717 no stream for any selector \u2014 log_errors dropped" };
+}
+
 async function tryMetricFallback(
   promTool: [string, Tool],
   serviceName: string,
@@ -504,14 +638,7 @@ async function tryMetricFallback(
       const duration = Date.now() - start;
       const resultStr = typeof result === "string" ? result : JSON.stringify(result);
       config.onToolCall?.(promTool[0], { expr: candidate }, resultStr, duration, undefined, "validation");
-      // Same MCP-error guard as Phase 2 — without it the fallback loop
-      // accepts the "Tool input validation failed" error string as a
-      // successful hit and stops searching for a real query.
-      if (resultStr.length > 10
-          && !resultStr.includes('"result":[]')
-          && !resultStr.includes('"error":true')) {
-        return candidate;
-      }
+      if (classifyQueryResult(result) === "data") return candidate;
     } catch {
       // Candidate threw (e.g., MCP rejected the query shape) — try the next.
       continue;
@@ -756,16 +883,12 @@ async function findLokiDatasourceUid(
   return undefined;
 }
 
-async function buildLabelMap(
+async function listLokiLabelNames(
   labelNamesTool: [string, any] | undefined,
-  labelValuesTool: [string, any] | undefined,
   lokiDsUid: string | undefined,
   config: ValidateStepConfig,
-  labelKeys: string[] = SERVICE_LABEL_KEYS,
-): Promise<Map<string, Map<string, string>>> {
-  const map = new Map<string, Map<string, string>>();
-  if (!labelNamesTool || !labelValuesTool || !lokiDsUid) return map;
-
+): Promise<string[]> {
+  if (!labelNamesTool || !lokiDsUid) return [];
   try {
     const start = Date.now();
     const namesResult = await labelNamesTool[1].execute!({ datasourceUid: lokiDsUid }, {} as any);
@@ -776,7 +899,24 @@ async function buildLabelMap(
     const parsed = unwrapMcpJson(namesResult);
     const allNames: string[] = Array.isArray(parsed) ? parsed : parsed?.labels ?? parsed?.data ?? parsed?.values ?? [];
     logger.debug(`Available label names (${allNames.length}): ${allNames.slice(0, 30).join(", ")}`);
+    return allNames;
+  } catch (err) {
+    logger.warn(`Failed to list Loki label names: ${err}`);
+    return [];
+  }
+}
 
+async function buildLabelMap(
+  allNames: string[],
+  labelValuesTool: [string, any] | undefined,
+  lokiDsUid: string | undefined,
+  config: ValidateStepConfig,
+  labelKeys: string[] = SERVICE_LABEL_KEYS,
+): Promise<Map<string, Map<string, string>>> {
+  const map = new Map<string, Map<string, string>>();
+  if (allNames.length === 0 || !labelValuesTool || !lokiDsUid) return map;
+
+  try {
     const available = allNames.filter(
       (k: string) => labelKeys.some((p) => k === p || k.toLowerCase().includes(p)),
     );

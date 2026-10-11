@@ -88,7 +88,7 @@ function candidateProbeRules(candidate: DiscoveryCandidate): ProbeMetricRule[] {
   if (Object.keys(candidate.logLabels).length > 0) {
     rules.push({
       name: "log_errors",
-      query: `sum(count_over_time({${logSelector(candidate.logLabels)}} |= \`error\` or \`fatal\` [15m]))`,
+      query: `sum(count_over_time({${logSelector(candidate.logLabels)}} |~ "error|fatal" [15m]))`,
       threshold: { op: "gt", value: 75 },
       consecutiveTicks: 2,
       source: "logs",
