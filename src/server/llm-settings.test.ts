@@ -3,7 +3,7 @@ import { Database } from "./db.js";
 import { getEffectiveReasoningEffort, getStackLlmSettingsView } from "./llm-settings.js";
 import type { Config, ReasoningEffort } from "../config/schema.js";
 
-function makeConfig(reasoning?: Partial<Record<"default" | "chat" | "investigation" | "discovery", ReasoningEffort>>): Config {
+function makeConfig(reasoning?: Partial<Record<"default" | "chat" | "investigation" | "discovery" | "deep", ReasoningEffort>>): Config {
   return {
     llm: {
       apiKey: "k",
@@ -51,6 +51,17 @@ describe("getEffectiveReasoningEffort — precedence", () => {
     const config = makeConfig({ default: "medium", chat: "low" });
     expect(getEffectiveReasoningEffort(db, config, "stack-1", "chat")).toBe("high");
     expect(getEffectiveReasoningEffort(db, config, "stack-1", "investigation")).toBe("medium");
+  });
+
+  it("deep has its own bucket: medium for deep runs while everything else stays low", () => {
+    const config = makeConfig({ default: "low", deep: "medium" });
+    expect(getEffectiveReasoningEffort(db, config, "stack-1", "deep")).toBe("medium");
+    expect(getEffectiveReasoningEffort(db, config, "stack-1", "investigation")).toBe("low");
+    db.setStackReasoningEffort("stack-1", { deep: "high" });
+    expect(getEffectiveReasoningEffort(db, config, "stack-1", "deep")).toBe("high");
+    const view = getStackLlmSettingsView(db, config, "stack-1");
+    expect(view.effective.deep).toEqual({ effort: "high", source: "stack" });
+    expect(view.config.deep).toBe("medium");
   });
 
   it("stack override is per-stack (does not bleed across stacks)", () => {
@@ -129,6 +140,7 @@ describe("getStackLlmSettingsView", () => {
       chat: { effort: "high", source: "stack" },
       investigation: { effort: "low", source: "config" },
       discovery: { effort: "medium", source: "default" },
+      deep: { effort: "medium", source: "default" },
     });
   });
 

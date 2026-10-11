@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { createModel, applyModelMiddleware } from "./index.js";
+import { describe, it, expect, vi } from "vitest";
+import { createModel, applyModelMiddleware, generateWithEffortFallback } from "./index.js";
 import type { Config } from "../config/schema.js";
 
 const baseLlmConfig: Config["llm"] = {
@@ -58,5 +58,40 @@ describe("applyModelMiddleware", () => {
   it("preserves caller-supplied maxOutputTokens", () => {
     const out = applyModelMiddleware({ maxOutputTokens: 1024 }, {});
     expect(out.maxOutputTokens).toBe(1024);
+  });
+});
+
+describe("generateWithEffortFallback", () => {
+  const empty = { content: [], finishReason: { unified: "length" } };
+  const answered = { content: [{ type: "text", text: "{\"ok\":true}" }], finishReason: { unified: "stop" } };
+  const params = { providerOptions: { openaiCompatible: { reasoningEffort: "medium" } } };
+
+  it("retries once at low effort when the budget went to reasoning and no text came back", async () => {
+    const retry = vi.fn(async () => answered);
+    const out = await generateWithEffortFallback(async () => empty, retry, params, { reasoningEffort: "medium" });
+    expect(out).toBe(answered);
+    expect(retry).toHaveBeenCalledWith({ providerOptions: { openaiCompatible: { reasoningEffort: "low" } } });
+  });
+
+  it("keeps a real answer", async () => {
+    const retry = vi.fn();
+    const out = await generateWithEffortFallback(async () => answered, retry, params, { reasoningEffort: "medium" });
+    expect(out).toBe(answered);
+    expect(retry).not.toHaveBeenCalled();
+  });
+
+  it("keeps tool calls even with no text", async () => {
+    const toolCall = { content: [{ type: "tool-call" }], finishReason: { unified: "length" } };
+    const retry = vi.fn();
+    expect(await generateWithEffortFallback(async () => toolCall, retry, params, { reasoningEffort: "high" })).toBe(toolCall);
+    expect(retry).not.toHaveBeenCalled();
+  });
+
+  it("does not retry at low or unset effort, or when the model stopped normally", async () => {
+    const retry = vi.fn();
+    await generateWithEffortFallback(async () => empty, retry, params, { reasoningEffort: "low" });
+    await generateWithEffortFallback(async () => empty, retry, params, {});
+    await generateWithEffortFallback(async () => ({ content: [], finishReason: { unified: "stop" } }), retry, params, { reasoningEffort: "medium" });
+    expect(retry).not.toHaveBeenCalled();
   });
 });

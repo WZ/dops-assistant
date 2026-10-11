@@ -92,7 +92,7 @@ const LlmRetrySchema = z.object({
 export const ReasoningEffortSchema = z.enum(["low", "medium", "high"]);
 export type ReasoningEffort = z.infer<typeof ReasoningEffortSchema>;
 
-export const ReasoningBucketSchema = z.enum(["chat", "investigation", "discovery"]);
+export const ReasoningBucketSchema = z.enum(["chat", "investigation", "discovery", "deep"]);
 export type ReasoningBucket = z.infer<typeof ReasoningBucketSchema>;
 
 const LlmReasoningEffortSchema = z.object({
@@ -100,6 +100,7 @@ const LlmReasoningEffortSchema = z.object({
   chat: ReasoningEffortSchema.optional(),
   investigation: ReasoningEffortSchema.optional(),
   discovery: ReasoningEffortSchema.optional(),
+  deep: ReasoningEffortSchema.optional(),
 }).optional();
 
 const LlmSchema = z.object({

@@ -667,6 +667,29 @@ describe("createMastraAdapters", () => {
     services: [{ name: "svc", metrics: [], logLabels: {} }],
   } as any;
 
+  it("runs Deep Investigation on the deep reasoning bucket; regular investigations keep theirs", async () => {
+    mockGetAllTools.mockResolvedValue({});
+    mockCreateChatAgent.mockImplementation((config) => ({ id: config.agentId, stream: vi.fn(), generate: vi.fn() }));
+    mockCreateModel.mockImplementation((_llm: unknown, opts?: { reasoningEffort?: string }) => ({ effort: opts?.reasoningEffort }) as any);
+    try {
+      mockRunAutonomousOrchestrator.mockImplementationOnce(async () => ({
+        outcome: "exhausted", hypotheses: [], evidence: [], trace: [],
+        stats: { moves: 0, toolCalls: 0, tokensSpent: 0, strikes: 0, depth: 0, subagents: 0, elapsedMs: 0 },
+      }));
+      const { orchestrate } = await createMastraAdapters({
+        config: { ...baseConfig, llm: { ...baseConfig.llm, reasoningEffort: { default: "low", deep: "medium" } } },
+        providers: [],
+      });
+      await orchestrate("svc is down");
+      expect(mockRunAutonomousOrchestrator.mock.calls.at(-1)![0].model).toEqual({ effort: "medium" });
+      const efforts = mockCreateModel.mock.calls.map((c: any[]) => c[1]?.reasoningEffort);
+      expect(efforts.filter((e: string) => e === "medium")).toHaveLength(1);
+      expect(efforts.filter((e: string) => e === "low")).toHaveLength(3);
+    } finally {
+      mockCreateModel.mockImplementation(() => ({ provider: "model" }) as any);
+    }
+  });
+
   it("passes projectRoot=process.cwd() when noHistory is omitted", async () => {
     const { createInvestigationWorkflow } = await import("../workflows/investigation.js");
     vi.mocked(createInvestigationWorkflow).mockClear();

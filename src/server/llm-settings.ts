@@ -3,9 +3,9 @@
  *
  * Two sources, in precedence order per agent bucket:
  *   1. db.settings (`llm.reasoningEffort.${stackId}`) — per-stack override JSON
- *      `{ chat?, investigation?, discovery? }`. Set/cleared from the GUI.
+ *      `{ chat?, investigation?, discovery?, deep? }`. Set/cleared from the GUI.
  *   2. config.yaml (`config.llm.reasoningEffort`) — admin-supplied defaults:
- *      `{ default?, chat?, investigation?, discovery? }`. Per-bucket wins over
+ *      `{ default?, chat?, investigation?, discovery?, deep? }`. Per-bucket wins over
  *      `default`.
  *
  * Returns `undefined` when nothing is set anywhere — callers MUST treat that
@@ -34,10 +34,11 @@ export interface StackLlmSettingsView {
     chat?: ReasoningEffort;
     investigation?: ReasoningEffort;
     discovery?: ReasoningEffort;
+    deep?: ReasoningEffort;
   };
 }
 
-const BUCKETS: ReasoningBucket[] = ["chat", "investigation", "discovery"];
+const BUCKETS: ReasoningBucket[] = ["chat", "investigation", "discovery", "deep"];
 
 export function getEffectiveReasoningEffort(
   db: Database,
@@ -63,6 +64,7 @@ export function getStackLlmSettingsView(
     chat: { effort: undefined, source: null },
     investigation: { effort: undefined, source: null },
     discovery: { effort: undefined, source: null },
+    deep: { effort: undefined, source: null },
   };
   for (const bucket of BUCKETS) {
     if (stack[bucket]) {
@@ -81,6 +83,7 @@ export function getStackLlmSettingsView(
       chat: cfg.chat,
       investigation: cfg.investigation,
       discovery: cfg.discovery,
+      deep: cfg.deep,
     },
   };
 }
