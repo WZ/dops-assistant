@@ -167,6 +167,36 @@ describe("validateSeverity", () => {
   });
 });
 
+describe("validateSeverity — impact cap", () => {
+  const latencyMetrics: MetricFindings = {
+    observations: [{ metric: "e2e_latency_p99", currentValue: "220s", baselineValue: "40s", timestamp: "now", severity: "high" as any }],
+    anomalyWindow: "last 1h",
+    summary: "Pod healthy, but e2e request latency p99 spiked from ~40s to 220s.",
+  };
+  const cleanLogs: LogFindings = { observations: [], summary: "No errors, exceptions, or failures in the last hour; all requests return 200." };
+  const healthyInfra: InfraFindings = { observations: [], summary: "Service is healthy: 1/1 replicas ready, 0 restarts, no warning events." };
+  const overcalled = { severity: "high", summary: "Latency spike under burst traffic.", rootCause: "Single replica with no autoscaling queues requests during bursts." };
+
+  it("caps high to medium when there is no evidence of damage (no errors, healthy infra, no critical metric)", () => {
+    expect(validateSeverity(overcalled, latencyMetrics, cleanLogs, healthyInfra)).toBe("medium");
+    expect(validateSeverity({ ...overcalled, severity: "critical" }, latencyMetrics, cleanLogs, healthyInfra)).toBe("medium");
+  });
+
+  it("keeps high when infrastructure shows a failure", () => {
+    const failing: InfraFindings = { observations: [], summary: "Node is healthy but 2 of 3 pods are crash-looping." };
+    expect(validateSeverity(overcalled, latencyMetrics, cleanLogs, failing)).toBeNull();
+  });
+
+  it("keeps high when logs show errors", () => {
+    const errorLogs: LogFindings = { observations: [], summary: "5xx error rate rose to 30% after 14:00." };
+    expect(validateSeverity(overcalled, latencyMetrics, errorLogs, healthyInfra)).toBeNull();
+  });
+
+  it("leaves medium and below alone", () => {
+    expect(validateSeverity({ ...overcalled, severity: "medium" }, latencyMetrics, cleanLogs, healthyInfra)).toBeNull();
+  });
+});
+
 describe("extractTimeRange", () => {
   it("handles ISO date", () => {
     const range = extractTimeRange("anomaly on 2026-03-05", "");

@@ -105,6 +105,7 @@ export type OrchestratorOutcome =
   | "wall-clock"
   | "exhausted" // decide-fn signalled no further moves
   | "inconclusive" // stalled (no progress) or hit the move backstop
+  | "no-incident" // reads healthy on its primary signal after a fault was ruled out
   | "aborted"; // caller aborted (e.g. the operator disconnected)
 
 export interface OrchestratorGuards {
@@ -268,6 +269,8 @@ const MAX_STALL = 8;
  * CONSECUTIVE empties; this trips on cumulative emptiness across the whole run.
  */
 const NO_EVIDENCE_BAIL_QUERIES = 4;
+// Re-check the primary health signal after this many evidence queries (no-incident stop).
+const HEALTH_RECHECK_QUERIES = 3;
 /**
  * Hard cap on operator "continue" decisions. Each continue resets the strike
  * counter and resumes; without a ceiling, a hung or looping operator prompt
@@ -322,6 +325,8 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
   let toolCalls = 0;
   let moves = 0;
   let stall = 0;
+  let ruledOutSinceHealthCheck = false;
+  let queriesSinceHealthCheck = 0;
   let operatorContinues = 0;
   // PR-4: the operator's standing lead from a continue-with-context resume. Set
   // when a pause resolves with one, kept across moves until a later pause replaces
@@ -407,6 +412,24 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
     // Fast no-evidence bail: several queries in and nothing surfaced anywhere →
     // the service is quiet. Stop now rather than burning the full run (inc-7 #5).
     if (toolCalls >= NO_EVIDENCE_BAIL_QUERIES && evidence.length === 0) return await giveUp("inconclusive");
+    // No-incident stop: after a proposed fault is ruled out, or every few
+    // evidence queries, re-check the primary signal (skill healthySignal). A
+    // healthy service can't be confirmed anyway (the health gate blocks it), so
+    // without this it is hunted until the wall-clock guard.
+    const healthCheckDue = ruledOutSinceHealthCheck || (hypotheses.length > 0 && queriesSinceHealthCheck >= HEALTH_RECHECK_QUERIES);
+    if (healthCheckDue && deps.checkHealthy) {
+      ruledOutSinceHealthCheck = false;
+      queriesSinceHealthCheck = 0;
+      const healthy = await deps.checkHealthy().catch(() => null);
+      if (healthy === true && !hypotheses.some((x) => x.standing === "confirmed")) {
+        const ruledOut = hypotheses.filter((x) => x.standing === "ruled-out").length;
+        const why = ruledOut > 0
+          ? `and ${ruledOut} proposed ${ruledOut === 1 ? "fault was" : "faults were"} ruled out`
+          : `after ${toolCalls} queries; no proposed fault could be confirmed`;
+        record({ move: "conclude", detail: `no incident: ${deps.incidentService ?? "the service"} reads healthy on its primary signal ${why}` });
+        return finish("no-incident");
+      }
+    }
 
     const state: OrchestratorState = {
       hypotheses,
@@ -458,6 +481,7 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
         const { timedOut, value: obs } = await raceOp(deps.gatherEvidence(h.hypothesis), deps.guards.opTimeoutMs, []);
         evidence.push(...obs);
         toolCalls++;
+        queriesSinceHealthCheck++;
         record({
           move: "query",
           detail: timedOut
@@ -483,6 +507,7 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
           // Evidence actively refutes it → genuinely ruled out.
           h.standing = "ruled-out";
           strikes++;
+          ruledOutSinceHealthCheck = true;
         } else {
           // `absent`: no evidence either way (e.g. the data source was
           // unreachable, or nothing matched the prediction). Absence of evidence

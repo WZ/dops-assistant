@@ -988,3 +988,72 @@ describe("runOrchestrator — grounding gate (pod-runtime cause vs zero pods)", 
     expect(result.outcome).toBe("confirmed");
   });
 });
+
+describe("runOrchestrator — no-incident stop (healthy + a fault ruled out)", () => {
+  const scriptRuleOut = (evaluate: "contradicted" | "absent" = "contradicted") => ({
+    evaluate: () => evaluate,
+    decideMove: scripted([
+      { type: "hypothesize", hypothesis: h("pods are down") },
+      { type: "query", target: 0 },
+      { type: "test", target: 0 },
+      { type: "hypothesize", hypothesis: h("pods are CPU-throttled") },
+      null,
+    ]),
+  });
+
+  it("stops with no-incident once a fault is ruled out and the service reads healthy", async () => {
+    let checks = 0;
+    const result = await runOrchestrator(makeDeps({
+      incidentService: "api",
+      checkHealthy: async () => { checks++; return true; },
+      ...scriptRuleOut(),
+    }));
+    expect(result.outcome).toBe("no-incident");
+    expect(result.confirmed).toBeUndefined();
+    expect(checks).toBe(1);
+    expect(result.trace.at(-1)).toMatchObject({ move: "conclude" });
+    expect(result.trace.at(-1)!.detail).toMatch(/^no incident: api reads healthy/);
+    // the second hypothesis was never proposed
+    expect(result.hypotheses).toHaveLength(1);
+  });
+
+  it("keeps investigating when the service is not healthy or health is unknown", async () => {
+    for (const v of [false, null]) {
+      const result = await runOrchestrator(makeDeps({ incidentService: "api", checkHealthy: async () => v, ...scriptRuleOut() }));
+      expect(result.outcome).toBe("exhausted");
+      expect(result.hypotheses).toHaveLength(2);
+    }
+  });
+
+  it("does not stop on an inconclusive test (absence of evidence is not a rule-out)", async () => {
+    const result = await runOrchestrator(makeDeps({ incidentService: "api", checkHealthy: async () => true, ...scriptRuleOut("absent") }));
+    expect(result.outcome).toBe("exhausted");
+  });
+
+  it("also stops after 3 evidence queries on a healthy service that never tests anything", async () => {
+    let checks = 0;
+    const result = await runOrchestrator(makeDeps({
+      incidentService: "api",
+      checkHealthy: async () => { checks++; return true; },
+      evaluate: () => "absent" as const,
+      decideMove: scripted([
+        { type: "hypothesize", hypothesis: h("replicas unavailable") },
+        { type: "query", target: 0 },
+        { type: "query", target: 0 },
+        { type: "query", target: 0 },
+        { type: "query", target: 0 },
+        null,
+      ]),
+    }));
+    expect(result.outcome).toBe("no-incident");
+    expect(result.stats.toolCalls).toBe(3);
+    expect(checks).toBe(1);
+    expect(result.trace.at(-1)!.detail).toMatch(/^no incident: api reads healthy on its primary signal after 3 queries/);
+  });
+
+  it("is unchanged when no checkHealthy is wired", async () => {
+    const result = await runOrchestrator(makeDeps({ incidentService: "api", ...scriptRuleOut() }));
+    expect(result.outcome).toBe("exhausted");
+    expect(result.hypotheses).toHaveLength(2);
+  });
+});

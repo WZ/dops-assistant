@@ -50,11 +50,13 @@ import type { ServiceRegistryStore } from "../services/registry.js";
 
 const logger = createLogger();
 
-// AP6: Per-tick query budget. When the probe generates more than this many
-// queries in a single tick, we emit a WARN log so operators notice
-// cardinality growth before it floods the metrics backend. Tuned so typical
-// stacks stay quiet; trips when services × rules grows unexpectedly.
+// AP6: Per-tick query budget. When the probe generates more than
+// max(QUERY_BUDGET_WARN_THRESHOLD, services × QUERY_BUDGET_PER_SERVICE)
+// queries in a single tick, we emit a WARN so operators notice rules-per-service
+// growth before it floods the metrics backend. Scaling with the service count
+// keeps a large stack with a normal rule count (~3/service) quiet.
 const QUERY_BUDGET_WARN_THRESHOLD = 200;
+const QUERY_BUDGET_PER_SERVICE = 5;
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -490,21 +492,22 @@ export async function runProbe(opts: ProbeOptions): Promise<ProbeResult> {
     }
   }
 
-  // AP6: Probe query budget warning. Warn when a tick generates more than
-  // 200 queries — stacks with many services and many per-service rules
-  // silently cross this threshold and can flood the metrics backend. Not a
+  // AP6: Probe query budget warning. Warn when a tick exceeds the scaled
+  // budget (see QUERY_BUDGET_WARN_THRESHOLD) — growing per-service rule counts
+  // silently multiply queries and can flood the metrics backend. Not a
   // hard block; observability only so operators can notice cardinality
   // explosion early. Fires once per tick when tripped (no suppression) —
   // the scan scheduler runs on a bounded cadence, so WARN-per-tick is fine.
-  if (tasks.length > QUERY_BUDGET_WARN_THRESHOLD) {
+  const queryBudget = Math.max(QUERY_BUDGET_WARN_THRESHOLD, services.length * QUERY_BUDGET_PER_SERVICE);
+  if (tasks.length > queryBudget) {
     logger.warn(
       {
         taskCount: tasks.length,
-        threshold: QUERY_BUDGET_WARN_THRESHOLD,
+        threshold: queryBudget,
         serviceCount: services.length,
         defaultMetricsCount: probe.metrics.length,
       },
-      `anomaly-probe: probe tick generated ${tasks.length} queries (threshold ${QUERY_BUDGET_WARN_THRESHOLD}) — cardinality may be growing; check services × per-service rule counts`,
+      `anomaly-probe: probe tick generated ${tasks.length} queries (threshold ${queryBudget}) — cardinality may be growing; check services × per-service rule counts`,
     );
   }
 

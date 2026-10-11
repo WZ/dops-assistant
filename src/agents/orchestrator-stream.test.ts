@@ -4,6 +4,12 @@ import type { TraceEntry } from "./orchestrator.js";
 import type { NormalizedObservation } from "../workflows/steps/corroboration.js";
 
 describe("traceEntryToStreamEvent", () => {
+  it("renders a no-incident conclusion as its own line, not 'kept looking'", () => {
+    const ev = traceEntryToStreamEvent({ move: "conclude", detail: "no incident: api reads healthy on its primary signal and 1 proposed fault was ruled out" } as TraceEntry);
+    expect(ev).toMatchObject({ verb: "no incident:", status: "done" });
+    expect(ev.target).toMatch(/^api reads healthy/);
+  });
+
   it("maps hypothesize → a running 'proposed a cause' row", () => {
     expect(traceEntryToStreamEvent({ move: "hypothesize", detail: "memory exhaustion" })).toEqual({
       verb: "proposed a cause:",
