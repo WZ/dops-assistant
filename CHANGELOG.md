@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.12.3] - 2026-10-11
+
+### Changed
+- **Reports say when an elevated reading is normal for the service.** Agents compare a reading with one "baseline" value, so an ordinary swing can read like an incident (on a shared model server, p99 latency moves 40s → 400s within an hour). When nothing shows damage (logs clean, infra healthy, no critical metric), each elevated symptom metric (latency, errors, restarts, availability) is re-checked against its own previous 24h range, and if all are inside it the summary says so, with the numbers. Severity is left as the model set it, since a long-running problem can sit inside a recent range. (#276)
+
 ## [0.4.12.2] - 2026-10-11
 
 ### Fixed
