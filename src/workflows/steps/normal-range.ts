@@ -92,5 +92,5 @@ export function normalRangeNote(result: NormalRangeResult): string {
   const parts = result.checks.map((c) => c.direction === "higher-is-worse"
     ? `${c.metric} peaked at ${fmt(c.worst)}, 24h p95 ${fmt(c.band)}`
     : `${c.metric} dipped to ${fmt(c.worst)}, 24h p5 ${fmt(c.band)}`);
-  return `Severity capped at low: every elevated symptom stayed within this service's normal range over the previous 24h (${parts.join("; ")}).`;
+  return `Note: every elevated symptom stayed within this service's normal range over the previous 24h (${parts.join("; ")}).`;
 }

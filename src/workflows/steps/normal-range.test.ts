@@ -88,6 +88,6 @@ describe("symptomDirection", () => {
 describe("normalRangeNote", () => {
   it("states the comparison for each symptom", () => {
     expect(normalRangeNote({ allWithin: true, checks: [{ metric: "p99_latency", direction: "higher-is-worse", worst: 193.2, band: 283.7, within: true }] }))
-      .toBe("Severity capped at low: every elevated symptom stayed within this service's normal range over the previous 24h (p99_latency peaked at 193, 24h p95 284).");
+      .toBe("Note: every elevated symptom stayed within this service's normal range over the previous 24h (p99_latency peaked at 193, 24h p95 284).");
   });
 });

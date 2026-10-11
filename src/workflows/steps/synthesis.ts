@@ -278,6 +278,8 @@ export function buildSynthesisStep(config: WorkflowConfig) {
 
       // An elevated reading only means an incident if it is outside what the
       // service normally does; the agents' single baseline value can't tell.
+      // Informational only: severity stays as synthesis set it, since a band
+      // built from recent history can absorb a long-running degradation.
       if (severity !== "low" && !hasDamageEvidence(metricsForTimeline, logsForTimeline, infraForTimeline)) {
         try {
           const normal = await checkSymptomsAgainstNormalRange(
@@ -286,12 +288,11 @@ export function buildSynthesisStep(config: WorkflowConfig) {
             (expr) => queryInstantValue(config.providers, expr),
           );
           if (normal?.allWithin) {
-            logger.info({ from: severity, checks: normal.checks }, "synthesis: elevated symptoms within their 24h normal range; severity capped at low");
-            severity = "low";
+            logger.info({ severity, checks: normal.checks }, "synthesis: elevated symptoms within their 24h normal range");
             summary = `${summary} ${normalRangeNote(normal)}`.trim();
           }
         } catch (err) {
-          logger.warn({ err }, "synthesis: normal-range check failed; severity unchanged");
+          logger.warn({ err }, "synthesis: normal-range check failed");
         }
       }
 
