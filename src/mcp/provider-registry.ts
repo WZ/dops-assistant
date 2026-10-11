@@ -69,35 +69,42 @@ function withProbeTimeout<T>(probe: Promise<T>, name: string): Promise<T> {
   return Promise.race([probe, timeout]).finally(() => clearTimeout(timer));
 }
 
+interface DatasourceUids {
+  prometheus?: string;
+  loki?: string;
+}
+
 /**
- * Resolve the Prometheus datasource UID from a metrics provider's tool set.
+ * Resolve Prometheus and Loki datasource UIDs from a provider's tool set.
  * Called during initialization when the MCP session is fresh.
  */
-async function resolvePrometheusDatasourceUid(tools: Record<string, unknown>): Promise<string | undefined> {
+async function resolveDatasourceUids(tools: Record<string, unknown>): Promise<DatasourceUids> {
   const listDsTool = Object.entries(tools).find(
     ([name]) => name.includes("list_datasource") || name.includes("list_datasources"),
   ) ?? Object.entries(tools).find(
     ([name]) => name.includes("datasource") && !name.includes("get_datasource"),
   );
-  if (!listDsTool) return undefined;
+  if (!listDsTool) return {};
   try {
     const result = await (listDsTool[1] as { execute: (args: unknown) => Promise<unknown> }).execute({});
     const outer = typeof result === "object" && result !== null ? result : undefined;
-    if (!outer || (outer as any)?.isError) return undefined;
+    if (!outer || (outer as any)?.isError) return {};
     const textContent = (outer as any)?.content?.[0]?.text;
-    if (!textContent || typeof textContent !== "string") return undefined;
+    if (!textContent || typeof textContent !== "string") return {};
     let data: unknown;
-    try { data = JSON.parse(textContent); } catch { return undefined; }
+    try { data = JSON.parse(textContent); } catch { return {}; }
     const datasources = Array.isArray(data) ? data : (data as any)?.datasources ?? [];
     const prom = datasources.find((ds: Record<string, unknown>) =>
       ds.type === "prometheus" || (ds.name as string)?.toLowerCase().includes("prometheus") || (ds.name as string)?.toLowerCase().includes("metric"),
     );
-    if (prom?.uid) {
-      logger.info({ uid: prom.uid, name: prom.name }, "ProviderRegistry: resolved Prometheus datasource UID");
-      return prom.uid as string;
-    }
+    const loki = datasources.find((ds: Record<string, unknown>) =>
+      ds.type === "loki" || (ds.name as string)?.toLowerCase().includes("loki"),
+    );
+    if (prom?.uid) logger.info({ uid: prom.uid, name: prom.name }, "ProviderRegistry: resolved Prometheus datasource UID");
+    if (loki?.uid) logger.info({ uid: loki.uid, name: loki.name }, "ProviderRegistry: resolved Loki datasource UID");
+    return { prometheus: prom?.uid as string | undefined, loki: loki?.uid as string | undefined };
   } catch { /* non-fatal */ }
-  return undefined;
+  return {};
 }
 
 function enabledToolNamesForProvider(provider: MastraProvider, toolNames: string[]): string[] {
@@ -123,6 +130,8 @@ export interface ProviderInfo {
   error?: string;
   /** Cached Prometheus datasource UID, resolved at initialization for metrics-role providers. */
   prometheusDatasourceUid?: string;
+  /** Cached Loki datasource UID, resolved at initialization for logs-role providers. */
+  lokiDatasourceUid?: string;
   /**
    * Enabled tool names (post-namespacing by mastra) discovered during
    * init/test. Cached so the StackManager init-time poller gate can cheaply
@@ -515,10 +524,13 @@ export class ProviderRegistry {
       entry.toolNames = enabledToolNamesForProvider(entry.provider, rawToolNames);
       entry.enabledToolCount = entry.toolNames.length;
 
-      // Resolve Prometheus datasource UID if not yet cached (session is fresh after successful test)
-      if (!entry.prometheusDatasourceUid && entry.config.roles.includes("metrics") && toolCount > 0) {
-        const allRawTools = await listAllProviderTools(entry.provider);
-        entry.prometheusDatasourceUid = await resolvePrometheusDatasourceUid(allRawTools);
+      // Resolve datasource UIDs if not yet cached (session is fresh after successful test)
+      const needsProm = !entry.prometheusDatasourceUid && entry.config.roles.includes("metrics");
+      const needsLoki = !entry.lokiDatasourceUid && entry.config.roles.includes("logs");
+      if ((needsProm || needsLoki) && toolCount > 0) {
+        const uids = await resolveDatasourceUids(await listAllProviderTools(entry.provider));
+        if (needsProm) entry.prometheusDatasourceUid = uids.prometheus;
+        if (needsLoki) entry.lokiDatasourceUid = uids.loki;
       }
 
       // Smoke test: execute a lightweight read-only tool to verify end-to-end connectivity
@@ -728,12 +740,14 @@ export class ProviderRegistry {
       toolNames = enabledToolNamesForProvider(provider, Object.keys(allRawTools));
     }
 
-    // Resolve Prometheus datasource UID for metrics-role providers (session is fresh here)
+    // Resolve datasource UIDs for metrics/logs-role providers (session is fresh here)
     let prometheusDatasourceUid: string | undefined;
-    if (config.roles.includes("metrics") && toolCount > 0) {
+    let lokiDatasourceUid: string | undefined;
+    if ((config.roles.includes("metrics") || config.roles.includes("logs")) && toolCount > 0) {
       try {
-        const allTools = await listAllProviderTools(provider);
-        prometheusDatasourceUid = await resolvePrometheusDatasourceUid(allTools);
+        const uids = await resolveDatasourceUids(await listAllProviderTools(provider));
+        if (config.roles.includes("metrics")) prometheusDatasourceUid = uids.prometheus;
+        if (config.roles.includes("logs")) lokiDatasourceUid = uids.loki;
       } catch { /* non-fatal */ }
     }
 
@@ -746,6 +760,7 @@ export class ProviderRegistry {
       enabledToolCount: toolNames.length,
       error,
       prometheusDatasourceUid,
+      lokiDatasourceUid,
       toolNames,
     };
 

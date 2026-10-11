@@ -39,6 +39,7 @@ vi.mock("../mcp/provider-registry.js", () => {
       enabledToolCount: 1,
       prometheusDatasourceUid: (config as { prometheusDatasourceUid?: string; roles?: string[] }).prometheusDatasourceUid
         ?? ((config as { roles?: string[] }).roles?.includes("metrics") ? "prom-ds" : undefined),
+      lokiDatasourceUid: (config as { roles?: string[] }).roles?.includes("logs") ? "loki-ds" : undefined,
     })));
     getByRole = vi.fn().mockReturnValue([]);
     add = vi.fn().mockResolvedValue({});
@@ -232,6 +233,19 @@ describe("StackManager", () => {
 
     it("throws for invalid stackId", () => {
       expect(() => manager.getContext("nonexistent")).toThrow("Stack not found: nonexistent");
+    });
+
+    it("hands the scan scheduler the Loki datasource UID of a logs-role provider", async () => {
+      const logsManager = new StackManager(db, makeConfig({
+        providers: [{ name: "grafana", roles: ["metrics", "logs"], mcpServer: { transport: "http" as const, url: "http://localhost:4000/mcp" } }],
+      } as Partial<Config>));
+      await logsManager.initialize();
+      const ctx = logsManager.getContext(logsManager.getDefaultStackId());
+      const deps = (ctx.scanScheduler as unknown as { deps: { getLokiDatasourceUid?: () => string | undefined } }).deps;
+      expect(deps.getLokiDatasourceUid?.()).toBe("loki-ds");
+      logsManager.stopAllPollers();
+      logsManager.stopTtlReaper();
+      logsManager.destroyAllMemory();
     });
   });
 
