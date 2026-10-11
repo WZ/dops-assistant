@@ -233,21 +233,39 @@ describe("runProbe", () => {
         && payload?.["kind"] === expected.kind;
     });
 
-  it("AP6: WARNs when a tick generates more than the query budget threshold", async () => {
+  const nRules = (n: number) => Array.from({ length: n }, (_, i) => ({
+    name: `rule_${i}`, query: `m${i}{service="{service}"}`, threshold: { op: "gt" as const, value: 1 }, consecutiveTicks: 1, source: "metrics" as const,
+  }));
+  const tick = (services: number, rules?: number) => runProbe({
+    services: Array.from({ length: services }, (_, i) => `svc-${i}`),
+    probe: rules === undefined ? buildProbe() : buildProbe({ metrics: nRules(rules) }),
+    providers,
+    datasourceUid: "uid",
+    consecutiveState: new Map(),
+    registryStore: fakeRegistryStore(),
+  });
+
+  it("AP6: does NOT WARN for a large stack with a normal number of rules per service", async () => {
     mockTools = { query_prometheus: { execute: vi.fn(async () => promResult(1)) } };
-    // 101 services × 2 default rules = 202 tasks > 200 threshold.
-    const manyServices = Array.from({ length: 101 }, (_, i) => `svc-${i}`);
-    await runProbe({
-      services: manyServices,
-      probe: buildProbe(),
-      providers,
-      datasourceUid: "uid",
-      consecutiveState: new Map(),
-      registryStore: fakeRegistryStore(),
-    });
+    // 101 services × 2 rules = 202 tasks: over 200, but only 2 rules/service.
+    await tick(101);
+    expect(findBudgetWarn()).toBeUndefined();
+  });
+
+  it("AP6: WARNs when rules per service grow past the per-service budget", async () => {
+    mockTools = { query_prometheus: { execute: vi.fn(async () => promResult(1)) } };
+    // 50 services × 6 rules = 300 > max(200, 50 × 5 = 250).
+    await tick(50, 6);
     const budgetWarn = findBudgetWarn();
     expect(budgetWarn).toBeDefined();
-    expect(budgetWarn![0]).toMatchObject({ taskCount: 202, threshold: 200, serviceCount: 101 });
+    expect(budgetWarn![0]).toMatchObject({ taskCount: 300, threshold: 250, serviceCount: 50 });
+  });
+
+  it("AP6: the absolute floor still WARNs for a small stack with many rules", async () => {
+    mockTools = { query_prometheus: { execute: vi.fn(async () => promResult(1)) } };
+    // 10 services × 25 rules = 250 > max(200, 50).
+    await tick(10, 25);
+    expect(findBudgetWarn()![0]).toMatchObject({ taskCount: 250, threshold: 200 });
   });
 
   it("AP6: does NOT WARN when tick task count stays under the query budget threshold", async () => {
