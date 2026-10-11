@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import express from "express";
 import request from "supertest";
+import { once } from "node:events";
+import type { Server } from "node:http";
 import {
   globalLimiter,
   strictLimiter,
@@ -11,7 +13,27 @@ import {
 
 // ── HTTP Rate Limiting Tests ────────────────────────────────────────────────
 
+// Bind each app once, explicitly on 127.0.0.1. supertest's (await api(app)) listens
+// on IPv6 `::` but connects to 127.0.0.1, so a port already held on IPv4 by
+// another local process answered instead (stray 403/404s).
+const servers: Server[] = [];
+const bound = new WeakMap<express.Express, Promise<ReturnType<typeof request>>>();
+function api(app: express.Express): Promise<ReturnType<typeof request>> {
+  let client = bound.get(app);
+  if (!client) {
+    const server = app.listen(0, "127.0.0.1");
+    servers.push(server);
+    client = once(server, "listening").then(() => request(server));
+    bound.set(app, client);
+  }
+  return client;
+}
+
 describe("HTTP rate limiting", () => {
+  afterEach(() => {
+    for (const server of servers.splice(0)) server.close();
+  });
+
   // Each test creates a fresh Express app with fresh limiter instances
   // to avoid cross-test counter contamination. express-rate-limit uses
   // the module-level singletons so we import fresh copies via factory.
@@ -32,12 +54,12 @@ describe("HTTP rate limiting", () => {
 
     // Send 300 requests — all should succeed
     for (let i = 0; i < 300; i++) {
-      const res = await request(app).get("/api/test");
+      const res = await (await api(app)).get("/api/test");
       expect(res.status).toBe(200);
     }
 
     // 301st request should be rate limited
-    const res = await request(app).get("/api/test");
+    const res = await (await api(app)).get("/api/test");
     expect(res.status).toBe(429);
     expect(res.headers["retry-after"]).toBeDefined();
   });
@@ -57,11 +79,11 @@ describe("HTTP rate limiting", () => {
     app.post("/api/skills/generate", (_req, res) => res.json({ ok: true }));
 
     for (let i = 0; i < 10; i++) {
-      const res = await request(app).post("/api/skills/generate");
+      const res = await (await api(app)).post("/api/skills/generate");
       expect(res.status).toBe(200);
     }
 
-    const res = await request(app).post("/api/skills/generate");
+    const res = await (await api(app)).post("/api/skills/generate");
     expect(res.status).toBe(429);
     expect(res.headers["retry-after"]).toBeDefined();
   });
@@ -84,16 +106,16 @@ describe("HTTP rate limiting", () => {
     app.get("/api/something", (_req, res) => res.json({ ok: true }));
 
     for (let i = 0; i < 30; i++) {
-      const res = await request(app).post("/api/something");
+      const res = await (await api(app)).post("/api/something");
       expect(res.status).toBe(200);
     }
 
     // 31st POST should be rate limited
-    const postRes = await request(app).post("/api/something");
+    const postRes = await (await api(app)).post("/api/something");
     expect(postRes.status).toBe(429);
 
     // GET should still work (moderate limiter skips GET)
-    const getRes = await request(app).get("/api/something");
+    const getRes = await (await api(app)).get("/api/something");
     expect(getRes.status).toBe(200);
   });
 
@@ -112,10 +134,10 @@ describe("HTTP rate limiting", () => {
     app.get("/api/test", (_req, res) => res.json({ ok: true }));
 
     // First request succeeds
-    await request(app).get("/api/test");
+    await (await api(app)).get("/api/test");
 
     // Second request is rate limited
-    const res = await request(app).get("/api/test");
+    const res = await (await api(app)).get("/api/test");
     expect(res.status).toBe(429);
     expect(res.headers["retry-after"]).toBeDefined();
     expect(Number(res.headers["retry-after"])).toBeGreaterThan(0);
@@ -135,7 +157,7 @@ describe("HTTP rate limiting", () => {
     app.get("/api/test", (_req, res) => res.json({ ok: true }));
 
     for (let i = 0; i < 5; i++) {
-      const res = await request(app).get("/api/test");
+      const res = await (await api(app)).get("/api/test");
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ ok: true });
     }
@@ -150,7 +172,7 @@ describe("HTTP rate limiting", () => {
     app.set("trust proxy", 1);
     app.get("/whoami", (req, res) => res.json({ ip: req.ip }));
 
-    const res = await request(app)
+    const res = await (await api(app))
       .get("/whoami")
       .set("X-Forwarded-For", "203.0.113.42");
 
@@ -163,7 +185,7 @@ describe("HTTP rate limiting", () => {
     // No app.set("trust proxy", ...) — Express defaults to false.
     app.get("/whoami", (req, res) => res.json({ ip: req.ip }));
 
-    const res = await request(app)
+    const res = await (await api(app))
       .get("/whoami")
       .set("X-Forwarded-For", "203.0.113.42");
 
