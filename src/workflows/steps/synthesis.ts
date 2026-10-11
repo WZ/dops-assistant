@@ -25,6 +25,7 @@ import { normalizeObservations } from "./observation-normalize.js";
 import { backfillEmptyEvidence } from "./evidence-backfill.js";
 import { createGatherEvidence } from "./hypothesis-requery.js";
 import { checkSymptomsAgainstNormalRange, normalRangeNote } from "./normal-range.js";
+import { wasScaledToZeroThroughout, scaledToZeroNote } from "./scaled-to-zero.js";
 import { queryInstantValue } from "../../server/prometheus-query.js";
 import type { RankedHypothesis } from "./corroboration.js";
 
@@ -276,11 +277,33 @@ export function buildSynthesisStep(config: WorkflowConfig) {
       );
       if (correctedSeverity) severity = correctedSeverity;
 
+      // A workload with 0 desired replicas throughout the window ran nothing,
+      // so latency or errors in the report belong to another deployment (metrics
+      // labelled by model or job name). Verified from the cluster rather than
+      // trusting the agent's "not deployed" instruction.
+      let scaledToZero = false;
+      if (severity !== "low" && targetService) {
+        try {
+          scaledToZero = (await wasScaledToZeroThroughout(
+            targetService,
+            timeRange,
+            (expr) => queryInstantValue(config.providers, expr),
+          )) === true;
+          if (scaledToZero) {
+            logger.info({ service: targetService, from: severity }, "synthesis: target had 0 desired replicas for the whole window; severity set to low");
+            severity = "low";
+            summary = `${summary} ${scaledToZeroNote(targetService)}`.trim();
+          }
+        } catch (err) {
+          logger.warn({ err }, "synthesis: scaled-to-zero check failed");
+        }
+      }
+
       // An elevated reading only means an incident if it is outside what the
       // service normally does; the agents' single baseline value can't tell.
       // Informational only: severity stays as synthesis set it, since a band
       // built from recent history can absorb a long-running degradation.
-      if (severity !== "low" && !hasDamageEvidence(metricsForTimeline, logsForTimeline, infraForTimeline)) {
+      if (!scaledToZero && severity !== "low" && !hasDamageEvidence(metricsForTimeline, logsForTimeline, infraForTimeline)) {
         try {
           const normal = await checkSymptomsAgainstNormalRange(
             metricsForTimeline.observations,
