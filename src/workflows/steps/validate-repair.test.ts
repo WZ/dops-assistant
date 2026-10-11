@@ -233,6 +233,20 @@ describe("runValidateStep — log selector verify and repair", () => {
     expect(lokiExecute).toHaveBeenCalledTimes(1);
   });
 
+  it("rewrites a log_errors query this Loki rejects, keeping the working selector", async () => {
+    lokiExecute = vi.fn(async (args: { logql: string }) => (args.logql.includes("`") ? LOKI_400 : LOKI_HIT));
+    const svc = service({
+      logLabels: { app_custom: "amd-gpu-exporter" },
+      probeRules: [{ ...logRule('app_custom="amd-gpu-exporter"'), query: 'sum(count_over_time({app_custom="amd-gpu-exporter"} |= `error` or `fatal` [15m]))' }],
+    });
+
+    const [r] = await runValidateStep({ providers: [], services: [svc] });
+
+    expect(rule(r!, "log_errors")?.query).toBe(logRule('app_custom="amd-gpu-exporter"').query);
+    expect(r!.logLabels).toEqual({ app_custom: "amd-gpu-exporter" });
+    expect(r!.validationNotes).toContain("log_errors query rewritten");
+  });
+
   it("keeps the selector untouched when Loki reports an error", async () => {
     lokiExecute = vi.fn(async () => LOKI_400);
     const svc = service({

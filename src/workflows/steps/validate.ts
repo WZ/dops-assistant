@@ -521,10 +521,19 @@ async function runLokiStreamCheck(
   lokiDsUid: string,
   config: ValidateStepConfig,
 ): Promise<QueryOutcome> {
+  return runLokiMetricQuery(lokiTool, `sum(count_over_time({${selectorBody}}[24h]))`, lokiDsUid, config);
+}
+
+async function runLokiMetricQuery(
+  lokiTool: [string, Tool],
+  logql: string,
+  lokiDsUid: string,
+  config: ValidateStepConfig,
+): Promise<QueryOutcome> {
   const now = Date.now();
   const args = {
     datasourceUid: lokiDsUid,
-    logql: `sum(count_over_time({${selectorBody}}[24h]))`,
+    logql,
     queryType: "metric",
     startTime: new Date(now - 60_000).toISOString(),
     endTime: new Date(now).toISOString(),
@@ -598,8 +607,18 @@ async function verifyLogSelector(
   config: ValidateStepConfig,
 ): Promise<{ ok: boolean; note: string }> {
   const current = await runLokiStreamCheck(lokiTool, labelSelectorBody(service.logLabels), lokiDsUid, config);
-  if (current === "data") return { ok: true, note: "logs \u2713" };
   if (current === "error") return { ok: false, note: "logs ? query failed (kept)" };
+  const rules = service.probeRules ?? (service.probeRules = []);
+  if (current === "data") {
+    // The selector is fine; the rule's own query may still use syntax this
+    // Loki rejects (e.g. backtick strings on older versions).
+    const logRule = rules.find((r) => r.name === "log_errors");
+    if (logRule && await runLokiMetricQuery(lokiTool, logRule.query, lokiDsUid, config) === "error") {
+      logRule.query = logErrorsQuery(labelSelectorBody(service.logLabels));
+      return { ok: true, note: "logs \u2713 log_errors query rewritten (rejected by Loki)" };
+    }
+    return { ok: true, note: "logs \u2713" };
+  }
 
   const namespace = lokiLabelValues.has("namespace") ? serviceNamespace(service) : undefined;
   const nsPart = namespace ? [`namespace="${namespace}"`] : [];
@@ -626,7 +645,6 @@ async function verifyLogSelector(
     });
   }
 
-  const rules = service.probeRules ?? (service.probeRules = []);
   for (const c of candidates) {
     if (await runLokiStreamCheck(lokiTool, c.body, lokiDsUid, config) !== "data") continue;
     service.logLabels = c.labels;
