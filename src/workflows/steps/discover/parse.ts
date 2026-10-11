@@ -59,6 +59,28 @@ function buildPodRegexSelector(
 }
 
 /**
+ * Pod-name-prefix regex: `<name>-<a>` or `<name>-<a>-<b>`. Covers DaemonSet
+ * and StatefulSet pods, Deployment pods, and Deployment pods whose generated
+ * name was truncated into one suffix segment. Used only after a stricter
+ * selector returned nothing.
+ */
+export function podPrefixRegex(name: string): string {
+  return `${promRegexEscape(name)}-[a-z0-9]+(-[a-z0-9]+)?`;
+}
+
+export function podPrefixRestartQuery(name: string, namespace: string | undefined): string {
+  const parts: string[] = [];
+  if (namespace) parts.push(`namespace="${promLabelEscape(namespace)}"`);
+  parts.push(`pod=~"${promLabelEscape(`${podPrefixRegex(name)}$`)}"`);
+  return `rate(kube_pod_container_status_restarts_total{${parts.join(",")}}[5m])`;
+}
+
+/** Double quotes and `|~`: older Loki rejects backtick strings and `or` between line filters. */
+export function logErrorsQuery(selectorBody: string): string {
+  return `sum(count_over_time({${selectorBody}} |~ "error|fatal" [15m]))`;
+}
+
+/**
  * Zod-validate LLM-written probe rules before they touch the registry or
  * the scan probe. Drops (and logs) any rule that fails shape validation
  * or contains an unsafe name. Addresses the LLM-trust-boundary gap
@@ -215,7 +237,7 @@ export function backfillLogErrors(
     .join(",");
   probeRules.push({
     name: "log_errors",
-    query: `sum(count_over_time({${selector}} |= \`error\` or \`fatal\` [15m]))`,
+    query: logErrorsQuery(selector),
     threshold: { op: "gt", value: 75 },
     consecutiveTicks: 2,
     source: "logs",

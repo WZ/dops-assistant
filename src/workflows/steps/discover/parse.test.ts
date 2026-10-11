@@ -142,7 +142,7 @@ describe("parsePrimaryOrReasoning — service-level backfills", () => {
       const log = (services?.[0]?.probeRules ?? []).find((r) => r.name === "log_errors");
       expect(log).toBeDefined();
       expect(log?.query).toBe(
-        'sum(count_over_time({namespace="shop",container="checkout-api"} |= `error` or `fatal` [15m]))',
+        'sum(count_over_time({namespace="shop",container="checkout-api"} |~ "error|fatal" [15m]))',
       );
       expect(log?.threshold).toEqual({ op: "gt", value: 75 });
       expect(log?.source).toBe("logs");

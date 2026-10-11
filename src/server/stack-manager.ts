@@ -247,6 +247,9 @@ export class StackManager {
       stackId: row.id,
       scan: getEffectiveScanConfig(this.db, this.config),
       getPrometheusDatasourceUid: getDatasourceUid,
+      getLokiDatasourceUid: () => providerRegistry.getAll().find(
+        p => p.config.roles.includes("logs") && p.lokiDatasourceUid,
+      )?.lokiDatasourceUid,
       getHiddenServices: () => this.db.getHiddenServices(row.id),
       onAnomaliesDetected: (evt: ScanAnomaliesEvent) => {
         this.onScanAnomalies?.(evt);

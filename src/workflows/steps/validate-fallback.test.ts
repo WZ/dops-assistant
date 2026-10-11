@@ -105,7 +105,8 @@ describe("runValidateStep — metric fallback when agent's pick returns empty", 
     const svc = buildService("happy-path", 'up{app="happy-path"}', true);
     await runValidateStep({ providers, services: [svc] });
 
-    // Only the original query was probed — no fallback candidates were tried.
-    expect(execute).toHaveBeenCalledTimes(1);
+    // Only the original metric query was probed — no metric fallback candidates were tried.
+    const metricCalls = execute.mock.calls.filter(([args]) => !String((args as { expr: string }).expr).includes("kube_pod_container_status_restarts_total"));
+    expect(metricCalls).toHaveLength(1);
   });
 });
