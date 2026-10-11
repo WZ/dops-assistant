@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.12.1] - 2026-10-11
+
+### Changed
+- **Deep Investigation says "no incident" on a healthy service instead of hunting until the time limit.** A deep run on a healthy service used to keep proposing ever-weaker causes until its ~10-minute limit. Once a proposed fault is ruled out, or every 3 evidence queries, it now re-checks the service's primary health signal (from the matched skill), and if the service reads healthy it ends with a new "No incident found" outcome. Live: healthy services finish in 1.5–3.5 minutes instead of ~10–11; a genuinely broken (scaled-to-zero) service still confirms its cause. (#271)
+
+### Fixed
+- **Overstated severity is capped at medium without evidence of damage.** A report can only be high or critical with a critical metric, errors in the logs, or failing infrastructure; an elevated but harmless signal (for example latency up while nothing errors and infra is healthy) is now medium. (#271)
+- **The scan's query-budget warning no longer fires on every tick for large stacks.** It now scales with the number of services (200, or 5 per service, whichever is larger), so a 94-service stack running a normal ~3 rules per service stays quiet while real rules-per-service growth still warns. (#271)
+
 ## [0.4.12.0] - 2026-10-10
 
 ### Added
