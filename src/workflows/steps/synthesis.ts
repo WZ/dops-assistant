@@ -24,7 +24,7 @@ import { runHypothesisLoop } from "./hypothesis-loop.js";
 import { normalizeObservations } from "./observation-normalize.js";
 import { backfillEmptyEvidence } from "./evidence-backfill.js";
 import { createGatherEvidence } from "./hypothesis-requery.js";
-import { checkSymptomsAgainstNormalRange, normalRangeNote } from "./normal-range.js";
+import { checkSymptomsAgainstNormalRange, normalRangeNote, executedPromQl } from "./normal-range.js";
 import { wasScaledToZeroThroughout, scaledToZeroNote } from "./scaled-to-zero.js";
 import { queryInstantValue } from "../../server/prometheus-query.js";
 import type { RankedHypothesis } from "./corroboration.js";
@@ -309,6 +309,8 @@ export function buildSynthesisStep(config: WorkflowConfig) {
             metricsForTimeline.observations,
             timeRange,
             (expr) => queryInstantValue(config.providers, expr),
+            Date.now(),
+            executedPromQl(metricsFindings.toolCalls),
           );
           if (normal?.allWithin) {
             logger.info({ severity, checks: normal.checks }, "synthesis: elevated symptoms within their 24h normal range");

@@ -30,6 +30,7 @@ import {
 import { PlanningOutputSchema, EvidenceOutputSchema } from "../schemas.js";
 import type { Skill } from "../../skills/store.js";
 import { safeJsonParse } from "../../agents/shared/processors.js";
+import { normalizeMetricObservations } from "./metric-severity.js";
 import { createMetricsAgent } from "../../agents/metrics.js";
 import { createLogsAgent } from "../../agents/logs.js";
 import { createInfraAgent } from "../../agents/infra.js";
@@ -86,6 +87,49 @@ interface EvidenceStepConfig {
 }
 
 // ── Shared factory ────────────────────────────────────────────────────────────
+
+/** Largest tool output handed to an extraction call; beyond this the call tends to fail outright. */
+const TOOL_DATA_EXTRACTION_CAP = 24_000;
+
+/** Captured tool results (not model chatter) are what an extractor can recover observations from. */
+function hasToolResults(toolData: string[]): boolean {
+  return toolData.some((entry) => entry.startsWith("Tool: "));
+}
+
+/**
+ * Join captured tool output for an extraction call, keeping the most recent
+ * entries that fit under the cap so the call gets everything it can use
+ * instead of failing on an oversized input.
+ */
+export function capToolDataForExtraction(toolData: string[], cap: number = TOOL_DATA_EXTRACTION_CAP): string {
+  const kept: string[] = [];
+  let used = 0;
+  for (let i = toolData.length - 1; i >= 0; i--) {
+    const entry = toolData[i]!;
+    if (used + entry.length > cap && kept.length > 0) break;
+    kept.push(entry.length > cap ? entry.slice(0, cap) : entry);
+    used += entry.length + 2;
+  }
+  return kept.reverse().join("\n\n");
+}
+
+/**
+ * Last-resort recovery: when the agent's own answer yielded no structured
+ * observations, re-extract them from the tool results it captured. Without it
+ * a phase that ran 16 queries is stored as "analysis unavailable".
+ */
+export async function recoverFromToolData(
+  toolData: string[],
+  extract: (input: string) => Promise<string>,
+): Promise<{ summary?: string; observations: unknown[] } | null> {
+  if (!hasToolResults(toolData)) return null;
+  try {
+    const parsed = safeJsonParse(await extract(capToolDataForExtraction(toolData)));
+    return parsed?.observations?.length ? parsed : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Create a Mastra evidence step from a config object.
@@ -235,7 +279,7 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
           model: workflowConfig.model as any,
         });
         try {
-          const extraction = await extractor.generate(toolData.join("\n\n"));
+          const extraction = await extractor.generate(capToolDataForExtraction(toolData));
           agentText = extraction.text ?? "";
         } catch { /* keep empty */ }
       }
@@ -265,6 +309,26 @@ function buildEvidenceStep(workflowConfig: WorkflowConfig, stepConfig: EvidenceS
             debug(`${phaseName.toUpperCase()}: re-extraction succeeded`);
           }
         } catch { /* fall through */ }
+      }
+
+      // 6c. Still nothing structured: recover from the captured tool results.
+      if (!parsed?.observations?.length && hasToolResults(toolData)) {
+        const { Agent: ExtractAgent } = await import("@mastra/core/agent");
+        const extractor = new ExtractAgent({
+          name: `${phaseName}-extractor`,
+          id: `${phaseName}-extractor`,
+          instructions: `Extract structured data from investigation results. Return ONLY valid JSON: ${extractorSchema}`,
+          model: workflowConfig.model as any,
+        });
+        const recovered = await recoverFromToolData(toolData, async (input) => (await extractor.generate(input)).text ?? "");
+        if (recovered) {
+          debug(`${phaseName.toUpperCase()}: recovered ${recovered.observations.length} observations from tool results`);
+          parsed = { ...parsed, ...recovered, summary: recovered.summary ?? parsed?.summary };
+        }
+      }
+
+      if (phaseName === "metrics" && Array.isArray(parsed?.observations)) {
+        parsed = { ...parsed, observations: normalizeMetricObservations(parsed.observations) };
       }
 
       // 7. Build timeRange pass-through from anomaly context
@@ -346,7 +410,7 @@ export function buildMetricsStep(config: WorkflowConfig) {
           : "",
       ].filter(Boolean).join("\n");
     },
-    extractorSchema: '{"summary": "string", "observations": [{"metric": "string", "currentValue": "string", "baselineValue": "string", "severity": "string"}]}',
+    extractorSchema: '{"summary": "string", "observations": [{"metric": "string (the PromQL expression)", "currentValue": "string", "baselineValue": "string", "severity": "normal|warning|critical"}]}',
     fallbackMessage: "Metrics analysis unavailable",
   });
 }
