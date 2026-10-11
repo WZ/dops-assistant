@@ -52,6 +52,9 @@ export function buildTimeline(
   return events.map((e) => `[${e.time}] [${e.source}] ${e.detail}`).join("\n");
 }
 
+/** Phrases that indicate everything is normal. */
+const NORMAL_PATTERNS = /\b(no anomal\w*|normal\w*|stable|steady|within.{0,20}(range|limit|band|baseline|expect)|no.{0,20}(spike|drop|outage|issue|incident|degradation|error)|healthy|expected|no abnormal)\b/i;
+
 /**
  * Deterministic severity validator.
  * Checks whether the LLM-assigned severity is consistent with the actual findings.
@@ -66,14 +69,12 @@ export function validateSeverity(
   logs: LogFindings,
   infra: InfraFindings,
 ): "low" | "medium" | "high" | "critical" | null {
-  // Patterns that indicate everything is normal
-  const normalPatterns = /\b(no anomal\w*|normal\w*|stable|steady|within.{0,20}(range|limit|band|baseline|expect)|no.{0,20}(spike|drop|outage|issue|incident|degradation|error)|healthy|expected|no abnormal)\b/i;
 
-  const summaryNormal = normalPatterns.test(report.summary);
-  const rootCauseNormal = normalPatterns.test(report.rootCause);
-  const metricSummaryNormal = normalPatterns.test(metrics.summary);
-  const logSummaryNormal = normalPatterns.test(logs.summary);
-  const infraSummaryNormal = normalPatterns.test(infra.summary);
+  const summaryNormal = NORMAL_PATTERNS.test(report.summary);
+  const rootCauseNormal = NORMAL_PATTERNS.test(report.rootCause);
+  const metricSummaryNormal = NORMAL_PATTERNS.test(metrics.summary);
+  const logSummaryNormal = NORMAL_PATTERNS.test(logs.summary);
+  const infraSummaryNormal = NORMAL_PATTERNS.test(infra.summary);
 
   // Check if any metric observations have warning/critical severity
   const hasElevatedMetrics = metrics.observations.some(
@@ -94,18 +95,23 @@ export function validateSeverity(
     }
   }
 
-  // Impact cap: high/critical needs evidence of damage — a critical metric,
-  // errors in the logs, or failing infrastructure. An elevated but harmless
-  // signal (e.g. latency up while nothing errors and infra is healthy) caps at
-  // medium instead of paging as a major incident.
-  if (report.severity === "high" || report.severity === "critical") {
-    const infraFailing = /\b(crash\w*|oom\w*|unavailable|not ready|evict\w*|pending|failing|failed|down|restarting|unhealthy)\b/i.test(infra.summary);
-    const logsClean = /\bno (errors?|exceptions?|failures?)\b/i.test(logs.summary);
-    const hasCriticalMetric = metrics.observations.some((o) => o.severity === "critical");
-    if (infraSummaryNormal && !infraFailing && logsClean && !hasCriticalMetric) return "medium";
+  // Impact cap: high/critical needs evidence of damage. An elevated but
+  // harmless signal (e.g. latency up while nothing errors and infra is
+  // healthy) caps at medium instead of paging as a major incident.
+  if ((report.severity === "high" || report.severity === "critical") && !hasDamageEvidence(metrics, logs, infra)) {
+    return "medium";
   }
 
   return null; // severity is fine
+}
+
+/** Damage = a critical metric, errors in the logs, or infrastructure that isn't healthy. */
+export function hasDamageEvidence(metrics: MetricFindings, logs: LogFindings, infra: InfraFindings): boolean {
+  const infraSummaryNormal = NORMAL_PATTERNS.test(infra.summary);
+  const infraFailing = /\b(crash\w*|oom\w*|unavailable|not ready|evict\w*|pending|failing|failed|down|restarting|unhealthy)\b/i.test(infra.summary);
+  const logsClean = /\bno (errors?|exceptions?|failures?)\b/i.test(logs.summary);
+  const hasCriticalMetric = metrics.observations.some((o) => o.severity === "critical");
+  return !(infraSummaryNormal && !infraFailing && logsClean && !hasCriticalMetric);
 }
 
 /**

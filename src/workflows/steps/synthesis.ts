@@ -9,7 +9,7 @@ import { createStep } from "@mastra/core/workflows";
 import { z } from "zod";
 import type { WorkflowConfig } from "../investigation.js";
 import { EvidenceOutputSchema, SynthesisOutputSchema } from "../schemas.js";
-import { buildTimeline, validateSeverity } from "../helpers.js";
+import { buildTimeline, validateSeverity, hasDamageEvidence } from "../helpers.js";
 import { debug } from "../tool-utils.js";
 import { safeJsonParse } from "../../agents/shared/processors.js";
 import { createSynthesisAgent, SYNTHESIS_MAX_OUTPUT_TOKENS } from "../../agents/synthesis.js";
@@ -24,6 +24,8 @@ import { runHypothesisLoop } from "./hypothesis-loop.js";
 import { normalizeObservations } from "./observation-normalize.js";
 import { backfillEmptyEvidence } from "./evidence-backfill.js";
 import { createGatherEvidence } from "./hypothesis-requery.js";
+import { checkSymptomsAgainstNormalRange, normalRangeNote } from "./normal-range.js";
+import { queryInstantValue } from "../../server/prometheus-query.js";
 import type { RankedHypothesis } from "./corroboration.js";
 
 const logger = createLogger("synthesis");
@@ -273,6 +275,25 @@ export function buildSynthesisStep(config: WorkflowConfig) {
         infraForTimeline,
       );
       if (correctedSeverity) severity = correctedSeverity;
+
+      // An elevated reading only means an incident if it is outside what the
+      // service normally does; the agents' single baseline value can't tell.
+      if (severity !== "low" && !hasDamageEvidence(metricsForTimeline, logsForTimeline, infraForTimeline)) {
+        try {
+          const normal = await checkSymptomsAgainstNormalRange(
+            metricsForTimeline.observations,
+            timeRange,
+            (expr) => queryInstantValue(config.providers, expr),
+          );
+          if (normal?.allWithin) {
+            logger.info({ from: severity, checks: normal.checks }, "synthesis: elevated symptoms within their 24h normal range; severity capped at low");
+            severity = "low";
+            summary = `${summary} ${normalRangeNote(normal)}`.trim();
+          }
+        } catch (err) {
+          logger.warn({ err }, "synthesis: normal-range check failed; severity unchanged");
+        }
+      }
 
       // ── Hypothesis loop (Step 2) — runs only when enabled (rounds>1) and the
       //    model emitted structured hypotheses. Deterministic + discriminating:
