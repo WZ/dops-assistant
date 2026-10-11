@@ -116,7 +116,8 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
 
   // Phase 1: Enrich remaining empty logLabels by matching service names against Loki label values (fallback)
   const lokiLabelNames = await listLokiLabelNames(lokiLabelNamesTool, lokiDsUid, config);
-  const labelMap = await buildLabelMap(lokiLabelNames, lokiLabelValuesTool, lokiDsUid, config, SERVICE_LABEL_KEYS);
+  const lokiLabelValues = await fetchLokiLabelValues(lokiLabelNames, lokiLabelValuesTool, lokiDsUid, config);
+  const labelMap = buildLabelMap(lokiLabelValues, SERVICE_LABEL_KEYS);
   const enriched = enrichLogLabels(k8sEnriched, labelMap);
   throwIfDiscoveryAborted(config.abortSignal);
 
@@ -190,7 +191,7 @@ export async function runValidateStep(config: ValidateStepConfig): Promise<Valid
     // this Loki actually has, else drop log_errors — a selector that matches
     // nothing reads as "no errors" forever.
     if (lokiTool && lokiDsUid && Object.keys(service.logLabels).length > 0) {
-      const outcome = await verifyLogSelector(service, lokiTool, lokiDsUid, lokiLabelNames, config);
+      const outcome = await verifyLogSelector(service, lokiTool, lokiDsUid, lokiLabelValues, config);
       logsOk = outcome.ok;
       notes.push(outcome.note);
     } else {
@@ -507,8 +508,13 @@ async function runPromCheck(
   }
 }
 
-const LOG_STREAM_LOOKBACK_MS = 24 * 60 * 60 * 1000;
-
+/**
+ * Whether a selector matched any log line in the last 24h. A metric query
+ * (the same shape the scan probe runs), not a log-line query: some older
+ * Loki versions return no entries to line queries through grafana-mcp while
+ * count_over_time over the same selector works. The short evaluation range
+ * keeps it to one or two steps.
+ */
 async function runLokiStreamCheck(
   lokiTool: [string, Tool],
   selectorBody: string,
@@ -518,9 +524,9 @@ async function runLokiStreamCheck(
   const now = Date.now();
   const args = {
     datasourceUid: lokiDsUid,
-    logql: `{${selectorBody}}`,
-    limit: 1,
-    startTime: new Date(now - LOG_STREAM_LOOKBACK_MS).toISOString(),
+    logql: `sum(count_over_time({${selectorBody}}[24h]))`,
+    queryType: "metric",
+    startTime: new Date(now - 60_000).toISOString(),
     endTime: new Date(now).toISOString(),
   };
   try {
@@ -574,50 +580,60 @@ function labelSelectorBody(labels: Record<string, string>): string {
     .join(",");
 }
 
-/** Equality label keys tried, in order, when the discovered log selector matches no stream. */
-const LOG_SELECTOR_KEYS = ["app", "service_name", "app_kubernetes_io_name", "container_name", "container"];
+/** Preferred first when several labels carry the service name; any other label is tried after. */
+const PREFERRED_LOG_KEYS = ["app", "app_kubernetes_io_name", "app_kubernetes_io_instance", "service_name", "container_name", "container", "pod", "instance"];
+/** Labels whose values are paths, metric names, or stream metadata — never a service selector. */
+const NON_SELECTOR_LOG_KEYS = new Set(["filename", "__name__", "stream", "detected_level", "namespace"]);
+
+function logKeyRank(key: string): number {
+  const i = PREFERRED_LOG_KEYS.indexOf(key);
+  return i === -1 ? PREFERRED_LOG_KEYS.length : i;
+}
 
 async function verifyLogSelector(
   service: ServiceConfig,
   lokiTool: [string, Tool],
   lokiDsUid: string,
-  lokiLabelNames: string[],
+  lokiLabelValues: Map<string, string[]>,
   config: ValidateStepConfig,
 ): Promise<{ ok: boolean; note: string }> {
   const current = await runLokiStreamCheck(lokiTool, labelSelectorBody(service.logLabels), lokiDsUid, config);
   if (current === "data") return { ok: true, note: "logs \u2713" };
   if (current === "error") return { ok: false, note: "logs ? query failed (kept)" };
 
-  const names = new Set(lokiLabelNames);
-  const namespace = names.has("namespace") ? serviceNamespace(service) : undefined;
-  const rules = service.probeRules ?? (service.probeRules = []);
-  const setLogRule = (selectorBody: string) => {
-    const existing = rules.find((r) => r.name === "log_errors");
-    if (existing) existing.query = logErrorsQuery(selectorBody);
-    else rules.push({ name: "log_errors", query: logErrorsQuery(selectorBody), threshold: { op: "gt", value: 75 }, consecutiveTicks: 2, source: "logs" });
-  };
+  const namespace = lokiLabelValues.has("namespace") ? serviceNamespace(service) : undefined;
+  const nsPart = namespace ? [`namespace="${namespace}"`] : [];
+  const keys = [...lokiLabelValues.keys()]
+    .filter((k) => !NON_SELECTOR_LOG_KEYS.has(k))
+    .sort((a, b) => logKeyRank(a) - logKeyRank(b) || a.localeCompare(b));
+  const podPrefix = podPrefixRegex(service.name);
+  const podPrefixRe = new RegExp(`^${podPrefix}$`);
 
-  for (const key of LOG_SELECTOR_KEYS.filter((k) => names.has(k))) {
+  // Exact label values first (equality selectors also become logLabels), then
+  // labels holding pod-name-prefixed values (pod, or `instance` on some stacks).
+  const candidates: Array<{ body: string; key: string; labels: Record<string, string> }> = [];
+  for (const key of keys) {
+    if (!lokiLabelValues.get(key)!.includes(service.name)) continue;
     const labels: Record<string, string> = namespace ? { namespace, [key]: service.name } : { [key]: service.name };
-    if (await runLokiStreamCheck(lokiTool, labelSelectorBody(labels), lokiDsUid, config) === "data") {
-      service.logLabels = labels;
-      setLogRule(labelSelectorBody(labels));
-      return { ok: true, note: `logs \u2713 repaired via ${key}` };
-    }
+    candidates.push({ body: labelSelectorBody(labels), key, labels });
+  }
+  for (const key of keys) {
+    if (!lokiLabelValues.get(key)!.some((v) => podPrefixRe.test(v))) continue;
+    candidates.push({
+      body: [...nsPart, `${key}=~"${podPrefix.replace(/\\/g, "\\\\")}"`].join(","),
+      key: `${key} prefix`,
+      labels: namespace ? { namespace } : {},
+    });
   }
 
-  // logLabels are equality-only, so a pod-regex match updates the probe rule
-  // and narrows logLabels to the namespace.
-  if (names.has("pod")) {
-    const body = [
-      ...(namespace ? [`namespace="${namespace}"`] : []),
-      `pod=~"${podPrefixRegex(service.name).replace(/\\/g, "\\\\")}"`,
-    ].join(",");
-    if (await runLokiStreamCheck(lokiTool, body, lokiDsUid, config) === "data") {
-      service.logLabels = namespace ? { namespace } : {};
-      setLogRule(body);
-      return { ok: true, note: "logs \u2713 repaired via pod-name prefix" };
-    }
+  const rules = service.probeRules ?? (service.probeRules = []);
+  for (const c of candidates) {
+    if (await runLokiStreamCheck(lokiTool, c.body, lokiDsUid, config) !== "data") continue;
+    service.logLabels = c.labels;
+    const existing = rules.find((r) => r.name === "log_errors");
+    if (existing) existing.query = logErrorsQuery(c.body);
+    else rules.push({ name: "log_errors", query: logErrorsQuery(c.body), threshold: { op: "gt", value: 75 }, consecutiveTicks: 2, source: "logs" });
+    return { ok: true, note: `logs \u2713 repaired via ${c.key}` };
   }
 
   service.logLabels = {};
@@ -891,7 +907,7 @@ async function listLokiLabelNames(
   if (!labelNamesTool || !lokiDsUid) return [];
   try {
     const start = Date.now();
-    const namesResult = await labelNamesTool[1].execute!({ datasourceUid: lokiDsUid }, {} as any);
+    const namesResult = await labelNamesTool[1].execute!({ datasourceUid: lokiDsUid, ...lokiLabelWindow() }, {} as any);
     const duration = Date.now() - start;
     const namesStr = typeof namesResult === "string" ? namesResult : JSON.stringify(namesResult);
     config.onToolCall?.(labelNamesTool[0], { datasourceUid: lokiDsUid }, namesStr, duration, undefined, "validation");
@@ -906,43 +922,50 @@ async function listLokiLabelNames(
   }
 }
 
-async function buildLabelMap(
+/**
+ * Label lookups span the same 24h as the stream check. The tool's default
+ * window is much shorter and misses services that log rarely.
+ */
+function lokiLabelWindow(): { startRfc3339: string; endRfc3339: string } {
+  const now = Date.now();
+  return { startRfc3339: new Date(now - 24 * 60 * 60 * 1000).toISOString(), endRfc3339: new Date(now).toISOString() };
+}
+
+/** Every value of every Loki label (one call per label), fetched once per validation run. */
+async function fetchLokiLabelValues(
   allNames: string[],
   labelValuesTool: [string, any] | undefined,
   lokiDsUid: string | undefined,
   config: ValidateStepConfig,
-  labelKeys: string[] = SERVICE_LABEL_KEYS,
-): Promise<Map<string, Map<string, string>>> {
-  const map = new Map<string, Map<string, string>>();
-  if (allNames.length === 0 || !labelValuesTool || !lokiDsUid) return map;
-
-  try {
-    const available = allNames.filter(
-      (k: string) => labelKeys.some((p) => k === p || k.toLowerCase().includes(p)),
-    );
-    logger.debug(`Found ${available.length} matching label keys: ${available.join(", ")}`);
-
-    for (const key of available) {
-      try {
-        const vStart = Date.now();
-        const valResult = await labelValuesTool[1].execute!({ datasourceUid: lokiDsUid, labelName: key }, {} as any);
-        const vDuration = Date.now() - vStart;
-        const valStr = typeof valResult === "string" ? valResult : JSON.stringify(valResult);
-        config.onToolCall?.(labelValuesTool[0], { labelName: key }, valStr, vDuration, undefined, "validation");
-
-        const valParsed = unwrapMcpJson(valResult);
-        const values: string[] = Array.isArray(valParsed) ? valParsed : valParsed?.values ?? valParsed?.data ?? [];
-        // Store lowercase → original mapping for case-preserving label selectors
-        const valueMap = new Map<string, string>();
-        for (const v of values) valueMap.set(v.toLowerCase(), v);
-        map.set(key, valueMap);
-        logger.debug(`Label "${key}": ${values.length} values`);
-      } catch { /* skip this label key */ }
-    }
-  } catch (err) {
-    logger.warn(`Failed to build label map: ${err}`);
+): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  if (allNames.length === 0 || !labelValuesTool || !lokiDsUid) return out;
+  for (const key of allNames) {
+    try {
+      const vStart = Date.now();
+      const valResult = await labelValuesTool[1].execute!({ datasourceUid: lokiDsUid, labelName: key, ...lokiLabelWindow() }, {} as any);
+      const valStr = typeof valResult === "string" ? valResult : JSON.stringify(valResult);
+      config.onToolCall?.(labelValuesTool[0], { labelName: key }, valStr, Date.now() - vStart, undefined, "validation");
+      const valParsed = unwrapMcpJson(valResult);
+      const values: string[] = Array.isArray(valParsed) ? valParsed : valParsed?.values ?? valParsed?.data ?? [];
+      out.set(key, values.filter((v): v is string => typeof v === "string"));
+    } catch { /* skip this label key */ }
   }
+  return out;
+}
 
+/** Lowercase → original value maps for the label keys used by name-based enrichment. */
+function buildLabelMap(
+  labelValues: Map<string, string[]>,
+  labelKeys: string[] = SERVICE_LABEL_KEYS,
+): Map<string, Map<string, string>> {
+  const map = new Map<string, Map<string, string>>();
+  for (const [key, values] of labelValues) {
+    if (!labelKeys.some((p) => key === p || key.toLowerCase().includes(p))) continue;
+    const valueMap = new Map<string, string>();
+    for (const v of values) valueMap.set(v.toLowerCase(), v);
+    map.set(key, valueMap);
+  }
   return map;
 }
 

@@ -7,7 +7,7 @@ import type { ServiceConfig } from "../../config/schema.js";
 const wrap = (payload: unknown) => ({ content: [{ type: "text", text: JSON.stringify(payload) }] });
 const EMPTY = wrap({ data: [], hints: { summary: "The query returned no data for the specified time range." } });
 const PROM_HIT = wrap({ data: [{ metric: { pod: "x" }, value: [1700000000, "0"] }] });
-const LOKI_HIT = wrap({ data: [{ timestamp: "1700000000000000000", line: "hello", labels: {} }] });
+const LOKI_HIT = wrap({ data: [{ values: [{ timestamp: "1700000000.000", value: 3 }] }] });
 const LOKI_400 = {
   isError: true,
   content: [{ type: "text", text: "loki API returned status code 400: parse error at line 1, col 42" }],
@@ -15,7 +15,7 @@ const LOKI_400 = {
 
 let promExecute: ReturnType<typeof vi.fn>;
 let lokiExecute: ReturnType<typeof vi.fn>;
-let lokiLabelNames: string[];
+let lokiLabels: Record<string, string[]>;
 
 vi.mock("../../mcp/provider.js", async () => {
   const actual = await vi.importActual<typeof import("../../mcp/provider.js")>("../../mcp/provider.js");
@@ -36,8 +36,8 @@ vi.mock("../../mcp/provider.js", async () => {
       if (role === "logs") {
         return {
           query_loki_logs: { execute: lokiExecute },
-          list_loki_label_names: { execute: async () => wrap(lokiLabelNames) },
-          list_loki_label_values: { execute: async () => wrap([]) },
+          list_loki_label_names: { execute: async () => wrap(Object.keys(lokiLabels)) },
+          list_loki_label_values: { execute: async ({ labelName }: { labelName: string }) => wrap(lokiLabels[labelName] ?? []) },
         };
       }
       return {};
@@ -62,7 +62,7 @@ const rule = (svc: ServiceConfig, name: string) => (svc.probeRules ?? []).find((
 beforeEach(() => {
   promExecute = vi.fn(async ({ expr }: { expr: string }) => (expr.startsWith("kube_daemonset") ? PROM_HIT : EMPTY));
   lokiExecute = vi.fn(async () => EMPTY);
-  lokiLabelNames = ["namespace", "pod", "container", "app"];
+  lokiLabels = { namespace: ["monitoring", "storage"], pod: ["amd-gpu-exporter-jfs49"], container: ["exporter"], app: [] };
 });
 
 describe("runValidateStep — pod_restarts verify and repair", () => {
@@ -144,17 +144,18 @@ describe("runValidateStep — log selector verify and repair", () => {
     const [r] = await runValidateStep({ providers: [], services: [svc] });
 
     const args = lokiExecute.mock.calls[0]![0] as Record<string, unknown>;
-    expect(args.logql).toBe('{namespace="monitoring",app="amd-gpu-exporter"}');
+    expect(args.logql).toBe('sum(count_over_time({namespace="monitoring",app="amd-gpu-exporter"}[24h]))');
+    expect(args.queryType).toBe("metric");
     expect(args.datasourceUid).toBe("loki-uid");
     expect(args).not.toHaveProperty("query");
     expect(r!.validationNotes).toContain("logs ✓");
     expect(r!.confidence).toBe("verified");
   });
 
-  it("repairs a selector that uses a label this Loki lacks, via a label it has", async () => {
-    lokiLabelNames = ["namespace", "app", "container_name"];
+  it("repairs a selector that uses a label this Loki lacks, via a label whose value is the service name", async () => {
+    lokiLabels = { namespace: ["storage"], app: ["other"], container_name: ["openebs-node"] };
     lokiExecute = vi.fn(async (args: { logql: string }) =>
-      args.logql === '{namespace="storage",container_name="openebs-node"}' ? LOKI_HIT : EMPTY);
+      args.logql.includes('{namespace="storage",container_name="openebs-node"}') ? LOKI_HIT : EMPTY);
     const svc = service({
       name: "openebs-node",
       logLabels: { namespace: "storage", container: "openebs-node" },
@@ -166,8 +167,8 @@ describe("runValidateStep — log selector verify and repair", () => {
     expect(r!.logLabels).toEqual({ namespace: "storage", container_name: "openebs-node" });
     expect(rule(r!, "log_errors")?.query).toBe('sum(count_over_time({namespace="storage",container_name="openebs-node"} |~ "error|fatal" [15m]))');
     expect(r!.validationNotes).toContain("logs ✓ repaired via container_name");
-    // Only label keys this Loki has are tried.
-    expect(lokiExecute.mock.calls.map(logqlOf).some((q) => q.includes("service_name="))).toBe(false);
+    // Only labels that actually carry the service name are tried.
+    expect(lokiExecute.mock.calls.map(logqlOf).some((q) => q.includes("app="))).toBe(false);
   });
 
   it("falls back to a pod-name prefix when no equality label matches", async () => {
@@ -183,9 +184,41 @@ describe("runValidateStep — log selector verify and repair", () => {
       'sum(count_over_time({namespace="monitoring",pod=~"amd-gpu-exporter-[a-z0-9]+(-[a-z0-9]+)?"} |~ "error|fatal" [15m]))',
     );
     expect(r!.logLabels).toEqual({ namespace: "monitoring" });
+    expect(r!.validationNotes).toContain("logs \u2713 repaired via pod prefix");
   });
 
-  it("drops log_errors and clears logLabels when no selector matches any stream", async () => {
+  it("uses whichever label holds pod names on this stack (e.g. `instance` when there is no `pod`)", async () => {
+    lokiLabels = { namespace: ["storage"], container_name: ["jiva-controller"], instance: ["pvc-1ae3-jiva-ctrl-6bf8f6f54ths"] };
+    lokiExecute = vi.fn(async (args: { logql: string }) => (args.logql.includes("instance=~") ? LOKI_HIT : EMPTY));
+    const svc = service({
+      name: "pvc-1ae3-jiva-ctrl",
+      logLabels: { namespace: "storage", container_name: "pvc-1ae3-jiva-ctrl" },
+      probeRules: [logRule('namespace="storage",container_name="pvc-1ae3-jiva-ctrl"')],
+    });
+
+    const [r] = await runValidateStep({ providers: [], services: [svc] });
+
+    expect(rule(r!, "log_errors")?.query).toContain('{namespace="storage",instance=~"pvc-1ae3-jiva-ctrl-[a-z0-9]+(-[a-z0-9]+)?"}');
+  });
+
+  it("finds the service name under any label, not just the common ones", async () => {
+    lokiLabels = { namespace: ["cert-manager"], app_kubernetes_io_instance: ["cert-manager"], container_name: ["manager"] };
+    lokiExecute = vi.fn(async (args: { logql: string }) =>
+      args.logql.includes('{namespace="cert-manager",app_kubernetes_io_instance="cert-manager"}') ? LOKI_HIT : EMPTY);
+    const svc = service({
+      name: "cert-manager",
+      logLabels: { namespace: "cert-manager", container_name: "cert-manager" },
+      probeRules: [logRule('namespace="cert-manager",container_name="cert-manager"')],
+    });
+
+    const [r] = await runValidateStep({ providers: [], services: [svc] });
+
+    expect(r!.logLabels).toEqual({ namespace: "cert-manager", app_kubernetes_io_instance: "cert-manager" });
+    expect(r!.validationNotes).toContain("repaired via app_kubernetes_io_instance");
+  });
+
+  it("drops log_errors and clears logLabels when no label carries the service", async () => {
+    lokiLabels = { namespace: ["monitoring"], pod: ["other-workload-abc12"], container: ["exporter"] };
     const svc = service({
       logLabels: { container_name: "amd-gpu-exporter" },
       probeRules: [logRule('container_name="amd-gpu-exporter"')],
@@ -196,6 +229,8 @@ describe("runValidateStep — log selector verify and repair", () => {
     expect(rule(r!, "log_errors")).toBeUndefined();
     expect(r!.logLabels).toEqual({});
     expect(r!.validationNotes).toContain("log_errors dropped");
+    // No candidate selectors exist, so only the original selector was checked.
+    expect(lokiExecute).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the selector untouched when Loki reports an error", async () => {
