@@ -36,6 +36,7 @@ export function outcomeHeadline(outcome: string | undefined): string {
     case "wall-clock": return "Stopped — hit the time limit";
     case "exhausted": return "Stopped — no further moves";
     case "inconclusive": return "Inconclusive — no clear cause";
+    case "no-incident": return "No incident found";
     default: return "Deep investigation finished";
   }
 }

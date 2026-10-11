@@ -177,6 +177,9 @@ export function traceEntryToStreamEvent(e: TraceEntry): Omit<AgentStreamEvent, "
       if (e.detail.startsWith("confirmed:")) {
         return { verb: "root cause:", target: e.detail.replace(/^confirmed:\s*/, ""), status: "strong" };
       }
+      if (e.detail.startsWith("no incident:")) {
+        return { verb: "no incident:", target: e.detail.replace(/^no incident:\s*/, ""), status: "done" };
+      }
       return { verb: "not confirmed yet — kept looking", detail: e.detail, status: "running" };
     }
 

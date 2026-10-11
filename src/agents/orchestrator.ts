@@ -105,6 +105,7 @@ export type OrchestratorOutcome =
   | "wall-clock"
   | "exhausted" // decide-fn signalled no further moves
   | "inconclusive" // stalled (no progress) or hit the move backstop
+  | "no-incident" // reads healthy on its primary signal after a fault was ruled out
   | "aborted"; // caller aborted (e.g. the operator disconnected)
 
 export interface OrchestratorGuards {
@@ -322,6 +323,7 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
   let toolCalls = 0;
   let moves = 0;
   let stall = 0;
+  let ruledOutSinceHealthCheck = false;
   let operatorContinues = 0;
   // PR-4: the operator's standing lead from a continue-with-context resume. Set
   // when a pause resolves with one, kept across moves until a later pause replaces
@@ -407,6 +409,21 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
     // Fast no-evidence bail: several queries in and nothing surfaced anywhere →
     // the service is quiet. Stop now rather than burning the full run (inc-7 #5).
     if (toolCalls >= NO_EVIDENCE_BAIL_QUERIES && evidence.length === 0) return await giveUp("inconclusive");
+    // No-incident stop: a proposed fault was just ruled out and the service reads
+    // healthy on its primary signal (skill healthySignal). Without this a healthy
+    // service is hunted until the wall-clock guard, proposing ever-weaker causes.
+    if (ruledOutSinceHealthCheck && deps.checkHealthy) {
+      ruledOutSinceHealthCheck = false;
+      const healthy = await deps.checkHealthy().catch(() => null);
+      if (healthy === true && !hypotheses.some((x) => x.standing === "confirmed")) {
+        const ruledOut = hypotheses.filter((x) => x.standing === "ruled-out").length;
+        record({
+          move: "conclude",
+          detail: `no incident: ${deps.incidentService ?? "the service"} reads healthy on its primary signal and ${ruledOut} proposed ${ruledOut === 1 ? "fault was" : "faults were"} ruled out`,
+        });
+        return finish("no-incident");
+      }
+    }
 
     const state: OrchestratorState = {
       hypotheses,
@@ -483,6 +500,7 @@ export async function runOrchestrator(deps: OrchestratorDeps): Promise<Orchestra
           // Evidence actively refutes it → genuinely ruled out.
           h.standing = "ruled-out";
           strikes++;
+          ruledOutSinceHealthCheck = true;
         } else {
           // `absent`: no evidence either way (e.g. the data source was
           // unreachable, or nothing matched the prediction). Absence of evidence
