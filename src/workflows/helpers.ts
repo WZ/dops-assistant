@@ -94,6 +94,17 @@ export function validateSeverity(
     }
   }
 
+  // Impact cap: high/critical needs evidence of damage — a critical metric,
+  // errors in the logs, or failing infrastructure. An elevated but harmless
+  // signal (e.g. latency up while nothing errors and infra is healthy) caps at
+  // medium instead of paging as a major incident.
+  if (report.severity === "high" || report.severity === "critical") {
+    const infraFailing = /\b(crash\w*|oom\w*|unavailable|not ready|evict\w*|pending|failing|failed|down|restarting|unhealthy)\b/i.test(infra.summary);
+    const logsClean = /\bno (errors?|exceptions?|failures?)\b/i.test(logs.summary);
+    const hasCriticalMetric = metrics.observations.some((o) => o.severity === "critical");
+    if (infraSummaryNormal && !infraFailing && logsClean && !hasCriticalMetric) return "medium";
+  }
+
   return null; // severity is fine
 }
 
