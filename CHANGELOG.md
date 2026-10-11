@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.12.3] - 2026-10-11
+
+### Changed
+- **Reports say when an elevated reading is normal for the service.** Agents compare a reading with one "baseline" value, so an ordinary swing can read like an incident (on a shared model server, p99 latency moves 40s → 400s within an hour). When nothing shows damage (logs clean, infra healthy, no critical metric), each elevated symptom metric (latency, errors, restarts, availability) is re-checked against its own previous 24h range, and if all are inside it the summary says so, with the numbers. Severity is left as the model set it, since a long-running problem can sit inside a recent range. (#276)
+- **A workload that was scaled to zero can no longer be reported as an incident.** Metrics labelled by model or job name (such as vLLM's request latency) belong to whichever deployment serves that model, so an investigation of a scaled-down deployment could report its sibling's latency as the target's problem. When the target's desired replicas (deployment, statefulset or daemonset) were 0 for the whole investigation window, severity is set to low and the summary says nothing was running. A workload that was up at any point in the window, or one with no replica metric, is never matched. (#276)
+- **A latency spike alone no longer keeps a report at high severity.** The metrics agent sometimes labels a latency reading "critical"; that counted as damage, so the cap to medium didn't apply even with clean logs and healthy infrastructure. Only critical errors, restarts, availability or saturation metrics count as damage now. (#276)
+
 ## [0.4.12.2] - 2026-10-11
 
 ### Fixed
