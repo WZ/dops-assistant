@@ -34,6 +34,15 @@ describe("checkSymptomsAgainstNormalRange", () => {
     expect(query.mock.calls.some(([e]) => e.includes("tool_call_parser"))).toBe(false);
   });
 
+  it("allows 10% of slack over the p95 so jitter on a flat metric is not 'outside'", async () => {
+    const near = await checkSymptomsAgainstNormalRange([{ metric: LATENCY, severity: "medium" }], WINDOW, prom({ [LATENCY]: { worst: 372, band: 363.8 } }), NOW);
+    expect(near?.allWithin).toBe(true);
+    const flat = await checkSymptomsAgainstNormalRange([{ metric: LATENCY, severity: "medium" }], WINDOW, prom({ [LATENCY]: { worst: 0.0251, band: 0.0249 } }), NOW);
+    expect(flat?.allWithin).toBe(true);
+    const over = await checkSymptomsAgainstNormalRange([{ metric: LATENCY, severity: "medium" }], WINDOW, prom({ [LATENCY]: { worst: 410, band: 363.8 } }), NOW);
+    expect(over?.allWithin).toBe(false);
+  });
+
   it("is not within range when the window's worst exceeds the 24h p95", async () => {
     const query = prom({ [LATENCY]: { worst: 620, band: 283.7 } });
     const result = await checkSymptomsAgainstNormalRange([{ metric: LATENCY, severity: "high" }], WINDOW, query, NOW);
@@ -140,6 +149,6 @@ describe("symptomDirection", () => {
 describe("normalRangeNote", () => {
   it("states the comparison for each symptom", () => {
     expect(normalRangeNote({ allWithin: true, checks: [{ metric: "p99_latency", direction: "higher-is-worse", worst: 193.2, band: 283.7, within: true }] }))
-      .toBe("Note: every elevated symptom stayed within this service's normal range over the previous 24h (p99_latency peaked at 193, 24h p95 284).");
+      .toBe("Note: every symptom metric stayed at or near this service's normal range over the previous 24h (p99_latency peaked at 193, 24h p95 284).");
   });
 });

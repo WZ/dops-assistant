@@ -15,6 +15,12 @@
 
 type Direction = "higher-is-worse" | "lower-is-worse";
 
+/**
+ * Slack around the 24h band. A flat metric (inter-token latency at 24.9ms) sits
+ * at its own p95, so without it any jitter reads as "outside normal".
+ */
+const NORMAL_RANGE_TOLERANCE = 0.1;
+
 /** Bounds the Prometheus calls (two per symptom) a synthesis step can spend here. */
 const MAX_SYMPTOM_QUERIES = 6;
 
@@ -115,7 +121,8 @@ export async function checkSymptomsAgainstNormalRange(
       if (wasFlagged) return null;
       continue;
     }
-    checks.push({ metric, direction, worst, band, within: higher ? worst <= band : worst >= band });
+    const within = higher ? worst <= band * (1 + NORMAL_RANGE_TOLERANCE) : worst >= band * (1 - NORMAL_RANGE_TOLERANCE);
+    checks.push({ metric, direction, worst, band, within });
   }
   if (checks.length === 0) return null;
   return { checks, allWithin: checks.every((c) => c.within) };
@@ -127,5 +134,5 @@ export function normalRangeNote(result: NormalRangeResult): string {
   const parts = result.checks.map((c) => c.direction === "higher-is-worse"
     ? `${c.metric} peaked at ${fmt(c.worst)}, 24h p95 ${fmt(c.band)}`
     : `${c.metric} dipped to ${fmt(c.worst)}, 24h p5 ${fmt(c.band)}`);
-  return `Note: every elevated symptom stayed within this service's normal range over the previous 24h (${parts.join("; ")}).`;
+  return `Note: every symptom metric stayed at or near this service's normal range over the previous 24h (${parts.join("; ")}).`;
 }
