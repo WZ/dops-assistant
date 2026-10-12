@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.12.4] - 2026-10-12
+
 ### Fixed
 - **Gathered log evidence is no longer lost.** Two causes. When the logs agent's final answer couldn't be parsed, the phase was stored as "analysis unavailable" even after 16 successful queries; it now re-extracts from the captured tool results (capped, newest first, so the call can't fail on an oversized input). And when the report writer kept only 1 of 6 gathered log observations, nothing refilled it; a category cut below half of what was gathered is now topped up from that phase's observations, skipping ones the report already covers.
 - **Metric severities are consistent.** The metrics agent was never told its severity vocabulary, so one reading arrived as "critical", "high", "medium" or "info". The prompt now defines `normal | warning | critical` (latency alone is never critical), and labels are normalized to those three when parsed.
